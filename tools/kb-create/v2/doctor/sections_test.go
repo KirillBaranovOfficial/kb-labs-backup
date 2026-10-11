@@ -112,7 +112,7 @@ func TestInstallationSectionNamesWhatIsMissing(t *testing.T) {
 
 func TestInstallationSectionWithoutAReceiptIsAFindingNotAnError(t *testing.T) {
 	section := InspectInstallation(t.TempDir(), host.State{Dir: t.TempDir()})
-	if section.OK || check(t, section, "receipt").OK || !check(t, section, "launcher-state").OK {
+	if section.OK || check(t, section, "receipt").OK || !check(t, section, "host-state").OK {
 		t.Fatalf("section = %+v", section)
 	}
 }

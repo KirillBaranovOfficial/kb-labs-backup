@@ -3,6 +3,10 @@ package doctor
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Input is a manifest-derived, value-free doctor request. Release tooling
@@ -17,18 +21,33 @@ type Input struct {
 // questions (see sections.go) and are present when a platform root was given;
 // Findings and Repair are the manifest-requirement gaps of the installation.
 type Response struct {
-	OK              bool       `json:"ok"`
-	Installed       bool       `json:"installed"`
-	Running         bool       `json:"running"`
-	Reachable       bool       `json:"reachable"`
-	Next            string     `json:"next"`
-	PlatformChannel string     `json:"platformChannel,omitempty"`
-	PlatformVersion string     `json:"platformVersion,omitempty"`
-	Profile         string     `json:"profile,omitempty"`
-	Installation    *Section   `json:"installation,omitempty"`
-	Platform        *Section   `json:"platform,omitempty"`
-	Findings        []Finding  `json:"findings"`
-	Repair          RepairPlan `json:"repair"`
+	OK               bool                      `json:"ok"`
+	Installed        bool                      `json:"installed"`
+	Running          bool                      `json:"running"`
+	Reachable        bool                      `json:"reachable"`
+	Next             string                    `json:"next"`
+	PlatformChannel  string                    `json:"platformChannel,omitempty"`
+	PlatformVersion  string                    `json:"platformVersion,omitempty"`
+	InstalledVersion string                    `json:"installedVersion,omitempty"`
+	RunningVersion   string                    `json:"runningVersion,omitempty"`
+	PendingRestart   *contracts.PendingRestart `json:"pendingRestart,omitempty"`
+	Retention        *RetentionReport          `json:"retention,omitempty"`
+	Profile          string                    `json:"profile,omitempty"`
+	Installation     *Section                  `json:"installation,omitempty"`
+	Platform         *Section                  `json:"platform,omitempty"`
+	Findings         []Finding                 `json:"findings"`
+	Repair           RepairPlan                `json:"repair"`
+}
+
+type RetentionReport struct {
+	InstallRoot       string                        `json:"installRoot"`
+	PlatformRoot      string                        `json:"platformRoot"`
+	VersionsDirectory string                        `json:"versionsDirectory"`
+	SharedState       string                        `json:"sharedState"`
+	InstallerState    string                        `json:"installerState"`
+	HostState         string                        `json:"hostState"`
+	Versions          []versionroot.RetainedVersion `json:"versions"`
+	Snapshots         []receipt.SnapshotUsage       `json:"snapshots"`
 }
 
 func Decode(data []byte) (Input, error) {

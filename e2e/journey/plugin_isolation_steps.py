@@ -7,6 +7,7 @@ import tempfile
 
 from invocations import (decode_ux_success_result, invocation_context, read_ux_cli_result,
                          run_command)
+from journey_resources import active_platform_root, create_fixture_install_container
 from service_steps import Journey
 
 
@@ -42,13 +43,14 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
             return None, env
         temp = tempfile.TemporaryDirectory(prefix="kb-project-plugin-scope-", dir=env.get("HOME"))
         fixture_root = Path(temp.name) / "platform"
-        fixture_root.mkdir()
-        for entry in platform_root.iterdir():
+        fixture_version = create_fixture_install_container(fixture_root, "fixture")
+        source_version = active_platform_root(platform_root)
+        for entry in source_version.iterdir():
             if entry.name in {".kb", "pnpm-workspace.yaml"}:
                 continue
-            (fixture_root / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
-        source_kb = platform_root / ".kb"
-        target_kb = fixture_root / ".kb"
+            (fixture_version / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+        source_kb = source_version / ".kb"
+        target_kb = fixture_version / ".kb"
         target_kb.mkdir()
         for filename in ("kb.config.json", "kb.config.jsonc"):
             source = source_kb / filename

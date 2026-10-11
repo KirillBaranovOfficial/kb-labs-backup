@@ -11,6 +11,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Host states reported by Runner.Status.
@@ -39,12 +40,16 @@ type StopResult struct {
 
 // Status is a point-in-time view of the host.
 type Status struct {
-	Runner    string     `json:"runner"`
-	State     string     `json:"state"`
-	PID       int        `json:"pid,omitempty"`
-	Healthy   bool       `json:"healthy"`
-	HealthURL string     `json:"healthUrl,omitempty"`
-	StartedAt *time.Time `json:"startedAt,omitempty"`
+	Runner          string     `json:"runner"`
+	State           string     `json:"state"`
+	PID             int        `json:"pid,omitempty"`
+	Healthy         bool       `json:"healthy"`
+	HealthURL       string     `json:"healthUrl,omitempty"`
+	PlatformVersion string     `json:"platformVersion,omitempty"`
+	TreeRoot        string     `json:"-"`
+	ReceiptID       string     `json:"receiptId,omitempty"`
+	ServiceIDs      []string   `json:"serviceIds,omitempty"`
+	StartedAt       *time.Time `json:"startedAt,omitempty"`
 	// StalePID is true when a pid file pointed at a dead process and was cleaned.
 	StalePID bool `json:"stalePid,omitempty"`
 }
@@ -59,10 +64,15 @@ type Runner interface {
 }
 
 // NewRunner builds the runner for an installation: the host process its
-// receipt declares, supervised under the per-user state home. Its secret
+// receipt declares, supervised under the install-root state directory. Its secret
 // environment is read from the platform's private store at every start, so a
 // value stored after the launcher began still reaches the next host process.
-func NewRunner(platformRoot string, state State) (*ProcessRunner, error) {
+func NewRunner(platformRoot string) (*ProcessRunner, error) {
+	layout, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return nil, err
+	}
+	platformRoot = layout.PlatformRoot()
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		return nil, contracts.NewDiag(contracts.CodeReceiptUnavailable,
@@ -84,38 +94,59 @@ func NewRunner(platformRoot string, state State) (*ProcessRunner, error) {
 		return nil, err
 	}
 	root = filepath.Clean(root)
-	state, err = StateForRoot(state, root)
+	treeRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessRunner{Spec: spec, State: state, PlatformRoot: root,
-		InstallationID: active.InstallationID, SecretEnv: store.Environment}, nil
+	state, err := StateForRoot(layout.InstallRoot())
+	if err != nil {
+		return nil, err
+	}
+	serviceIDs := make([]string, 0, len(active.Plan.ServiceGraph.Services))
+	for _, service := range active.Plan.ServiceGraph.Services {
+		serviceIDs = append(serviceIDs, service.ID)
+	}
+	identity, err := NewProcessIdentity(active, root, filepath.Clean(treeRoot))
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessRunner{Spec: spec, State: state, InstallRoot: layout.InstallRoot(), PlatformRoot: root, TreeRoot: filepath.Clean(treeRoot),
+		Identity: identity, SecretEnv: store.Environment}, nil
+}
+
+func NewRecordedRunner(installRoot string) (*ProcessRunner, error) {
+	layout, err := versionroot.ForPlatformPath(installRoot)
+	if err != nil {
+		return nil, err
+	}
+	root, err := filepath.Abs(layout.PlatformRoot())
+	if err != nil {
+		return nil, err
+	}
+	state, err := StateForRoot(filepath.Clean(layout.InstallRoot()))
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessRunner{InstallRoot: layout.InstallRoot(), PlatformRoot: filepath.Clean(root), State: state, Spec: Spec{StopGrace: defaultStopGrace}}, nil
 }
 
 // Prober starts the plan's host under its installation-owned state directory.
 // Runtime stops it if verification fails and keeps it running after commit.
 type Prober struct {
 	PlatformRoot string
-	State        State
 	Operation    string
 }
 
 // Start launches the declared host and returns its cleanup operation.
 func (p Prober) Start(ctx context.Context, declared contracts.HostSpec) (func() error, error) {
-	spec, err := NewSpec(p.PlatformRoot, declared)
-	if err != nil {
-		return nil, specInvalid(err)
-	}
-	root, err := filepath.Abs(p.PlatformRoot)
+	runner, err := NewRunner(p.PlatformRoot)
 	if err != nil {
 		return nil, err
 	}
-	state, err := StateForRoot(p.State, root)
-	if err != nil {
-		return nil, err
+	if runner.Spec.Command != resolveCommand(runner.PlatformRoot, declared.Command) || runner.Spec.HealthURL != declared.HealthURL {
+		return nil, specInvalid(fmt.Errorf("probe specification does not match the active receipt"))
 	}
-	store := secrets.Store{PlatformRoot: p.PlatformRoot}
-	runner := &ProcessRunner{Spec: spec, State: state, PlatformRoot: filepath.Clean(root), SecretEnv: store.Environment, Operation: p.Operation}
+	runner.Operation = p.Operation
 	if _, err := runner.Start(ctx); err != nil {
 		return nil, err
 	}

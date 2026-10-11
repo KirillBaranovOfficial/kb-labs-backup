@@ -22,6 +22,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/semrange"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Options describe the launcher doing the resolving. Zero values mean the
@@ -421,7 +422,14 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 	for index := range artifacts {
 		item := &artifacts[index]
 		if request.Source == contracts.SourceOffline {
-			cachePath := filepath.Join(request.PlatformRoot, ".kb", "v2", "cache")
+			layout, err := versionroot.New(request.PlatformRoot)
+			if err != nil {
+				return err
+			}
+			cachePath, err := layout.SharedRuntimePath(".kb/v2/cache")
+			if err != nil {
+				return err
+			}
 			if item.IsBinary() {
 				cachePath = filepath.Join(cachePath, "binaries", item.SHA256)
 			} else {

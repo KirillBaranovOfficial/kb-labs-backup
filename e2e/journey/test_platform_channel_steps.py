@@ -7,14 +7,16 @@ import unittest
 from pathlib import Path
 
 from platform_channel_steps import run_platform_channel_steps
+from test_install_layout import create_test_install_container
 
 
 class PlatformChannelStepsTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="journey-channel-test-")
         self.root = Path(self.temp.name)
-        (self.root / ".kb/v2").mkdir(parents=True)
-        self.receipt = self.root / ".kb/v2/receipt.json"
+        self.active_root = create_test_install_container(self.root)
+        self.receipt = self.active_root / ".kb/v2/receipt.json"
+        self.receipt.parent.mkdir(parents=True)
         self._write_receipt("3.0.0", "stable")
         self.request = self.root / "request.json"
         self.request.write_text(json.dumps({"platformRoot": str(self.root)}) + "\n")
@@ -45,11 +47,12 @@ class PlatformChannelStepsTest(unittest.TestCase):
                     "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.",
                     "meta": {"minimum": "1228.80 MiB", "available": "1200.00 MiB"}, "correlationId": "c-memory",
                 }}), "")
-            self.fresh_root.joinpath(".kb/v2").mkdir(parents=True, exist_ok=True)
+            fresh_active_root = create_test_install_container(self.fresh_root)
+            (fresh_active_root / ".kb/v2").mkdir(parents=True, exist_ok=True)
             plan = {"platformChannel": "canary", "serviceGraph": {"platformVersion": "3.0.2-canary.1"},
                     "artifacts": [{"kind": "platform", "version": "3.0.2-canary.1", "sha256": "platform"},
                                   {"kind": "sdk", "version": "3.0.2-canary.1", "sha256": "sdk"}]}
-            self.fresh_root.joinpath(".kb/v2/receipt.json").write_text(json.dumps({"plan": plan}))
+            (fresh_active_root / ".kb/v2/receipt.json").write_text(json.dumps({"plan": plan}))
             return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"receipt": {"plan": plan}}}), "")
         if args[1] == "update" and str(self.root / "canary-index.json") in args:
             self._write_receipt("3.0.2-canary.1", "canary")

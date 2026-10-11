@@ -17,15 +17,14 @@ type Transcript struct {
 	secrets []string
 }
 
-func New(platformRoot, correlationID string, secrets []string) (*Transcript, error) {
+func New(directory, correlationID string, secrets []string) (*Transcript, error) {
 	if strings.TrimSpace(correlationID) == "" {
 		return nil, fmt.Errorf("log correlation ID is required")
 	}
-	dir := filepath.Join(platformRoot, ".kb", "logs")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(directory, 0o750); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(filepath.Join(dir, correlationID+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(filepath.Join(directory, correlationID+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}

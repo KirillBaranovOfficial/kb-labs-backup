@@ -4,6 +4,41 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-11
+
+### The chosen install directory is the complete installation container
+
+The user-provided install root is a real directory containing `versions/`, a
+relative `current` symlink, and declared installer state. Only `current`
+changes during a version switch. There are no sibling version directories or
+implicit user-data directories. Mutable runtime state that must survive a
+switch is stored once under the install root and linked into each version;
+sealed version roots never copy mutable state. Host process, supervisor,
+control, update queue, and lifecycle-lock state lives at
+`state/installer/host`. Lifecycle operations write outside the container only
+to the install shim location selected by the invoked launcher and the existing
+per-user Gateway registry and CLI diagnostic log. Uninstall removes
+contract-owned entries, then removes the install root only when no foreign
+entries remain. This supersedes the sibling-directory location below.
+Cases: PC-001.5, PC-001.17, PC-003, S-023.10, S-023.16, S-023.17, S-050.5,
+S-050.6, S-050.8, S-223.
+
+### Version-root updates recover to the last healthy installation
+
+Fresh installation creates a stable platform-root link and a versioned tree in
+the `versions/` directory inside the user-chosen install root. Update
+verification is offline while a host is running; starting a staged host could
+bind the same service ports or open live project state. Update never restarts
+services. It keeps the active root, last healthy root, and any tree still used
+by a running host, pruning other version roots. If no healthy start was ever
+recorded, the prior active root is the recovery root. A failed restart restores
+that root; a successful restart records the new healthy root and then prunes
+the former recovery root. Update, restart, and rollback refuse roots outside
+this layout with a typed reinstall hint; they do not migrate legacy roots.
+Uninstall removes the stable link and the entire owned version-root directory.
+Cases: PC-001.5, PC-001.13, S-023.3, S-023.15, S-023.16, S-024.6,
+S-050.5, S-050.6, S-223.
+
 ## 2026-10-09
 
 ### Secured install creates and discloses the first administrator credential once
@@ -620,3 +655,16 @@ tracked only by the former shared `~/.kb/launcher/host.pid` location are not
 migrated into per-root state; users must stop and start those hosts with the
 current launcher. No compatibility reader or migration shim is maintained.
 Cases: PC-001.10, PC-001.12, PC-001.16.
+
+## 2026-10-11
+
+### Project registration belongs to the user after bootstrap
+
+A first install registers its selected project through the Gateway as the first
+administrator created by that install, without saving a CLI session. Local and
+secured installs use the same host-owned project API. Later install/apply calls
+may keep the recorded project selection or omit it; a different non-empty
+selection is refused before apply so the user can authenticate and register it
+explicitly. Duplicate registration of the same canonical path returns the
+existing record unless a conflicting name was requested. Update never
+registers projects. Cases: S-124.14, S-187.9–S-187.12, S-224.1.

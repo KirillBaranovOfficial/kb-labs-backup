@@ -13,6 +13,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
+from journey_resources import active_platform_root
 from service_steps import Journey
 from marketplace_steps import _platform_snapshot
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
@@ -91,6 +92,31 @@ def _project_state_dir(project_root: Path, env: dict[str, str]) -> Path:
     return kb_home / "state" / project["id"]
 
 
+def _restore_platform_adapter_fixture(
+    config_path: Path,
+    original_config: bytes | None,
+    project_root: Path,
+    platform_root: Path,
+    env: dict[str, str],
+    runner: CommandRunner,
+) -> str | None:
+    try:
+        current_config = config_path.read_bytes() if config_path.exists() else None
+        if current_config == original_config:
+            return None
+        if original_config is None:
+            config_path.unlink(missing_ok=True)
+        else:
+            config_path.write_bytes(original_config)
+        restart = ["kb-create", "restart", "--platform-root", str(platform_root), "--json"]
+        result = _run(runner, restart, project_root, env)
+        if _json(result, restart).get("ok") is not True:
+            return "platform host did not restart after restoring its original adapter config"
+        return None
+    except Exception as error:
+        return f"platform adapter config could not be restored: {error}"
+
+
 def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                               env: dict[str, str] | None = None,
                               runner: CommandRunner = run_command) -> None:
@@ -123,8 +149,13 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project_a)
     project_state = _project_state_dir(project_a, base_env)
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
+    platform_content_root = active_platform_root(platform_root)
     project_b = Path(tempfile.mkdtemp(prefix="kb-adapter-project-b-", dir=base_env["HOME"]))
     project_b_registered = False
+    platform_config_path = platform_root / ".kb" / "kb.config.jsonc"
+    if not platform_config_path.exists():
+        platform_config_path = platform_root / ".kb" / "kb.config.json"
+    original_platform_config = platform_config_path.read_bytes() if platform_config_path.exists() else None
 
     def cli(args: list[str], cwd: Path = project_a) -> subprocess.CompletedProcess[str]:
         return _run(runner, ["kb", *args], cwd, base_env)
@@ -241,7 +272,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("notifier does not use the local in-process default")
         if rows["llm"].get("mode") != "real" or rows["llm"].get("credentialsStatus") != "missing" or rows["llm"].get("missingCredentials") != ["OPENAI_API_KEY"]:
             raise RuntimeError("implicit OpenAI LLM default does not report its missing credential")
-        openai_package = platform_root / "node_modules" / "@kb-labs" / "adapters-openai" / "package.json"
+        openai_package = platform_content_root / "node_modules" / "@kb-labs" / "adapters-openai" / "package.json"
         if not openai_package.is_file() or json.loads(openai_package.read_text()).get("name") != "@kb-labs/adapters-openai":
             raise RuntimeError("sealed base install does not include the implicit OpenAI LLM default")
         if rows["vectorStore"].get("mode") != "unconfigured" or rows["vectorStore"].get("implementation") is not None:
@@ -253,7 +284,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("list fresh-install built-in adapter defaults", "adapter", assert_default_list, cases=["S-054.1"])
 
     def assert_optional_openai_requirement_in_install_plan() -> None:
-        receipt_path = platform_root / ".kb" / "v2" / "receipt.json"
+        receipt_path = active_platform_root(platform_root) / ".kb" / "v2" / "receipt.json"
         if not receipt_path.is_file():
             raise RuntimeError("fresh install did not write its V2 receipt")
         receipt = json.loads(receipt_path.read_text())
@@ -278,7 +309,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             "@kb-labs/shared-command-kit",
             "@kb-labs/shared-tool-kit",
         }
-        package_root = platform_root / "node_modules" / "@kb-labs"
+        package_root = platform_content_root / "node_modules" / "@kb-labs"
         missing = sorted(name for name in sdk_runtime_peers if not (package_root / name.removeprefix("@kb-labs/") / "package.json").is_file())
         if missing:
             raise RuntimeError(f"installed platform is missing SDK runtime peers: {', '.join(missing)}")
@@ -371,7 +402,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("doctor verifies filesystem default is loaded", "adapter", assert_doctor, cases=["S-054.2"])
 
     def assert_doctor_manifest_repair_is_explicit() -> None:
-        manifest = platform_root / "node_modules" / "@kb-labs" / "gateway-app" / "kb-create.manifest.json"
+        manifest = platform_content_root / "node_modules" / "@kb-labs" / "gateway-app" / "kb-create.manifest.json"
         if not manifest.is_file():
             raise RuntimeError(f"the installed gateway artifact has no manifest projection to diagnose: {manifest}")
         manifest.unlink()
@@ -401,7 +432,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                  assert_doctor_manifest_repair_is_explicit, cases=["S-054.13"])
 
     def assert_unbound_analytics_uses_manifest_default() -> None:
-        config_file = platform_root / ".kb" / "kb.config.jsonc"
+        config_file = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
         original = config_file.read_bytes()
         analytics_db = project_state / "analytics" / "analytics.sqlite"
         analytics_db.parent.mkdir(parents=True, exist_ok=True)
@@ -469,7 +500,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         install_payload = _json(_run(runner, install, project_a, base_env), install)
         if install_payload.get("ok") is not True:
             raise RuntimeError("could not install the replacement analytics adapter")
-        lock_path = platform_root / ".kb" / "marketplace.lock"
+        lock_path = active_platform_root(platform_root) / ".kb" / "marketplace.lock"
         try:
             lock = json.loads(lock_path.read_text())
         except (OSError, json.JSONDecodeError) as error:
@@ -493,9 +524,9 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                  assert_adapter_replacement_keeps_old_data, cases=["S-054.11"])
 
     def assert_marketplace_requires_kb_create_pins() -> None:
-        workspace_file = platform_root / "pnpm-workspace.yaml"
-        receipt_file = platform_root / ".kb" / "v2" / "receipt.json"
-        package_file = platform_root / "package.json"
+        workspace_file = platform_content_root / "pnpm-workspace.yaml"
+        receipt_file = active_platform_root(platform_root) / ".kb" / "v2" / "receipt.json"
+        package_file = platform_content_root / "package.json"
         original_workspace = workspace_file.read_bytes()
         original_package = package_file.read_bytes()
         receipt = json.loads(receipt_file.read_text())
@@ -603,7 +634,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             command = ["adapter", "bind", "storage", "@kb-labs/adapters-fs", "--json"]
             if _json(cli(command, platform_root), command).get("ok") is not True:
                 raise RuntimeError("could not bind the filesystem adapter at platform scope")
-            if config(platform_root).get("platform", {}).get("adapters", {}).get("storage") != "@kb-labs/adapters-fs":
+            if config(active_platform_root(platform_root)).get("platform", {}).get("adapters", {}).get("storage") != "@kb-labs/adapters-fs":
                 raise RuntimeError("platform config does not contain the storage binding")
             for project in (project_a, project_b):
                 project_config = config(project)
@@ -683,7 +714,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             command = ["adapter", "unbind", "storage", "--json"]
             if _json(cli(command, platform_root), command).get("ok") is not True:
                 raise RuntimeError("could not unbind platform storage")
-            platform_config = config(platform_root).get("platform", {})
+            platform_config = config(active_platform_root(platform_root)).get("platform", {})
             if "storage" in platform_config.get("adapters", {}) or "storage" in platform_config.get("adapterOptions", {}):
                 raise RuntimeError("platform storage binding or options remain after unbind")
             row = rows_for(project_a).get("storage")
@@ -699,13 +730,28 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     except Exception as error:
         journey.step("project adapter and plugin isolation checks", "adapter", lambda: str(error))
     finally:
+        cleanup_errors: list[str] = []
+        restore_error = _restore_platform_adapter_fixture(
+            platform_config_path, original_platform_config, project_a, platform_root, base_env, runner,
+        )
+        if restore_error:
+            cleanup_errors.append(restore_error)
         if project_b_registered:
             try:
                 command = ["project", "remove", str(project_b), "--yes", "--json"]
-                cli(command)
+                result = cli(command)
+                if result.returncode != 0:
+                    cleanup_errors.append(f"project B could not be unregistered: {(result.stderr or result.stdout).strip()}")
             except Exception as error:
-                journey.step("unregister adapter project B", "adapter", lambda: str(error))
-        shutil.rmtree(project_b, ignore_errors=True)
+                cleanup_errors.append(f"project B could not be unregistered: {error}")
+        if project_b.exists():
+            try:
+                shutil.rmtree(project_b)
+            except OSError as error:
+                cleanup_errors.append(f"adapter project B fixture could not be removed: {error}")
+        if cleanup_errors:
+            message = "; ".join(cleanup_errors)
+            journey.step("restore adapter journey fixture state", "adapter", lambda: message)
 
 
 def _save_run(run_workflow, project):

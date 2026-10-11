@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -137,51 +136,6 @@ func progressWriteFailure(err error, next string) *diag.Diag {
 
 // runInstall is the human frontend. It gathers answers, prints the shared
 // resolver's plan, then invokes the same apply engine used by JSON callers.
-func projectRegistrationFailure(platformRoot, projectRoot string, cause error) *diag.Diag {
-	failure := contracts.NewDiag(contracts.CodeApplyFailed,
-		"The platform is installed, but the selected project could not be registered.",
-		fmt.Sprintf("Run `kb project add %q`, then verify with `kb project show %q`.", projectRoot, projectRoot), cause)
-	failure.Meta = map[string]any{"platformRoot": platformRoot, "projectRoot": projectRoot}
-	return failure
-}
-
-func projectCLIPath(platformRoot string) string {
-	return filepath.Join(platformRoot, ".kb", "v2", "bin", "kb")
-}
-
-func registerProject(platformRoot, projectRoot string, registrar func(string) (string, error)) (string, error) {
-	if registrar != nil {
-		return registrar(projectRoot)
-	}
-	command := exec.Command(projectCLIPath(platformRoot), "project", "add", projectRoot, "--json")
-	output, err := command.Output()
-	if err != nil {
-		var failure struct {
-			Error *diag.Diag `json:"error"`
-		}
-		if json.Unmarshal(output, &failure) == nil && failure.Error != nil {
-			return "", fmt.Errorf("%s [%s]. %s", failure.Error.Message, failure.Error.Code, failure.Error.Hint)
-		}
-		return "", fmt.Errorf("the project registry command failed (%s)", err)
-	}
-	var result struct {
-		OK   bool `json:"ok"`
-		Data struct {
-			Project struct {
-				ID   string `json:"id"`
-				Path string `json:"path"`
-			} `json:"project"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(output, &result); err != nil {
-		return "", fmt.Errorf("decode project registration result: %w", err)
-	}
-	if !result.OK || result.Data.Project.ID == "" || result.Data.Project.Path != projectRoot {
-		return "", fmt.Errorf("project registration returned an unexpected result")
-	}
-	return result.Data.Project.ID, nil
-}
-
 type humanProgress struct {
 	out     io.Writer
 	started map[string]time.Time
@@ -244,13 +198,10 @@ func defaultPlatformRoot() string {
 }
 
 func populateSecrets(store secrets.Store, mappings string) error {
-	if strings.TrimSpace(mappings) == "" {
-		return nil
-	}
-	for _, pair := range strings.Split(mappings, ",") {
-		name, environment, ok := strings.Cut(strings.TrimSpace(pair), "=")
-		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(environment) == "" {
-			return fmt.Errorf("secret mapping %q must be requirement=ENV_VAR", pair)
+	for _, mapping := range splitSecretMappings(mappings) {
+		name, environment := mapping[0], mapping[1]
+		if environment == "" {
+			return fmt.Errorf("secret mapping %q must be requirement=ENV_VAR", name)
 		}
 		value, exists := os.LookupEnv(environment)
 		if !exists || value == "" {
@@ -261,6 +212,22 @@ func populateSecrets(store secrets.Store, mappings string) error {
 		}
 	}
 	return nil
+}
+
+func splitSecretMappings(mappings string) [][2]string {
+	if strings.TrimSpace(mappings) == "" {
+		return nil
+	}
+	values := make([][2]string, 0)
+	for _, pair := range strings.Split(mappings, ",") {
+		name, environment, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(environment) == "" {
+			values = append(values, [2]string{strings.TrimSpace(pair), ""})
+			continue
+		}
+		values = append(values, [2]string{strings.TrimSpace(name), strings.TrimSpace(environment)})
+	}
+	return values
 }
 
 func compileScenario(id, answers string, resume bool, base contracts.InstallRequest) (contracts.InstallRequest, error) {

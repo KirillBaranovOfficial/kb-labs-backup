@@ -10,6 +10,7 @@ import urllib.request
 
 from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context, invocation_link,
                          open_http, read_ux_cli_result, read_ux_http_result, run_command)
+from journey_resources import active_platform_root
 from project_service_path import project_service_path
 from service_steps import Journey
 
@@ -140,7 +141,7 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
         base_result = {}
         base_result_error = str(error)
     platform_root = Path(os.environ.get("KB_JOURNEY_PLATFORM_ROOT", str(Path.home() / "kb-platform"))).resolve()
-    expected_platform_config = str(platform_root / ".kb" / "kb.config.jsonc")
+    expected_platform_config = str(active_platform_root(platform_root) / ".kb" / "kb.config.jsonc")
     scope_ok = (base_result_error is None and base_result.get("file") == expected_platform_config
                 and project_config_before == (project_config.read_bytes() if project_config.is_file() else None)
                 and base_result.get("nextCommand") == f"kb-create restart --platform-root {json.dumps(str(platform_root))}")

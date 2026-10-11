@@ -36,8 +36,9 @@ scenario, or the interactive install command.
 `apply` and `update` require an immutable release index and request. Recovery
 operations deliberately require only `--platform-root` (and a snapshot for
 rollback), so they recover the verified V2 receipt rather than recalculating a
-new plan. Raw package-manager transcript is private under `.kb/logs/`; failed
-operations add a redacted dossier under `.kb/diagnostics/`.
+new plan. Raw package-manager transcript is private under
+`$PLATFORM_ROOT/installer/logs/`; failed operations add a redacted dossier under
+`$PLATFORM_ROOT/installer/diagnostics/`.
 
 CI and agents may pass the request file unchanged, or use direct flags such
 as `--platform-root`, `--platform-version`/`--platform-channel`,
@@ -148,7 +149,7 @@ steps (`swap` package):
 
 `rollback` without `--snapshot` undoes the last update: the receipt records the
 snapshot taken before it (`KB_UPDATE_NO_SNAPSHOT` when there is none). Failures
-write a diagnostic dossier under `.kb/diagnostics/`.
+write a diagnostic dossier under `$PLATFORM_ROOT/installer/diagnostics/`.
 
 Uninstall and rollback require explicit confirmation. A terminal prompts with
 the affected platform scope; uninstall preserves project files. Non-interactive
@@ -386,7 +387,7 @@ remain internal and are never serialized; unexpected causes are recorded in a
 structured local log keyed by the correlation ID.
 
 Each invocation writes a full local log. A failure additionally writes a
-redacted dossier under `.kb/diagnostics/<correlation-id>/` with resolved plan,
+redacted dossier under `$PLATFORM_ROOT/installer/diagnostics/<correlation-id>/` with resolved plan,
 receipt/snapshot metadata, engine journal, package-manager output, toolchain,
 config hashes and the service graph. The CLI prints one recovery
 command and the bundle path so users can attach it to an issue without manual

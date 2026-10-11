@@ -2,12 +2,12 @@ package secrets
 
 import (
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
@@ -20,7 +20,7 @@ func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 	if err != nil || !exists {
 		t.Fatalf("exists/error = %v / %v", exists, err)
 	}
-	path := filepath.Join(root, ".kb", "v2", "secrets.env")
+	path := secretsPath(t, root)
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), "super-secret") {
 		t.Fatalf("store/error = %s / %v", data, err)
@@ -28,6 +28,26 @@ func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode/error = %v / %v", info.Mode(), err)
+	}
+}
+
+func TestReadOnlyStoreRejectsStagedWrites(t *testing.T) {
+	root := t.TempDir()
+	store := Store{PlatformRoot: root}
+	if err := store.Put("stable", "before"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(secretsPath(t, root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.ReadOnly = true
+	if err := store.Put("stable", "after"); err == nil {
+		t.Fatal("read-only staged secret write unexpectedly succeeded")
+	}
+	after, err := os.ReadFile(secretsPath(t, root))
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("read-only secret write changed shared state: %q / %v", after, err)
 	}
 }
 
@@ -135,7 +155,7 @@ func TestGetReturnsStoredValueAndReportsAbsence(t *testing.T) {
 
 func secretsFile(t *testing.T, root string) map[string]string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "secrets.env"))
+	data, err := os.ReadFile(secretsPath(t, root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +166,19 @@ func secretsFile(t *testing.T, root string) map[string]string {
 		}
 	}
 	return values
+}
+
+func secretsPath(t *testing.T, root string) string {
+	t.Helper()
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func gatewaySecretPatches() []contracts.ConfigPatch {

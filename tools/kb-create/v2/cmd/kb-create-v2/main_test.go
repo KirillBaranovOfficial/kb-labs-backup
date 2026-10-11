@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -49,9 +51,7 @@ func TestClientStatusAndDoctorAreHealthyWithoutHost(t *testing.T) {
 	root := t.TempDir()
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "client"}}
-	if err := receipt.Write(root, contracts.InstallReceipt{ID: "client-r1", InstallationID: "installation-client", Plan: plan}); err != nil {
-		t.Fatal(err)
-	}
+	writeVersionedReceipt(t, root, contracts.InstallReceipt{ID: "client-r1", InstallationID: "installation-client", Plan: plan})
 	statusResult, statusFailure, statusCode, _ := executeForTest(t, operationTestSetup{Operation: "status", PlatformRoot: root, JSON: true})
 	if statusCode != 0 || statusFailure != nil {
 		t.Fatalf("status exit = %d, failure=%v", statusCode, statusFailure)
@@ -277,11 +277,7 @@ func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := filepath.Join(home, "platform")
-	marker := filepath.Join(root, ".kb", "user-data.json")
-	if err := os.MkdirAll(filepath.Dir(marker), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(marker, []byte("{\"keep\":true}\n"), 0o600); err != nil {
+	if err := os.MkdirAll(root, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	index := filepath.Join(home, "release-index.json")
@@ -307,6 +303,19 @@ func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
 	}
 	if after := snapshotTree(t, root); !bytes.Equal(before, after) {
 		t.Fatalf("plan changed the platform root: before %q, after %q", before, after)
+	}
+	foreign := filepath.Join(root, "user-owned.txt")
+	if err := os.WriteFile(foreign, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	foreignBefore := snapshotTree(t, root)
+	_, failure, code, _ = executeForTest(t, operationTestSetup{Operation: "plan", Index: index, Direct: directRequest{PlatformRoot: root,
+		PlatformVersion: "2.0.0", Policy: string(contracts.PolicyCompatible)}, JSON: true})
+	if code == 0 || failure == nil || failure.Code != contracts.CodeInstallLayoutUnsupported {
+		t.Fatalf("plan on a non-empty foreign root = code %d, diagnostic %#v", code, failure)
+	}
+	if after := snapshotTree(t, root); !bytes.Equal(foreignBefore, after) {
+		t.Fatalf("plan changed a foreign target: before %q, after %q", foreignBefore, after)
 	}
 }
 
@@ -350,6 +359,10 @@ func (a installArtifacts) Install(items []contracts.Artifact) error {
 	return a.InstallWithProgress(items, nil)
 }
 func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progress func(string, bool) error) error {
+	root, err := a.installRoot()
+	if err != nil {
+		return err
+	}
 	if progress != nil {
 		if err := progress("Download and verify artifacts", true); err != nil {
 			return err
@@ -361,32 +374,53 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 			return err
 		}
 	}
-	bin := filepath.Join(a.root, "node_modules", "@kb-labs", "cli-bin", "dist")
+	bin := filepath.Join(root, "node_modules", "@kb-labs", "cli-bin", "dist")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		if progress != nil {
 			err = errors.Join(err, progress("Install packages", false))
 		}
 		return err
 	}
-	err := os.WriteFile(filepath.Join(bin, "bin.js"), []byte("export {};\n"), 0o644)
+	err = os.WriteFile(filepath.Join(bin, "bin.js"), []byte("export {};\n"), 0o644)
 	// Like a real install, every artifact package lands with its package.json;
 	// the platform lock hashes it for discovery's integrity check.
 	for _, item := range items {
 		if err != nil || item.Package == "" {
 			continue
 		}
-		dir := filepath.Join(a.root, "node_modules", filepath.FromSlash(item.Package))
+		dir := filepath.Join(root, "node_modules", filepath.FromSlash(item.Package))
 		if err = os.MkdirAll(dir, 0o755); err == nil {
 			err = os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"`+item.Package+`","version":"`+item.Version+`"}`), 0o644)
 		}
 		if err == nil {
-			err = installed.Write(a.root, item)
+			err = installed.Write(root, item)
 		}
 	}
 	if progress != nil {
 		progress("Install packages", false)
 	}
 	return err
+}
+
+func (a installArtifacts) installRoot() (string, error) {
+	versions := filepath.Join(a.root, "versions")
+	entries, err := os.ReadDir(versions)
+	if os.IsNotExist(err) {
+		return a.root, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	stages := make([]string, 0, 1)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".stage-") && entry.IsDir() {
+			stages = append(stages, filepath.Join(versions, entry.Name()))
+		}
+	}
+	if len(stages) == 1 {
+		return stages[0], nil
+	}
+	return a.root, nil
 }
 func (installArtifacts) Restore([]contracts.Artifact) error { return nil }
 
@@ -451,7 +485,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code %d, failure=%v, screen:\n%s", code, failure, screen.String())
 	}
-	for _, expected := range []string{"Resolve (", "Download and verify artifacts (", "Install packages (", "Render config (", "Start host (", "Verify installation (", "Create kb shim (", "KB Labs is installed", "kb project add <path>"} {
+	for _, expected := range []string{"Resolve (", "Download and verify artifacts (", "Install packages (", "Render config (", "Verify installation (", "Start host (", "Create kb shim (", "KB Labs is installed", "kb project add <path>"} {
 		if !strings.Contains(screen.String(), expected) {
 			t.Errorf("screen missing %q:\n%s", expected, screen.String())
 		}
@@ -462,10 +496,10 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	if _, err := os.Stat(outputPath); err != nil {
 		t.Fatal(err)
 	}
-	if target, err := os.Readlink(filepath.Join(home, "bin", "kb")); err != nil || target != filepath.Join(root, ".kb", "v2", "bin", "kb") {
+	if target, err := os.Readlink(filepath.Join(home, "bin", "kb")); err != nil || target != filepath.Join(platformRootForTest(t, root), ".kb", "v2", "bin", "kb") {
 		t.Fatalf("kb shim target/error = %q / %v", target, err)
 	}
-	installedReceipt, err := receipt.Read(root)
+	installedReceipt, err := receipt.Read(platformRootForTest(t, root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +535,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	if secondaryCode != 0 {
 		t.Fatalf("secondary no-flag apply exit %d: %s", secondaryCode, secondaryText)
 	}
-	secondaryReceipt, err := receipt.Read(secondaryRoot)
+	secondaryReceipt, err := receipt.Read(platformRootForTest(t, secondaryRoot))
 	if err != nil || secondaryReceipt.Verification.HostHealthURL != fmt.Sprintf("http://127.0.0.1:%d/health", port+100) {
 		t.Fatalf("secondary receipt Gateway = %q, error=%v; want next 100-port offset", secondaryReceipt.Verification.HostHealthURL, err)
 	}
@@ -511,38 +545,28 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 }
 
-// case: S-187.4
-func TestRegisterProjectInvokesPlainProjectAdd(t *testing.T) {
-	home := t.TempDir()
-	root := filepath.Join(home, "secondary-root")
-	bin := filepath.Join(root, ".kb", "v2", "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
+// case: S-187.6
+func TestLocalProjectRegistrationUsesHostProjectAPIWithoutCredentials(t *testing.T) {
+	project := t.TempDir()
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/projects" || r.Header.Get("Authorization") != "" {
+			t.Errorf("request path/auth = %s / %q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(w, `{"ok":true,"data":{"id":"prj_test123","path":%q}}`, project)
+	}))
+	defer server.Close()
+	active := contracts.InstallReceipt{ID: "local-receipt", Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{Values: map[string]string{
+		"gateway.access.mode": `"local"`,
+	}}}, Verification: contracts.Verification{HostHealthURL: server.URL + "/health"}}
+	if err := receipt.Write(root, active); err != nil {
 		t.Fatal(err)
 	}
-	kb := filepath.Join(bin, "kb")
-	argsFile := filepath.Join(home, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\nprintf '{\"ok\":true,\"data\":{\"project\":{\"id\":\"prj_test123\",\"path\":\"%s\"}}}' \"$PROJECT_PATH\"\n"
-	if err := os.WriteFile(kb, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CAPTURE_ARGS", argsFile)
-	projectPath := filepath.Join(home, "project")
-	t.Setenv("PROJECT_PATH", projectPath)
-	if err := os.Mkdir(projectPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	projectID, err := registerProject(root, projectPath, nil)
+	projectID, err := registerProject(root, project)
 	if err != nil || projectID != "prj_test123" {
-		t.Fatalf("projectID/error = %q / %v", projectID, err)
-	}
-	args, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "project\nadd\n" + projectPath + "\n--json\n"
-	if string(args) != want {
-		t.Fatalf("kb args = %q, want %q", args, want)
+		t.Fatalf("project id/error = %q / %v", projectID, err)
 	}
 }
 
@@ -618,12 +642,12 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 			return "", errors.New("project registry unavailable")
 		},
 	})
-	if failedCode != 1 || failure == nil || failure.Code != contracts.CodeApplyFailed ||
-		failure.Message != "The platform is installed, but the selected project could not be registered." ||
-		!strings.Contains(failure.Hint, "kb project add") {
+	if failedCode != 1 || failure == nil || failure.Code != "KB_INSTALL_PROJECT_REGISTRATION_FAILED" ||
+		failure.Message != "The platform is installed, but the selected project is not registered." ||
+		failure.Meta["causeCode"] != "KB_INSTALL_PROJECT_REGISTRATION_FAILED" || !strings.Contains(failure.Hint, "kb project add") {
 		t.Fatalf("project registration failure = code %d, output %#v", failedCode, failure)
 	}
-	if _, err := os.Stat(filepath.Join(failedRoot, ".kb", "v2", "receipt.json")); err != nil {
+	if _, err := os.Stat(receipt.Path(platformRootForTest(t, failedRoot))); err != nil {
 		t.Fatalf("late registration failure should retain the completed platform install receipt: %v", err)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/swap"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // recoverRequest is `doctor --recover`: the flags the launcher hands to the
@@ -68,6 +69,23 @@ func (d doctorCommandResult) human() string {
 	}
 	if d.PlatformVersion != "" {
 		lines = append(lines, "Platform version: "+d.PlatformVersion)
+	}
+	if d.PendingRestart != nil {
+		lines = append(lines, renderPendingRestart(d.PendingRestart))
+	}
+	if d.Retention != nil {
+		lines = append(lines, "Install root: "+d.Retention.InstallRoot,
+			"Platform root: "+d.Retention.PlatformRoot,
+			"Version roots directory: "+d.Retention.VersionsDirectory,
+			"Shared runtime state: "+d.Retention.SharedState,
+			"Installer state: "+d.Retention.InstallerState,
+			"Host state: "+d.Retention.HostState)
+		for _, version := range d.Retention.Versions {
+			lines = append(lines, fmt.Sprintf("Retained version %s (%s): %d bytes", version.Version, version.Role, version.DiskUsageBytes))
+		}
+		for _, snapshot := range d.Retention.Snapshots {
+			lines = append(lines, fmt.Sprintf("Recovery snapshot %s: %d bytes", snapshot.ID, snapshot.DiskUsageBytes))
+		}
 	}
 	var warnings []doctor.Finding
 	for _, finding := range d.Findings {
@@ -133,11 +151,16 @@ func (d doctorCommandResult) human() string {
 	return strings.Join(lines, "\n")
 }
 
-func (i doctorCommandInput) inspectPlatform(state host.State) doctor.Section {
-	if active, err := receipt.Read(i.PlatformRoot); err == nil && active.Plan.ServiceGraph.Profile == "client" {
+func (i doctorCommandInput) inspectPlatform() doctor.Section {
+	layout, layoutErr := versionroot.New(i.PlatformRoot)
+	if layoutErr != nil {
+		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The installation layout cannot be resolved: " + layoutErr.Error()}})
+	}
+	platformRoot := layout.PlatformRoot()
+	if active, err := receipt.Read(platformRoot); err == nil && active.Plan.ServiceGraph.Profile == "client" {
 		return doctor.NewSection(nil)
 	}
-	runner, err := host.NewRunner(i.PlatformRoot, state)
+	runner, err := host.NewRunner(i.PlatformRoot)
 	if err != nil {
 		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The host cannot be inspected: " + err.Error(), Hint: "Repair the installation first."}})
 	}
@@ -147,7 +170,7 @@ func (i doctorCommandInput) inspectPlatform(state host.State) doctor.Section {
 	if err != nil {
 		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The host status cannot be read: " + err.Error()}})
 	}
-	active, err := receipt.Read(i.PlatformRoot)
+	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The active install receipt cannot be read while checking adapter bindings."}})
 	}
@@ -168,6 +191,15 @@ func (i doctorCommandInput) inspectPlatform(state host.State) doctor.Section {
 // back like a failed update.
 func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult, *diag.Diag) {
 	root := i.PlatformRoot
+	layout, err := versionroot.New(root)
+	if err != nil {
+		return doctorFixResult{}, unsupportedPlatformLayout(root, err)
+	}
+	platformRoot := layout.PlatformRoot()
+	activeRoot, activeErr := layout.Active()
+	if activeErr != nil {
+		return doctorFixResult{}, unsupportedPlatformLayout(root, activeErr)
+	}
 	projectionRepairRequested := false
 	for _, finding := range response.Findings {
 		if finding.Code == "KB_INSTALL_MANIFEST_PROJECTION_INVALID" {
@@ -176,7 +208,7 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 		}
 	}
 	unresolvedRequiredInput := false
-	state, err := host.StateHome()
+	state, err := host.StateForRoot(root)
 	if err != nil {
 		return doctorFixResult{}, asDiag(err)
 	}
@@ -192,16 +224,16 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 	var snapshot contracts.Snapshot
 	result, err := swap.Run(ctx, lifecycleHost{command: command, state: state}, swap.Operation{
 		Name:            "repair",
-		PreviousVersion: installedVersion(root),
+		PreviousVersion: installedVersion(platformRoot),
 		Change: func(context.Context, bool) (string, error) {
-			active, receiptErr := receipt.Read(root)
+			active, receiptErr := receipt.Read(activeRoot)
 			if receiptErr != nil {
 				return "", receiptErr
 			}
-			if err := installed.EnsureProjections(root, active.Plan.Artifacts); err != nil {
+			if err := installed.EnsureProjections(activeRoot, active.Plan.Artifacts); err != nil {
 				return "", err
 			}
-			input, inputErr := automaticDoctorInput(root)
+			input, inputErr := automaticDoctorInput(activeRoot)
 			if inputErr != nil {
 				return "", inputErr
 			}
@@ -218,11 +250,11 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 				repairPlan.RequiredInput = nil
 			}
 			var fixErr error
-			snapshot, fixErr = runtime.DoctorFix(root, repairPlan, runtime.Dependencies{})
+			snapshot, fixErr = runtime.DoctorFix(activeRoot, repairPlan, runtime.Dependencies{})
 			return snapshot.ID, fixErr
 		},
 		Restore: func(_ context.Context, id string) error {
-			_, restoreErr := lifecycle.Rollback(root, id, nil)
+			_, restoreErr := lifecycle.Rollback(platformRoot, layout.SnapshotsDir(), id, nil)
 			return restoreErr
 		},
 	})
@@ -230,7 +262,7 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 		return doctorFixResult{}, operationDiagnostic(root, correlationID, "", asDiag(err), nil)
 	}
 	if filepath.Base(i.Executable) == "kb-create" {
-		if _, shimErr := shim.Ensure(i.Executable, root); shimErr != nil {
+		if _, shimErr := shim.Ensure(i.Executable, platformRoot); shimErr != nil {
 			return doctorFixResult{}, shimFailure("KB_INSTALL_APPLY_FAILED", root, shimErr)
 		}
 	}

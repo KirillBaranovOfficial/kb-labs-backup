@@ -18,6 +18,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/resolve"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 const Schema = "kb.create.scenario/v2"
@@ -264,7 +265,11 @@ func New(value Scenario) (State, error) {
 // LoadState resumes a prior non-secret scenario state. Missing state starts a
 // new journey with defaults; an unrelated/corrupt state is never accepted.
 func LoadState(platformRoot string, value Scenario) (State, error) {
-	data, err := os.ReadFile(statePath(platformRoot, value.ID))
+	path, err := statePath(platformRoot, value.ID)
+	if err != nil {
+		return State{}, err
+	}
+	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return New(value)
 	}
@@ -301,7 +306,10 @@ func SaveState(platformRoot string, value Scenario, state State) error {
 	if err != nil {
 		return err
 	}
-	path := statePath(platformRoot, value.ID)
+	path, err := statePath(platformRoot, value.ID)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
@@ -310,8 +318,16 @@ func SaveState(platformRoot string, value Scenario, state State) error {
 	}
 	return os.Rename(path+".tmp", path)
 }
-func statePath(platformRoot, id string) string {
-	return filepath.Join(platformRoot, ".kb", "v2", "scenarios", id+".json")
+func statePath(installRoot, id string) (string, error) {
+	layout, err := versionroot.New(installRoot)
+	if err != nil {
+		return "", err
+	}
+	directory, err := layout.SharedRuntimePath(".kb/v2/scenarios")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, id+".json"), nil
 }
 func StateDigest(value Scenario, state State) (string, error) {
 	copy := State{ScenarioID: state.ScenarioID, Answers: map[string]json.RawMessage{}}
