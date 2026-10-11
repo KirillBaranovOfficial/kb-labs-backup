@@ -33,6 +33,28 @@ from service_port_assertions import assert_service_ports_preserved
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_install_refusal_is_a_case_fail_with_the_product_envelope(self):
+        journey = Journey("local")
+        envelope = {"code": "KB_INSTALL_LAYOUT_UNSUPPORTED", "message": "foreign target",
+                    "cause": "foreign bytes found", "hint": "choose a fresh writable path"}
+        stdout = json.dumps({"ok": False, "error": envelope}) + "\n"
+
+        parsed = installer_case_steps.parse_install_refusal(stdout)
+        self.assertIsNotNone(parsed)
+        message = (f"{parsed['code']}: {parsed['message']}; cause={parsed.get('cause', '')}; "
+                   f"hint={parsed.get('hint', '')}")
+        journey.step("JSON install progress", "platform.install", lambda: message,
+                     cases=["PC-001.17"], details=lambda: {"productEnvelope": parsed})
+
+        result = journey.result()
+        self.assertEqual(parsed, envelope)
+        self.assertEqual(result.status, "FAIL")
+        self.assertEqual(result.first_failure["name"], "JSON install progress")
+        self.assertEqual(result.first_failure["cases"], ["PC-001.17"])
+        self.assertEqual(result.first_failure["details"]["productEnvelope"], envelope)
+        self.assertEqual(result.case_run["claims"],
+                         [{"claimId": "PC-001.17", "kind": "journey", "status": "FAIL"}])
+
     def test_j52_installer_sequence_attributes_leak_and_keeps_later_rows(self):
         with tempfile.TemporaryDirectory(prefix="journey-host-lifecycle-") as temp:
             root = Path(temp) / "platform"

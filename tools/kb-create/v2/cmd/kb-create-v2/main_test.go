@@ -31,6 +31,8 @@ import (
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/versionroot"
+	"github.com/spf13/cobra"
 )
 
 func TestRequestWithGeneratedSecretsAddsOnlyDeclaredGeneratedSecretInputs(t *testing.T) {
@@ -218,6 +220,9 @@ func TestRecordedGatewayURLKeepsUpdateAddressFromReceipt(t *testing.T) {
 }
 
 func TestHumanReleaseIndexFailurePrintsLoaderReason(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
 	path := filepath.Join(t.TempDir(), "missing-release-index.json")
 	_, err := catalog.LoadFile(path)
 	if err == nil {
@@ -558,6 +563,222 @@ func installOutput(t *testing.T) (*bytes.Buffer, string) {
 		t.Fatal(err)
 	}
 	return &bytes.Buffer{}, path
+}
+
+// case: PC-001.17, PC-001.18
+func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
+	index := filepath.Join(home, "release-index.json")
+	source, err := catalog.LoadFile(filepath.Join("..", "..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := source.Platforms[0].Profiles["default"]
+	baseGatewayPort := 0
+	highestServicePort := 0
+	for _, service := range graph.Services {
+		if service.ID == "gateway" {
+			baseGatewayPort = service.Port
+		}
+		if service.Port > highestServicePort {
+			highestServicePort = service.Port
+		}
+	}
+	if baseGatewayPort == 0 {
+		t.Fatal("default service graph has no Gateway port")
+	}
+	source.Platforms[0].Host = testHostOnFreePortWithPortHeadroom(t, highestServicePort)
+	release, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(home, "fresh-project")
+	if err := os.Mkdir(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(home, "bin", "kb-create")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("launcher"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	runInstall := func(root string) (int, string) {
+		t.Helper()
+		dependencyFactory := func(cmd *cobra.Command) commandDependencies {
+			return commandDependencies{
+				Runtime:       &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
+				NodeCheck:     func() error { return nil },
+				InstallInput:  strings.NewReader(strings.Repeat("\n", 12)),
+				InstallOutput: clikitcommand.FromCommand(cmd).ProgressWriter(),
+				ProjectRegistrar: func(string, string) (string, error) {
+					return "prj_fixture", nil
+				},
+				Command: cmd, Executable: launcher,
+			}
+		}
+		args := []string{"install", "--json", "--index", index, "--platform-root", root,
+			"--service-profile", "default", "--scenario", "explore", "--registry", "http://verdaccio:4873",
+			"--project-root", project}
+		var stdout, stderr bytes.Buffer
+		code := clikitcommand.Execute(newRootCommandWithDependencyFactory(dependencyFactory), args, &stdout, &stderr)
+		return code, stdout.String() + stderr.String()
+	}
+
+	for _, target := range []string{"missing", "empty"} {
+		t.Run(target, func(t *testing.T) {
+			root := filepath.Join(home, target)
+			if target == "empty" {
+				if err := os.Mkdir(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if code, output := runInstall(root); code != 0 {
+				t.Fatalf("install target %s: code=%d output=%s", target, code, output)
+			}
+			layout, err := versionroot.New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := layout.Validate(); err != nil {
+				t.Fatalf("install target %s did not become a valid versioned install: %v", target, err)
+			}
+			if _, err := receipt.Read(layout.PlatformRoot()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	partialRoot := filepath.Join(home, "partial")
+	partialLayout, err := versionroot.New(partialRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := partialLayout.StageInitial(); err != nil {
+		t.Fatal(err)
+	}
+	if code, output := runInstall(partialRoot); code != 0 {
+		t.Fatalf("install retry from a declared initial handoff: code=%d output=%s", code, output)
+	}
+	if err := partialLayout.Validate(); err != nil {
+		t.Fatalf("install retry did not recover the declared initial handoff: %v", err)
+	}
+
+	foreignRoot := filepath.Join(home, "foreign")
+	if err := os.Mkdir(foreignRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	foreignFile := filepath.Join(foreignRoot, "keep.txt")
+	if err := os.WriteFile(foreignFile, []byte("user data\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	foreignBefore := snapshotTree(t, foreignRoot)
+	if code, output := runInstall(foreignRoot); code == 0 || !strings.Contains(output, contracts.CodeInstallLayoutUnsupported) {
+		t.Fatalf("foreign target was not refused with KB_INSTALL_LAYOUT_UNSUPPORTED: code=%d output=%s", code, output)
+	}
+	if after := snapshotTree(t, foreignRoot); !bytes.Equal(after, foreignBefore) {
+		t.Fatalf("foreign target changed: before=%q after=%q", foreignBefore, after)
+	}
+
+	for _, currentEntry := range []string{"file", "directory"} {
+		t.Run("damaged-current-"+currentEntry, func(t *testing.T) {
+			damagedRoot := filepath.Join(home, "damaged-"+currentEntry)
+			if err := os.Mkdir(damagedRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			current := filepath.Join(damagedRoot, "current")
+			if currentEntry == "directory" {
+				if err := os.Mkdir(current, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(current, []byte("not a link\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotTree(t, damagedRoot)
+			if code, output := runInstall(damagedRoot); code == 0 || !strings.Contains(output, contracts.CodeInstallLayoutUnsupported) {
+				t.Fatalf("damaged target was not refused with KB_INSTALL_LAYOUT_UNSUPPORTED: code=%d output=%s", code, output)
+			}
+			if after := snapshotTree(t, damagedRoot); !bytes.Equal(after, before) {
+				t.Fatalf("damaged target changed: before=%q after=%q", before, after)
+			}
+		})
+	}
+}
+
+func TestInstallAndApplyArgvRefuseUnattributedRootsUnchanged(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
+	index := filepath.Join("..", "..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json")
+	project := filepath.Join(home, "fresh-project")
+	if err := os.Mkdir(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	targets := []struct {
+		name  string
+		setup func(*testing.T, string)
+	}{
+		{"foreign preinstall scenario", func(t *testing.T, root string) {
+			path := filepath.Join(root, "state", "scenarios", "foreign.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("foreign bytes\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"ownership and versions without current", func(t *testing.T, root string) {
+			if err := os.MkdirAll(filepath.Join(root, "versions", "1.0.0"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "ownership.json"), []byte(`{"schema":"kb.create.installation-owner/v1","installationId":"00112233445566778899aabbccddeeff"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, target := range targets {
+		t.Run(target.name, func(t *testing.T) {
+			root := filepath.Join(home, strings.ReplaceAll(target.name, " ", "-"))
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			target.setup(t, root)
+			before := snapshotTree(t, root)
+			for _, operation := range []string{"install", "plan", "apply"} {
+				args := []string{operation, "--json", "--index", index, "--platform-root", root,
+					"--service-profile", "default", "--scenario", "commit", "--registry", "http://verdaccio:4873",
+					"--project-root", project}
+				var stdout, stderr bytes.Buffer
+				code := clikitcommand.Execute(newRootCommand(), args, &stdout, &stderr)
+				var payload map[string]any
+				decodeErr := json.Unmarshal(stdout.Bytes(), &payload)
+				if decodeErr != nil {
+					firstRecord := strings.SplitN(stdout.String(), "\n", 2)[0]
+					decodeErr = json.Unmarshal([]byte(firstRecord), &payload)
+				}
+				if decodeErr != nil {
+					t.Fatalf("%s argv output is not JSON: %s stderr=%s: %v", operation, stdout.String(), stderr.String(), decodeErr)
+				}
+				if code == 0 || errorCode(payload) != contracts.CodeInstallLayoutUnsupported {
+					t.Fatalf("%s argv refusal = exit %d, code %s, stdout=%s stderr=%s", operation, code, errorCode(payload), stdout.String(), stderr.String())
+				}
+				if after := snapshotTree(t, root); !bytes.Equal(after, before) {
+					t.Fatalf("%s changed refused target: before=%q after=%q", operation, before, after)
+				}
+			}
+		})
+	}
 }
 
 // case: PC-001.16, S-054.2
@@ -1127,6 +1348,12 @@ func testListenerWithPortHeadroom(t *testing.T, headroom int) net.Listener {
 		}
 		if err := listener.Close(); err != nil {
 			t.Fatal(err)
+		}
+	}
+	for port := 65535 - headroom; port >= 1024; port-- {
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			return listener
 		}
 	}
 	t.Fatal("could not reserve a loopback port with the required allocation headroom")
