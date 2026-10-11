@@ -145,7 +145,7 @@ describe('resolveDiscoveredAdapterDefaults', () => {
         documentDatabase: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
         kvStore: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
         analytics: {
-          filename: resolveRuntimeStatePath('/project', ['analytics', 'analytics.sqlite']),
+          dbPath: resolveRuntimeStatePath('/project', ['analytics', 'analytics.sqlite']),
           retentionDays: 90,
         },
       });

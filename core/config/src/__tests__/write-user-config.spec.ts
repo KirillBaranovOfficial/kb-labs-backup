@@ -502,7 +502,7 @@ describe('unsetUserConfigValue', () => {
   // project user config
   "platform": {
     "adapters": { "storage": "@kb-labs/adapters-fs", "cache": "@kb-labs/adapters-cache" },
-    "adapterOptions": { "storage": { "baseDir": ".kb/data" } }
+    "adapterOptions": { "storage": { "baseDir": "storage" } }
   }
 }
 `;
@@ -519,7 +519,7 @@ describe('unsetUserConfigValue', () => {
     expect(parseJsonc(result.text)).toEqual({
       platform: {
         adapters: { cache: '@kb-labs/adapters-cache' },
-        adapterOptions: { storage: { baseDir: '.kb/data' } },
+        adapterOptions: { storage: { baseDir: 'storage' } },
       },
     });
     expect(result.text).toContain('// project user config');
@@ -528,7 +528,7 @@ describe('unsetUserConfigValue', () => {
 
   it('dry-runs without writing and is idempotent when the key is already absent', async () => {
     await fsp.writeFile(file, JSON.stringify({
-      platform: { adapters: { storage: '@kb-labs/adapters-fs' }, adapterOptions: { storage: { baseDir: '.kb/data' } } },
+      platform: { adapters: { storage: '@kb-labs/adapters-fs' }, adapterOptions: { storage: { baseDir: 'storage' } } },
     }));
     const original = await fsp.readFile(file, 'utf8');
     const dryRun = await unsetUserConfigValue({

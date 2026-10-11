@@ -279,8 +279,8 @@ test('filesystem adapter contributes the project storage directory default to th
   const requirement = {
     id: 'storage.default',
     path: '/platform/adapterOptions/storage',
-    default: { baseDir: '.kb/data' },
-    hint: 'Store project data under .kb/data',
+    default: { baseDir: 'storage' },
+    hint: 'Store project data under the platform data root',
   };
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
@@ -499,10 +499,10 @@ test('the release index requires and binds the persistent fresh-install defaults
     analytics: '@kb-labs/adapters-analytics-sqlite',
   };
   const options = {
-    storage: { baseDir: '.kb/data' },
-    documentDatabase: { filename: '.kb/database/kb.sqlite' },
-    kvStore: { filename: '.kb/database/kb.sqlite' },
-    analytics: { filename: '.kb/analytics/analytics.sqlite' },
+    storage: { baseDir: 'storage' },
+    documentDatabase: { filename: 'database/kb.sqlite' },
+    kvStore: { filename: 'database/kb.sqlite' },
+    analytics: { dbPath: 'analytics/analytics.sqlite' },
   };
   const output = join(root, 'release-index.json');
   execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,

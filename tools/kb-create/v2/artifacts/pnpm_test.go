@@ -374,7 +374,7 @@ func TestPnpmMaterializesSignedArtifactManifestForDoctor(t *testing.T) {
 	root := t.TempDir()
 	item := contracts.Artifact{
 		ID: "disk-io-storage", Kind: "adapter", Package: "@kb/data-store", Version: "2.0.0",
-		Config: []contracts.ConfigRequirement{{ID: "store.path", Path: "/storage/path", Required: true, Default: `".kb/data"`, Hint: "set a storage path"}, {ID: "gateway.jwtSecret", Secret: true, Generate: true, Env: "GATEWAY_JWT_SECRET", Services: []string{"gateway"}}},
+		Config: []contracts.ConfigRequirement{{ID: "store.path", Path: "/storage/path", Required: true, Default: `"data"`, Hint: "set a storage path"}, {ID: "gateway.jwtSecret", Secret: true, Generate: true, Env: "GATEWAY_JWT_SECRET", Services: []string{"gateway"}}},
 	}
 	if err := (Pnpm{Root: root, Runner: &fakeRunner{}}).Install([]contracts.Artifact{item}); err != nil {
 		t.Fatal(err)
@@ -388,7 +388,7 @@ func TestPnpmMaterializesSignedArtifactManifestForDoctor(t *testing.T) {
 		t.Fatalf("requirements = %#v", requirements)
 	}
 	requirement := manifest.Requirements[0]
-	if requirement.ID != "store.path" || requirement.Path != "/storage/path" || requirement.Hint != "set a storage path" || string(requirement.Default) != `".kb/data"` {
+	if requirement.ID != "store.path" || requirement.Path != "/storage/path" || requirement.Hint != "set a storage path" || string(requirement.Default) != `"data"` {
 		t.Fatalf("requirement = %#v", requirement)
 	}
 	generated := manifest.Requirements[1]

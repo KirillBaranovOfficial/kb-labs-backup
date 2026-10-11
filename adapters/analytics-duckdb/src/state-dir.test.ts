@@ -37,11 +37,13 @@ describe('DuckDBAnalytics default path (ADR-0044)', () => {
     expect(existsSync(join(project, '.kb'))).toBe(false);
   });
 
-  it('keeps an explicit relative path under the project', async () => {
-    const db = new DuckDBAnalytics({ workspace: { cwd: project }, dbPath: 'data/a.duckdb', context });
+  it('uses an explicit resolved path outside the project workspace', async () => {
+    const dataPath = join(kbHome, 'platform-data', 'data.duckdb');
+    const db = new DuckDBAnalytics({ workspace: { cwd: project }, dbPath: dataPath, context });
     await db.track('llm.complete');
 
-    expect(existsSync(join(project, 'data', 'a.duckdb'))).toBe(true);
+    expect(existsSync(dataPath)).toBe(true);
+    expect(existsSync(join(project, 'data'))).toBe(false);
     expect(existsSync(resolveRuntimeStatePath(project, ['analytics']))).toBe(false);
   });
 });
