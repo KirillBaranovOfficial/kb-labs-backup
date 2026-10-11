@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
-from invocations import invocation_context, invocation_link
+from invocations import invocation_context, invocation_link, write_report_json, write_report_text
 
 
 @dataclass
@@ -108,7 +108,8 @@ class Journey:
         return result
 
     def skipped(self, name: str, capability: str, message: str = "not selected") -> StepResult:
-        result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, message, [])
+        result = StepResult(name, capability, self.mode, "SKIPPED", 0.0,
+                            message, [])
         self.steps.append(result)
         return result
 
@@ -116,7 +117,8 @@ class Journey:
         case_ids = list(cases)
         if self.selected_claims and (not case_ids or not self.selected_claims.intersection(case_ids)):
             return self.skipped(name, capability)
-        result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, reason, case_ids)
+        result = StepResult(name, capability, self.mode, "BLOCKED", 0.0,
+                            reason, case_ids)
         self.steps.append(result)
         return result
 
@@ -162,9 +164,7 @@ class Journey:
 
     def write_json(self, path: str | Path) -> JourneyResult:
         result = self.result()
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(asdict(result), indent=2) + "\n")
+        write_report_json(path, asdict(result))
         return result
 
 
@@ -213,10 +213,9 @@ class FlowGraph:
 
     def _write_traceback(self, group: str, name: str) -> None:
         if self.diagnostics_path:
-            self.diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.diagnostics_path.open("a", encoding="utf-8") as stream:
-                stream.write(f"\n== unexpected exception in {group}/{name} ==\n")
-                stream.write(traceback.format_exc())
+            write_report_text(self.diagnostics_path,
+                              f"\n== unexpected exception in {group}/{name} ==\n{traceback.format_exc()}",
+                              append=True)
 
     def step(self, name: str, group: str, capability: str, check: Callable[[], str | None],
              cases: Iterable[str] = ()) -> StepResult:

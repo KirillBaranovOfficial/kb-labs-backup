@@ -181,17 +181,18 @@ class StudioJourneyTests(unittest.TestCase):
 
     def test_secured_member_is_created_through_invite_and_activation(self):
         responses = [
-            FakeResponse({"data": {"accessToken": "admin-token"}, "ok": True}),
+            FakeResponse({"data": {"accessToken": "synthetic-admin-access-token"}, "ok": True}),
             FakeResponse({"data": {"activationUrl": "http://localhost/activate/one-time-token"}, "ok": True}, 201),
             FakeResponse({"data": {}, "ok": True}, 200),
         ]
         with patch("studio_steps.urllib.request.urlopen", side_effect=responses) as open_url:
-            email, password = create_studio_member("http://127.0.0.1:4000", "admin@example.test", "secret")
+            email, password = create_studio_member(
+                "http://127.0.0.1:4000", "admin@example.test", "synthetic-admin-password")
 
         self.assertEqual(email, "journey-member@example.test")
         self.assertEqual(password, "JourneyMember123!")
         invite_request = open_url.call_args_list[1].args[0]
-        self.assertEqual(invite_request.get_header("Authorization"), "Bearer admin-token")
+        self.assertEqual(invite_request.get_header("Authorization"), "Bearer synthetic-admin-access-token")
         self.assertEqual(json.loads(invite_request.data), {"email": email, "role": "member"})
         activation_request = open_url.call_args_list[2].args[0]
         self.assertEqual(json.loads(activation_request.data), {"token": "one-time-token", "password": password})

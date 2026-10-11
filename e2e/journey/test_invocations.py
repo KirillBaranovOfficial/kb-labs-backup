@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import io
+import ast
 import subprocess
 import sys
 import tempfile
@@ -11,7 +14,107 @@ sys.path.insert(0, str(Path(__file__).parent))
 import invocations
 
 
+def secret_environment_write_violations(source_text: str, filename: str = "<source>") -> list[str]:
+    """Find secret-like keys written directly into environment mappings."""
+    tree = ast.parse(source_text, filename=filename)
+
+    def literal_key(node):
+        return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+    def secret_keys(mapping):
+        return [key for key in (literal_key(item) for item in mapping.keys)
+                if key is not None and invocations.is_secret_key(key)]
+
+    def is_env_mapping(node):
+        if isinstance(node, ast.Name):
+            return node.id == "env" or node.id.endswith("_env") or node.id == "environ"
+        return (isinstance(node, ast.Attribute) and node.attr == "environ"
+                and isinstance(node.value, ast.Name) and node.value.id == "os")
+
+    def contains_secret_mapping_write(node):
+        if isinstance(node, ast.Dict) and secret_keys(node):
+            return True
+        if isinstance(node, ast.Call) and any(
+                keyword.arg and invocations.is_secret_key(keyword.arg) for keyword in node.keywords):
+            return True
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            return ((is_env_mapping(node.left) and contains_secret_mapping_write(node.right))
+                    or (is_env_mapping(node.right) and contains_secret_mapping_write(node.left)))
+        return False
+
+    violations = []
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+    def inside_storage_helper(node):
+        current = node
+        while current in parents:
+            current = parents[current]
+            if (isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and current.name == "store_report_secret"):
+                return Path(filename).name == "invocations.py"
+        return False
+
+    for node in ast.walk(tree):
+        if inside_storage_helper(node):
+            continue
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                key = literal_key(target.slice) if isinstance(target, ast.Subscript) else None
+                if (isinstance(target, ast.Subscript) and is_env_mapping(target.value)
+                        and isinstance(target.ctx, (ast.Store, ast.Del))
+                        and key is not None and invocations.is_secret_key(key)):
+                    violations.append(f"{filename}:{node.lineno}: direct secret-key assignment")
+                if (is_env_mapping(target) and contains_secret_mapping_write(node.value)):
+                    violations.append(f"{filename}:{node.lineno}: secret literal assigned to environment")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            receiver = node.func.value
+            if is_env_mapping(receiver):
+                if node.func.attr in {"update", "setdefault", "__setitem__"}:
+                    if any(contains_secret_mapping_write(arg) for arg in node.args):
+                        violations.append(f"{filename}:{node.lineno}: secret literal passed to environment write")
+                    if any(keyword.arg is None and contains_secret_mapping_write(keyword.value)
+                           for keyword in node.keywords):
+                        violations.append(f"{filename}:{node.lineno}: secret mapping expanded into environment write")
+                    if any(keyword.arg and invocations.is_secret_key(keyword.arg)
+                           for keyword in node.keywords):
+                        violations.append(f"{filename}:{node.lineno}: secret key passed to environment write")
+                    if node.func.attr == "setdefault" and node.args:
+                        key = literal_key(node.args[0])
+                        if key is not None and invocations.is_secret_key(key):
+                            violations.append(f"{filename}:{node.lineno}: direct secret-key setdefault")
+            for keyword in node.keywords:
+                if keyword.arg == "env" and contains_secret_mapping_write(keyword.value):
+                    violations.append(f"{filename}:{node.lineno}: secret literal passed as env")
+        if isinstance(node, ast.Dict):
+            if any(key is None and is_env_mapping(value) for key, value in zip(node.keys, node.values)):
+                if secret_keys(node):
+                    violations.append(f"{filename}:{node.lineno}: secret key in environment mapping merge")
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            if ((is_env_mapping(node.left) and contains_secret_mapping_write(node.right))
+                    or (is_env_mapping(node.right) and contains_secret_mapping_write(node.left))):
+                violations.append(f"{filename}:{node.lineno}: secret key in environment mapping union")
+
+    return violations
+
+
 class PtyInvocationTest(unittest.TestCase):
+    def test_pty_timeout_retains_partial_transcript_and_candidate_state(self):
+        with tempfile.TemporaryDirectory(prefix="journey-pty-timeout-") as temp, \
+                invocations.invocation_context(report_root=temp):
+            with self.assertRaises(invocations.PtyCommandTimeout) as raised:
+                invocations.run_pty_command(
+                    [sys.executable, "-c", "import sys; print('confirmation prompt', flush=True); sys.stdin.read()"],
+                    env={"KB_JOURNEY_STATES": '{"candidate":"running"}'}, timeout=0.2,
+                )
+
+            self.assertIn("confirmation prompt", raised.exception.output)
+            self.assertIn("candidate state", str(raised.exception))
+            self.assertIn('"candidate":"running"', str(raised.exception))
+            call = json.loads((Path(temp) / "invocations/calls.jsonl").read_text())
+            self.assertIn("confirmation prompt", call["stdout"])
+            self.assertIn('"candidate":"running"', call["error"])
+
     def test_pty_eof_waits_for_child_exit_instead_of_recording_timeout(self):
         class ExitingProcess:
             pid = 12345
@@ -44,6 +147,98 @@ class PtyInvocationTest(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["exit_code"], 1)
         self.assertIsNone(records[0]["error"])
+
+
+class ReportRedactionTest(unittest.TestCase):
+    def test_short_secret_values_only_redact_structural_secret_fields(self):
+        with tempfile.TemporaryDirectory(prefix="journey-short-redaction-") as temp:
+            target = Path(temp) / "report.json"
+            source = {
+                "exit_code": 1,
+                "case_id": "S-187.7",
+                "path": "/tmp/common/path",
+                "message": "one common value remains useful here",
+                "command_text": "APP_PASSWORD=1 --token common",
+                "environment": {"APP_PASSWORD": "1", "APP_TOKEN": "common"},
+                "argv": ["kb", "--token", "common", "--path", "/tmp/common/path"],
+            }
+            expected = {
+                "exit_code": 1,
+                "case_id": "S-187.7",
+                "path": "/tmp/common/path",
+                "message": "one common value remains useful here",
+                "command_text": "APP_PASSWORD=[REDACTED] --token [REDACTED]",
+                "environment": {"APP_PASSWORD": "[REDACTED]", "APP_TOKEN": "[REDACTED]"},
+                "argv": ["kb", "--token", "[REDACTED]", "--path", "/tmp/common/path"],
+            }
+            invocations.write_report_json(
+                target, source, env={"APP_PASSWORD": "1", "APP_TOKEN": "common"})
+
+            rendered = target.read_text()
+            self.assertEqual(rendered, json.dumps(expected, indent=2) + "\n")
+            self.assertEqual(json.loads(rendered), expected)
+
+    def test_each_report_boundary_redacts_an_unredacted_payload(self):
+        env = {}
+        secret = invocations.store_report_secret(
+            env, "KB_JOURNEY_API_TOKEN", "synthetic-boundary-secret-for-tests",
+            "synthetic boundary test secret")
+        with tempfile.TemporaryDirectory(prefix="journey-boundary-redaction-") as temp:
+            root = Path(temp)
+            json_path = root / "direct.json"
+            invocations.write_report_json(json_path, {"message": secret}, env=env)
+            self.assertNotIn(secret, json_path.read_text())
+            self.assertEqual(json.loads(json_path.read_text())["message"], "[REDACTED]")
+
+            text_path = root / "direct.txt"
+            invocations.write_report_text(text_path, f"message: {secret}", env=env)
+            self.assertNotIn(secret, text_path.read_text())
+
+            printed = io.StringIO()
+            invocations.print_report_text(f"message: {secret}", env=env, stream=printed)
+            self.assertNotIn(secret, printed.getvalue())
+
+            with invocations.invocation_context(report_root=root):
+                invocations.record_invocation(
+                    kind="command", argv=["kb", "--token", secret], cwd=root,
+                    env=env, exit_code=1, stdout=secret, stderr="", duration_seconds=0.1,
+                )
+            invocation = (root / "invocations" / "calls.jsonl").read_text()
+            self.assertNotIn(secret, invocation)
+            self.assertEqual(json.loads(invocation)["exit_code"], 1)
+
+    def test_journey_sources_store_secret_environment_values_through_shared_helper(self):
+        root = Path(__file__).parent
+        violations = []
+        for source in sorted(root.rglob("*.py")):
+            if source.name.startswith("test_"):
+                continue
+            violations.extend(secret_environment_write_violations(source.read_text(), str(source)))
+
+        self.assertEqual(violations, [])
+
+    def test_secret_environment_source_scan_covers_mapping_writes_and_allows_reads(self):
+        writes = (
+            'env.update({"KB_X_TOKEN": value})',
+            'os.environ.update({"KB_X_TOKEN": value})',
+            'env.update(KB_X_TOKEN=value)',
+            'os.environ.update(KB_X_TOKEN=value)',
+            'env.update(**{"KB_X_TOKEN": value})',
+            'env = {**env, "KB_X_TOKEN": value}',
+            'merged = env | {"KB_X_TOKEN": value}',
+        )
+        for source in writes:
+            with self.subTest(source=source):
+                self.assertTrue(secret_environment_write_violations(source), source)
+
+        reads = (
+            'value = env["KB_X_TOKEN"]',
+            'value = env.get("KB_X_TOKEN")',
+            'present = "KB_X_TOKEN" in env',
+        )
+        for source in reads:
+            with self.subTest(source=source):
+                self.assertEqual(secret_environment_write_violations(source), [], source)
 
 
 if __name__ == "__main__":

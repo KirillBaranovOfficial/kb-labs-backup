@@ -285,8 +285,8 @@ class CliAuthJourneyTests(unittest.TestCase):
                     'KB_INSTALL_RECOVERY_HOST_RUNNING: Recovery needs the host to be stopped. Next: Run "kb-create stop", recover, then "kb-create start".', ""), 0.0
             return subprocess.CompletedProcess(args, 0, "done", ""), 0.0
 
-        with patch("steps.auth._login", return_value=("new", "refresh")), \
-             patch("steps.auth._request", side_effect=[{"accessToken": "old"}, {"tenantId": "tenant-1"},
+        with patch("steps.auth._login", return_value=("new-access-token-for-journey", "new-refresh-token-for-journey")), \
+             patch("steps.auth._request", side_effect=[{"accessToken": "old-access-token-for-journey"}, {"tenantId": "tenant-1"},
                  {"email": "admin@example.test", "tenantId": "tenant-1"}]):
             run_bootstrap_recovery_steps("/bin/kb-create", "/isolated/platform", "admin@example.test",
                                          "OldPass123!", "NewPass123!", {"HOME": "/isolated"}, invoke,
@@ -312,8 +312,8 @@ class CliAuthJourneyTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, "done", ""), 0.0
 
         with patch("steps.auth._login", side_effect=[AssertionError("invalid credentials"),
-                                                      ("old-access", "old-refresh")]), \
-             patch("steps.auth._request", side_effect=[{"accessToken": "old"}, {"tenantId": "tenant-1"},
+                                                      ("old-access-token-for-journey", "old-refresh-token-for-journey")]), \
+             patch("steps.auth._request", side_effect=[{"accessToken": "old-access-token-for-journey"}, {"tenantId": "tenant-1"},
                                                         {"email": "admin@example.test", "tenantId": "tenant-1"}]), \
              self.assertRaisesRegex(AssertionError, "recovery failed"):
             run_bootstrap_recovery_steps("/bin/kb-create", "/isolated/platform", "admin@example.test",
@@ -333,8 +333,8 @@ class CliAuthJourneyTests(unittest.TestCase):
             output = "NewPass123!" if args[1] == "doctor" else "done"
             return subprocess.CompletedProcess(args, 0, output, ""), 0.0
 
-        with patch("steps.auth._login", return_value=("new-access", "new-refresh")), \
-             patch("steps.auth._request", side_effect=[{"accessToken": "old"}, {"tenantId": "tenant-1"},
+        with patch("steps.auth._login", return_value=("new-access-token-for-journey", "new-refresh-token-for-journey")), \
+             patch("steps.auth._request", side_effect=[{"accessToken": "old-access-token-for-journey"}, {"tenantId": "tenant-1"},
                                                         {"email": "admin@example.test", "tenantId": "tenant-1"}]), \
              self.assertRaisesRegex(AssertionError, "echoed the supplied password"):
             run_bootstrap_recovery_steps("/bin/kb-create", "/isolated/platform", "admin@example.test",

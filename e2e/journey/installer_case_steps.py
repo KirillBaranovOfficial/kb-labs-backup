@@ -7,6 +7,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
@@ -164,6 +165,58 @@ def run_uninstall_decline_step(*, mode: str, args: list[str], receipt_path: Path
 
     journey.step("decline the terminal uninstall confirmation", "platform.uninstall", decline,
                  cases=["S-050.3"])
+    return journey
+
+
+def run_missing_project_request_steps(*, mode: str, launcher: str, stable_index: Path,
+                                      home: Path, run_command: CommandRunner) -> Journey:
+    """Reject a missing project in every request command before platform mutation."""
+    journey = Journey(mode, f"missing-project-install-{mode}")
+
+    def reject_missing_project(operations: tuple[str, ...]) -> None:
+        def path_state(path: Path) -> tuple[str, bytes | str | None] | None:
+            if path.is_symlink():
+                return "symlink", str(path.readlink())
+            if path.is_file():
+                return "file", path.read_bytes()
+            if path.is_dir():
+                return "directory", None
+            if path.exists():
+                return "other", str(path.stat().st_mode)
+            return None
+
+        shim_path = Path(launcher).resolve().parent / "kb"
+        registry_path = home / ".kb" / "projects.json"
+        shim_before = path_state(shim_path)
+        registry_before = path_state(registry_path)
+        with tempfile.TemporaryDirectory(prefix="journey-missing-project-install-") as temp:
+            root = Path(temp)
+            project = root / "missing-project"
+            for operation in operations:
+                target = root / operation
+                result = run_command([launcher, operation, "--json", "--index", str(stable_index),
+                                      "--platform-root", str(target), "--project-root", str(project)])
+                _, error = _diagnostic(result, f"{operation} with a missing project directory")
+                hint = error.get("hint", "")
+                receipt_path = target / ".kb" / "v2" / "receipt.json"
+                scenario_path = target / ".kb" / "v2" / "scenarios" / "custom.json"
+                shim_changed = path_state(shim_path) != shim_before
+                registry_changed = path_state(registry_path) != registry_before
+                if (result.returncode == 0 or error.get("code") != "KB_INSTALL_INPUT_REQUIRED"
+                        or "must exist" not in error.get("message", "")
+                        or "mkdir -p" not in hint or "existing project directory" not in hint
+                        or target.exists() or receipt_path.exists() or shim_changed or registry_changed
+                        or scenario_path.exists() or Path(str(scenario_path) + ".tmp").exists()):
+                    raise RuntimeError(f"missing project {operation} was not rejected before mutation: "
+                                       f"exit={result.returncode}, code={error.get('code')}, "
+                                       f"platform root exists={target.exists()}, receipt exists={receipt_path.exists()}, "
+                                       f"shim changed={shim_changed}, project registry changed={registry_changed}, "
+                                       f"scenario state exists={scenario_path.exists()}")
+
+    journey.step("reject installation when the selected project directory is missing",
+                 "platform.install", lambda: reject_missing_project(("install",)), cases=["S-187.7"])
+    journey.step("reject plan and apply when the selected project directory is missing",
+                 "platform.install", lambda: reject_missing_project(("plan", "apply")), cases=["S-187.8"])
     return journey
 
 
@@ -454,8 +507,10 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                                   run_command: CommandRunner) -> Journey:
     """Install a custom scenario in JSON mode and verify its project registry entry."""
     journey = Journey(mode, f"json-install-project-{mode}")
+    installed = False
 
     def install_and_show() -> None:
+        nonlocal installed
         platform_root.parent.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True, exist_ok=True)
         try:
@@ -470,11 +525,32 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                 raise RuntimeError(f"JSON install did not register the canonical project path: {shown}")
             if (project_root / ".kb").exists():
                 raise RuntimeError("JSON project registration wrote KB Labs files into the project repository")
+            installed = True
+        except Exception:
+            cleanup_installer_fixture_root(platform_root, launcher, run_command)
+            raise
+
+    def update_after_project_removed() -> None:
+        if not installed:
+            raise RuntimeError("project install fixture did not complete")
+        request_path = platform_root.parent / "s187-receipt-request.json"
+        try:
+            receipt = json.loads((platform_root / ".kb/v2/receipt.json").read_text())
+            request_path.write_text(json.dumps(receipt["plan"]["request"]))
+            shutil.rmtree(project_root)
+            updated = _data(run_command([launcher, "update", "--json", "--index", str(stable_index),
+                                         "--input", str(request_path)]),
+                            "update after registered project directory was removed")
+            if updated.get("ok") is not True or not updated.get("alreadyUpToDate"):
+                raise RuntimeError(f"update did not accept the receipt request after project removal: {updated}")
         finally:
+            request_path.unlink(missing_ok=True)
             cleanup_installer_fixture_root(platform_root, launcher, run_command)
 
     journey.step("install a custom scenario in JSON mode and register its project",
                  "platform.install", install_and_show, cases=["S-187.6"])
+    journey.step("update after the registered project directory was removed",
+                 "platform.update", update_after_project_removed, cases=["S-187.9"])
     return journey
 
 

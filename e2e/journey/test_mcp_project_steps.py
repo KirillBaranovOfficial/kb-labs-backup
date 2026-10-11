@@ -215,7 +215,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 return 200, {"userId": "admin"}, {}
             return 200, {"ready": True}, {}
 
-        with patch("service_runner.ADMIN_PASSWORD", "admin-pass"), \
+        with patch("service_runner.ADMIN_PASSWORD", "synthetic-admin-password"), \
                 patch("service_runner.ADMIN_EMAIL", "admin@example.test"), \
                 patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": ""}), \
                 patch("service_runner.request", side_effect=request), \

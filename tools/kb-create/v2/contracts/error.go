@@ -2,6 +2,15 @@ package contracts
 
 import "github.com/kb-labs/clikit/diag"
 
+// Diagnostic converts shared request validation into the platform CLI failure
+// contract, including its input exit code and field metadata.
+func (e *RequestValidationError) Diagnostic() *diag.Diag {
+	failure := NewDiag(e.Code, e.Message, e.Hint, e.Cause)
+	failure.Meta = map[string]any{"field": e.Field}
+	failure.ProcessExitCode = diag.ExitInput
+	return failure
+}
+
 // ErrorStage is the moment of the user journey in which an error happened.
 // The set is open; the values below are the ones the launcher emits.
 type ErrorStage string

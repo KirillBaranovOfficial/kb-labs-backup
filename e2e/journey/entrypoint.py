@@ -13,6 +13,7 @@ from pathlib import Path
 from platform_state_dump import dump_platform_state, failure_dump_environment
 from scoreboard import write_scoreboards
 from journey_resources import case_catalog_root, journey_module
+from invocations import print_report_text, write_report_json, write_report_text
 
 
 def write_case_scoreboards(summary_path: str | Path) -> None:
@@ -48,8 +49,7 @@ def record_runner_failure(summary_path: str | Path, mode: str, error: Exception,
     result["steps"].append(step)
     result["status"] = "FAIL"
     result["first_failure"] = result.get("first_failure") or step
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(result, indent=2) + "\n")
+    write_report_json(target, result)
 
 
 def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> int:
@@ -66,25 +66,28 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
                 env=os.environ, admin_password=os.getenv("KB_JOURNEY_ADMIN_PASSWORD", ""),
             )
         except Exception as dump_error:
-            print(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}", file=sys.stderr)
+            print_report_text(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}",
+                              stream=sys.stderr, flush=True)
         try:
             record_runner_failure(summary_path, mode, error, "startup")
             write_case_scoreboards(summary_path)
         except OSError as write_error:
-            print(f"Journey runner startup failed; could not write result: {write_error}", file=sys.stderr)
-        print(f"Journey runner startup failed: {error.__class__.__name__}: {error}", file=sys.stderr)
+            print_report_text(f"Journey runner startup failed; could not write result: {write_error}",
+                              stream=sys.stderr, flush=True)
+        print_report_text(f"Journey runner startup failed: {error.__class__.__name__}: {error}",
+                          stream=sys.stderr, flush=True)
         return 1
     try:
         return int(namespace["main"]())
     except Exception as error:
         try:
             diagnostic = Path(summary_path).with_name("journey-diagnostics.log")
-            with diagnostic.open("a", encoding="utf-8") as stream:
-                stream.write("\n== Journey runner traceback ==\n")
-                stream.writelines(traceback.format_exception(error))
-                stream.write("\n")
+            write_report_text(diagnostic, "\n== Journey runner traceback ==\n"
+                              + "".join(traceback.format_exception(type(error), error, error.__traceback__))
+                              + "\n", append=True)
         except OSError as diagnostic_error:
-            print(f"Journey traceback could not be written: {diagnostic_error}", file=sys.stderr)
+            print_report_text(f"Journey traceback could not be written: {diagnostic_error}",
+                              stream=sys.stderr, flush=True)
         try:
             report = Path(summary_path)
             environment = namespace.get("env")
@@ -104,13 +107,16 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
                 admin_password="JourneyPassw0rd!" if mode == "secured" else "",
             )
         except Exception as dump_error:
-            print(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}", file=sys.stderr)
+            print_report_text(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}",
+                              stream=sys.stderr, flush=True)
         try:
             record_runner_failure(summary_path, mode, error, "crash")
             write_case_scoreboards(summary_path)
         except OSError as write_error:
-            print(f"Journey runner crashed; could not write result: {write_error}", file=sys.stderr)
-        print(f"Journey runner crashed: {error.__class__.__name__}: {error}", file=sys.stderr)
+            print_report_text(f"Journey runner crashed; could not write result: {write_error}",
+                              stream=sys.stderr, flush=True)
+        print_report_text(f"Journey runner crashed: {error.__class__.__name__}: {error}",
+                          stream=sys.stderr, flush=True)
         return 1
     finally:
         cleanup = namespace.get("cleanup")
@@ -127,4 +133,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        print_report_text(f"Journey runner failed: {error.__class__.__name__}: {error}",
+                          stream=sys.stderr, flush=True)
+        raise SystemExit(1)

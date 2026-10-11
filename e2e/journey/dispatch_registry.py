@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import asdict, dataclass
+from invocations import print_report_text
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,7 @@ def main() -> int:
         runner = RUNNERS.get(sys.argv[2])
         if runner is None:
             raise ValueError(f"unknown journey runner selector: {sys.argv[2]}")
-        print(json.dumps(asdict(runner)))
+        print_report_text(json.dumps(asdict(runner)), flush=True)
         return 0
     if len(sys.argv) == 3 and sys.argv[1] == "--dispatch":
         selector = sys.argv[2]
@@ -65,7 +66,7 @@ def main() -> int:
             if runner is None:
                 raise ValueError(f"unknown journey runner selector: {item}")
             runners.append(asdict(runner))
-        print(json.dumps(runners))
+        print_report_text(json.dumps(runners), flush=True)
         return 0
     if len(sys.argv) == 3 and sys.argv[1] == "--supports":
         selection = json.load(sys.stdin)
@@ -77,5 +78,9 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except ValueError as error:
-        print(str(error), file=sys.stderr)
+        print_report_text(str(error), stream=sys.stderr, flush=True)
         raise SystemExit(2)
+    except Exception as error:
+        print_report_text(f"Journey dispatch failed: {error.__class__.__name__}: {error}",
+                          stream=sys.stderr, flush=True)
+        raise SystemExit(1)

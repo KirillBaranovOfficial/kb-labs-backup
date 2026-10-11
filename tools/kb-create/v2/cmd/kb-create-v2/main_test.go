@@ -603,8 +603,79 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 			return "", errors.New("project registry unavailable")
 		},
 	})
-	if failedCode != 1 || failure == nil || failure.Code != contracts.CodeApplyFailed || !strings.Contains(failure.Hint, "kb project add") {
+	if failedCode != 1 || failure == nil || failure.Code != contracts.CodeApplyFailed ||
+		failure.Message != "The platform is installed, but the selected project could not be registered." ||
+		!strings.Contains(failure.Hint, "kb project add") {
 		t.Fatalf("project registration failure = code %d, output %#v", failedCode, failure)
+	}
+	if _, err := os.Stat(filepath.Join(failedRoot, ".kb", "v2", "receipt.json")); err != nil {
+		t.Fatalf("late registration failure should retain the completed platform install receipt: %v", err)
+	}
+}
+
+// case: S-187.7
+func TestHumanInstallRejectsMissingProjectBeforeCreatingPlatformRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	index := writeJSONInstallFixture(t, home)
+	platformRoot := filepath.Join(home, "platform")
+	projectRoot := filepath.Join(home, "missing-project")
+	launcher := filepath.Join(home, ".local", "bin", "kb-create")
+	registrarCalled := false
+	_, failure, code, _ := executeForTest(t, operationTestSetup{
+		Operation: "install", Index: index,
+		Direct:     directRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot},
+		Executable: launcher,
+		ProjectRegistrar: func(string) (string, error) {
+			registrarCalled = true
+			return "", nil
+		},
+	})
+	if code != 2 || failure == nil || failure.Code != contracts.CodeInputRequired || !strings.Contains(failure.Hint, "mkdir -p") {
+		t.Fatalf("install missing-project validation = exit %d, failure %#v", code, failure)
+	}
+	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
+		t.Fatalf("invalid project selection created platform root: %v", err)
+	}
+	if _, err := os.Stat(receipt.Path(platformRoot)); !os.IsNotExist(err) {
+		t.Fatalf("invalid project selection created install receipt: %v", err)
+	}
+	if _, err := os.Lstat(shim.Path(launcher)); !os.IsNotExist(err) {
+		t.Fatalf("invalid project selection created launcher shim: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".kb", "projects.json")); !os.IsNotExist(err) {
+		t.Fatalf("invalid project selection created project registry state: %v", err)
+	}
+	if registrarCalled {
+		t.Fatal("invalid project selection called the project registrar")
+	}
+}
+
+// case: S-187.8
+func TestApplyRejectsMissingProjectBeforeSavingScenarioAnswers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	index := writeJSONInstallFixture(t, home)
+	platformRoot := filepath.Join(home, "platform")
+	projectRoot := filepath.Join(home, "missing-project")
+	_, failure, code, _ := executeForTest(t, operationTestSetup{
+		Operation: "apply", Index: index, PlatformRoot: platformRoot,
+		Direct:     directRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot},
+		ScenarioID: "custom", ScenarioAnswers: `{"access.mode":"local"}`,
+	})
+	if code != 2 || failure == nil || failure.Code != contracts.CodeInputRequired || !strings.Contains(failure.Hint, "mkdir -p") {
+		t.Fatalf("apply missing-project validation = exit %d, failure %#v", code, failure)
+	}
+	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
+		t.Fatalf("invalid project selection saved scenario answers or created platform root: %v", err)
+	}
+	for _, statePath := range []string{
+		filepath.Join(platformRoot, ".kb", "v2", "scenarios", "custom.json"),
+		filepath.Join(platformRoot, ".kb", "v2", "scenarios", "custom.json.tmp"),
+	} {
+		if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+			t.Fatalf("invalid project selection saved scenario state at %s: %v", statePath, err)
+		}
 	}
 }
 
@@ -734,8 +805,8 @@ func TestApplyRequestValidationHintUsesActualRetryArguments(t *testing.T) {
 		t.Fatalf("invalid request exit=%d failure=%v output=%s", code, failure, output)
 	}
 	want := "Correct platformRoot in request file '" + requestPath + "', then retry: kb-create apply --index '" + index + "' --input '" + requestPath + "' --json"
-	if failure.Hint != want {
-		t.Fatalf("validation hint = %q, want exact retry instruction %q", failure.Hint, want)
+	if !strings.Contains(failure.Hint, want) || !strings.Contains(failure.Hint, "Set `platformRoot` to a non-empty directory") {
+		t.Fatalf("validation hint = %q, want validation guidance and exact retry instruction %q", failure.Hint, want)
 	}
 }
 

@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Mapping
 
-from invocations import run_command
+from invocations import print_report_text, run_command
 
 
 def run_hermetic_cli(
@@ -33,13 +33,18 @@ def main() -> int:
     if command and command[0] == "--":
         command = command[1:]
     if not command:
-        print("usage: hermetic_cli.py -- <command> [args...]", file=sys.stderr)
+        print_report_text("usage: hermetic_cli.py -- <command> [args...]", stream=sys.stderr)
         return 2
-    result = run_hermetic_cli(command, cwd=Path.cwd())
+    try:
+        result = run_hermetic_cli(command, cwd=Path.cwd())
+    except Exception as error:
+        print_report_text(f"Hermetic journey command failed: {error.__class__.__name__}: {error}",
+                          stream=sys.stderr, flush=True)
+        return 1
     if result.stdout:
-        sys.stdout.write(result.stdout)
+        print_report_text(result.stdout, end="", flush=True)
     if result.stderr:
-        sys.stderr.write(result.stderr)
+        print_report_text(result.stderr, stream=sys.stderr, end="", flush=True)
     return result.returncode
 
 
