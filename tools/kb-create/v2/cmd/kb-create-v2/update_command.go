@@ -61,6 +61,9 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	plan := resolved.Plan
 	active, err := receipt.Read(plan.Request.PlatformRoot)
 	if err != nil {
+		if failure := receiptArtifactIdentityFailure(err, input.Index, plan.Request.PlatformRoot); failure != nil {
+			return updateCommandResult{}, inputFailure(failure)
+		}
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
 		failure.ProcessExitCode = diag.ExitInput
 		return updateCommandResult{}, failure

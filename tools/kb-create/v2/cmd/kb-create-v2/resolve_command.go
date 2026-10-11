@@ -80,6 +80,9 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 	if _, err := os.Stat(receiptPath); err == nil {
 		active, readErr := receipt.Read(plan.Request.PlatformRoot)
 		if readErr != nil {
+			if failure := receiptArtifactIdentityFailure(readErr, request.Index, plan.Request.PlatformRoot); failure != nil {
+				return planResult{}, inputFailure(failure)
+			}
 			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be read for update comparison", "restore a named V2 snapshot, then rerun `kb-create plan`", readErr)
 			return planResult{}, inputFailure(failure)
 		}
@@ -95,6 +98,16 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 	}
 	outcome, errorCode = "success", ""
 	return planResult{Plan: plan, UpdateSummary: updateSummary}, nil
+}
+
+func receiptArtifactIdentityFailure(err error, index, platformRoot string) *diag.Diag {
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != contracts.CodeArtifactIdentityInvalid {
+		return nil
+	}
+	failure.Hint = fmt.Sprintf("Reinstall this platform with `kb-create apply --index %s --platform-root %s`.",
+		contracts.ShellQuote(index), contracts.ShellQuote(platformRoot))
+	return failure
 }
 
 func inputFailure(failure *diag.Diag) *diag.Diag {
