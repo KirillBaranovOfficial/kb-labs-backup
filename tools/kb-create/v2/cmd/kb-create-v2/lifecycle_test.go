@@ -29,18 +29,6 @@ import (
 	"github.com/kb-labs/create/v2/swap"
 )
 
-func TestReadConfirmation(t *testing.T) {
-	for _, test := range []struct {
-		answer string
-		want   bool
-	}{{"y\n", true}, {"yes\n", true}, {"n\n", false}, {"\n", false}} {
-		got, err := readConfirmation(strings.NewReader(test.answer))
-		if err != nil || got != test.want {
-			t.Fatalf("answer %q: got %v, %v", test.answer, got, err)
-		}
-	}
-}
-
 type snapshotRestoreRecorder struct {
 	artifacts []contracts.Artifact
 	calls     int

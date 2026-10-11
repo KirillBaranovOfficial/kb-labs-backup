@@ -102,7 +102,10 @@ func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
 	if baseContext == nil {
 		baseContext = context.Background()
 	}
-	root.SetContext(context.WithValue(baseContext, streamWriterKey{}, stdout))
+	input := root.InOrStdin()
+	interaction := &Interaction{in: input, out: stdout, err: stderr, terminal: isTerminalInput(input), machine: modeForArgs(args) != result.ModeHuman}
+	baseContext = context.WithValue(baseContext, streamWriterKey{}, stdout)
+	root.SetContext(context.WithValue(baseContext, interactionKey{}, interaction))
 
 	_, err := root.ExecuteC()
 	mode := modeForArgs(args)
@@ -112,6 +115,9 @@ func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
 	if data, ok := result.ReturnedData(err); ok {
 		human := captured.String()
 		if mode == result.ModeHuman && strings.TrimSpace(human) == "" {
+			if interaction.hasStreamed() {
+				return diag.ExitOK
+			}
 			encoded, marshalErr := json.MarshalIndent(data, "", "  ")
 			if marshalErr != nil {
 				return result.RenderDiag(stdout, stderr, diag.FromError(marshalErr), mode)

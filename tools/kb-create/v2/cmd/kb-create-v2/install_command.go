@@ -38,7 +38,7 @@ func executeInstallStream(ctx context.Context, installInput installCommandInput,
 func install(ctx context.Context, input installCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
 	out := deps.InstallOutput
 	if out == nil {
-		out = os.Stdout
+		out = clikitcommand.FromCommand(deps.Command).ProgressWriter()
 	}
 	if err := deps.NodeCheck(); err != nil {
 		failure := contracts.NewDiag(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.",
@@ -74,7 +74,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	}
 	inputReader := deps.InstallInput
 	if inputReader == nil {
-		inputReader = os.Stdin
+		inputReader = clikitcommand.FromCommand(deps.Command).Input()
 	}
 	generatedSecrets := map[string]string{}
 	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, wizard.IO{In: inputReader, Out: out, Generated: generatedSecrets})
