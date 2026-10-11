@@ -18,14 +18,54 @@ from installer_case_steps import (_data, _seed_doctor_fixture, assert_default_se
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
                                   run_gateway_allocation_step,
                                   assert_root_offset, run_json_install_project_step,
-                                  run_uninstall_decline_step, _service_ids_match,
+                                  run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
                                   _snapshot_installation_owned_tree)
+from invocations import PtyCommandTimeout
 from journey_resources import case_catalog_root
 from service_steps import Journey, record_candidate_provenance
 from service_port_assertions import assert_service_ports_preserved
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    # case: S-187.7
+    def test_missing_project_request_claims_check_error_and_platform_root_absence(self):
+        with tempfile.TemporaryDirectory(prefix="journey-missing-project-install-test-") as temp:
+            root = Path(temp)
+            platform = root / "platform"
+            index = root / "release-index.json"
+            index.write_text("{}")
+            calls = []
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            launcher = bin_dir / "kb-create"
+            shim_target = root / "existing-kb"
+            shim_target.write_text("existing shim target")
+            (bin_dir / "kb").symlink_to(shim_target)
+            registry_dir = root / ".kb"
+            registry_dir.mkdir()
+            registry = registry_dir / "projects.json"
+            registry.write_text('{"projects":[{"path":"existing-project"}]}')
+
+            def run_command(args):
+                calls.append(args)
+                error = {"code": "KB_INSTALL_INPUT_REQUIRED", "message": "project directory must exist",
+                         "hint": "Run mkdir -p 'missing-project' or pass an existing project directory."}
+                records = [
+                    {"ok": False, "error": error},
+                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 2}}},
+                ]
+                return subprocess.CompletedProcess(args, 2,
+                    "\n".join(json.dumps(record) for record in records) + "\n", "")
+
+            journey = run_missing_project_request_steps(mode="local", launcher=str(launcher), stable_index=index,
+                                                        home=root, run_command=run_command)
+            self.assertEqual(journey.steps[0].cases, ["S-187.7"])
+            self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+            self.assertEqual(calls[0][1:3], ["install", "--json"])
+            self.assertEqual(journey.steps[1].cases, ["S-187.8"])
+            self.assertEqual(journey.steps[1].status, "PASS", journey.steps[1].message)
+            self.assertEqual([call[1] for call in calls], ["install", "plan", "apply"])
+
     # case: S-039.1
     def test_apply_scenario_claim_checks_command_stream_and_receipt_preference(self):
         with tempfile.TemporaryDirectory(prefix="journey-apply-scenario-") as temp:
@@ -179,9 +219,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 calls.append(args)
                 if args[1] == "install":
                     (platform / ".kb/v2/bin").mkdir(parents=True)
-                    (platform / ".kb/v2/receipt.json").write_text("{}")
+                    (platform / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"request": {
+                        "platformRoot": str(platform), "projectRoot": str(project)}}}))
                     (platform / ".kb/v2/bin/kb").write_text("fixture")
                     return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{"operation":"install"}}', "")
+                if args[1] == "update":
+                    return subprocess.CompletedProcess(args, 0,
+                        '{"ok":true,"data":{"ok":true,"alreadyUpToDate":true}}', "")
                 if args[1] == "project":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
                         "project": {"id": "prj_test", "path": str(project.resolve())}}}), "")
@@ -195,11 +239,16 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                     run_command=run_command)
             self.assertEqual(journey.steps[0].cases, ["S-187.6"])
             self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+            self.assertEqual(journey.steps[1].cases, ["S-187.9"])
+            self.assertEqual(journey.steps[1].status, "PASS", journey.steps[1].message)
             install_args = calls[0]
             self.assertIn("--json", install_args)
             self.assertEqual(install_args[install_args.index("--scenario") + 1], "custom")
             self.assertEqual(install_args[install_args.index("--project-root") + 1], str(project))
-            self.assertEqual([call[1] for call in calls[1:]], ["project", "status", "stop", "uninstall"])
+            self.assertEqual([call[1] for call in calls[1:]], ["project", "update", "status", "stop", "uninstall"])
+            update_args = calls[2]
+            self.assertEqual(update_args[1], "update")
+            self.assertEqual(update_args[update_args.index("--input") + 1], str(platform.parent / "s187-receipt-request.json"))
 
     def test_installer_fixture_cleanup_stops_running_host_before_removing_root(self):
         with tempfile.TemporaryDirectory(prefix="journey-installer-cleanup-") as temp:
@@ -757,6 +806,22 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(journey.steps[0].cases, ["S-050.3"])
             self.assertEqual(journey.steps[0].status, "FAIL")
 
+    # case: S-050.3
+    def test_uninstall_decline_timeout_keeps_transcript_and_candidate_state(self):
+        with tempfile.TemporaryDirectory(prefix="journey-uninstall-timeout-") as temp:
+            receipt = Path(temp) / "receipt.json"
+            receipt.write_text('{"id":"unchanged"}')
+
+            def fake_pty(args, *, on_output):
+                raise PtyCommandTimeout(args, 120, "partial confirmation prompt", '{"host":"running"}')
+
+            journey = run_uninstall_decline_step(mode="local", args=["kb-create", "uninstall"],
+                                                 receipt_path=receipt, run_pty=fake_pty)
+            self.assertEqual(journey.steps[0].cases, ["S-050.3"])
+            self.assertEqual(journey.steps[0].status, "FAIL")
+            self.assertIn("partial confirmation prompt", journey.steps[0].message)
+            self.assertIn('{"host":"running"}', journey.steps[0].message)
+
     def test_each_claim_fails_when_the_cli_returns_a_failed_envelope(self):
         with tempfile.TemporaryDirectory(prefix="journey-installer-cases-") as temp:
             root = Path(temp)
@@ -785,7 +850,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",
-                        "S-187.4", "S-187.5", "S-187.6"}
+                        "S-187.4", "S-187.5", "S-187.6", "S-187.9"}
             self.assertEqual(set(claims), expected)
             self.assertTrue(all(claims[claim] == "FAIL" for claim in expected))
 

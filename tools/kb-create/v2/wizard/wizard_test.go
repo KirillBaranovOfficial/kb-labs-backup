@@ -2,12 +2,37 @@ package wizard
 
 import (
 	"bytes"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 )
+
+// case: S-187.7
+func TestRequestScenarioUsesSharedProjectSelectionValidation(t *testing.T) {
+	source, err := catalog.Seal(catalog.Catalog{
+		Channels:  map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	platformRoot := filepath.Join(base, "platform")
+	_, err = RequestScenario(source, platformRoot, "explore", filepath.Join(base, "missing-project"), IO{
+		In: bytes.NewBufferString("\n\n"), Out: &bytes.Buffer{},
+	})
+	var validation *contracts.RequestValidationError
+	if !errors.As(err, &validation) || validation.Code != contracts.CodeInputRequired || validation.Field != "projectRoot" {
+		t.Fatalf("RequestScenario() error = %T %v, want shared projectRoot request validation", err, err)
+	}
+	if _, statErr := os.Stat(platformRoot); !os.IsNotExist(statErr) {
+		t.Fatalf("wizard validation created platform root: stat error = %v", statErr)
+	}
+}
 
 func TestRequestBuildsSharedCompatibleRequest(t *testing.T) {
 	source, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}, Plugins: []catalog.Component{{ID: "review", Version: "1", Package: "@kb/review", Tarball: "https://example.test/review.tgz", SHA256: "review"}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "pino", Version: "1", Package: "@kb/pino", Tarball: "https://example.test/pino.tgz", SHA256: "pino"}}}})

@@ -14,17 +14,38 @@ import (
 
 // case: S-023.6
 func TestEqualVersionUpdateReturnsBeforeSnapshotWritesOrLifecycle(t *testing.T) {
+	assertEqualVersionUpdateDoesNotRequireProjectDirectory(t)
+}
+
+// case: S-187.9
+func TestUpdateReceiptReplayAllowsRemovedProjectDirectory(t *testing.T) {
+	assertEqualVersionUpdateDoesNotRequireProjectDirectory(t)
+}
+
+func assertEqualVersionUpdateDoesNotRequireProjectDirectory(t *testing.T) {
+	t.Helper()
 	inst := newInstallation(t)
+	projectRoot := filepath.Join(t.TempDir(), "previously-registered-project")
+	if err := os.Mkdir(projectRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	active, err := receipt.Read(inst.root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	active.Schema, active.ID, active.InstallationID = contracts.ReceiptSchema, "active", "same-install"
 	active.Plan.Schema, active.Plan.PlatformChannel = contracts.ResolvedPlanSchema, "stable"
-	active.Plan.Request = contracts.InstallRequest{PlatformRoot: inst.root}
+	active.Plan.Request = contracts.InstallRequest{PlatformRoot: inst.root, ProjectRoot: projectRoot}
+	active.Plan.Request, err = active.Plan.Request.Normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
 	active.Plan.ServiceGraph = contracts.ServiceGraph{PlatformVersion: "3.2.0"}
 	active.Plan.Artifacts = []contracts.Artifact{{ID: "platform", Kind: "platform", Package: "@kb/platform", Version: "3.2.0"}}
 	if err := receipt.Write(inst.root, active); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(projectRoot); err != nil {
 		t.Fatal(err)
 	}
 	receiptPath := receipt.Path(inst.root)
@@ -45,10 +66,17 @@ func TestEqualVersionUpdateReturnsBeforeSnapshotWritesOrLifecycle(t *testing.T) 
 	if err := os.WriteFile(indexPath, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	requestPath := filepath.Join(t.TempDir(), "receipt-request.json")
+	receiptRequest, err := json.Marshal(active.Plan.Request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, receiptRequest, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	installer := &recordingInstaller{}
 	result, failure, code, raw := executeForTest(t, operationTestSetup{
-		Operation: "update", Index: indexPath, PlatformRoot: inst.root,
-		Direct:        directRequest{PlatformVersion: "3.2.0", Policy: "compatible"},
+		Operation: "update", Index: indexPath, Input: requestPath, PlatformRoot: inst.root,
 		RuntimeDeps:   &runtime.Dependencies{Artifacts: installer},
 		NodePreflight: func() error { return nil },
 	})
