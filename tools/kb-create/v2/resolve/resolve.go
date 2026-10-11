@@ -163,7 +163,10 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("SDK", sdkVersion, "is not present in the release index")
 		}
-		artifacts = append(artifacts, artifact(sdk, "sdk"))
+		artifacts, err = appendSelectedSDK(artifacts, artifact(sdk, "sdk"), platform.Version)
+		if err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
 	}
 	requirements := append([]catalog.Requirement(nil), platform.Requires...)
 	for _, item := range request.Plugins {
@@ -253,6 +256,27 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version), ProviderBindings: bindings, Host: selectedHost, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
 	plan.PlanHash = hash(plan)
 	return plan, nil
+}
+
+// appendSelectedSDK records the selected SDK once. A platform that bundles the
+// SDK package already installs it, so the bundled record takes the selected
+// role instead of a second record; a different version of a bundled package
+// cannot be installed next to it.
+func appendSelectedSDK(artifacts []contracts.Artifact, sdk contracts.Artifact, platformVersion string) ([]contracts.Artifact, error) {
+	for index, existing := range artifacts {
+		if existing.Identity() != sdk.Identity() {
+			continue
+		}
+		if existing.Version != sdk.Version {
+			return nil, incompatible("SDK", sdk.Version, "platform "+platformVersion+" bundles "+existing.Package+" "+existing.Version)
+		}
+		if existing.SHA256 != sdk.SHA256 || existing.Tarball != sdk.Tarball {
+			return nil, contracts.PlanArtifactIdentityFailure(sdk.Identity())
+		}
+		artifacts[index].Kind = sdk.Kind
+		return artifacts, nil
+	}
+	return append(artifacts, sdk), nil
 }
 
 func appendSelectedAdapter(artifacts []contracts.Artifact, adapter catalog.Adapter) ([]contracts.Artifact, error) {
