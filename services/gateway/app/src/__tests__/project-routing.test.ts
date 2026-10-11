@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { registerProjectRoutes } from "../project-routing.js";
 
-const PROJECT_SERVICES = [{ serviceId: "rest", rewritePrefix: "/api/v1" }];
+const PROJECT_SERVICES = [{ serviceId: "rest", rewritePrefix: "/api/v1", healthCheck: "/health" }];
 
 describe("registerProjectRoutes", () => {
   let upstream: Server | undefined;
@@ -27,11 +27,11 @@ describe("registerProjectRoutes", () => {
     app = Fastify();
     const transport = { resolveProjectService: async () => undefined };
     await expect(registerProjectRoutes(app, [
-      { serviceId: "rest", rewritePrefix: "/api/v1" },
-      { serviceId: "rest", rewritePrefix: "/api/v2" },
+      { serviceId: "rest", rewritePrefix: "/api/v1", healthCheck: "/health" },
+      { serviceId: "rest", rewritePrefix: "/api/v2", healthCheck: "/health" },
     ], transport)).rejects.toThrow(/duplicate project service id/i);
     await expect(registerProjectRoutes(app, [
-      { serviceId: "rest/api", rewritePrefix: "/api/v1" },
+      { serviceId: "rest/api", rewritePrefix: "/api/v1", healthCheck: "/health" },
     ], transport)).rejects.toThrow(/invalid project service id/i);
   });
 
@@ -102,7 +102,7 @@ describe("registerProjectRoutes", () => {
         headers: {},
         release: () => undefined,
       }),
-    }), undefined, [{ serviceId: "mcp", rewritePrefix: "/" }]);
+    }), undefined, [{ serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" }]);
 
     const response = await app!.inject({ method: "POST", url: "/api/v1/projects/prj_a/mcp", payload: "{}" });
 
@@ -130,6 +130,9 @@ describe("registerProjectRoutes", () => {
       ok: false,
       error: { code: "KB_RUNTIME_RESOURCE_NOT_FOUND" },
     });
+    expect(res.json().error.hint).toBe(
+      'Run "kb project show prj_a" to confirm the project, then use a declared service ID.',
+    );
     expect(acquired).toBe(false);
   });
 
@@ -143,6 +146,89 @@ describe("registerProjectRoutes", () => {
 
     expect(res.statusCode).toBe(502);
     expect(released).toBe(1);
+  });
+
+  // case: PC-002.3, PC-002.8, S-124.11, S-124.13
+  it("routes project health through the declared endpoint and wraps the payload", async () => {
+    const seen = await setup((port) => ({
+      resolveProjectService: async () => ({
+        baseUrl: `http://127.0.0.1:${port}`,
+        pathPrefix: "/rest",
+        headers: {},
+        release: () => undefined,
+      }),
+    }), { statusCode: 200, body: '{"schema":"kb.health/1","status":"healthy"}' });
+
+    const response = await app!.inject({ method: "GET", url: "/api/v1/projects/prj_a/rest/health" });
+
+    expect(seen[0]?.url).toBe("/rest/health");
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, data: { schema: "kb.health/1", status: "healthy" } });
+  });
+
+  // case: PC-002.8
+  it("preserves the declared service health payload when it reports degraded", async () => {
+    await setup((port) => ({
+      resolveProjectService: async () => ({
+        baseUrl: `http://127.0.0.1:${port}`,
+        pathPrefix: "/rest",
+        headers: {},
+        release: () => undefined,
+      }),
+    }), { statusCode: 200, body: '{"schema":"kb.health/1","status":"degraded"}' });
+
+    const response = await app!.inject({ method: "GET", url: "/api/v1/projects/prj_a/rest/health" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, data: { schema: "kb.health/1", status: "degraded" } });
+  });
+
+  // case: S-226.1
+  it("returns one actionable catalogued failure for unhealthy project health", async () => {
+    await setup((port) => ({
+      resolveProjectService: async () => ({
+        baseUrl: `http://127.0.0.1:${port}`,
+        pathPrefix: "/rest",
+        headers: {},
+        release: () => undefined,
+      }),
+    }), { statusCode: 200, body: '{"schema":"kb.health/1","status":"unhealthy"}' });
+
+    const response = await app!.inject({ method: "GET", url: "/api/v1/projects/prj_a/rest/health" });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_PROJECT_RUNTIME_START_FAILED",
+        message: 'Project service "rest" for project "prj_a" did not report healthy.',
+        hint: 'Run "kb logs query --source rest --level error --limit 20" to inspect its errors, then retry the health request.',
+      },
+    });
+  });
+
+  // case: S-226.1
+  it("returns one actionable catalogued failure when declared project health is unreachable", async () => {
+    await setup(() => ({
+      resolveProjectService: async () => ({
+        baseUrl: "http://127.0.0.1:1",
+        pathPrefix: "/rest",
+        headers: {},
+        release: () => undefined,
+      }),
+    }));
+
+    const response = await app!.inject({ method: "GET", url: "/api/v1/projects/prj_a/rest/health" });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_PROJECT_RUNTIME_START_FAILED",
+        message: 'Project service "rest" for project "prj_a" did not report healthy.',
+        hint: 'Run "kb logs query --source rest --level error --limit 20" to inspect its errors, then retry the health request.',
+      },
+    });
   });
 
   // case: S-221.2

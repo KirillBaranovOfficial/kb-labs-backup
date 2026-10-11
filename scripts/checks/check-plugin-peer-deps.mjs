@@ -24,17 +24,14 @@
  */
 
 import { pathToFileURL } from 'node:url';
+import { isPlatformPackage } from '../../core/plugin-runtime/src/platform-resolve/platform-package.js';
 
 import { findPackages, findPluginEntryPackages, runLint } from './lib/boundary-common.mjs';
 
 export const CHECK_NAME = 'plugin-peer-deps';
 export const RULE = 'plugin-platform-dependency';
 
-// `plugin-*` is listed explicitly (core/plugin-*): a prefix match would also catch plugin-template-* packages.
-const PLATFORM_PACKAGE =
-  /^@kb-labs\/(?:sdk|platform-client|plugin-(?:contracts|runtime|execution|execution-factory)|(?:core|cli|shared|adapters)-[a-z0-9-]+)$/;
-
-export const isPlatformPackage = (name) => PLATFORM_PACKAGE.test(name);
+export { isPlatformPackage };
 
 /** @returns {{ target: string, field: string }[]} platform packages declared outside peerDependencies. */
 export function findPlatformRuntimeDeps(pkgJson) {

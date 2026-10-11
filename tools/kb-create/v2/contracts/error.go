@@ -71,10 +71,15 @@ const (
 	CodeUpdateHostNotHealthy      = "KB_UPDATE_HOST_NOT_HEALTHY"
 	CodeUpdateNoSnapshot          = "KB_UPDATE_NO_SNAPSHOT"
 	CodeUpdateSecretRefused       = "KB_UPDATE_SECRET_REFUSED"
-	CodePlatformLayoutUnsupported = "KB_PLATFORM_LAYOUT_UNSUPPORTED"
+	CodeInstallLayoutUnsupported  = "KB_INSTALL_LAYOUT_UNSUPPORTED"
 	CodeHostSpecInvalid           = "KB_HOST_SPEC_INVALID"
 	CodeHostStateDirUnwritable    = "KB_HOST_STATE_DIR_UNWRITABLE"
 	CodeHostProcessIdentityStale  = "KB_HOST_PROCESS_IDENTITY_STALE"
+)
+
+const (
+	CodeProjectSelectionChanged   = "KB_INSTALL_PROJECT_SELECTION_CHANGED"
+	CodeProjectRegistrationFailed = "KB_INSTALL_PROJECT_REGISTRATION_FAILED"
 )
 
 // NewDiag constructs the shared clikit diagnostic for a kb-create error code.

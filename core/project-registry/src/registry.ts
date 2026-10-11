@@ -255,11 +255,17 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
       }
       const id = deriveProjectId(canonical);
       const apply = addOptions.dryRun ? preview : mutate;
+      let alreadyExisted = false;
       const project = await apply((file) => {
-        if (file.projects.some((p) => p.id === id)) {
-          throw new ProjectRegistryError('KB_PROJECT_ALREADY_REGISTERED', `Project already registered: ${canonical}`, {
-            path: canonical,
-          });
+        const existing = file.projects.find((p) => p.id === id);
+        if (existing) {
+          if (requestedName !== undefined && requestedName !== existing.name) {
+            throw new ProjectRegistryError('KB_PROJECT_ALREADY_REGISTERED', `Project already registered: ${canonical}`, {
+              path: canonical,
+            });
+          }
+          alreadyExisted = true;
+          return existing;
         }
         const taken = new Set(file.projects.map((p) => p.name));
         if (requestedName !== undefined && taken.has(requestedName)) {
@@ -278,7 +284,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
         file.projects.push(record);
         return record;
       });
-      return { project, declaration: await hasDeclaration(canonical) };
+      return { project, declaration: await hasDeclaration(canonical), alreadyExisted };
     },
 
     async list(): Promise<ProjectView[]> {

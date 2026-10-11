@@ -18,7 +18,7 @@ import type {
   AuthConfig,
   GatewayConfig,
 } from "@kb-labs/gateway-contracts";
-import type { ProjectServiceApiDeclaration } from "@kb-labs/plugin-contracts";
+import type { ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
 import type { IContextLogger } from "@kb-labs/core-platform";
 import type { IDocumentDatabase } from "@kb-labs/core-platform/adapters";
 import { HostStore } from "@kb-labs/gateway-core";
@@ -105,7 +105,7 @@ export interface GatewayEmbedOptions {
    */
   projectRouting?: ProjectRouting;
   /** Project route IDs and internal bases derived from service manifests. */
-  projectServices?: readonly ProjectServiceApiDeclaration[];
+  projectServices?: readonly ProjectServiceDeclaration[];
   /** Project-aware connection resolver; local hosts bind it to runtime leases. */
   projectServiceTransport?: Pick<IServiceTransport, "resolveProjectService">;
   /**

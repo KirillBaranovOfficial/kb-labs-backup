@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import platform
 import re
 import shutil
@@ -18,7 +19,7 @@ from urllib.parse import urlsplit
 
 from platform_update_steps import _json_command
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
-                         read_ux_cli_stream)
+                         read_ux_cli_stream, run_command as evidence_run_command)
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
                                active_platform_root, create_fixture_install_container,
                                snapshot_tree, workspace_resource)
@@ -26,7 +27,7 @@ from service_port_assertions import (assert_root_offset, service_ports,
                                      service_transport_ports)
 from service_steps import Journey
 
-CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
+CommandRunner = Callable[..., subprocess.CompletedProcess]
 
 
 class InstallerHostLifecycle:
@@ -696,6 +697,11 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                           "registered project after JSON install").get("project", {})
             if shown.get("path") != str(project_root.resolve()) or not shown.get("id"):
                 raise RuntimeError(f"JSON install did not register the canonical project path: {shown}")
+            repeated = _data(run_platform_cli(platform_root,
+                                              ["project", "add", str(project_root), "--json"], run_command),
+                             "idempotent add of installer-registered project")
+            if repeated.get("alreadyExisted") is not True or repeated.get("project", {}).get("id") != shown.get("id"):
+                raise RuntimeError("duplicate project add did not return the existing registration")
             if (project_root / ".kb").exists():
                 raise RuntimeError("JSON project registration wrote KB Labs files into the project repository")
             installed = True
@@ -720,8 +726,154 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
             request_path.unlink(missing_ok=True)
             cleanup_installer_fixture_root(platform_root, launcher, run_command)
 
+    def reject_changed_project_selection() -> None:
+        selected = platform_root.parent / "s187-changed-project"
+        selected.mkdir(parents=True, exist_ok=True)
+        receipt_path = active_platform_root(platform_root) / ".kb/v2/receipt.json"
+        before = receipt_path.read_bytes()
+        result = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                              "--platform-root", str(platform_root), "--project-root", str(selected)])
+        _, failure = _diagnostic(result, "install with a changed project selection")
+        if (failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
+                or "kb project add" not in failure.get("hint", "")
+                or "kb project show" not in failure.get("hint", "")
+                or receipt_path.read_bytes() != before):
+            raise RuntimeError("changed project selection was not refused before the active receipt changed")
+        apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                    "--platform-root", str(platform_root), "--project-root", str(selected)])
+        _, apply_failure = _diagnostic(apply_result, "apply with a changed project selection")
+        if (apply_failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
+                or "kb project add" not in apply_failure.get("hint", "")
+                or "kb project show" not in apply_failure.get("hint", "")
+                or receipt_path.read_bytes() != before):
+            raise RuntimeError("apply changed the active receipt instead of refusing the selection")
+
+    def accept_existing_project_selections() -> None:
+        root = platform_root.parent / "s187-repeat-install"
+        selected_project = platform_root.parent / "s187-repeat-project"
+        root.mkdir(parents=True, exist_ok=True)
+        selected_project.mkdir(parents=True, exist_ok=True)
+        registry_path = Path.home() / ".kb/projects.json"
+        try:
+            initial = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                   "--platform-root", str(root), "--service-profile", "default",
+                                   "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
+                                   "--project-root", str(selected_project)])
+            _data(initial, "initial install for repeated project selection")
+            before = json.loads(registry_path.read_text()) if registry_path.is_file() else {"projects": []}
+            repeated = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                    "--platform-root", str(root), "--service-profile", "default",
+                                    "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
+                                    "--project-root", str(selected_project)])
+            _data(repeated, "repeat install with the recorded project")
+            omitted = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                   "--platform-root", str(root), "--service-profile", "default",
+                                   "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}'])
+            _data(omitted, "repeat install with no selected project")
+            after = json.loads(registry_path.read_text()) if registry_path.is_file() else {"projects": []}
+            before_paths = [entry.get("path") for entry in before.get("projects", [])]
+            after_paths = [entry.get("path") for entry in after.get("projects", [])]
+            if (initial.returncode != 0 or repeated.returncode != 0 or omitted.returncode != 0
+                    or after_paths.count(str(selected_project.resolve())) != 1
+                    or before_paths.count(str(selected_project.resolve())) != 1):
+                raise RuntimeError("an existing recorded or omitted selection triggered project registration")
+        finally:
+            cleanup_installer_fixture_root(root, launcher, run_command)
+
+    def install_secured_project_without_session() -> None:
+        root = platform_root.parent / "s187-secured"
+        project = platform_root.parent / "s187-secured-project"
+        admin_password = os.environ.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyInstallSecret1!")
+        root.mkdir(parents=True, exist_ok=True)
+        project.mkdir(parents=True, exist_ok=True)
+        try:
+            result = run_command([launcher, "install", "--index", str(stable_index),
+                                  "--platform-root", str(root), "--service-profile", "default",
+                                  "--scenario", "custom", "--scenario-answers",
+                                  '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}',
+                                  "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD",
+                                  "--project-root", str(project)])
+            if result.returncode != 0 or "First administrator credentials (shown once)" not in result.stdout:
+                raise RuntimeError("secured install did not complete or disclose the first administrator once")
+            show_match = re.search(r"kb project show ([^\s`]+)", result.stdout)
+            if not show_match:
+                raise RuntimeError("secured install omitted its project verification command")
+            registry_path = Path.home() / ".kb/projects.json"
+            registry = json.loads(registry_path.read_text())
+            registered = [entry for entry in registry.get("projects", [])
+                          if entry.get("path") == str(project.resolve())]
+            if len(registered) != 1 or (Path.home() / ".kb/session.json").exists():
+                raise RuntimeError("secured install did not register once or left a CLI session")
+            if (project / ".kb").exists():
+                raise RuntimeError("secured project registration wrote into the project repository")
+            active_root = active_platform_root(root)
+            receipt = json.loads((active_root / ".kb/v2/receipt.json").read_text())
+            gateway_url = receipt.get("verification", {}).get("hostHealthUrl", "")
+            gateway_origin = urlsplit(gateway_url)
+            gateway_url = f"{gateway_origin.scheme}://{gateway_origin.netloc}"
+            login = evidence_run_command([str(active_root / ".kb/v2/bin/kb"), "auth", "login",
+                                          "--gateway-url", gateway_url, "--email", "x18-admin@example.test",
+                                          "--password-stdin"], input=admin_password + "\n")
+            if login.returncode != 0 or not (Path.home() / ".kb/session.json").is_file():
+                raise RuntimeError("explicit administrator login did not create a CLI session")
+            shown = _data(run_platform_cli(root, ["project", "show", show_match.group(1), "--json"], run_command),
+                          "printed project verification command after explicit login").get("project", {})
+            if shown.get("path") != str(project.resolve()) or shown.get("id") != registered[0].get("id"):
+                raise RuntimeError("the printed project verification command did not show the registered project")
+            (Path.home() / ".kb/session.json").unlink(missing_ok=True)
+            repeat = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                  "--platform-root", str(root), "--service-profile", "default",
+                                  "--scenario", "custom", "--scenario-answers",
+                                  '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}',
+                                  "--project-root", str(project)])
+            _data(repeat, "repeat secured install with its recorded project")
+            omitted = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                   "--platform-root", str(root), "--service-profile", "default",
+                                   "--scenario", "custom", "--scenario-answers",
+                                   '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}'])
+            _data(omitted, "repeat secured install without a project selection")
+            if repeat.returncode != 0 or omitted.returncode != 0:
+                raise RuntimeError("secured existing project selections unexpectedly required login")
+            receipt_path = active_platform_root(root) / ".kb/v2/receipt.json"
+            before = receipt_path.read_bytes()
+            changed = platform_root.parent / "s187-secured-changed-project"
+            changed.mkdir(parents=True, exist_ok=True)
+            refusal = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                  "--platform-root", str(root), "--project-root", str(changed)])
+            _, failure = _diagnostic(refusal, "secured install with changed project selection")
+            if (failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
+                    or "kb auth login --gateway-url" not in failure.get("hint", "")
+                    or "kb project add" not in failure.get("hint", "")
+                    or "kb project show" not in failure.get("hint", "")
+                    or receipt_path.read_bytes() != before):
+                raise RuntimeError("secured changed project selection was not refused before apply")
+            apply_refusal = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                         "--platform-root", str(root), "--project-root", str(changed)])
+            _, apply_failure = _diagnostic(apply_refusal, "secured apply with changed project selection")
+            if (apply_failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
+                    or "kb auth login --gateway-url" not in apply_failure.get("hint", "")
+                    or "kb project add" not in apply_failure.get("hint", "")
+                    or "kb project show" not in apply_failure.get("hint", "")
+                    or receipt_path.read_bytes() != before):
+                raise RuntimeError("secured apply changed the active receipt instead of refusing the selection")
+        finally:
+            (Path.home() / ".kb/session.json").unlink(missing_ok=True)
+            cleanup_installer_fixture_root(root, launcher, run_command)
+
     journey.step("install a custom scenario in JSON mode and register its project",
                  "platform.install", install_and_show, cases=["S-187.6"])
+    journey.step("make project registration idempotent for the same canonical path",
+                 "platform.install", install_and_show, cases=["S-124.14"])
+    if mode == "local":
+        journey.step("refuse a changed project selection before applying an existing installation",
+                     "platform.install", reject_changed_project_selection, cases=["S-187.11"])
+    if mode == "local":
+        journey.step("accept the recorded or omitted project selection without registering again",
+                     "platform.install", accept_existing_project_selections, cases=["S-187.12"])
+    if mode == "secured":
+        journey.step("register the selected project during secured first install without saving a session",
+                     "platform.install", install_secured_project_without_session,
+                     cases=["S-187.10", "S-187.11", "S-187.12"])
     journey.step("update after the registered project directory was removed",
                  "platform.update", update_after_project_removed, cases=["S-187.9"])
     return journey
@@ -1057,7 +1209,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                    "--platform-root", str(foreign_root),
                                    "--service-profile", "default", "--scenario", "commit"])
             _, error = _diagnostic(refused, "PC-001 foreign target")
-            if (error.get("code") != "KB_PLATFORM_LAYOUT_UNSUPPORTED"
+            if (error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
                     or "kb-create install --platform-root" not in error.get("hint", "")
                     or foreign_file.read_text() != "user data\n"):
                 raise RuntimeError("fresh install did not refuse a foreign non-empty directory unchanged")
@@ -1123,7 +1275,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                    "--input", str(legacy_request)])
             error = decode_ux_error_result(read_ux_cli_result(refused.stdout, refused.returncode))
             after = hashlib.sha256(legacy_receipt.read_bytes()).digest()
-            if (refused.returncode == 0 or error.get("code") != "KB_PLATFORM_LAYOUT_UNSUPPORTED"
+            if (refused.returncode == 0 or error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
                     or "kb-create install --platform-root" not in error.get("hint", "") or before != after):
                 raise RuntimeError("update did not reject the unversioned root with a reinstall command and preserved bytes")
             for operation, arguments in (
@@ -1132,7 +1284,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             ):
                 refused = run_command([launcher, operation, *arguments])
                 error = decode_ux_error_result(read_ux_cli_result(refused.stdout, refused.returncode))
-                if (refused.returncode == 0 or error.get("code") != "KB_PLATFORM_LAYOUT_UNSUPPORTED"
+                if (refused.returncode == 0 or error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
                         or "kb-create install --platform-root" not in error.get("hint", "")
                         or hashlib.sha256(legacy_receipt.read_bytes()).digest() != before):
                     raise RuntimeError(f"{operation} did not refuse the unversioned root unchanged with a reinstall command")

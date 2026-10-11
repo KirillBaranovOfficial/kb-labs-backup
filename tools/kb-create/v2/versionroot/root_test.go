@@ -754,7 +754,7 @@ func assertOnlyInstallRoot(t *testing.T, parent string) {
 func TestUnsupportedOperatingSystemIsCataloguedBeforeStaging(t *testing.T) {
 	err := supportedOS("windows")
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodePlatformLayoutUnsupported {
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeInstallLayoutUnsupported {
 		t.Fatalf("unsupported operating-system error = %#v", err)
 	}
 }

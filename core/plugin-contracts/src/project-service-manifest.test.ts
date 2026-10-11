@@ -21,10 +21,18 @@ describe("collectProjectServiceDeclarations", () => {
       manifest("workflow", "workflow"),
       manifest("mcp-daemon", "mcp", "/"),
     ])).toEqual([
-      { serviceId: "rest", rewritePrefix: "/api/v1" },
-      { serviceId: "workflow", rewritePrefix: "/api/v1" },
-      { serviceId: "mcp", rewritePrefix: "/" },
+      { serviceId: "rest", rewritePrefix: "/api/v1", healthCheck: "/health" },
+      { serviceId: "workflow", rewritePrefix: "/api/v1", healthCheck: "/health" },
+      { serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" },
     ]);
+  });
+
+  it("uses the service readiness URL path as the project's health endpoint", () => {
+    const rest = manifest("rest", "rest");
+    rest.runtime.healthCheck = "http://localhost:5050/ready?probe=1";
+    expect(collectProjectServiceDeclarations([rest])).toEqual([{
+      serviceId: "rest", rewritePrefix: "/api/v1", healthCheck: "/ready",
+    }]);
   });
 
   // case: S-221.1

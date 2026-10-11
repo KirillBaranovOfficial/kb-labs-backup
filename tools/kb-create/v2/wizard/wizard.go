@@ -51,7 +51,7 @@ func Request(source catalog.Catalog, platformRoot string, terminal IO) (contract
 		return contracts.InstallRequest{}, err
 	}
 	if err := layout.ValidateInitialTarget(); err != nil {
-		return contracts.InstallRequest{}, contracts.NewDiag(contracts.CodePlatformLayoutUnsupported,
+		return contracts.InstallRequest{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 			"The chosen install root is not an empty directory or an owned installation container.",
 			"Choose a fresh writable path, then run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"`.", err)
 	}

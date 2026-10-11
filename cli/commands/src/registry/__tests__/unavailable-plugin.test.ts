@@ -190,6 +190,4 @@ describe('failed enabled plugins', () => {
 
 async function copyAnalyticsFixture(fixture: string, pluginDir: string): Promise<void> {
   await fs.cp(fixture, pluginDir, { recursive: true });
-  await fs.mkdir(path.join(pluginDir, 'dist'), { recursive: true });
-  await fs.cp(path.join(pluginDir, 'commands'), path.join(pluginDir, 'dist', 'commands'), { recursive: true });
 }

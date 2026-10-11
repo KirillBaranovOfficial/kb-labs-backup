@@ -62,6 +62,7 @@ func readBootstrapOutcome(ctx context.Context, healthURL string, store secrets.S
 	if err != nil {
 		return fmt.Errorf("Gateway auth readiness request could not be created")
 	}
+	request.Header.Set("X-Request-Id", diag.NewCorrelationID())
 	client := http.Client{Timeout: 3 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {

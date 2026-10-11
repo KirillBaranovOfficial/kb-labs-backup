@@ -308,7 +308,7 @@ func TestRollbackFailureIncludesOperationLogAndDiagnosticDossier(t *testing.T) {
 // case: S-223.3
 func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 	t.Setenv(host.KBHomeEnv, t.TempDir())
-	for _, test := range []struct{ operation, code string }{{"rollback", contracts.CodePlatformLayoutUnsupported}, {"uninstall", contracts.CodePlatformLayoutUnsupported}} {
+	for _, test := range []struct{ operation, code string }{{"rollback", contracts.CodeInstallLayoutUnsupported}, {"uninstall", contracts.CodeInstallLayoutUnsupported}} {
 		payload, code, raw := invoke(t, operationTestSetup{Operation: test.operation, PlatformRoot: t.TempDir(), Yes: true})
 		if code != 2 || errorCode(payload) != test.code {
 			t.Fatalf("%s: %d %s", test.operation, code, raw)

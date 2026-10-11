@@ -158,6 +158,11 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if err != nil {
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The installation lifecycle state path could not be resolved.", "Pass the install root used by this installation, then rerun `kb-create install`.", err)
 	}
+	if !initialInstall {
+		if _, failure := existingProjectSelection(platformRoot, planned.Request.ProjectRoot); failure != nil {
+			return applyCommandResult{}, failure
+		}
+	}
 	release, err := state.AcquireOperation("apply")
 	if err != nil {
 		return applyCommandResult{}, asDiag(err)
@@ -393,7 +398,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 }
 
 func unsupportedPlatformLayout(root string, cause error) *diag.Diag {
-	failure := contracts.NewDiag(contracts.CodePlatformLayoutUnsupported,
+	failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 		"This platform root does not use the supported versioned installation layout.",
 		"Choose a fresh writable path, then run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"`.", cause)
 	failure.Meta = map[string]any{"platformRoot": root, "nextCommand": contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")}

@@ -1,13 +1,17 @@
-import type { ProjectServiceApiDeclaration, ServiceManifest } from "./manifest.js";
+import type { ProjectServiceApiDeclaration, ProjectServiceDeclaration, ServiceManifest } from "./manifest.js";
 
 export class ProjectServiceManifestError extends Error {
   readonly code = "CONFIG_ERROR";
-  readonly details = { path: "serviceManifest.projectApi" };
-  readonly hint = "Correct projectApi.serviceId and projectApi.rewritePrefix in the service manifest, then restart the host.";
+  readonly details: { path: string };
+  readonly hint: string;
 
-  constructor(message: string) {
+  constructor(message: string, path = "serviceManifest.projectApi") {
     super(message);
     this.name = "ProjectServiceManifestError";
+    this.details = { path };
+    this.hint = path === "serviceManifest.runtime.healthCheck"
+      ? "Set runtime.healthCheck to an HTTP URL or absolute health path, then restart the host."
+      : "Correct projectApi.serviceId and projectApi.rewritePrefix in the service manifest, then restart the host.";
   }
 }
 
@@ -43,8 +47,36 @@ export function validateProjectServiceDeclarations(
 /** Validate and collect project URL declarations from service manifests. */
 export function collectProjectServiceDeclarations(
   manifests: readonly ServiceManifest[],
-): ProjectServiceApiDeclaration[] {
-  return validateProjectServiceDeclarations(
+): ProjectServiceDeclaration[] {
+  validateProjectServiceDeclarations(
     manifests.flatMap((manifest) => manifest.projectApi ? [manifest.projectApi] : []),
   );
+  return manifests.flatMap((manifest) => {
+    if (!manifest.projectApi) return [];
+    const declaredHealthCheck = manifest.runtime.healthCheck;
+    let healthCheck: string;
+    if (declaredHealthCheck.startsWith("/")) {
+      healthCheck = declaredHealthCheck.split("?", 1)[0] ?? declaredHealthCheck;
+    } else {
+      try {
+        const healthUrl = new URL(declaredHealthCheck);
+        if (!["http:", "https:"].includes(healthUrl.protocol)) {
+          throw new Error("unsupported health check URL");
+        }
+        healthCheck = healthUrl.pathname;
+      } catch {
+        throw new ProjectServiceManifestError(
+          `Invalid service health check "${declaredHealthCheck}". A project service must declare an absolute health path or HTTP URL.`,
+          "serviceManifest.runtime.healthCheck",
+        );
+      }
+    }
+    if (!healthCheck || healthCheck === "/") {
+      throw new ProjectServiceManifestError(
+        `Invalid service health check "${declaredHealthCheck}". A project service must declare a non-root health path.`,
+        "serviceManifest.runtime.healthCheck",
+      );
+    }
+    return [{ ...manifest.projectApi, healthCheck }];
+  });
 }

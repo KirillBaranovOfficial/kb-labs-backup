@@ -27,26 +27,7 @@ import {
   type ErrorEnvelope,
 } from "@kb-labs/core-platform";
 import type { GatewayConfig } from "@kb-labs/gateway-contracts";
-
-/** Gateway-owned first path segments that the SPA fallback must never answer. */
-const RESERVED_ROOTS: ReadonlySet<string> = new Set([
-  "api",
-  "auth",
-  "health",
-  "ready",
-  "metrics",
-  "observability",
-  "hosts",
-  "clients",
-  "internal",
-  "webhooks",
-  "telemetry",
-  "docs",
-  "docs-all",
-  "openapi.json",
-  "openapi-merged.json",
-  "echo",
-]);
+import { isGatewayPath } from "../routes/path-classification.js";
 
 /** Gateway-native roots that Studio addresses under `/api/<root>/...`. */
 const API_ALIAS_ROOTS: ReadonlySet<string> = new Set([
@@ -222,7 +203,7 @@ export async function createStudioStatic(
       return undefined;
     }
     const pathname = pathnameOf(rawUrl);
-    if (RESERVED_ROOTS.has(firstSegment(pathname)) || matchesPrefix(pathname, upstreamPrefixes)) {
+    if (isGatewayPath(pathname) || matchesPrefix(pathname, upstreamPrefixes)) {
       return undefined;
     }
     return pathname;

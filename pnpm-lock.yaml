@@ -5942,6 +5942,12 @@ importers:
       '@kb-labs/core-retry':
         specifier: workspace:*
         version: link:../../core/retry
+      '@kb-labs/perm-presets':
+        specifier: workspace:*
+        version: link:../../shared/perm-presets
+      '@kb-labs/shared-tool-kit':
+        specifier: workspace:*
+        version: link:../../shared/tool-kit
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -5961,9 +5967,6 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
-      '@kb-labs/perm-presets':
-        specifier: workspace:*
-        version: link:../../shared/perm-presets
       '@kb-labs/platform-client':
         specifier: workspace:*
         version: link:../platform-client
@@ -5985,9 +5988,6 @@ importers:
       '@kb-labs/shared-testing-platform':
         specifier: workspace:*
         version: link:../../shared/testing-platform
-      '@kb-labs/shared-tool-kit':
-        specifier: workspace:*
-        version: link:../../shared/tool-kit
       '@kb-labs/studio-devtools':
         specifier: workspace:*
         version: link:../../studio/devtools

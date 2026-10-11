@@ -118,6 +118,68 @@ export function validatePackedSource(sourcePackage, packedPackage, {
   return failures;
 }
 
+export async function inspectPackedFixture(sourceDirectory) {
+  const temporaryDirectory = mkdtempSync(join(tmpdir(), 'kb-packed-fixture-'));
+  try {
+    let archive = sourceDirectory;
+    if (!sourceDirectory.endsWith('.tgz')) {
+      execFileSync('pnpm', ['pack', '--pack-destination', temporaryDirectory, '--silent'], {
+        cwd: sourceDirectory,
+        stdio: 'ignore',
+      });
+      const archives = readdirSync(temporaryDirectory).filter((filename) => filename.endsWith('.tgz'));
+      if (archives.length !== 1) return { packageName: basename(sourceDirectory), kind: 'unknown', failures: [`pnpm pack produced ${archives.length} fixture tarballs`] };
+      archive = join(temporaryDirectory, archives[0]);
+    }
+    const packageRoot = join(temporaryDirectory, 'package');
+    execFileSync('tar', ['-xzf', archive, '-C', temporaryDirectory]);
+    const packageJson = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
+    let discovery;
+    try {
+      discovery = await import('../../core/discovery/dist/index.js');
+    } catch (error) {
+      return { packageName: basename(packageRoot), kind: 'unknown', failures: [
+        `product discovery could not be loaded from the workspace build: ${error.message}; ` +
+        'build it with: corepack pnpm -r --filter "@kb-labs/core-discovery..." --workspace-concurrency=2 build',
+      ] };
+    }
+    const diagnostics = new discovery.DiagnosticCollector();
+    const loaded = await discovery.loadManifestFile(packageRoot, diagnostics);
+    if (loaded.kind !== 'manifest') {
+      let platform;
+      try {
+        platform = await import('../../core/platform/dist/index.js');
+      } catch (error) {
+        return { packageName: packageJson.name, kind: 'unknown', failures: [
+          `product adapter loader could not be loaded from the workspace build: ${error.message}; ` +
+          'build it with: corepack pnpm -r --filter "@kb-labs/core-platform..." --workspace-concurrency=2 build',
+        ] };
+      }
+      const adapter = await platform.loadAdapterManifest({ packageRoot });
+      if (adapter.kind === 'adapter') {
+        return { packageName: packageJson.name, kind: 'adapter', adapterManifest: adapter.manifest, failures: [] };
+      }
+      const reason = adapter.kind === 'failed'
+        ? `product adapter loader rejected ${packageJson.name}: ${adapter.reason}`
+        : `product loaders could not classify ${packageJson.name} as a plugin or adapter`;
+      if (loaded.kind === 'failed') {
+        return { packageName: packageJson.name, kind: 'invalid', failures: [
+          `product discovery could not load the packed manifest: ${loaded.cause}; ${reason}`,
+        ] };
+      }
+      return { packageName: packageJson.name, kind: 'unknown', failures: [reason] };
+    }
+    const failures = [];
+    for (const command of loaded.loaded.manifest.cli?.commands ?? []) {
+      const handler = discovery.resolveCliHandlerPath(packageRoot, command.handler);
+      if (!existsSync(handler)) failures.push(`${packageJson.name}: product discovery cannot resolve handler ${command.handler} to ${handler}`);
+    }
+    return { packageName: packageJson.name, kind: 'plugin', failures };
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 export function validateTarball(tarball) {
   const packageJson = execFileSync('tar', ['-xOzf', tarball, 'package/package.json'], { encoding: 'utf8' });
   const manifest = JSON.parse(packageJson);
@@ -169,7 +231,7 @@ function packWorkspaceSource(directory) {
   }
 }
 
-function validateTarballAgainstWorkspace(tarball, packages, workspacePackageNames, candidateNames) {
+export async function validateTarballAgainstWorkspace(tarball, packages, workspacePackageNames, candidateNames, fixtureNames) {
   const { manifest, packedPaths, failures } = validateTarball(tarball);
   const source = packages.get(manifest.name);
   if (!source) {
@@ -212,10 +274,14 @@ function validateTarballAgainstWorkspace(tarball, packages, workspacePackageName
     sourceManifest: sourceManifestJson,
     packedManifest: packedManifestJson,
   }));
+  if (fixtureNames.has(manifest.name)) {
+    const fixture = await inspectPackedFixture(tarball);
+    failures.push(...fixture.failures);
+  }
   return { manifest, failures };
 }
 
-function main() {
+async function main() {
   const directory = process.argv[2];
   const workspaceRoot = process.argv[3];
   if (!directory || !workspaceRoot) {
@@ -229,12 +295,15 @@ function main() {
     return 1;
   }
   const packages = workspacePackages(workspaceRoot);
+  const extras = JSON.parse(readFileSync(join(workspaceRoot, 'e2e/scripts/pack-extras.json'), 'utf8'));
+  const fixtureNames = new Set(extras.map((extra) => JSON.parse(readFileSync(
+    join(workspaceRoot, extra.directory, 'package.json'), 'utf8')).name));
   const workspacePackageNames = new Set(packages.keys());
   const candidateNames = new Set(tarballs.map((tarball) => validateTarball(tarball).manifest.name));
   let invalid = 0;
   for (const tarball of tarballs) {
-    const { manifest, failures } = validateTarballAgainstWorkspace(
-      tarball, packages, workspacePackageNames, candidateNames,
+    const { manifest, failures } = await validateTarballAgainstWorkspace(
+      tarball, packages, workspacePackageNames, candidateNames, fixtureNames,
     );
     for (const failure of failures) {
       invalid += 1;
@@ -251,10 +320,8 @@ function main() {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  try {
-    process.exitCode = main();
-  } catch (error) {
+  main().then((code) => { process.exitCode = code; }).catch((error) => {
     process.stderr.write(`ERROR: package output validation failed: ${error.message}\n`);
     process.exitCode = 1;
-  }
+  });
 }

@@ -86,12 +86,24 @@ describe('addProject', () => {
     }
   });
 
-  it('rejects a duplicate registration with the registry catalog code', async () => {
+  // case: S-124.14
+  it('returns the existing project for an idempotent registration', async () => {
     const registry = createProjectRegistry({ root });
     const dir = makeProject('dup', true);
-    await addProject(registry, { path: dir });
+    const first = await addProject(registry, { path: dir });
+    const duplicate = await addProject(registry, { path: dir });
 
-    await expect(addProject(registry, { path: dir })).rejects.toMatchObject({
+    expect(duplicate).toMatchObject({ status: 'added', alreadyExisted: true });
+    expect(duplicate.project).toEqual(first.project);
+    expect(await listProjects(registry)).toHaveLength(1);
+  });
+
+  it('keeps a refusal when a duplicate path requests a different name', async () => {
+    const registry = createProjectRegistry({ root });
+    const dir = makeProject('dup-name', true);
+    await addProject(registry, { path: dir, name: 'original' });
+
+    await expect(addProject(registry, { path: dir, name: 'different' })).rejects.toMatchObject({
       code: 'KB_PROJECT_ALREADY_REGISTERED',
     });
   });
