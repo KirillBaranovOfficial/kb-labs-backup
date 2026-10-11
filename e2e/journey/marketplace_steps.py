@@ -467,7 +467,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         for scope in ("platform", "project"):
             command = ["marketplace", "uninstall", commit_package, "--scope", scope, "--json"]
             _output(cli(command), command)
-        platform_lock = json.loads((platform_root / ".kb" / "marketplace.lock").read_text())
+        platform_lock = json.loads((active_platform_root(platform_root) / ".kb" / "marketplace.lock").read_text())
         project_lock = json.loads(lock_file.read_text())
         if commit_package in platform_lock.get("plugins", {}):
             raise RuntimeError("S-192 requires Commit to be absent from the platform marketplace lock")
@@ -762,7 +762,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     def uninstall_target() -> None:
         with invocation_context(step_id="S-192.4"):
             _output(cli(uninstall_commit), uninstall_commit)
-            platform_lock = json.loads((platform_root / ".kb" / "marketplace.lock").read_text())
+            platform_lock = json.loads((active_platform_root(platform_root) / ".kb" / "marketplace.lock").read_text())
             if commit_package in platform_lock.get("plugins", {}):
                 raise RuntimeError("project uninstall changed the S-192 platform prerequisite: Commit is pinned there")
             if not project_id:
