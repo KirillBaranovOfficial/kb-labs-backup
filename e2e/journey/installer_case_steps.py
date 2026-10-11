@@ -1023,7 +1023,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                    "--platform-root", str(foreign_root),
                                    "--service-profile", "default", "--scenario", "commit"])
             _, error = _diagnostic(refused, "PC-001 foreign target")
-            if (error.get("code") != "KB_PLATFORM_LAYOUT_UNSUPPORTED"
+            if (error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
                     or "kb-create install --platform-root" not in error.get("hint", "")
                     or foreign_file.read_text() != "user data\n"):
                 raise RuntimeError("fresh install did not refuse a foreign non-empty directory unchanged")
@@ -1089,7 +1089,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                    "--input", str(legacy_request)])
             error = decode_ux_error_result(read_ux_cli_result(refused.stdout, refused.returncode))
             after = hashlib.sha256(legacy_receipt.read_bytes()).digest()
-            if (refused.returncode == 0 or error.get("code") != "KB_PLATFORM_LAYOUT_UNSUPPORTED"
+            if (refused.returncode == 0 or error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
                     or "kb-create install --platform-root" not in error.get("hint", "") or before != after):
                 raise RuntimeError("update did not reject the unversioned root with a reinstall command and preserved bytes")
             for operation, arguments in (
@@ -1098,7 +1098,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             ):
                 refused = run_command([launcher, operation, *arguments])
                 error = decode_ux_error_result(read_ux_cli_result(refused.stdout, refused.returncode))
-                if (refused.returncode == 0 or error.get("code") != "KB_PLATFORM_LAYOUT_UNSUPPORTED"
+                if (refused.returncode == 0 or error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
                         or "kb-create install --platform-root" not in error.get("hint", "")
                         or hashlib.sha256(legacy_receipt.read_bytes()).digest() != before):
                     raise RuntimeError(f"{operation} did not refuse the unversioned root unchanged with a reinstall command")

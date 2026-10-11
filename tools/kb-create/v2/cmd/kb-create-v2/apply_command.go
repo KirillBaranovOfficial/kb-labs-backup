@@ -393,7 +393,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 }
 
 func unsupportedPlatformLayout(root string, cause error) *diag.Diag {
-	failure := contracts.NewDiag(contracts.CodePlatformLayoutUnsupported,
+	failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 		"This platform root does not use the supported versioned installation layout.",
 		"Choose a fresh writable path, then run `kb-create install --platform-root NEW_ROOT`.", cause)
 	failure.Meta = map[string]any{"platformRoot": root, "nextCommand": "kb-create install --platform-root NEW_ROOT"}

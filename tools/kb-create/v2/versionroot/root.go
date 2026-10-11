@@ -96,7 +96,7 @@ func supportedOS(goos string) error {
 	if goos == "linux" || goos == "darwin" {
 		return nil
 	}
-	failure := contracts.NewDiag(contracts.CodePlatformLayoutUnsupported,
+	failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 		"Atomic platform switching is supported only on Linux and macOS.",
 		"Run `kb-create install --platform-root NEW_ROOT` on Linux or macOS.", nil)
 	failure.Meta = map[string]any{"goos": goos}

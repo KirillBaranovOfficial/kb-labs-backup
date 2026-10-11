@@ -994,7 +994,7 @@
       "hint": "Run `kb-create doctor --platform-root ROOT` using the platform root from the failed command."
     },
     {
-      "code": "KB_PLATFORM_LAYOUT_UNSUPPORTED",
+      "code": "KB_INSTALL_LAYOUT_UNSUPPORTED",
       "area": "install",
       "stage": "preflight",
       "severity": "error",

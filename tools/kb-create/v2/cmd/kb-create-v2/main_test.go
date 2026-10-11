@@ -309,7 +309,7 @@ func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
 	foreignBefore := snapshotTree(t, root)
 	_, failure, code, _ = executeForTest(t, operationTestSetup{Operation: "plan", Index: index, Direct: directRequest{PlatformRoot: root,
 		PlatformVersion: "2.0.0", Policy: string(contracts.PolicyCompatible)}, JSON: true})
-	if code == 0 || failure == nil || failure.Code != contracts.CodePlatformLayoutUnsupported {
+	if code == 0 || failure == nil || failure.Code != contracts.CodeInstallLayoutUnsupported {
 		t.Fatalf("plan on a non-empty foreign root = code %d, diagnostic %#v", code, failure)
 	}
 	if after := snapshotTree(t, root); !bytes.Equal(foreignBefore, after) {

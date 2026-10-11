@@ -185,7 +185,7 @@ func requireUpdateSecrets(plan contracts.ResolvedInstallPlan, store secrets.Stor
 func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot string, plan contracts.ResolvedInstallPlan, state, launcherState host.State, runtimeOverrides *runtime.Dependencies) (updateCommandResult, *diag.Diag) {
 	layout, err := versionroot.New(installRoot)
 	if err != nil {
-		return updateCommandResult{}, contracts.NewDiag(contracts.CodePlatformLayoutUnsupported, "The install root cannot use the required atomic layout.", "Run `kb-create install --platform-root NEW_ROOT` on Linux or macOS.", err)
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The install root cannot use the required atomic layout.", "Run `kb-create install --platform-root NEW_ROOT` on Linux or macOS.", err)
 	}
 	root := layout.PlatformRoot()
 	if _, err := receipt.Read(root); err != nil {
@@ -231,7 +231,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	defer transcript.Close()
 	activeRoot, err := layout.Active()
 	if err != nil {
-		return updateCommandResult{}, contracts.NewDiag(contracts.CodePlatformLayoutUnsupported, "The active version root could not be resolved for read-only update inputs.", "Run `kb-create doctor --platform-root "+installRoot+"` before retrying the update.", err)
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The active version root could not be resolved for read-only update inputs.", "Run `kb-create doctor --platform-root "+installRoot+"` before retrying the update.", err)
 	}
 	store := secrets.Store{PlatformRoot: activeRoot, ReadOnly: true}
 	release, err := state.AcquireOperation("update")
