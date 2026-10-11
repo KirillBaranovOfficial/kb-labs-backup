@@ -22,6 +22,7 @@ import type {
   SignalOpts,
 } from '@kb-labs/sdk';
 import { acquireHandle, type SharedHandle } from './shared-handle.js';
+import type { PlatformDataContext } from '@kb-labs/sdk/adapters';
 
 const TABLE = '_kb_kv';
 
@@ -38,7 +39,7 @@ const decode = <T>(raw: string | null): T | null => (raw === null ? null : JSON.
 
 export interface SqliteKVConfig {
   filename: string;
-  workspace?: { cwd: string };
+  platformData?: PlatformDataContext;
   readonly?: boolean;
   wal?: boolean;
   /** TTL sweeper interval in ms (default 30_000). Set to 0 to disable. */
@@ -54,7 +55,6 @@ export class SqliteKVStore implements IKVStore {
   constructor(config: SqliteKVConfig) {
     this.handle = acquireHandle({
       filename: config.filename,
-      cwd: config.workspace?.cwd,
       readonly: config.readonly,
       wal: config.wal,
     });

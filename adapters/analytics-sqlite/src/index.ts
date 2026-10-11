@@ -11,7 +11,7 @@
  */
 
 import Database from 'better-sqlite3';
-import { join, isAbsolute, dirname } from 'node:path';
+import { dirname } from 'node:path';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { mkdirSync } from 'node:fs';
 import { AdapterConfigError, AdapterUnavailableError } from '@kb-labs/sdk';
@@ -28,6 +28,7 @@ import type {
   BufferStatus,
   DlqStatus,
   DailyStats,
+  PlatformDataContext,
 } from '@kb-labs/sdk/adapters';
 
 
@@ -112,12 +113,12 @@ function getDefaultMetrics(typeFilter?: string | string[]): string[] {
 export interface SQLiteAnalyticsOptions {
   /** Path to the SQLite database file. Default: `<KB_HOME>/state/<projectId>/analytics/analytics.sqlite` */
   dbPath?: string;
-  /** Alias for dbPath — accepted for config compatibility with kb.config.json */
-  filename?: string;
   /** Analytics context for event enrichment */
   context?: AnalyticsContext;
   /** Workspace context injected by core-runtime (provides cwd for relative path resolution) */
   workspace?: { cwd: string };
+  /** Runtime context for platform-owned configured output paths. */
+  platformData?: PlatformDataContext;
   /** Analytics context injected by core-runtime (for auto-enrichment) */
   analytics?: AnalyticsContext;
   /** Delete events older than this many days on startup and at least daily. Default: 90. */
@@ -143,11 +144,11 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
   constructor(options: SQLiteAnalyticsOptions = {}) {
     this.logger = options.logger;
     const cwd = options.workspace?.cwd ?? process.cwd();
-    const rawPath = options.dbPath ?? options.filename;
+    const rawPath = options.dbPath;
     // No explicit path: per-project runtime state lives outside the repository (ADR-0044).
     this.dbPath = rawPath === undefined
       ? resolveRuntimeStatePath(cwd, ['analytics', 'analytics.sqlite'])
-      : isAbsolute(rawPath) ? rawPath : join(cwd, rawPath);
+      : rawPath;
 
     this.context = options.context ?? options.analytics ?? {
       source: { product: 'unknown', version: '0.0.0' },

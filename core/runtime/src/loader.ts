@@ -22,6 +22,7 @@ import { RunExecutor } from './run-executor.js';
 import { RunOrchestrator } from './run-orchestrator.js';
 import { createDefaultExecutionPolicyLLM } from './wrappers/default-execution-policy-llm.js';
 import { resolveInstalledAdapterDefaults } from './default-adapters.js';
+import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
 
 import { ResourceManager } from './core/resource-manager.js';
 import { JobScheduler } from './core/job-scheduler.js';
@@ -30,7 +31,7 @@ import {
   getAdapterStatusRegistry,
   resetAdapterStatus,
 } from './adapter-status.js';
-import { ADAPTER_DEFAULTS, AdapterUnavailableError, type AdapterSlot, type HostServiceEnvironment } from '@kb-labs/core-platform';
+import { ADAPTER_DEFAULTS, AdapterConfigError, AdapterUnavailableError, type AdapterSlot, type HostServiceEnvironment } from '@kb-labs/core-platform';
 import { inmemoryFactories } from '@kb-labs/core-platform/inmemory';
 import { noopFactories } from '@kb-labs/core-platform/noop';
 import { WorkflowEngine } from './core/workflow-engine.js';
@@ -686,6 +687,7 @@ export async function initPlatform(
       workspace: { cwd },
       analytics: analyticsContext,
     };
+    let platformDataContext: { dataRoot: string } | undefined;
 
     // Platform services are available to generic adapter factories through
     // their manifest declarations, independent of adapter slot names.
@@ -877,6 +879,29 @@ export async function initPlatform(
         const requestedContexts = module.manifest.contexts ?? [];
         const contexts: Record<string, unknown> = {};
 
+        const pathOptions = Object.entries(module.manifest.configSchema ?? {})
+          .filter(([, schema]) => schema.pathBase === 'platformData');
+        if (requestedContexts.includes('platformData') || pathOptions.length > 0) {
+          platformDataContext ??= {
+            dataRoot: await resolvePlatformDataRoot(adapterRoot, workspaceDevelopment),
+          };
+          runtimeContexts.platformData = platformDataContext;
+        }
+
+        const normalizedOptions: Record<string, unknown> = {
+          ...(baseOptions as Record<string, unknown>),
+        };
+        for (const [option, schema] of pathOptions) {
+          if (Object.hasOwn(normalizedOptions, option)) {
+            normalizedOptions[option] = resolvePlatformDataPath(
+              normalizedOptions[option],
+              platformDataContext!,
+              `platform.adapterOptions.${name}.${option}`,
+              schema.specialValues,
+            );
+          }
+        }
+
         for (const ctxName of requestedContexts) {
           if (runtimeContexts[ctxName]) {
             contexts[ctxName] = runtimeContexts[ctxName];
@@ -885,8 +910,9 @@ export async function initPlatform(
 
         adapterConfigs[name] = {
           module: primaryAdapter,
-          // Merge contexts with user options (user options can override)
-          config: { ...contexts, ...baseOptions, ...hostServiceOptions },
+          // Contexts are runtime-owned. In particular, platformData cannot be
+          // replaced by config supplied by a plugin or platform file.
+          config: { ...normalizedOptions, ...contexts, ...hostServiceOptions },
         };
 
         // Collect middleware declarations from manifest
@@ -904,6 +930,7 @@ export async function initPlatform(
           });
         }
       } catch (error) {
+        if (error instanceof AdapterConfigError) throw error;
         if (OPTIONAL_ADAPTER_SLOTS.has(name)) {
           platform.logger.warn('Optional platform adapter unavailable; capability disabled', {
             adapterSlot: name,

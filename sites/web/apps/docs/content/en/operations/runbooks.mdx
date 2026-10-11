@@ -242,9 +242,7 @@ Single-host deployments often use SQLite for analytics, logs, databases, and the
 kb-dev stop
 
 tar czf kb-labs-backup-$(date +%Y%m%d).tar.gz \
-  .kb/database/ \
-  .kb/analytics/ \
-  .kb/storage/ \
+  .kb/data/ \
   .kb/mind/
 
 kb-dev start
@@ -253,7 +251,7 @@ kb-dev start
 Or use SQLite's `.backup` command for online backups without stopping services:
 
 ```bash
-sqlite3 .kb/database/kb.sqlite ".backup 'kb.sqlite.backup'"
+sqlite3 .kb/data/database/kb.sqlite ".backup 'kb.sqlite.backup'"
 ```
 
 SQLite `.backup` is consistent under concurrent writes.
@@ -262,8 +260,8 @@ SQLite `.backup` is consistent under concurrent writes.
 
 ```bash
 kb-dev stop
-mv .kb/database/kb.sqlite .kb/database/kb.sqlite.old
-cp /path/to/backup.sqlite .kb/database/kb.sqlite
+mv .kb/data/database/kb.sqlite .kb/data/database/kb.sqlite.old
+cp /path/to/backup.sqlite .kb/data/database/kb.sqlite
 kb-dev start
 ```
 

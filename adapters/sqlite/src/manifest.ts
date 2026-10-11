@@ -27,7 +27,7 @@ export const manifest: AdapterManifest = {
   implements: ['IDocumentDatabase', 'IKVStore'],
   networkRequired: false,
   defaultFor: ['documentDatabase', 'kvStore'],
-  contexts: ['workspace'],
+  contexts: ['workspace', 'platformData'],
   capabilities: {
     transactions: true,
     batch: true,
@@ -41,6 +41,8 @@ export const manifest: AdapterManifest = {
     filename: {
       type: 'string',
       description: 'Database file path (use :memory: for in-memory database)',
+      pathBase: 'platformData',
+      specialValues: [':memory:'],
     },
     readonly: {
       type: 'boolean',

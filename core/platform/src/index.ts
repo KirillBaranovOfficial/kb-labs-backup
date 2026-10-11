@@ -52,6 +52,7 @@ export type {
 // ADAPTER INTERFACES (replaceable implementations via kb.config.json)
 // ═══════════════════════════════════════════════════════════════════════════
 
+export type { PlatformDataContext } from "./adapters/platform-data.js";
 export type {
   AdapterManifest,
   AdapterType,

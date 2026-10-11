@@ -9,26 +9,28 @@
  *   node scripts/migrate-from-jsonl.mjs [--source <dir>] [--db <path>] [--dry-run]
  *
  * Defaults:
- *   --source  .kb/analytics/buffer
- *   --db      .kb/analytics/analytics.duckdb
+ *   --source  analytics/buffer
+ *   --db      analytics/analytics.duckdb
  *
  * Example:
  *   node scripts/migrate-from-jsonl.mjs \
- *     --source .kb/analytics/buffer \
- *     --db .kb/analytics/analytics.duckdb
+ *     --source analytics/buffer \
+ *     --db analytics/analytics.duckdb
  */
 
 import { DuckDBInstance } from '@duckdb/node-api';
 import { existsSync, readdirSync, mkdirSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { parseArgs } from 'node:util';
+import { resolvePlatformDataRoot } from '@kb-labs/sdk/adapters';
 
 // ─── Parse CLI args ───────────────────────────────────────────────────────────
 
 const { values: args } = parseArgs({
   options: {
-    source: { type: 'string', default: '.kb/analytics/buffer' },
-    db: { type: 'string', default: '.kb/analytics/analytics.duckdb' },
+    'platform-root': { type: 'string' },
+    source: { type: 'string', default: 'analytics/buffer' },
+    db: { type: 'string', default: 'analytics/analytics.duckdb' },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', default: false },
   },
@@ -40,19 +42,26 @@ if (args.help) {
 migrate-from-jsonl.mjs — Import JSONL events into DuckDB
 
 Usage:
-  node scripts/migrate-from-jsonl.mjs [options]
+  node scripts/migrate-from-jsonl.mjs --platform-root <path> [options]
 
 Options:
-  --source <dir>    Source directory with .jsonl files (default: .kb/analytics/buffer)
-  --db <path>       DuckDB database file path (default: .kb/analytics/analytics.duckdb)
+  --platform-root <path> Platform root that owns the data root (or set KB_PLATFORM_ROOT)
+  --source <dir>    Source directory with .jsonl files (default: analytics/buffer)
+  --db <path>       DuckDB database file path (default: analytics/analytics.duckdb)
   --dry-run         Show what would be migrated without writing
   --help            Show this help
 `);
   process.exit(0);
 }
 
-const sourceDir = resolve(process.cwd(), args.source);
-const dbPath = resolve(process.cwd(), args.db);
+const platformRoot = args['platform-root'] ?? process.env.KB_PLATFORM_ROOT;
+if (!platformRoot) {
+  console.error('Platform root is required. Pass --platform-root <path> or set KB_PLATFORM_ROOT, then rerun the migration.');
+  process.exit(1);
+}
+const dataRoot = await resolvePlatformDataRoot(resolve(platformRoot));
+const sourceDir = resolve(dataRoot, args.source);
+const dbPath = resolve(dataRoot, args.db);
 const isDryRun = args['dry-run'];
 
 // ─── Validate source directory ────────────────────────────────────────────────

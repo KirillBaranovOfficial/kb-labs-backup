@@ -41,6 +41,7 @@ import type {
   BulkOp,
   BulkResult,
 } from '@kb-labs/sdk';
+import type { PlatformDataContext } from '@kb-labs/sdk/adapters';
 
 interface CollectionMeta {
   /** Path inside the doc whose value (plus ttlMs) becomes `expires_at`. */
@@ -302,8 +303,8 @@ const liveParams = (ttlActive: boolean): unknown[] => (ttlActive ? [now()] : [])
 export interface SqliteDocumentConfig {
   /** File path. `:memory:` for ephemeral in-process databases (testing). */
   filename: string;
-  /** Workspace context — injected by core-runtime so relative `filename` resolves. */
-  workspace?: { cwd: string };
+  /** Runtime's platform data context resolves manifest-declared paths. */
+  platformData?: PlatformDataContext;
   /** Open in readonly mode (default false). */
   readonly?: boolean;
   /** Enable WAL journaling (default true). */
@@ -327,7 +328,6 @@ export class SqliteDocumentDatabase implements IDocumentDatabase {
   constructor(config: SqliteDocumentConfig) {
     this.handle = acquireHandle({
       filename: config.filename,
-      cwd: config.workspace?.cwd,
       readonly: config.readonly,
       wal: config.wal,
     });

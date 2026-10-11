@@ -234,7 +234,7 @@ if (parsed.schema === 'kb.v1') {
 
 4. ⏳ **Testing**:
    - Generate real events via CLI commands
-   - Verify V1 format in `.kb/analytics/buffer/events-*.jsonl`
+   - Verify V1 format in `<KB_HOME>/state/<projectId>/analytics/buffer/events-*.jsonl`
    - Verify Studio UI shows Actor, Source, RunId columns
    - Test CI mode with `CI=true` environment variable
 

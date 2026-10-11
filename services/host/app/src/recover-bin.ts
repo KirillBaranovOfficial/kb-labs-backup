@@ -10,6 +10,7 @@ import {
   initPlatform,
   loadPlatformConfig,
   platform,
+  isWorkspaceDevelopmentMode,
 } from "@kb-labs/core-runtime";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import {
@@ -72,7 +73,7 @@ async function main(): Promise<number> {
     loaded.platformRoot,
     undefined,
     undefined,
-    { assemblyHook: makeAssemblyHook() },
+    { assemblyHook: makeAssemblyHook(), workspaceDevelopment: isWorkspaceDevelopmentMode(loaded) },
   );
   try {
     const config = loaded.effectiveConfig ?? loaded.rawConfig;

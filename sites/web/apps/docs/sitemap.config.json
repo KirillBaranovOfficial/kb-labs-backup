@@ -24,8 +24,8 @@
       "pages": [
         { "slug": "index",       "type": "manual", "static": true },
         { "slug": "quick-start", "type": "hybrid", "owners": ["tools/kb-create/**", "cli/**", "plugins/marketplace/**"] },
-        { "slug": "installation","type": "hybrid", "owners": ["tools/kb-create/**", "cli/**"] },
-        { "slug": "privacy",     "type": "manual", "static": true }
+        { "slug": "installation","type": "hybrid", "owners": ["tools/kb-create/**", "cli/**", "core/runtime/src/default-adapters.ts"] },
+        { "slug": "privacy",     "type": "manual", "owners": ["adapters/analytics-file/src/**"] }
       ]
     },
 
@@ -38,7 +38,7 @@
       "pages": [
         { "slug": "concepts/overview",        "type": "manual", "owners": ["core/**", "services/host/app/**", "services/project-runtime/app/**", "services/mcp/app/**"] },
         { "slug": "concepts/plugin-system",   "type": "manual", "owners": ["core/plugin-runtime/**", "core/plugin-contracts/**"] },
-        { "slug": "concepts/adapter-system",  "type": "manual", "owners": ["core/platform/**", "adapters/**"] },
+        { "slug": "concepts/adapter-system",  "type": "manual", "owners": ["core/platform/**", "core/runtime/src/loader.ts", "core/runtime/src/platform-data-root.ts", "core/project-registry/src/state-dir.ts", "adapters/**"] },
         { "slug": "concepts/execution-model", "type": "manual", "owners": ["core/plugin-execution/**", "core/runtime/src/config.ts", "core/runtime/src/config-schemas.ts", "core/runtime/src/loader.ts", "core/sandbox/**"] },
         { "slug": "concepts/workflow-engine", "type": "manual", "owners": ["plugins/workflow/engine/**", "plugins/workflow/contracts/**", "plugins/workflow/daemon/src/cron-discovery.ts", "plugins/workflow/entry/src/manifest.ts"] },
         { "slug": "concepts/permissions",     "type": "manual", "owners": ["core/policy/**", "shared/perm-presets/**"] },
@@ -146,7 +146,7 @@
       "stalenessRisk": "high",
       "note": "Interfaces are auto-generated from TypeScript. Guides are manual. Individual adapters are marketplace entities.",
       "pages": [
-        { "slug": "adapters/index",          "type": "manual", "owners": ["core/platform/**"] },
+        { "slug": "adapters/index",          "type": "manual", "owners": ["core/platform/**", "core/runtime/src/loader.ts", "adapters/**"] },
         { "slug": "adapters/custom-adapter", "type": "manual", "owners": ["sdk/**", "core/platform/**"] },
         { "slug": "adapters/built-in",       "type": "hybrid", "owners": ["adapters/**"] }
       ],
@@ -181,7 +181,7 @@
       "label": "Configuration",
       "stalenessRisk": "medium",
       "pages": [
-        { "slug": "configuration/kb-config",             "type": "hybrid", "owners": ["core/config/**", "core/runtime/src/config.ts", "core/runtime/src/config-schemas.ts", "core/runtime/src/adapters/config-adapter.ts"] },
+        { "slug": "configuration/kb-config",             "type": "hybrid", "owners": ["core/config/**", "core/runtime/src/config.ts", "core/runtime/src/config-schemas.ts", "core/runtime/src/adapters/config-adapter.ts", "core/runtime/src/loader.ts", "core/runtime/src/platform-data-root.ts", "tools/kb-create/v2/contracts/platform-layout.json", "adapters/**"] },
         { "slug": "configuration/dev-config",            "type": "hybrid", "owners": ["infra/devkit/**", "tools/kb-devkit/**", "shared/daemon/src/daemon.ts", "services/host/app/src/host.ts"] },
         { "slug": "configuration/profiles",              "type": "manual", "owners": ["core/config/**", "core/runtime/src/adapters/config-adapter.ts"] },
         { "slug": "configuration/environment-variables", "type": "manual", "owners": ["core/config/**", "core/platform/src/host-service-address.ts", "core/platform/src/service-listen-address.ts", "shared/daemon/src/daemon.ts", "cli/bin/src/runtime/plugin-executor.ts", "services/host/app/src/host.ts", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "plugins/marketplace-registry/app/src/bootstrap.ts"] }
@@ -235,7 +235,7 @@
         { "slug": "services/kb-devkit",       "type": "manual", "owners": ["infra/devkit/**", "tools/kb-devkit/**"] },
         { "slug": "services/kb-deploy",       "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "services/kb-monitor",      "type": "manual", "owners": ["tools/kb-monitor/**"] },
-        { "slug": "services/marketplace",     "type": "manual", "owners": ["plugins/marketplace/**", "core/extension-store/**", "core/discovery/src/marketplace-lock.ts", "cli/commands/src/commands/system/adapter/**"] },
+        { "slug": "services/marketplace",     "type": "manual", "owners": ["plugins/marketplace/**", "core/extension-store/**", "core/discovery/src/marketplace-lock.ts", "cli/commands/src/commands/system/adapter/**", "core/runtime/src/platform-data-root.ts", "adapters/fs/src/manifest.ts"] },
         { "slug": "services/rest-api",        "type": "hybrid", "owners": ["services/rest-api/app/src/**"] },
         { "slug": "services/studio",          "type": "manual", "owners": ["studio/app/**"] },
         { "slug": "services/host-agent",      "type": "manual", "owners": ["plugins/host-agent/**", "adapters/workspace-agent/**"] },

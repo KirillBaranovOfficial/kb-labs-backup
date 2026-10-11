@@ -3,6 +3,7 @@ import {
   mapErrorEnvelopeToExitCode,
   toErrorEnvelope,
 } from '@kb-labs/core-platform';
+import { platform } from '@kb-labs/core-runtime';
 import {
   CliError,
   mapCliErrorToExitCode,
@@ -38,6 +39,12 @@ export function handleExecutionError(error: unknown, presenter: Presenter): numb
   }
 
   const envelope = toErrorEnvelope(error);
+  if (envelope.code === 'KB_RUNTIME_UNEXPECTED') {
+    const cause = error instanceof Error ? error : new Error(String(error));
+    platform.logger.error('CLI command failed unexpectedly', cause, {
+      correlationId: envelope.correlationId,
+    });
+  }
   if (presenter.isJSON && typeof presenter.json === 'function') {
     presenter.json({ ok: false, error: envelope });
   } else if (typeof presenter.error === 'function') {

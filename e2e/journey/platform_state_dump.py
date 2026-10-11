@@ -127,6 +127,19 @@ def _write_secret_fingerprints(source: Path, target: Path) -> int:
         return 0
 
 
+def _registered_project_state(project_root: Path, env: Mapping[str, str] | None) -> Path | None:
+    command_env = dict(env or os.environ)
+    home = Path(command_env.get("KB_HOME", str(Path(command_env.get("HOME", str(Path.home()))) / ".kb")))
+    try:
+        projects = json.loads((home / "projects.json").read_text()).get("projects", [])
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
+    project = next((row for row in projects if isinstance(row, dict)
+                    and isinstance(row.get("id"), str)
+                    and Path(row.get("path", "")).resolve() == project_root.resolve()), None)
+    return home / "state" / project["id"] if project else None
+
+
 def _write_auth_state_probe(platform_root: Path, target: Path) -> int:
     """Write aggregate session health and database identity without credential material."""
     active = active_platform_root(platform_root)
@@ -136,7 +149,7 @@ def _write_auth_state_probe(platform_root: Path, target: Path) -> int:
         filename = config["platform"]["adapterOptions"]["documentDatabase"]["filename"]
         database = Path(filename)
         if not database.is_absolute():
-                database = active / database
+            database = active / ".kb" / "data" / database
         stat = database.stat()
         connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=1)
         try:
@@ -181,7 +194,7 @@ def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platfo
     destination = Path(reports_dir) / f"service-logs-{mode}-{run_id}"
     destination.mkdir(parents=True, exist_ok=True)
     used = 0
-    platform_database = active_platform_root(Path(platform_root)) / ".kb" / "database" / "kb.sqlite"
+    platform_database = active_platform_root(Path(platform_root)) / ".kb" / "data" / "database" / "kb.sqlite"
     databases = {*home.glob("state/*/database/kb.sqlite"), platform_database}
     for database in sorted(databases):
         try:
@@ -355,17 +368,18 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             pass
         for evidence_root in evidence_roots:
             evidence_prefix = Path("workflow-evidence") / evidence_root.name
-            workflow_records = evidence_root / ".kb" / "data" / "workflows"
+            project_state = _registered_project_state(evidence_root, env)
+            workflow_records = project_state / "storage" / "workflows" if project_state else None
             try:
                 records = sorted(workflow_records.glob("*.json"),
                                  key=lambda path: path.stat().st_mtime, reverse=True)
-            except OSError:
+            except (OSError, AttributeError):
                 records = []
             for source in records[:20]:
-                add(source, evidence_prefix / ".kb" / "data" / "workflows" / source.name)
+                add(source, evidence_prefix / "project-state" / "storage" / "workflows" / source.name)
 
             for directory in ("logs", "diagnostics"):
-                log_root = evidence_root / ".kb" / directory
+                log_root = project_state / directory if project_state else None
                 try:
                     logs = sorted(
                         (path for path in log_root.glob("*")
@@ -373,10 +387,10 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                         key=lambda path: path.stat().st_mtime,
                         reverse=True,
                     )
-                except OSError:
+                except (OSError, AttributeError):
                     logs = []
                 for source in logs[:3]:
-                    add(source, evidence_prefix / ".kb" / directory / source.name, tail=True)
+                    add(source, evidence_prefix / "project-state" / directory / source.name, tail=True)
 
         packages = []
         scope = active / "node_modules" / "@kb-labs"

@@ -21,6 +21,7 @@ import {
   type ILogReader,
 } from "@kb-labs/core-platform";
 import { getAdapterStatus, type AdapterSlotStatus } from "./adapter-status.js";
+import { isWorkspaceDevelopmentMode } from "./platform-mode.js";
 import {
   platform,
   type PlatformContainer,
@@ -247,7 +248,7 @@ async function launch(
       adapterProjectRoot,
       uiProvider,
       adapterProjectRoot === platformRoot ? undefined : platformRoot,
-      { assemblyHook, hostServiceEnvironment },
+      { assemblyHook, hostServiceEnvironment, workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult) },
     );
   } catch (error) {
     if (failurePolicy === "strict") {
@@ -262,7 +263,7 @@ async function launch(
       adapterProjectRoot,
       uiProvider,
       undefined,
-      { assemblyHook, hostServiceEnvironment },
+      { assemblyHook, hostServiceEnvironment, workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult) },
     );
   }
 

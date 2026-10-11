@@ -30,7 +30,9 @@ export {
   type ProjectRegistryOptions,
 } from './registry.js';
 export {
+  resolvePlatformDataPath,
   resolveProjectStateDir,
   resolveRuntimeStatePath,
   type ProjectStateOptions,
 } from './state-dir.js';
+export { resolvePlatformDataRoot } from './platform-data-root.js';

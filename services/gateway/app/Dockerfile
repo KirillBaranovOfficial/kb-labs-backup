@@ -15,7 +15,7 @@ COPY --chown=kb:nodejs .kb/deploy/gateway-app/dist ./dist
 # refuses to boot without both files.
 COPY --chown=kb:nodejs services/gateway/app/docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN mkdir -p .kb/database .kb/storage .kb/analytics && chown -R kb:nodejs .kb && \
+RUN mkdir -p .kb/data && chown -R kb:nodejs .kb && \
     chmod +x /app/docker-entrypoint.sh
 
 USER kb

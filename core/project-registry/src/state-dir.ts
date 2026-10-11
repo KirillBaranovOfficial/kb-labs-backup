@@ -1,5 +1,6 @@
 import { realpathSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
+import { AdapterConfigError, type PlatformDataContext } from '@kb-labs/core-platform';
 import { deriveProjectId } from './project-id.js';
 import { projectStateDir, resolveKbHome } from './registry.js';
 
@@ -60,4 +61,44 @@ export function resolveRuntimeStatePath(
   options: ProjectStateOptions = {},
 ): string {
   return join(resolveProjectStateDir(projectRoot, options), ...segments);
+}
+
+/** Resolve one manifest-declared platform-data option without consulting cwd. */
+export function resolvePlatformDataPath(
+  value: unknown,
+  context: PlatformDataContext,
+  optionPath: string,
+  specialValues: readonly string[] = [],
+): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new AdapterConfigError(
+      optionPath,
+      'expected a non-empty path string',
+      `Run kb config set --scope platform ${optionPath} '<path-inside-platform-data>' with a path inside ${context.dataRoot}.`,
+    );
+  }
+  if (specialValues.includes(value) || isAbsolute(value)) return value;
+
+  const normalizedInput = value.replaceAll('\\', sep);
+  const normalizedRelative = normalize(normalizedInput);
+  const candidate = resolve(context.dataRoot, normalizedInput);
+  const candidateRelative = relative(context.dataRoot, candidate);
+  const escapesRoot = candidateRelative === '..' || candidateRelative.startsWith(`..${sep}`) || isAbsolute(candidateRelative);
+  const hasRepositoryPrefix = normalizedRelative === '.kb' || normalizedRelative.startsWith(`.kb${sep}`);
+
+  if (hasRepositoryPrefix || escapesRoot) {
+    const correction = hasRepositoryPrefix
+      ? normalizedRelative.replace(/^\.kb(?:[\\/]|$)/, '').replaceAll('\\', sep)
+      : basename(normalizedInput);
+    const corrected = correction && correction !== '.' && correction !== '..'
+      ? correction
+      : 'data';
+    const reason = hasRepositoryPrefix
+      ? 'relative paths cannot begin with .kb/'
+      : 'relative paths cannot escape the platform data root';
+    const command = `kb config set --scope platform ${optionPath} '${corrected.replaceAll("'", "'\\''")}'`;
+    throw new AdapterConfigError(optionPath, reason, `Run \`${command}\` to set a path inside ${context.dataRoot}.`);
+  }
+
+  return candidate;
 }

@@ -1,8 +1,8 @@
 /** Show platform adapters and their built-in fallback. */
 
-import path from 'node:path';
 import { ADAPTER_DEFAULTS, toErrorEnvelope, ErrorEnvelopeError, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { ADAPTER_CONFIG_KEYS, discoverAdapters, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
+import { ADAPTER_CONFIG_KEYS, discoverAdapters, isWorkspaceDevelopmentMode, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
+import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
@@ -74,6 +74,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
     const effectiveAdapterOptions = resolvedDefaults.adapterOptions as Record<string, unknown>;
     const discovered = await discoverAdapters(loaded.platformRoot);
+    const platformDataRoot = await resolvePlatformDataRoot(loaded.platformRoot, isWorkspaceDevelopmentMode(loaded));
     const startHostCommand = `kb-create start --platform-root ${JSON.stringify(loaded.platformRoot)}`;
     let hostStatuses = new Map<string, HostAdapterStatus>();
     let runtimeStatus: 'known' | 'unknown' = 'unknown';
@@ -122,7 +123,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         .map(([, field]) => field.env as string);
       const baseDir = slot === 'storage' && option && typeof option === 'object' &&
         'baseDir' in option && typeof option.baseDir === 'string'
-        ? path.resolve(loaded.projectRoot, option.baseDir)
+        ? resolvePlatformDataPath(option.baseDir, { dataRoot: platformDataRoot }, `platform.adapterOptions.${configKey}.baseDir`)
         : undefined;
       const localLogsAvailable = slot === 'logs' &&
         Boolean(effectiveAdapters.logRingBuffer || effectiveAdapters.logPersistence);

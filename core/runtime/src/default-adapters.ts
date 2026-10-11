@@ -79,7 +79,7 @@ export function resolveDiscoveredAdapterDefaults(
       case 'documentDatabase':
       case 'kvStore': return { filename: resolveRuntimeStatePath(projectRoot, ['database', 'kb.sqlite']) };
       case 'analytics': return {
-        filename: resolveRuntimeStatePath(projectRoot, ['analytics', 'analytics.sqlite']),
+        dbPath: resolveRuntimeStatePath(projectRoot, ['analytics', 'analytics.sqlite']),
         retentionDays: 90,
       };
       case 'logRingBuffer': return { maxSize: 100 };

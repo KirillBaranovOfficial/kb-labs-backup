@@ -1,7 +1,7 @@
 ---
 title: "Installation"
 description: "Install KB Labs locally or apply a release index from CI."
-updatedAt: "2026-10-09"
+updatedAt: "2026-10-11"
 order: 2
 ---
 
@@ -42,7 +42,7 @@ example `cd ~/any-project && kb commit`.
 
 The default install includes a built-in local adapter pack and does not ask you
 to choose adapter providers. In a project, `kb adapter list --json` shows
-`storage` as `@kb-labs/adapters-fs` with its effective `.kb/data` directory;
+`storage` as `@kb-labs/adapters-fs` with its effective `<KB_HOME>/state/<projectId>/storage` directory;
 cache uses the platform-local StateBroker; and logging, analytics, and local
 databases use Pino, a ring buffer, and SQLite. Event delivery, plugin invoke,
 artifacts, config, and notifications use in-process implementations. No

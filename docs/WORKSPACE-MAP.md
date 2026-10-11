@@ -239,7 +239,7 @@ _No packages found._
 | Package | Description |
 |---------|-------------|
 | `@kb-labs/adapters-analytics-duckdb` | DuckDB analytics adapter for KB Labs platform (SQL-native time-series analytics) |
-| `@kb-labs/adapters-analytics-file` | File-based analytics adapter for KB Labs platform (writes JSONL to .kb/analytics/buffer) |
+| `@kb-labs/adapters-analytics-file` | File-based analytics adapter for KB Labs platform (writes JSONL to <KB_HOME>/state/<projectId>/analytics/buffer) |
 | `@kb-labs/adapters-analytics-sqlite` | SQLite analytics adapter for KB Labs platform — concurrent writes, SQL analytics, no lock issues |
 | `@kb-labs/adapters-environment-docker` | Docker adapter implementing IEnvironmentProvider |
 | `@kb-labs/adapters-eventbus-cache` | EventBus adapter using ICache for persistent event storage |

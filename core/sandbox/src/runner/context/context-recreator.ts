@@ -47,33 +47,25 @@ export async function recreateContext(
 
   // Initialize platform in worker if config provided
   if (serializedCtx.platformConfig) {
-    try {
-      // Import initPlatform dynamically to avoid circular dependencies
-      const { initPlatform } = await import("@kb-labs/core-runtime");
+    if (!serializedCtx.platformRoot || serializedCtx.workspaceDevelopment === undefined) {
+      throw new Error('platformRoot and workspaceDevelopment are required when a sandbox worker initializes platform adapters.');
+    }
+    const { initPlatform } = await import("@kb-labs/core-runtime");
+    const cwd = serializedCtx.workdir || serializedCtx.pluginRoot || process.cwd();
+    await initPlatform(
+      serializedCtx.platformConfig,
+      cwd,
+      undefined,
+      serializedCtx.platformRoot,
+      { workspaceDevelopment: serializedCtx.workspaceDevelopment },
+    );
 
-      // Get cwd from serializedCtx (workdir or pluginRoot)
-      const cwd =
-        serializedCtx.workdir || serializedCtx.pluginRoot || process.cwd();
-
-      await initPlatform(serializedCtx.platformConfig, cwd);
-
-      if (debugMode) {
-        sandboxOutput.debug("Platform initialized in worker", {
-          adapters: Object.keys(serializedCtx.platformConfig.adapters ?? {}),
-        });
-      }
-    } catch (error) {
-      sandboxOutput.warn(
-        "Failed to initialize platform in worker, using NoOp adapters",
-        error instanceof Error ? error.message : String(error),
-      );
-      // Fallback to NoOp adapters
-      try {
-        const { initPlatform } = await import("@kb-labs/core-runtime");
-        await initPlatform({ adapters: {} });
-      } catch {
-        // Ignore fallback errors - platform will use NoOp by default
-      }
+    if (debugMode) {
+      sandboxOutput.debug("Platform initialized in worker", {
+        adapters: Object.keys(serializedCtx.platformConfig.adapters ?? {}),
+        platformRoot: serializedCtx.platformRoot,
+        workspaceDevelopment: serializedCtx.workspaceDevelopment,
+      });
     }
   }
 
@@ -109,42 +101,6 @@ export async function recreateContext(
     adapterMeta: serializedCtx.adapterMeta,
     version: serializedCtx.version,
   };
-
-  // Validate context in debug mode (non-blocking, just log warnings)
-  // Note: Validation is optional and skipped if module is not available
-  if (
-    process.env.KB_PLUGIN_DEV_MODE === "true" ||
-    process.env.DEBUG?.includes("@kb-labs")
-  ) {
-    // Try to validate context if validation module is available
-    // This is optional and won't break if module is not available
-    try {
-      // Use dynamic import to avoid circular dependency and handle missing module gracefully
-      // @ts-expect-error - optional dependency, may not be available
-      void import("@kb-labs/plugin-runtime/context")
-        .then((module) => {
-          if (
-            module?.validateExecutionContext &&
-            module?.formatValidationResult
-          ) {
-            // Type assertion needed due to different ExecutionContext types between packages
-            // Both packages have compatible ExecutionContext structures, so this is safe
-            const validation = module.validateExecutionContext(
-              ctx as Parameters<typeof module.validateExecutionContext>[0],
-            );
-            if (!validation.valid) {
-              const formatted = module.formatValidationResult(validation);
-              sandboxOutput.warn("Context validation warnings:\n" + formatted);
-            }
-          }
-        })
-        .catch(() => {
-          // Ignore validation errors silently - module might not be available
-        });
-    } catch {
-      // Ignore validation errors in production
-    }
-  }
 
   // Recreate adapter context if needed
   if (serializedCtx.adapterContextData) {

@@ -1,7 +1,7 @@
 ---
 title: "Adapter System"
 description: "What adapters are and why the platform uses them."
-updatedAt: "2026-10-01"
+updatedAt: "2026-10-11"
 order: 4
 ---
 
@@ -26,7 +26,7 @@ These interfaces live in `@kb-labs/core-platform`. Adapters live in separate pac
 ## Defaults and shipped adapters
 
 A fresh install ships the local adapter pack. `storage` uses
-`@kb-labs/adapters-fs` at `<project>/.kb/data`; cache uses the platform-local
+`@kb-labs/adapters-fs` at `<KB_HOME>/state/<projectId>/storage`; cache uses the platform-local
 StateBroker; logger, analytics, document database, key-value store, and log
 reader use local Pino, SQLite, and ring-buffer components. Event bus, invoke,
 artifacts, config, and notifications use in-process implementations. These
@@ -56,7 +56,7 @@ effective `platform.adapters` section maps each capability to a package, and
     },
     "adapterOptions": {
       "storage": {
-        "baseDir": ".kb/data"
+        "baseDir": "storage"
       }
     }
   }

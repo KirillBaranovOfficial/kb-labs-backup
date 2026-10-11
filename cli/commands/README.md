@@ -252,7 +252,7 @@ kb adapter list --json
 commands from the platform root:
 
 ```bash
-kb config set --scope platform platform.adapterOptions.storage '{"baseDir":".kb/override-data"}'
+kb config set --scope platform platform.adapterOptions.storage '{"baseDir":"override-data"}'
 kb adapter bind storage @kb-labs/adapters-fs
 kb adapter unbind storage
 ```
