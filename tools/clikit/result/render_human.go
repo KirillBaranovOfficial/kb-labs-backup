@@ -29,6 +29,9 @@ func writeHumanDiag(w io.Writer, d *diag.Diag) {
 	if d.CorrelationID != "" {
 		o.Detail("correlationId: " + d.CorrelationID)
 	}
+	if remoteID, ok := d.Meta["remoteCorrelationId"].(string); ok && diag.IsValidCorrelationID(remoteID) {
+		o.Detail("remote correlationId: " + remoteID)
+	}
 }
 
 // ResolveMode maps the CLI output flags to a render mode. The canonical

@@ -514,8 +514,10 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
                     isinstance(turn, dict) and turn.get("sessionId") == session_id for turn in turns
                 )):
                     return "agent session turn history did not identify the session or return an empty collection"
-            elif data.get("sessionId", data.get("id")) != session_id:
-                return f"agent session {description} did not identify the created session"
+            else:
+                identity = data.get("session") if description == "detail" else data
+                if not isinstance(identity, dict) or identity.get("sessionId", identity.get("id")) != session_id:
+                    return f"agent session {description} did not identify the created session"
         return None
 
     journey.step("inspect project agent session", "agents", inspect_session, cases=["S-141.3"])

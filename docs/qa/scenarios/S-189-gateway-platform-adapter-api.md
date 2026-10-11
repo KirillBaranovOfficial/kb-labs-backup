@@ -31,6 +31,7 @@ async iterable results.
 | S-189.4 | Send an authenticated `POST /platform/v1/llm/stream` with a request that returns an `AsyncIterable` | The response uses `text/event-stream`, yields each result chunk, and ends with the `[DONE]` event. |
 | S-189.5 | Send an authenticated stream request whose mock provider rejects the key before its first chunk, then a request whose provider stream becomes malformed after one chunk; check gateway health after each request | Before SSE headers, HTTP 502 contains `KB_CONFIG_LLM_KEY_INVALID`, a plain-language message, correlation ID, and a hint with the exact `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'` command. After streaming starts, the terminal `event: error` contains catalogued `KB_CONFIG_LLM_PROVIDER_UNAVAILABLE`, a hint with the exact `kb config get platform.adapterOptions.llm.baseURL --scope platform --json` command, and no `[DONE]`. Both requests end cleanly, and the gateway remains healthy. |
 | S-189.6 | Send an authenticated `POST /platform/v1/llm/stream` with `{"args":[]}` | HTTP 400 contains the typed `KB_RUNTIME_INPUT_INVALID` envelope; the gateway remains healthy. |
+| S-189.7 | Send an authenticated `GET /platform/v1/unknown/resource` for an unmounted Platform API route | HTTP 404 returns a JSON ADR-0049 `KB_RUNTIME_RESOURCE_NOT_FOUND` envelope. Studio's SPA document is never returned for an API-shaped path. |
 
 ## Pass criteria
 

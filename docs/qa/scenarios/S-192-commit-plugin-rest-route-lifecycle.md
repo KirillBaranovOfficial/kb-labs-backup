@@ -27,12 +27,13 @@ uninstall it and verify that its route is no longer available.
 
 | # | Action | Expected |
 |---|---|---|
-| S-192.1 | With no runtime active for the registered project, GET `/api/v1/projects/<project-id>/unknown-service/health` | Gateway returns HTTP 404 with the catalogued `KB_RUNTIME_RESOURCE_NOT_FOUND` envelope and host health still reports no runtime for that project. |
-| S-192.2 | Run `kb marketplace install @kb-labs/commit-entry@<version>` in the registered project | The selected Commit version is installed and enabled in that project's marketplace state. |
+| S-192.1 | With no runtime active for the registered project, GET `/api/v1/projects/<project-id>/unknown-service/health` | Gateway returns HTTP 404 with the catalogued `KB_RUNTIME_RESOURCE_NOT_FOUND` envelope. Its hint tells the user to run `kb project show <project-id>` to confirm the project, then use a declared service ID. Host health still reports no runtime for that project. |
+| S-192.2 | After S-192.7 passes, run `kb marketplace install @kb-labs/commit-entry@<version>` in the registered project | The selected Commit version is installed and enabled in that project's marketplace state. The platform lock remains without Commit, so its project route is served by the project installation. |
 | S-192.3 | After S-192.2 completes, GET `/api/v1/projects/<project-id>/rest/plugins/commit/status` for the registered project without restarting any service | The Commit handler answers successfully with its status response. |
-| S-192.4 | Run `kb marketplace uninstall @kb-labs/commit-entry` in the project, then GET `/api/v1/projects/<project-id>/rest/plugins/commit/status` again | The request returns HTTP 404 with the typed envelope `{ok:false,error:{code:"KB_PLUGIN_NOT_INSTALLED",message:"Plugin is not installed in this project.",hint:"Run `kb marketplace install @kb-labs/commit-entry` in this project.",correlationId:<non-empty>}}`. |
+| S-192.4 | Run `kb marketplace uninstall @kb-labs/commit-entry` in the project, then GET `/api/v1/projects/<project-id>/rest/plugins/commit/status` again and inspect the platform lock | The request returns HTTP 404 with the typed envelope `{ok:false,error:{code:"KB_PLUGIN_NOT_INSTALLED",message:"Plugin is not installed in this project.",hint:"Run `kb marketplace install @kb-labs/commit-entry` in this project.",correlationId:<non-empty>}}`; the platform lock still has no Commit entry. |
 | S-192.5 | Run `kb marketplace install @kb-labs/commit-entry@<version>` again, then GET `/api/v1/projects/<project-id>/rest/plugins/commit/status` | The Commit handler answers successfully without restarting any service. |
 | S-192.6 | GET `/api/v1/projects/<project-id>/rest/api/v1/plugins/commit/status` | Gateway returns HTTP 404 with the catalogued `KB_RUNTIME_RESOURCE_NOT_FOUND` envelope; the internal `/api/v1` mount prefix is not public. |
+| S-192.7 | Before S-192.2, inspect the platform marketplace lock and GET `/api/v1/projects/<project-id>/rest/plugins/commit/status` | Commit is absent from the platform lock, and the route returns HTTP 404 with `KB_PLUGIN_NOT_INSTALLED`; this proves the project install starts without a platform copy keeping the route mounted. |
 
 ## Pass criteria
 

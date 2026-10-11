@@ -77,6 +77,17 @@ def validate_unmounted_commit_response(status: int, payload: object) -> None:
         raise RuntimeError(f"unmounted Commit route returned an unexpected gateway failure: HTTP {status} {payload!r}")
 
 
+def _commit_project_fixture_entry(lock: object, version: str) -> dict | None:
+    plugins = lock.get("plugins") if isinstance(lock, dict) else None
+    entry = plugins.get("@kb-labs/commit") if isinstance(plugins, dict) else None
+    if (isinstance(lock, dict) and lock.get("schema") == "kb.marketplace/3"
+            and isinstance(entry, dict) and entry.get("version") == version
+            and entry.get("package") == "@kb-labs/commit-entry" and entry.get("integrity")
+            and entry.get("source") == "marketplace" and entry.get("enabled") is True):
+        return entry
+    return None
+
+
 def _registry_version(package_id: str, registry: str, env: dict[str, str], runner: CommandRunner) -> str:
     command = ["npm", "view", package_id, "version", "--json", f"--registry={registry}"]
     result = run_with_runner(runner, command, cwd=env["KB_JOURNEY_PROJECT_ROOT"], env=env,
@@ -251,14 +262,10 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
 
     journey.step("secured marketplace requires a saved CLI session", "marketplace",
                  lambda: assert_auth_required("S-041.7"), cases=["S-041.7"])
-    if journey.steps[-1].status != "PASS":
-        return
 
 
     journey.step("S-010.6 secured marketplace requires the catalogued login error", "marketplace",
                  lambda: assert_auth_required("S-010.6"), cases=["S-010.6"])
-    if journey.steps[-1].status != "PASS":
-        return
 
     gateway = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
     email = env.get("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
@@ -288,11 +295,42 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         raise RuntimeError("authenticated marketplace list still returned KB_AUTH_REQUIRED")
 
 
-def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: str,
+def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, registry: str,
+                                   env: dict[str, str] | None = None,
+                                   runner: CommandRunner = run_command) -> dict | None:
+    """Install the exact Commit pin consumed by downstream project fixtures."""
+    project = Path(project_root).resolve()
+    base_env = dict(os.environ if env is None else env)
+    base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project)
+
+    captured: dict[str, dict] = {}
+
+    def install_fixture() -> None:
+        wait_for_marketplace_ready(project, base_env, runner)
+        version = _registry_version("@kb-labs/commit-entry", registry, base_env, runner)
+        command = ["marketplace", "install", f"@kb-labs/commit-entry@{version}", "--json"]
+        result = _json(_run(["kb", *command], cwd=project, env=base_env, runner=runner), command)
+        installed = result.get("installed")
+        if (result.get("scope") != "project" or not isinstance(installed, list)
+                or not any(isinstance(item, dict) and item.get("id") == "@kb-labs/commit"
+                           and item.get("version") == version for item in installed)):
+            raise RuntimeError("project fixture install did not return the selected Commit version")
+        lock = json.loads((project / ".kb" / "marketplace.lock").read_text())
+        entry = _commit_project_fixture_entry(lock, version)
+        if entry is None:
+            raise RuntimeError("project fixture install did not establish the exact Commit marketplace lock entry")
+        captured["entry"] = dict(entry)
+
+    journey.step("produce Commit project fixture", "marketplace-fixtures", install_fixture, role="lifecycle")
+    return captured.get("entry")
+
+
+def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path, registry: str,
                           env: dict[str, str] | None = None,
                           runner: CommandRunner = run_command,
                           http_opener: Callable[..., object] = urllib.request.urlopen,
-                          commit_case_hook: Callable[[], None] | None = None) -> None:
+                          commit_case_hook: Callable[[], None] | None = None,
+                          fixture_entry: dict | None = None) -> None:
     """Execute S-010 and S-047 in the isolated installed platform."""
     project = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
@@ -305,8 +343,6 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     commit_install_package = "@kb-labs/commit-entry"
     unrelated_package = "@kb-labs/qa-entry"
     authenticate_secured_marketplace(journey, project, base_env, runner)
-    if journey.steps and journey.steps[-1].status != "PASS":
-        return
 
     def assert_shared_errors() -> None:
         failures = (
@@ -324,13 +360,12 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
                 validate_shared_failure(result, json_mode=json_mode, code=code, message=message, hint=hint)
     journey.step("marketplace and adapter failures use the shared envelope", "marketplace",
                  assert_shared_errors, cases=["S-051.2", "S-051.3", "S-051.4"])
-    if journey.steps[-1].status != "PASS":
-        return
     with invocation_context(step_id="S-010.1"):
         wait_for_marketplace_ready(project, base_env, runner)
         run_plugin_policy_diagnostic_step(journey, project, registry, base_env, runner)
-        if journey.steps[-1].status != "PASS":
-            return
+        # The malformed-policy diagnostic is an independent assertion. Its
+        # result does not determine whether the marketplace can install the
+        # Commit fixture that produces the project lock state.
         commit_version = _registry_version(commit_install_package, registry, base_env, runner)
         unrelated_version = _registry_version(unrelated_package, registry, base_env, runner)
     platform_list = ["marketplace", "plugins", "list", "--scope", "platform", "--json"]
@@ -347,8 +382,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
 
     lock_file = project / ".kb" / "marketplace.lock"
     before = json.loads(lock_file.read_text()) if lock_file.exists() else {"plugins": {}}
-    if commit_package in before.get("plugins", {}):
-        raise RuntimeError(f"{commit_package} is already pinned in the fresh project before the install case")
+    if commit_package not in before.get("plugins", {}):
+        raise RuntimeError(f"{commit_package} fixture is missing before the marketplace lifecycle")
     install_commit = ["marketplace", "install", f"{commit_install_package}@{commit_version}", "--json"]
     install_commit_platform = ["marketplace", "install", f"{commit_install_package}@{commit_version}",
                               "--scope", "platform", "--json"]
@@ -387,15 +422,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             raise RuntimeError("platform marketplace install did not record the portable exact plugin identity")
         if _platform_snapshot(platform_root) != sealed_platform_before:
             raise RuntimeError("marketplace install changed the platform receipt or installed package versions")
-    journey.step(
-        "install exact marketplace plugin into both scopes", "marketplace",
-        install_exact_commit,
-        cases=["S-010.1"],
-    )
-    if journey.steps[-1].status != "PASS":
-        return
-
-    def prepare_project_only_commit_scope() -> None:
+    def prepare_clean_scopes_for_s010() -> None:
         for scope in ("platform", "project"):
             command = ["marketplace", "uninstall", commit_package, "--scope", scope, "--json"]
             _output(cli(command), command)
@@ -405,10 +432,11 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         if commit_package in json.loads(lock_file.read_text()).get("plugins", {}):
             raise RuntimeError("S-192 project setup did not remove the prior Commit pin")
 
-    journey.step("remove platform and project Commit pins before the S-192 project lifecycle", "marketplace",
-                 prepare_project_only_commit_scope)
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("prepare clean scopes for the S-010 install", "marketplace",
+                 prepare_clean_scopes_for_s010, role="lifecycle")
+    journey.step("install exact marketplace plugin into both scopes", "marketplace",
+                 install_exact_commit, cases=["S-010.1"],
+                 requires=("step:prepare clean scopes for the S-010 install",))
 
     project_id = base_env.get("KB_JOURNEY_PROJECT_ID", "")
     gateway = base_env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -435,6 +463,33 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     journey.step("reject an unknown project service without starting its runtime", "marketplace",
                  assert_unknown_service_does_not_start_runtime, cases=["S-192.1"])
 
+    def verify_s192_project_only_precondition() -> None:
+        for scope in ("platform", "project"):
+            command = ["marketplace", "uninstall", commit_package, "--scope", scope, "--json"]
+            _output(cli(command), command)
+        platform_lock = json.loads((active_platform_root(platform_root) / ".kb" / "marketplace.lock").read_text())
+        project_lock = json.loads(lock_file.read_text())
+        if commit_package in platform_lock.get("plugins", {}):
+            raise RuntimeError("S-192 requires Commit to be absent from the platform marketplace lock")
+        if commit_package in project_lock.get("plugins", {}):
+            raise RuntimeError("S-192 requires Commit to be absent from the project marketplace lock before install")
+        if not project_id:
+            raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+        request = urllib.request.Request(
+            f"{gateway}{project_service_path(project_id, 'rest', 'plugins/commit/status')}",
+            headers={"Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"},
+        )
+        status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
+        try:
+            payload = read_ux_http_result(raw, status)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("S-192 pre-install Commit route did not return a JSON gateway envelope") from error
+        validate_unmounted_commit_response(status, payload)
+
+    journey.step("verify S-192 platform and project pins and route are absent before install", "marketplace",
+                 verify_s192_project_only_precondition, cases=["S-192.7"],
+                 requires=("step:install exact marketplace plugin into both scopes",))
+
     def install_commit_for_project_lifecycle() -> None:
         result = _json(cli(install_commit), install_commit)
         installed = result.get("installed")
@@ -444,9 +499,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             raise RuntimeError("project marketplace install did not return the selected plugin version as JSON")
 
     journey.step("install Commit into the project for the route lifecycle", "marketplace",
-                 install_commit_for_project_lifecycle, cases=["S-192.2"])
-    if journey.steps[-1].status != "PASS":
-        return
+                 install_commit_for_project_lifecycle, cases=["S-192.2"],
+                 requires=("step:verify S-192 platform and project pins and route are absent before install",))
 
     try:
         if commit_case_hook is None:
@@ -471,7 +525,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         validate_commit_status_response(status, payload)
 
     journey.step("GET the installed project Commit status route", "marketplace",
-                 assert_commit_status_route, cases=["S-192.3"])
+                 assert_commit_status_route, cases=["S-192.3"],
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     listed = ["marketplace", "plugins", "list", "--json"]
     def assert_marketplace_list() -> None:
@@ -479,38 +534,30 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         entry = next((item for item in _entries(payload) if item.get("id") == commit_package), None)
         if not entry or entry.get("version") != commit_version or entry.get("enabled") is not True:
             raise RuntimeError(f"plugin list omitted the enabled exact pin {commit_package}@{commit_version}")
-    journey.step("list installed project plugins", "marketplace", assert_marketplace_list, cases=["S-010.2"])
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("list installed project plugins", "marketplace", assert_marketplace_list, cases=["S-010.2"],
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def assert_commit_lock() -> None:
         lock = json.loads(lock_file.read_text())
-        entry = lock.get("plugins", {}).get("@kb-labs/commit")
-        if lock.get("schema") != "kb.marketplace/3" or not isinstance(entry, dict):
-            raise RuntimeError("project marketplace lock is not schema v3 or has no commit plugin pin")
-        if (entry.get("version") != commit_version or entry.get("package") != commit_install_package or not entry.get("integrity")
-                or entry.get("source") != "marketplace" or entry.get("enabled") is not True):
-            raise RuntimeError(f"project lock entry does not preserve package, exact version, integrity, source and enabled state: {entry!r}")
-    journey.step("inspect exact v3 marketplace lock entry", "marketplace", assert_commit_lock, cases=["S-010.3"])
-    if journey.steps[-1].status != "PASS":
-        return
+        if _commit_project_fixture_entry(lock, commit_version) is None:
+            raise RuntimeError("project lock entry does not preserve package, exact version, integrity, source and enabled state")
+    journey.step("inspect exact v3 marketplace lock entry", "marketplace", assert_commit_lock, cases=["S-010.3"],
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     commit_open = ["commit", "open", "--json"]
     def assert_commit_command() -> None:
         payload = _json(cli(commit_open), commit_open)
         if payload.get("hasPlan") is not False:
             raise RuntimeError(f"`kb commit open --json` did not return its documented empty-plan result: {payload!r}")
-    journey.step("invoke documented installed commit command", "marketplace", assert_commit_command, cases=["S-010.4"])
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("invoke documented installed commit command", "marketplace", assert_commit_command,
+                 cases=["S-010.4"], requires=("step:install Commit into the project for the route lifecycle",))
 
     gateway_doctor = ["marketplace", "plugins", "doctor", "--scope", "project", "--json"]
     def assert_cli_plugin_gateway() -> None:
         payload = _json(cli(gateway_doctor), gateway_doctor)
     journey.step("invoke gateway-backed plugin command through installed CLI", "marketplace",
-                 assert_cli_plugin_gateway, cases=["S-010.7"])
-    if journey.steps[-1].status != "PASS":
-        return
+                 assert_cli_plugin_gateway, cases=["S-010.7"],
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def assert_stopped_host_error() -> None:
         stop_command = ["kb-create", "stop", "--platform-root", str(platform_root), "--json"]
@@ -536,8 +583,6 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
 
     journey.step("report catalogued error when the installed host is stopped", "marketplace",
                  assert_stopped_host_error, cases=["S-203.14"])
-    if journey.steps[-1].status != "PASS":
-        return
 
     def assert_default_gateway_config() -> None:
         config_path = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
@@ -552,8 +597,6 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
 
     journey.step("resolve the default gateway address for CLI plugins", "marketplace",
                  assert_default_gateway_config, cases=["S-203.15"])
-    if journey.steps[-1].status != "PASS":
-        return
 
     def assert_invalid_gateway_port_error() -> None:
         invalid_env = {**base_env, "GATEWAY_PORT": "not-a-port"}
@@ -574,8 +617,6 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
 
     journey.step("report a catalogued config error for an invalid gateway port", "marketplace",
                  assert_invalid_gateway_port_error, cases=["S-203.16"])
-    if journey.steps[-1].status != "PASS":
-        return
 
     def assert_reinstall_idempotent() -> None:
         _output(cli(install_commit), install_commit)
@@ -585,9 +626,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         entry = lock["plugins"][commit_package]
         if entry.get("version") != commit_version:
             raise RuntimeError("reinstall changed the requested exact plugin version")
-    journey.step("repeat exact install without duplicate pin", "marketplace", assert_reinstall_idempotent, cases=["S-010.5"])
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("repeat exact install without duplicate pin", "marketplace", assert_reinstall_idempotent,
+                 cases=["S-010.5"], requires=("step:install Commit into the project for the route lifecycle",))
 
     def set_plugin_enabled(enabled: bool) -> None:
         action = "enable" if enabled else "disable"
@@ -604,9 +644,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
 
     def assert_disabled() -> None:
         set_plugin_enabled(False)
-    journey.step("disable installed Commit plugin", "marketplace", assert_disabled, cases=["S-011.1"])
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("disable installed Commit plugin", "marketplace", assert_disabled, cases=["S-011.1"],
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def assert_disabled_list() -> None:
         command = ["marketplace", "plugins", "list"]
@@ -615,9 +654,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         output = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
         if result.returncode != 0 or "disabled" not in output.lower() or "⏸" not in output:
             raise RuntimeError(f"marketplace list did not show the disabled count and row marker: {output!r}")
-    journey.step("confirm disabled Commit appears in list", "marketplace", assert_disabled_list, cases=["S-011.2"])
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("confirm disabled Commit appears in list", "marketplace", assert_disabled_list, cases=["S-011.2"],
+                 requires=("step:disable installed Commit plugin",))
 
     def assert_command_hidden() -> None:
         command = ["commit", "--help"]
@@ -625,15 +663,13 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             result = cli(command)
         if result.returncode == 0:
             raise RuntimeError("Commit commands remain discoverable while the plugin is disabled")
-    journey.step("confirm disabled Commit commands are unavailable", "marketplace", assert_command_hidden, cases=["S-011.3"])
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("confirm disabled Commit commands are unavailable", "marketplace", assert_command_hidden,
+                 cases=["S-011.3"], requires=("step:disable installed Commit plugin",))
 
     def assert_enabled() -> None:
         set_plugin_enabled(True)
-    journey.step("enable installed Commit plugin", "marketplace", assert_enabled, cases=["S-011.4"])
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("enable installed Commit plugin", "marketplace", assert_enabled, cases=["S-011.4"],
+                 requires=("step:disable installed Commit plugin",))
 
     def assert_enabled_list_and_command() -> None:
         list_command = ["marketplace", "plugins", "list"]
@@ -649,9 +685,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         if help_result.returncode != 0:
             raise RuntimeError("Commit commands remain unavailable after enabling the plugin")
     journey.step("confirm enabled Commit appears and commands are available", "marketplace",
-                 assert_enabled_list_and_command, cases=["S-011.5"])
-    if journey.steps[-1].status != "PASS":
-        return
+                 assert_enabled_list_and_command, cases=["S-011.5"],
+                 requires=("step:enable installed Commit plugin",))
 
     def assert_missing_disable_preserves_lock() -> None:
         before_lock = lock_file.read_bytes()
@@ -664,9 +699,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         if lock_file.read_bytes() != before_lock:
             raise RuntimeError("disabling an uninstalled package changed the marketplace lock")
     journey.step("reject disabling an uninstalled plugin without changing the lock", "marketplace",
-                 assert_missing_disable_preserves_lock, cases=["S-011.6"])
-    if journey.steps[-1].status != "PASS":
-        return
+                 assert_missing_disable_preserves_lock, cases=["S-011.6"],
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def update_commit() -> None:
         command = ["marketplace", "update", "@kb-labs/commit", "--scope", "project", "--json"]
@@ -683,9 +717,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
                 and isinstance(item.get("version"), str) and item["version"]
                 for item in installed):
             raise RuntimeError("marketplace update did not report the exact updated Commit version")
-    journey.step("update installed Commit version", "marketplace", update_commit, cases=["S-012.1"])
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("update installed Commit version", "marketplace", update_commit, cases=["S-012.1"],
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def assert_updated_pin() -> None:
         command = ["marketplace", "plugins", "list", "--scope", "project", "--json"]
@@ -696,9 +729,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         if (not isinstance(entry, dict) or not isinstance(lock_entry, dict)
                 or entry.get("version") != lock_entry.get("version") or not lock_entry.get("integrity")):
             raise RuntimeError("plugin list and marketplace lock do not show the same exact version and integrity")
-    journey.step("verify updated Commit pin in list and lock", "marketplace", assert_updated_pin, cases=["S-012.2"])
-    if journey.steps[-1].status != "PASS":
-        return
+    journey.step("verify updated Commit pin in list and lock", "marketplace", assert_updated_pin,
+                 cases=["S-012.2"], requires=("step:update installed Commit version",))
 
     def assert_updated_command() -> None:
         command = ["commit", "--help"]
@@ -707,9 +739,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         if result.returncode != 0:
             raise RuntimeError("Commit command group is unavailable after update")
     journey.step("confirm Commit commands remain available after update", "marketplace",
-                 assert_updated_command, cases=["S-012.3"])
-    if journey.steps[-1].status != "PASS":
-        return
+                 assert_updated_command, cases=["S-012.3"],
+                 requires=("step:update installed Commit version",))
 
     def assert_unknown_update_preserves_pin() -> None:
         before = json.loads(lock_file.read_text()).get("plugins", {}).get(commit_package)
@@ -724,14 +755,16 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
                 or before != after):
             raise RuntimeError("unknown package update did not warn while preserving the Commit pin")
     journey.step("reject unknown package update and preserve Commit pin", "marketplace",
-                 assert_unknown_update_preserves_pin, cases=["S-012.4"])
-    if journey.steps[-1].status != "PASS":
-        return
+                 assert_unknown_update_preserves_pin, cases=["S-012.4"],
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     uninstall_commit = ["marketplace", "uninstall", commit_package, "--json"]
     def uninstall_target() -> None:
         with invocation_context(step_id="S-192.4"):
             _output(cli(uninstall_commit), uninstall_commit)
+            platform_lock = json.loads((active_platform_root(platform_root) / ".kb" / "marketplace.lock").read_text())
+            if commit_package in platform_lock.get("plugins", {}):
+                raise RuntimeError("project uninstall changed the S-192 platform prerequisite: Commit is pinned there")
             if not project_id:
                 raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
             request = urllib.request.Request(route, headers={
@@ -744,9 +777,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         validate_unmounted_commit_response(status, payload)
     journey.step("uninstall target project plugin", "marketplace",
                  uninstall_target,
-                 cases=["S-047.1", "S-192.4"])
-    if journey.steps[-1].status != "PASS":
-        return
+                 cases=["S-047.1", "S-192.4"],
+                 requires=("step:GET the installed project Commit status route",))
 
     def assert_unrelated_remains() -> None:
         payload = _json(cli(listed), listed)
@@ -757,9 +789,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         if not unrelated or unrelated.get("version") != unrelated_version or unrelated.get("enabled") is not True:
             raise RuntimeError(f"unrelated project plugin did not remain installed and enabled: {unrelated!r}")
     journey.step("list confirms target absent and unrelated plugin remains", "marketplace", assert_unrelated_remains,
-                 cases=["S-047.2"])
-    if journey.steps[-1].status != "PASS":
-        return
+                 cases=["S-047.2"], requires=("step:uninstall target project plugin",))
 
     def assert_lock_and_unrelated_plugin() -> None:
         lock = json.loads(lock_file.read_text())
@@ -779,9 +809,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
                 or not isinstance(payload.get("diagnostics"), list)):
             raise RuntimeError(f"unrelated `kb qa cases list --json` command returned an invalid case-list result: {payload!r}")
     journey.step("verify lock removal and invoke unrelated project plugin", "marketplace", assert_lock_and_unrelated_plugin,
-             cases=["S-047.3"])
-    if journey.steps[-1].status != "PASS":
-        return
+             cases=["S-047.3"], requires=("step:uninstall target project plugin",))
 
     def reinstall_commit_and_assert_route() -> None:
         reinstall = ["marketplace", "install", f"{commit_install_package}@{commit_version}", "--json"]
@@ -803,7 +831,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             raise RuntimeError("reinstalled Commit status route did not return JSON") from error
         validate_commit_status_response(status, payload)
     journey.step("reinstall Commit and call its project REST route", "marketplace",
-                 reinstall_commit_and_assert_route, cases=["S-192.5"])
+                 reinstall_commit_and_assert_route, cases=["S-192.5"],
+                 requires=("step:uninstall target project plugin",))
 
     def reject_rest_internal_mount_prefix() -> None:
         legacy_url = f"{gateway}{project_service_path(project_id, 'rest', 'api/v1/plugins/commit/status')}"
@@ -815,4 +844,48 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             raise RuntimeError("REST's internal /api/v1 mount prefix remained publicly reachable")
 
     journey.step("reject REST's internal API mount in public URLs", "marketplace",
-                 reject_rest_internal_mount_prefix, cases=["S-192.6"])
+                 reject_rest_internal_mount_prefix, cases=["S-192.6"],
+                 requires=("step:reinstall Commit and call its project REST route",))
+
+
+def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: str,
+                          env: dict[str, str] | None = None,
+                          runner: CommandRunner = run_command,
+                          http_opener: Callable[..., object] = urllib.request.urlopen,
+                          commit_case_hook: Callable[[], None] | None = None,
+                          *, fixture_entry: dict | None = None) -> None:
+    """Run marketplace assertions and preserve the independent project fixture."""
+    project = Path(project_root).resolve()
+    base_env = dict(os.environ if env is None else env)
+    base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project)
+
+    def restore_fixture() -> None:
+        if not isinstance(fixture_entry, dict):
+            raise RuntimeError("marketplace lifecycle has no captured Commit fixture lock entry to restore")
+        version = fixture_entry.get("version")
+        if not isinstance(version, str) or not version:
+            raise RuntimeError("captured Commit fixture lock entry has no exact version")
+        lock_file = project / ".kb" / "marketplace.lock"
+        try:
+            lock = json.loads(lock_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            lock = {}
+        entry = lock.get("plugins", {}).get("@kb-labs/commit") if isinstance(lock, dict) else None
+        if entry == fixture_entry:
+            return
+        if isinstance(entry, dict):
+            uninstall = ["kb", "marketplace", "uninstall", "@kb-labs/commit", "--json"]
+            _output(_run(uninstall, cwd=project, env=base_env, runner=runner), uninstall)
+        install = ["kb", "marketplace", "install", f"@kb-labs/commit-entry@{version}", "--json"]
+        _output(_run(install, cwd=project, env=base_env, runner=runner), install)
+        lock = json.loads(lock_file.read_text())
+        entry = lock.get("plugins", {}).get("@kb-labs/commit")
+        if entry != fixture_entry:
+            raise RuntimeError("marketplace lifecycle cleanup did not restore the complete captured Commit fixture lock entry")
+
+    try:
+        _run_marketplace_lifecycle_steps(journey, project, registry, base_env, runner,
+                                         http_opener, commit_case_hook, fixture_entry)
+    finally:
+        journey.step("restore Commit project fixture after marketplace lifecycle", "marketplace-fixtures",
+                     restore_fixture, role="lifecycle")

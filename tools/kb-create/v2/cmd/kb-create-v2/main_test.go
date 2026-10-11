@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -543,38 +545,28 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 }
 
-// case: S-187.4
-func TestRegisterProjectInvokesPlainProjectAdd(t *testing.T) {
-	home := t.TempDir()
-	root := filepath.Join(home, "secondary-root")
-	bin := filepath.Join(root, ".kb", "v2", "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
+// case: S-187.6
+func TestLocalProjectRegistrationUsesHostProjectAPIWithoutCredentials(t *testing.T) {
+	project := t.TempDir()
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/projects" || r.Header.Get("Authorization") != "" {
+			t.Errorf("request path/auth = %s / %q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(w, `{"ok":true,"data":{"id":"prj_test123","path":%q}}`, project)
+	}))
+	defer server.Close()
+	active := contracts.InstallReceipt{ID: "local-receipt", Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{Values: map[string]string{
+		"gateway.access.mode": `"local"`,
+	}}}, Verification: contracts.Verification{HostHealthURL: server.URL + "/health"}}
+	if err := receipt.Write(root, active); err != nil {
 		t.Fatal(err)
 	}
-	kb := filepath.Join(bin, "kb")
-	argsFile := filepath.Join(home, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\nprintf '{\"ok\":true,\"data\":{\"project\":{\"id\":\"prj_test123\",\"path\":\"%s\"}}}' \"$PROJECT_PATH\"\n"
-	if err := os.WriteFile(kb, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CAPTURE_ARGS", argsFile)
-	projectPath := filepath.Join(home, "project")
-	t.Setenv("PROJECT_PATH", projectPath)
-	if err := os.Mkdir(projectPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	projectID, err := registerProject(root, projectPath, nil)
+	projectID, err := registerProject(root, project)
 	if err != nil || projectID != "prj_test123" {
-		t.Fatalf("projectID/error = %q / %v", projectID, err)
-	}
-	args, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "project\nadd\n" + projectPath + "\n--json\n"
-	if string(args) != want {
-		t.Fatalf("kb args = %q, want %q", args, want)
+		t.Fatalf("project id/error = %q / %v", projectID, err)
 	}
 }
 
@@ -650,9 +642,9 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 			return "", errors.New("project registry unavailable")
 		},
 	})
-	if failedCode != 1 || failure == nil || failure.Code != contracts.CodeApplyFailed ||
-		failure.Message != "The platform is installed, but the selected project could not be registered." ||
-		!strings.Contains(failure.Hint, "kb project add") {
+	if failedCode != 1 || failure == nil || failure.Code != "KB_INSTALL_PROJECT_REGISTRATION_FAILED" ||
+		failure.Message != "The platform is installed, but the selected project is not registered." ||
+		failure.Meta["causeCode"] != "KB_INSTALL_PROJECT_REGISTRATION_FAILED" || !strings.Contains(failure.Hint, "kb project add") {
 		t.Fatalf("project registration failure = code %d, output %#v", failedCode, failure)
 	}
 	if _, err := os.Stat(receipt.Path(platformRootForTest(t, failedRoot))); err != nil {

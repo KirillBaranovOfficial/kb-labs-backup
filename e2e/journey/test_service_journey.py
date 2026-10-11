@@ -1,6 +1,7 @@
 import ast
 import hashlib
 import io
+import shutil
 import json
 import os
 import re
@@ -353,7 +354,8 @@ raise SystemExit(1)
             journey.step("launcher version", "platform.install", lambda: None, cases=["PC-001.1"])
             journey.step("start host", "platform.host", lambda: None, cases=["PC-002.1"])
             journey.step("update stopped host", "platform.update", lambda: None,
-                         cases=["S-023.9"], requires=("candidate provenance", "launcher version", "start host"))
+                         cases=["S-023.9"], requires=("step:candidate provenance", "step:launcher version",
+                                                       "step:start host"))
 
         self.assertEqual([step.status for step in journey.steps], ["PASS"] * 4)
         self.assertEqual(journey.steps[0].details["selectionRole"], "prerequisite")
@@ -381,7 +383,7 @@ raise SystemExit(1)
         self.assertEqual(result.status, "PASS")
         self.assertEqual(result.details["selectionRole"], "lifecycle")
 
-    def test_failed_prerequisite_fails_the_selected_step(self):
+    def test_failed_prerequisite_blocks_the_selected_step_with_reason(self):
         def selection_environment(*, cases):
             return {
                 "KB_JOURNEY_SELECTED_STEPS": cases[0],
@@ -390,13 +392,148 @@ raise SystemExit(1)
 
         with patch.dict(os.environ, selection_environment(cases=["S-042.1"]), clear=False):
             journey = Journey("local", "failed-selected-prerequisite")
-            journey.step("project registration", "platform.project", lambda: "registration failed",
-                         requires=("project registration",))
+            journey.step("project registration", "platform.project", lambda: "registration failed")
             target = journey.step("update", "platform.update", lambda: None, cases=["S-042.1"],
-                                  requires=("project registration",))
+                                  requires=("step:project registration",))
 
-        self.assertEqual(target.status, "FAIL")
+        self.assertEqual(target.status, "BLOCKED")
         self.assertIn("project registration ended FAIL", target.message)
+        self.assertEqual(target.details["prerequisiteFailures"],
+                         ["step:project registration ended FAIL: registration failed"])
+        self.assertEqual(journey.result().case_run["claims"], [])
+        self.assertEqual(journey.result().status, "FAIL")
+
+    def test_missing_prerequisite_blocks_selected_step_with_journey_status_blocked(self):
+        def selection_environment(*, cases):
+            return {
+                "KB_JOURNEY_SELECTED_STEPS": cases[0],
+            }
+
+        with patch.dict(os.environ, selection_environment(cases=["S-042.1"]), clear=False):
+            journey = Journey("local", "missing-selected-prerequisite")
+            target = journey.step("update", "platform.update", lambda: None, cases=["S-042.1"],
+                                  requires=("step:unrun-prerequisite",))
+
+        self.assertEqual(target.status, "BLOCKED")
+        self.assertIn("unrun-prerequisite did not run before update", target.message)
+        self.assertEqual(journey.result().case_run["claims"], [])
+        self.assertEqual(journey.result().status, "BLOCKED")
+
+    def test_reflected_recorder_still_blocks_unseen_runtime_dependency(self):
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": "S-042.1"}, clear=False):
+            journey = Journey("local", "reflected-recorder-prerequisite")
+            recorder = getattr(journey, "step")
+            target = recorder("update", "platform.update", lambda: None,
+                              cases=["S-042.1"], requires=("step:unrun-prerequisite",))
+
+        self.assertEqual(target.status, "BLOCKED")
+        self.assertIn("step:unrun-prerequisite did not run before update", target.message)
+        self.assertEqual(journey.result().case_run["claims"], [])
+        self.assertEqual(journey.result().status, "BLOCKED")
+
+    def test_failed_host_start_blocks_nested_update_in_full_run(self):
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": "",
+            "KB_JOURNEY_PREREQUISITE_STEPS": "",
+            "KB_JOURNEY_PREREQUISITE_FLOWS": "",
+        }, clear=False):
+            parent = Journey("local", "full-update-parent")
+            graph = FlowGraph(parent, {})
+            self.assertEqual(graph.flow(
+                "start platform host", "host", "platform.host",
+                lambda: parent.step("start host", "platform.host", lambda: "host did not start"),
+            ), "FAIL")
+            child = Journey("local", "nested-update", parent=parent)
+            blocked = child.step(
+                "update platform", "platform.update", lambda: None,
+                requires=("flow:start platform host", "step:start host"),
+            )
+
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertIn("flow:start platform host ended FAIL", blocked.message)
+        self.assertIn("step:start host ended FAIL", blocked.message)
+
+    def test_nested_journey_resolves_parent_step_and_flow_outcomes_live(self):
+        parent = Journey("local", "nested-parent")
+        graph = FlowGraph(parent, {})
+        graph.flow("project registration", "project", "projects",
+                   lambda: parent.step("project registered", "projects", lambda: None))
+        child = Journey("local", "nested-child", parent=parent)
+        result = child.step("dependent", "project", lambda: None,
+                            requires=("flow:project registration", "step:project registered"))
+        self.assertEqual(result.status, "PASS")
+
+    def test_journey_result_case_run_loads_through_qa_cases_coverage_consumer(self):
+        root = Path(__file__).resolve().parents[2]
+        node = shutil.which("node")
+        self.assertIsNotNone(node)
+        build = subprocess.run(
+            [str(root / "tools/kb-devkit/kb-devkit"), "run", "build", "--packages",
+             "@kb-labs/cli-bin,@kb-labs/qa-entry"],
+            cwd=root, text=True, capture_output=True, check=False, timeout=900,
+        )
+        self.assertEqual(build.returncode, 0, f"case coverage CLI build failed: {build.stderr or build.stdout}")
+        cli_bin = root / "cli/bin/dist/bin.js"
+        self.assertTrue(cli_bin.is_file(), f"CLI binary not found at {cli_bin}")
+
+        with tempfile.TemporaryDirectory(prefix="qa-coverage-consumer-test-") as directory:
+            run_file = Path(directory) / "test-run.json"
+            journey = Journey("local", "coverage-consumer-test-run")
+            # Step with PASS claim: PC-001.1 is claimed by e2e/journey/runner.py
+            journey.step("provenance check", "platform.install", lambda: None, cases=["PC-001.1"])
+            # Step that FAILS: PC-001.2 is claimed by e2e/journey/runner.py
+            journey.step("install check", "platform.install", lambda: "installation failed", cases=["PC-001.2"])
+            # Step that is BLOCKED: PC-001.3 is claimed by e2e/journey/runner.py, requiring PC-001.2
+            journey.step("dependent check", "platform.install", lambda: None, cases=["PC-001.3"],
+                         requires=("step:install check",))
+
+            journey_result = journey.result()
+            self.assertEqual(journey_result.status, "FAIL")
+            steps_by_name = {step.name: step for step in journey.steps}
+            self.assertEqual(steps_by_name["provenance check"].status, "PASS")
+            self.assertEqual(steps_by_name["install check"].status, "FAIL")
+            self.assertEqual(steps_by_name["dependent check"].status, "BLOCKED")
+
+            # Crucial producer invariant: claims array contains ONLY PASS and FAIL, NO BLOCKED
+            claims_map = {claim["claimId"]: claim["status"] for claim in journey_result.case_run["claims"]}
+            self.assertEqual(claims_map, {"PC-001.1": "PASS", "PC-001.2": "FAIL"})
+            self.assertNotIn("PC-001.3", claims_map)
+
+            # Write out result
+            journey.write_json(run_file)
+
+            # Load through the real consumer CLI
+            command = [node, str(cli_bin), "qa", "cases", "coverage", "--mode", "local",
+                       "--run", str(run_file), "--json"]
+            env = dict(os.environ)
+            env["HOME"] = directory
+            env.pop("KB_PLATFORM_ROOT", None)
+            env.pop("KB_HOME", None)
+            env.pop("KB_NET_OFFSET", None)
+            from hermetic_cli import run_hermetic_cli
+            proc = run_hermetic_cli(command, cwd=root, env=env, timeout=120)
+            self.assertEqual(proc.returncode, 0, f"qa cases coverage failed: {proc.stderr or proc.stdout}")
+            payload = json.loads(proc.stdout)
+            self.assertTrue(payload.get("ok"), payload)
+            coverage_data = payload.get("data", {})
+            self.assertEqual(coverage_data.get("schema"), "kb.qa-case-coverage/v1")
+            pc001 = next((c for c in coverage_data.get("cases", []) if c.get("id") == "PC-001"), None)
+            self.assertIsNotNone(pc001)
+            steps_cov = {s.get("stepId"): s for s in pc001.get("steps", [])}
+            self.assertEqual(steps_cov["PC-001.1"].get("status"), "PASS")
+            self.assertEqual(steps_cov["PC-001.2"].get("status"), "FAIL")
+            self.assertEqual(steps_cov["PC-001.3"].get("status"), "NOT RUN")
+            self.assertIn("Journey/e2e claim exists but has no passing run result", steps_cov["PC-001.3"].get("reason", ""))
+
+            # Also verify consumer strictly rejects if a run file contains status: BLOCKED in claims
+            corrupted_run_file = Path(directory) / "corrupted-run.json"
+            corrupted_data = json.loads(run_file.read_text())
+            corrupted_data["case_run"]["claims"].append({"claimId": "PC-001.3", "kind": "journey", "status": "BLOCKED"})
+            corrupted_run_file.write_text(json.dumps(corrupted_data))
+
+            corrupted_proc = run_hermetic_cli([node, str(cli_bin), "qa", "cases", "coverage", "--mode", "local",
+                                              "--run", str(corrupted_run_file), "--json"], cwd=root, env=env, timeout=120)
+            self.assertIn("claims[2].status must be PASS or FAIL", corrupted_proc.stdout + corrupted_proc.stderr)
 
     def test_service_step_exception_is_saved_and_later_steps_continue(self):
         journey = Journey("local", "raised-step")

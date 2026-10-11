@@ -948,7 +948,7 @@ def main():
                        and bool(plan_payload.get("artifacts")) and bool(plan_payload.get("serviceGraph")))
             record_case("agent plan", plan_ok,
                        "plan omitted the isolated root, resolved artifacts, or service graph", cases=["PC-001.3"],
-                       requires=("launcher version",))
+                       requires=("step:launcher version",))
         elif operation == "install":
             if FRONT_DOOR == "agent":
                 record_case("agent JSON install", install_ok,
@@ -1154,6 +1154,7 @@ def main():
                     run_command=update_command,
                     verify_user=verify_admin,
                     expire_user_session=expire_admin_session,
+                    parent_journey=CASE_JOURNEY,
                     allowed_outside_roots=(Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb"))),
                                            Path(BIN / "kb").absolute()),
                 )

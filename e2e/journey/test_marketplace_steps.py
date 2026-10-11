@@ -1,5 +1,6 @@
 import json
 import ast
+import os
 import subprocess
 import sys
 import tempfile
@@ -12,11 +13,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               prepare_commit_project_fixture,
                                run_plugin_policy_diagnostic_step,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
-from service_steps import Journey
+from service_steps import FlowGraph, Journey
+from journey_dependencies import Dependency
+import service_runner
 from test_install_layout import create_test_install_container
 from invocations import invocation_context, open_http, run_command
 
@@ -340,6 +344,7 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_SERVICE_TOKEN": "fixture-token"}
             calls: list[tuple[str, ...]] = []
             host_running = True
+            registry_version = "2.120.1"
 
             def lock(path: Path, *, platform: bool = False) -> dict:
                 lock_file = path / ".kb" / "marketplace.lock"
@@ -365,7 +370,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 if command[0] == "npm":
                     package_id = command[2]
                     versions = {
-                        "@kb-labs/commit-entry": "2.120.1",
+                        "@kb-labs/commit-entry": registry_version,
                         "@kb-labs/qa-entry": "2.120.1",
                         "@kb-labs/e2e-analytics-emitter": "1.0.0",
                         "@kb-labs/adapters-fs": "2.107.0",
@@ -447,7 +452,8 @@ class MarketplaceStepTests(unittest.TestCase):
                         "scope": "platform" if platform else "project",
                     })
                 elif args[:3] == ["marketplace", "plugins", "list"]:
-                    value = lock(cwd_path)
+                    platform_scope = "--scope" in args and args[args.index("--scope") + 1] == "platform"
+                    value = lock(active_platform if platform_scope else cwd_path, platform=platform_scope)
                     entries = [{"id": package_id, **entry} for package_id, entry in value["plugins"].items()]
                     if "--json" in args:
                         stdout = json.dumps({"entries": entries})
@@ -547,6 +553,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, stdout, "")
 
             http_calls = []
+            route_observations = []
             commit_case_hook_calls = []
 
             class FakeResponse:
@@ -580,6 +587,11 @@ class MarketplaceStepTests(unittest.TestCase):
                         "correlationId": "request-fixture"}})
                 if request.full_url.endswith("/health"):
                     return FakeResponse(200, {"ok": True, "data": {"projectRuntimes": {"runtimes": []}}})
+                if service_path in rest_route_table:
+                    route_observations.append((
+                        "@kb-labs/commit" in lock(active_platform, platform=True)["plugins"],
+                        "@kb-labs/commit" in lock(project)["plugins"],
+                    ))
                 if service_path in rest_route_table and "@kb-labs/commit" in lock(project)["plugins"]:
                     return FakeResponse(200, {"ok": True, "data": {"scope": "project", "hasPlan": False}})
                 error_code = "KB_RUNTIME_RESOURCE_NOT_FOUND" if service_path not in rest_route_table else "KB_PLUGIN_NOT_INSTALLED"
@@ -595,8 +607,19 @@ class MarketplaceStepTests(unittest.TestCase):
                 commit_case_hook_calls.append(True)
 
             journey = Journey("local", "marketplace-fixture")
-            run_marketplace_steps(journey, project, "http://registry.test", env, fake_run, fake_http,
-                                  commit_case_hook=fake_commit_case_hook)
+            fixture_entry = prepare_commit_project_fixture(journey, project, "http://registry.test", env, fake_run)
+            self.assertEqual(fixture_entry, json.loads((project / ".kb" / "marketplace.lock").read_text())[
+                "plugins"]["@kb-labs/commit"])
+            registry_version = "2.120.9"
+            def fail_unrelated_policy_claim(journey, *_args, **_kwargs):
+                journey.step("malformed project plugin policy diagnostic", "marketplace",
+                             lambda: "replayed j54 S-203.25 failure", cases=["S-203.25"])
+            def fail_unrelated_error_claim(*_args, **_kwargs):
+                raise AssertionError("independent S-051 envelope assertion failed")
+            with patch("marketplace_steps.run_plugin_policy_diagnostic_step", side_effect=fail_unrelated_policy_claim), \
+                    patch("marketplace_steps.validate_shared_failure", side_effect=fail_unrelated_error_claim):
+                run_marketplace_steps(journey, project, "http://registry.test", env, fake_run, fake_http,
+                                      commit_case_hook=fake_commit_case_hook, fixture_entry=fixture_entry)
 
             expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 7))) for step in steps}
             expected.update({
@@ -604,13 +627,18 @@ class MarketplaceStepTests(unittest.TestCase):
                 "S-051.2", "S-051.3", "S-051.4",
                 "S-203.14", "S-203.15", "S-203.16",
                 "S-203.25",
+                "S-192.7",
             })
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
-            self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
-            self.assertEqual(actual, expected)
+            claims_by_id = {claim["claimId"]: claim["status"]
+                            for claim in journey.result().case_run["claims"]}
+            self.assertEqual(journey.result().status, "FAIL")
+            self.assertEqual(claims_by_id["S-051.2"], "FAIL")
+            self.assertEqual(claims_by_id["S-203.25"], "FAIL")
+            self.assertEqual(actual, expected, [(step.name, step.status, step.message) for step in journey.steps])
             self.assertEqual(commit_case_hook_calls, [True])
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
-            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1",
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.9",
                            "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "marketplace", "uninstall", "@kb-labs/commit",
                            "--scope", "platform", "--json"), calls)
@@ -620,15 +648,160 @@ class MarketplaceStepTests(unittest.TestCase):
                 "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/plugins/commit/status",
                 "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/plugins/commit/status",
                 "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/plugins/commit/status",
+                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/plugins/commit/status",
                 "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",
             ])
             self.assertTrue(all(call[1] == "Bearer fixture-token" for call in http_calls))
+            self.assertEqual(route_observations[0], (False, False))
+            self.assertEqual(route_observations[-3], (False, True))
+            self.assertEqual(route_observations[-2], (False, False))
             self.assertNotIn(("npm", "view", "@kb-labs/adapters-fs", "version", "--json", "--registry=http://registry.test"), calls)
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs@2.107.0", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "qa", "cases", "list", "--json"), calls)
             self.assertIn(("kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"), calls)
             self.assertNotIn("port", json.loads(platform_config.read_text())["gateway"])
             self.assertFalse(any(item.name.startswith("kb-marketplace-project-b-") for item in home.iterdir()))
+
+            lock_path = project / ".kb" / "marketplace.lock"
+            self.assertIn("@kb-labs/commit", json.loads(lock_path.read_text())["plugins"])
+            fixture_file = home / "summary" / "project-fixtures-local.json"
+            env["KB_JOURNEY_PROJECT_FIXTURES_FILE"] = str(fixture_file)
+            graph = FlowGraph(journey, {"marketplace-fixtures": ("marketplace-available",)})
+            probe = graph.probe_state("marketplace-available", "marketplace", "marketplace install", lambda: (
+                None if "@kb-labs/commit" in json.loads(lock_path.read_text()).get("plugins", {})
+                else "Commit fixture is absent from the project marketplace lock"
+            ))
+            self.assertEqual(probe.status, "PASS")
+
+            previous_environment = {key: os.environ.get(key) for key in (
+                "KB_JOURNEY_PROJECT_B_ID", "KB_JOURNEY_PROJECT_B_ROOT")}
+            downstream = []
+            try:
+                with patch("service_runner.PROJECT_ID", "prj_marketplace_fixture"), \
+                        patch("service_runner.prepare_mcp_projects", return_value=("prj_fixture_b", str(home / "project-b"))):
+                    handoff = graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
+                                         lambda: service_runner._prepare_and_export_mcp_projects(str(project), "registry", env))
+                self.assertEqual(handoff, "PASS")
+                self.assertTrue(fixture_file.is_file())
+                self.assertEqual(json.loads(fixture_file.read_text())["projectAId"], "prj_marketplace_fixture")
+                downstream_flow = graph.flow("fixture-dependent downstream flow", "marketplace-fixtures", "downstream",
+                                              lambda: downstream.append("ran"))
+                self.assertEqual(downstream_flow, "PASS")
+                self.assertEqual(downstream, ["ran"])
+            finally:
+                for key, value in previous_environment.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+            lifecycle_assertions = [
+                step.name for step in journey.steps
+                if step.capability == "marketplace"
+                and step.name != "restore Commit project fixture after marketplace lifecycle"
+            ]
+            self.assertGreater(len(lifecycle_assertions), 20)
+            original_commit_entry = dict(fixture_entry)
+            all_case_claims = {case_id for step in journey.steps for case_id in step.cases}
+            modes = (
+                ("batch", set()),
+                ("selected", set(all_case_claims)),
+            )
+            for mode_name, selected_steps in modes:
+                for index, failpoint in enumerate(lifecycle_assertions):
+                    with self.subTest(mode=mode_name, lifecycle_assertion=failpoint):
+                        registry_version = "2.120.1"
+                        save_lock(project, {"schema": "kb.marketplace/3", "plugins": {
+                            "@kb-labs/commit": dict(original_commit_entry),
+                        }})
+                        save_lock(active_platform, {"schema": "kb.marketplace/3", "plugins": {}, "adapters": {}})
+                        trial = Journey("local", f"marketplace-failure-{mode_name}-{index}")
+                        trial.selected_steps = set(selected_steps)
+                        trial.selected_claims = set(selected_steps)
+                    trial_fixture_entry = prepare_commit_project_fixture(
+                        trial, project, "http://registry.test", env, fake_run)
+                    self.assertEqual(trial_fixture_entry, original_commit_entry)
+                    registry_version = "2.120.9"
+                    requirements: dict[str, tuple[str, ...]] = {}
+                    original_step = trial.step
+
+                    def record_requirements(name, capability, check, cases=(), details=None, *, requires=(), role="step"):
+                        requirements[name] = tuple(Dependency.parse(item).name for item in requires)
+                        return original_step(name, capability, check, cases=cases, details=details,
+                                             requires=requires, role=role)
+
+                    trial.step = record_requirements
+                    checked_steps = []
+
+                    def inject_selected_failure(name, check, selected=failpoint):
+                        checked_steps.append(name)
+                        if name == selected:
+                            return f"injected assertion failure at {selected}"
+                        return check()
+
+                    trial.step_guard = inject_selected_failure
+                    with patch("marketplace_steps.run_plugin_policy_diagnostic_step",
+                               side_effect=fail_unrelated_policy_claim), \
+                            patch("marketplace_steps.validate_shared_failure",
+                                  side_effect=fail_unrelated_error_claim):
+                        run_marketplace_steps(trial, project, "http://registry.test", env, fake_run, fake_http,
+                                              commit_case_hook=fake_commit_case_hook,
+                                              fixture_entry=trial_fixture_entry)
+                    self.assertEqual(
+                        next(step.status for step in trial.steps if step.name == failpoint), "FAIL")
+                    final_lock = json.loads(lock_path.read_text())
+                    final_entry = final_lock.get("plugins", {}).get("@kb-labs/commit")
+                    self.assertEqual(final_lock.get("schema"), "kb.marketplace/3")
+                    self.assertEqual(final_entry, original_commit_entry)
+
+                    status_by_name = {step.name: step for step in trial.steps}
+                    blocked_dependents = set()
+                    changed = True
+                    while changed:
+                        changed = False
+                        for name, prereqs in requirements.items():
+                            if name not in blocked_dependents and any(
+                                    required == failpoint or required in blocked_dependents
+                                    for required in prereqs):
+                                blocked_dependents.add(name)
+                                changed = True
+                    claims_by_id = {
+                        claim["claimId"]: claim["status"]
+                        for claim in trial.result().case_run["claims"]
+                    }
+                    for dependent_name in blocked_dependents:
+                        dependent = status_by_name[dependent_name]
+                        self.assertEqual(dependent.status, "BLOCKED", dependent_name)
+                        self.assertTrue(dependent.details.get("prerequisiteFailures"), dependent_name)
+                        for claim_id in dependent.cases:
+                            self.assertNotIn(claim_id, claims_by_id, f"blocked claim {claim_id} must not be emitted")
+                    for independent_name in lifecycle_assertions:
+                        if independent_name != failpoint and independent_name not in blocked_dependents:
+                            self.assertIn(independent_name, checked_steps, independent_name)
+
+                    failure_graph = FlowGraph(trial, {"marketplace-fixtures": ("marketplace-available",)})
+                    state_probe = failure_graph.probe_state(
+                        "marketplace-available", "marketplace-fixture-producer", "Commit project fixture",
+                        lambda: None if "@kb-labs/commit" in json.loads(lock_path.read_text()).get("plugins", {})
+                        else "Commit fixture is absent from the project marketplace lock",
+                    )
+                    self.assertEqual(state_probe.status, "PASS")
+                    downstream = []
+                    with patch("service_runner.PROJECT_ID", "prj_marketplace_fixture"), \
+                            patch("service_runner.prepare_mcp_projects",
+                                  return_value=("prj_fixture_b", str(home / "project-b"))):
+                        handoff = failure_graph.flow(
+                            "prepare MCP project fixtures", "marketplace-fixtures", "mcp",
+                            lambda: service_runner._prepare_and_export_mcp_projects(
+                                str(project), "registry", env))
+                    self.assertEqual(handoff, "PASS")
+                    self.assertTrue(fixture_file.is_file())
+                    self.assertEqual(json.loads(fixture_file.read_text())["projectAId"],
+                                     "prj_marketplace_fixture")
+                    self.assertEqual(failure_graph.flow(
+                        "fixture-dependent downstream flow", "marketplace-fixtures", "downstream",
+                        lambda: downstream.append(failpoint)), "PASS")
+                    self.assertEqual(downstream, [failpoint])
 
 
 if __name__ == "__main__":

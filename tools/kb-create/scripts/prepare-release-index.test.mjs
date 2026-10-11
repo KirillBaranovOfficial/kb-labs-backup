@@ -1,7 +1,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,8 +27,9 @@ test('seals recursive runtime peers of platform members and SDK, and validates p
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', {
-      peerDependencies: { '@kb-labs/core-runtime': '^2.0.0', '@kb-labs/perm-presets': '^2.0.0' },
-    }, { 'dist/index.js': 'import { presets } from "@kb-labs/perm-presets";' }),
+      peerDependencies: { '@kb-labs/core-runtime': '^2.0.0', '@kb-labs/core-contracts': '^2.0.0' },
+      dependencies: { '@kb-labs/shared-tool-kit': 'workspace:*', '@kb-labs/perm-presets': 'workspace:*' },
+    }, { 'dist/index.js': 'import { presets } from "@kb-labs/perm-presets"; import "@kb-labs/core-contracts";' }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-contracts', '2.0.0', '', {
       peerDependencies: { '@kb-labs/shared-tool-kit': '^2.0.0' },
     }, { 'dist/index.js': 'export { createTool } from "@kb-labs/shared-tool-kit";' }),
@@ -43,18 +44,18 @@ test('seals recursive runtime peers of platform members and SDK, and validates p
     '--binary-manifest', binaryManifest, '--platform-member-packages', '@kb-labs/core-contracts', '--output', output], { stdio: 'pipe' });
   const index = JSON.parse(readFileSync(output, 'utf8'));
   const members = index.platforms[0].members.map(member => member.package);
-  assert.ok(members.includes('@kb-labs/perm-presets'));
-  assert.ok(members.includes('@kb-labs/shared-tool-kit'));
+  assert.ok(members.includes('@kb-labs/core-contracts'));
+  assert.ok(!members.includes('@kb-labs/shared-tool-kit'), 'SDK dependencies resolve through their installed dependency graph');
 });
 
 // case: S-054.16
-test('seals declared SDK runtime entrypoints and leaves optional helper peers out', () => {
+test('validates SDK runtime dependencies and leaves optional helper peers out', () => {
   const root = temporaryRoot('kb-release-index-optional-peers-');
   const stage = join(root, 'stage');
   const packageRoot = join(root, 'packages');
   mkdirSync(stage, { recursive: true });
-  const runtimePeers = [
-    '@kb-labs/core-platform', '@kb-labs/core-runtime', '@kb-labs/core-sys',
+  const runtimeDependencies = [
+    '@kb-labs/core-platform', '@kb-labs/core-sys',
     '@kb-labs/perm-presets', '@kb-labs/shared-cli-ui',
     '@kb-labs/shared-command-kit', '@kb-labs/shared-tool-kit',
   ];
@@ -62,12 +63,15 @@ test('seals declared SDK runtime entrypoints and leaves optional helper peers ou
     '@kb-labs/shared-testing', '@kb-labs/shared-testing-e2e',
     '@kb-labs/shared-testing-platform', '@kb-labs/studio-plugin-tools',
   ];
-  const peerDependencies = Object.fromEntries([...runtimePeers, ...helperPeers].map(name => [name, '^2.0.0']));
+  const dependencies = Object.fromEntries(runtimeDependencies.map(name => [name, 'workspace:*']));
+  const peerDependencies = { '@kb-labs/core-runtime': '^2.0.0', ...Object.fromEntries(helperPeers.map(name => [name, '^2.0.0'])) };
   const peerDependenciesMeta = Object.fromEntries(helperPeers.map(name => [name, { optional: true }]));
   const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', {
       peerDependencies,
+      dependencies,
       peerDependenciesMeta,
       exports: {
         '.': { import: './dist/index.js' },
@@ -76,11 +80,11 @@ test('seals declared SDK runtime entrypoints and leaves optional helper peers ou
       },
       kbLabs: { release: { nonRuntimeEntrypoints: ['./testing', './studio-build'] } },
     }, {
-      'dist/index.js': runtimePeers.map(name => `import "${name}";`).join('\n'),
+      'dist/index.js': runtimeDependencies.map(name => `import "${name}";`).join('\n'),
       'dist/testing/index.js': helperPeers.slice(0, 3).map(name => `import "${name}";`).join('\n'),
       'dist/studio-build/index.js': 'import "@kb-labs/studio-plugin-tools";',
     }),
-    ...[...runtimePeers, ...helperPeers].map(name => packageArtifact(root, packageRoot, stage, name, '2.0.0', '')),
+    ...[...runtimeDependencies, ...helperPeers].map(name => packageArtifact(root, packageRoot, stage, name, '2.0.0', '')),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
@@ -89,7 +93,7 @@ test('seals declared SDK runtime entrypoints and leaves optional helper peers ou
   execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
     '--binary-manifest', binaryManifest, '--output', output], { stdio: 'pipe' });
   const members = JSON.parse(readFileSync(output, 'utf8')).platforms[0].members.map(member => member.package);
-  for (const peer of runtimePeers) assert.ok(members.includes(peer), `${peer} must remain sealed`);
+  for (const dependency of runtimeDependencies) assert.ok(!members.includes(dependency), `${dependency} remains an SDK dependency`);
   for (const peer of helperPeers) assert.ok(!members.includes(peer), `${peer} must stay out of the platform`);
 });
 
@@ -142,6 +146,42 @@ test('fails when a published bare runtime import is neither a dependency nor a s
     '--binary-manifest', binaryManifest, '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /runtime import @kb-labs\/perm-presets.*neither a dependency nor a sealed peer/);
+});
+
+// case: S-054.2
+test('rejects a runtime peer that the installed platform graph does not provide, and accepts a dependency', () => {
+  const prepare = (prefix, sdkManifest) => {
+    const root = temporaryRoot(prefix);
+    const stage = join(root, 'stage');
+    const packageRoot = join(root, 'packages');
+    mkdirSync(stage, { recursive: true });
+    const artifacts = [
+      packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+      packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
+      packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', sdkManifest,
+        { 'dist/index.js': 'export { createTool } from "@kb-labs/shared-tool-kit";' }),
+      packageArtifact(root, packageRoot, stage, '@kb-labs/shared-tool-kit', '2.0.0', '', {},
+        { 'dist/index.js': 'export const createTool = () => {};' }),
+    ];
+    writeStageManifest(root, packageRoot, stage, artifacts);
+    const binaryManifest = join(root, 'binary-manifest.json');
+    writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+    return spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
+      '--binary-manifest', binaryManifest, '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
+  };
+
+  const peerOnly = prepare('kb-release-index-unprovided-runtime-peer-', {
+    peerDependencies: { '@kb-labs/core-runtime': '^2.0.0', '@kb-labs/shared-tool-kit': '^2.0.0' },
+  });
+  assert.notEqual(peerOnly.status, 0);
+  assert.match(`${peerOnly.stdout}\n${peerOnly.stderr}`,
+    /@kb-labs\/sdk runtime import @kb-labs\/shared-tool-kit is satisfied only by peer @kb-labs\/shared-tool-kit, which the platform package graph does not provide/);
+
+  const dependency = prepare('kb-release-index-provided-runtime-dependency-', {
+    peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' },
+    dependencies: { '@kb-labs/shared-tool-kit': 'workspace:*' },
+  });
+  assert.equal(dependency.status, 0, dependency.stderr);
 });
 
 test('prepares a sealed index from staged plugin, service and adapter manifests', () => {
@@ -229,13 +269,17 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'sqlite-stores')?.provides, ['documentDatabase', 'kvStore']);
 });
 
-test('classifies every staged service and adapter artifact from the built workspace', () => {
+test('validates the built SDK runtime imports and classifies every staged service and adapter artifact', () => {
   const workspaceRoot = fileURLToPath(new URL('../../../', import.meta.url));
   const root = temporaryRoot('kb-release-index-workspace-artifacts-');
   const stage = join(root, 'stage');
   const packageRoot = join(root, 'packages');
   mkdirSync(stage, { recursive: true });
   const workspacePackages = JSON.parse(execFileSync('corepack', ['pnpm', '-r', 'list', '--depth', '-1', '--json'], { cwd: workspaceRoot, encoding: 'utf8' }));
+  const workspaceByName = new Map(workspacePackages.map(pkg => [
+    JSON.parse(readFileSync(join(pkg.path, 'package.json'), 'utf8')).name,
+    pkg,
+  ]));
   const builtManifests = [];
   for (const workspacePackage of workspacePackages) {
     const relativePackagePath = relative(workspaceRoot, workspacePackage.path);
@@ -245,10 +289,26 @@ test('classifies every staged service and adapter artifact from the built worksp
     const manifest = JSON.parse(readFileSync(join(workspacePackage.path, 'dist', 'manifest.json'), 'utf8'));
     builtManifests.push({ packageJSON, manifest });
   }
+  const sdkWorkspace = workspaceByName.get('@kb-labs/sdk');
+  assert.ok(sdkWorkspace, 'the workspace must include the published SDK package');
+  const sdkPackageJSON = JSON.parse(readFileSync(join(sdkWorkspace.path, 'package.json'), 'utf8'));
+  const sdkRuntimeFiles = {};
+  const collectSdkRuntimeFiles = directory => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        collectSdkRuntimeFiles(path);
+      } else if (/\.(?:c|m)?js$/.test(entry.name)) {
+        sdkRuntimeFiles[relative(sdkWorkspace.path, path)] = readFileSync(path, 'utf8');
+      }
+    }
+  };
+  collectSdkRuntimeFiles(join(sdkWorkspace.path, 'dist'));
+  const sdkPlatformPeers = Object.keys(sdkPackageJSON.peerDependencies ?? {}).filter(name =>
+    sdkPackageJSON.peerDependenciesMeta?.[name]?.optional !== true);
   const version = JSON.parse(readFileSync(join(workspaceRoot, 'core/runtime/package.json'), 'utf8')).version;
   const artifacts = [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', version, ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', version, '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', version, '', { bin: { 'kb-host': './dist/bin.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0' })),
     packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
@@ -256,12 +316,25 @@ test('classifies every staged service and adapter artifact from the built worksp
       root, packageRoot, stage, packageJSON.name, '2.0.0', JSON.stringify(manifest),
       packageJSON.bin ? { bin: packageJSON.bin } : {},
     )),
+    packageArtifact(root, packageRoot, stage, sdkPackageJSON.name, sdkPackageJSON.version, '',
+      sdkPackageJSON, sdkRuntimeFiles),
   ];
+  const stagedNames = new Set(artifacts.map(artifact => artifact.name));
+  for (const packageName of [...Object.keys(sdkPackageJSON.dependencies ?? {}), ...sdkPlatformPeers]) {
+    if (!packageName.startsWith('@kb-labs/')) continue;
+    if (stagedNames.has(packageName)) continue;
+    const workspacePackage = workspaceByName.get(packageName);
+    assert.ok(workspacePackage, `SDK runtime package ${packageName} must come from the workspace`);
+    const packageJSON = JSON.parse(readFileSync(join(workspacePackage.path, 'package.json'), 'utf8'));
+    artifacts.push(packageArtifact(root, packageRoot, stage, packageName, packageJSON.version, '', packageJSON));
+    stagedNames.add(packageName);
+  }
   writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
   const output = join(root, 'release-index.json');
-  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--output', output], { stdio: 'pipe' });
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
+    '--binary-manifest', binaryManifest, '--platform-member-packages', sdkPlatformPeers.join(','), '--output', output], { stdio: 'pipe' });
   const index = JSON.parse(readFileSync(output, 'utf8'));
   const expectedServices = builtManifests.filter(({ manifest }) => manifest.schema === 'kb.service/1').map(({ manifest }) => manifest.id).sort();
   const expectedAdapters = builtManifests.filter(({ manifest }) => manifest.schema === 'kb.adapter/1').map(({ manifest }) => manifest.id).sort();
@@ -269,6 +342,31 @@ test('classifies every staged service and adapter artifact from the built worksp
   assert.ok(expectedAdapters.length > 0, 'the workspace build must stage adapter manifests');
   assert.deepEqual(index.platforms[0].profiles.default.services.map(item => item.id).sort(), expectedServices);
   assert.deepEqual(index.adapters.map(item => item.id).sort(), expectedAdapters);
+
+  // Keep the shipped SDK imports and platform graph intact while reproducing
+  // the old manifest shape: a peer alone must not be accepted just because
+  // its package tarball happened to be staged.
+  const revertedStage = join(root, 'reverted-stage');
+  mkdirSync(revertedStage, { recursive: true });
+  const revertedArtifacts = artifacts.filter(artifact => artifact.name !== sdkPackageJSON.name).map(artifact => {
+    writeFileSync(join(revertedStage, artifact.tarball), readFileSync(join(stage, artifact.tarball)));
+    return artifact;
+  });
+  const revertedSdkManifest = {
+    ...sdkPackageJSON,
+    dependencies: { ...sdkPackageJSON.dependencies },
+    peerDependencies: { ...sdkPackageJSON.peerDependencies, '@kb-labs/shared-tool-kit': '>=2.0.0' },
+  };
+  delete revertedSdkManifest.dependencies['@kb-labs/shared-tool-kit'];
+  revertedArtifacts.push(packageArtifact(root, packageRoot, revertedStage, sdkPackageJSON.name, sdkPackageJSON.version,
+    '', revertedSdkManifest, sdkRuntimeFiles));
+  writeStageManifest(root, packageRoot, revertedStage, revertedArtifacts);
+  const reverted = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', revertedStage,
+    '--binary-manifest', binaryManifest, '--platform-member-packages', sdkPlatformPeers.join(','),
+    '--output', join(root, 'reverted-release-index.json')], { encoding: 'utf8' });
+  assert.notEqual(reverted.status, 0);
+  assert.match(`${reverted.stdout}\n${reverted.stderr}`,
+    /@kb-labs\/sdk runtime import @kb-labs\/shared-tool-kit.*peer @kb-labs\/shared-tool-kit/);
 });
 
 test('filesystem adapter contributes the project storage directory default to the release index', () => {

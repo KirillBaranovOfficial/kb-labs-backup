@@ -269,6 +269,7 @@ export type {
   ManifestV3,
   ServiceManifest,
   ProjectServiceApiDeclaration,
+  ProjectServiceDeclaration,
   ServiceRuntime,
   ServiceEnvVar,
   SchemaRef,
