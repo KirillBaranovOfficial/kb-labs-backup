@@ -20,6 +20,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 func TestStartStatusErrorRemainsAnError(t *testing.T) {
@@ -60,6 +61,24 @@ func binaries(t *testing.T) (launcher, fakehost string) {
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if buildDir != "" {
+		for _, binary := range []string{filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost")} {
+			output, err := exec.Command("lsof", "-nP", "-t", binary).CombinedOutput()
+			if err == nil && len(bytes.TrimSpace(output)) > 0 {
+				fmt.Fprintf(os.Stderr, "test process remains alive for %s:\n%s", binary, output)
+				code = 1
+			} else if err != nil {
+				if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 || len(bytes.TrimSpace(output)) != 0 {
+					fmt.Fprintf(os.Stderr, "could not audit test process path %s: %v\n%s", binary, err, output)
+					code = 1
+				} else {
+					fmt.Fprintf(os.Stdout, "process audit %s: none\n", binary)
+				}
+			} else {
+				fmt.Fprintf(os.Stdout, "process audit %s: none\n", binary)
+			}
+		}
+	}
+	if buildDir != "" {
 		os.RemoveAll(buildDir)
 	}
 	os.Exit(code)
@@ -82,8 +101,13 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 	listener.Close()
 	root := t.TempDir()
 	spec := &contracts.HostSpec{Command: fakehost, Args: append([]string{"-port", fmt.Sprint(port)}, hostArgs...), HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: spec}
-	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", InstallationID: "installation-r1", Plan: plan}); err != nil {
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: spec,
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}}}
+	writeVersionedReceipt(t, root, contracts.InstallReceipt{ID: "r1", InstallationID: "installation-r1", Plan: plan})
+	if err := os.WriteFile(filepath.Join(root, "state", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "current", ".kb", "marketplace.lock"), []byte("old package set\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	kbHome := t.TempDir()
@@ -93,7 +117,52 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 		t.Fatal(err)
 	}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
-	t.Cleanup(func() { _, _, _ = inst.run("stop", "--json") })
+	t.Cleanup(func() {
+		_, code, output := inst.run("stop", "--json")
+		if code != 0 {
+			t.Errorf("test cleanup stop failed: %s", output)
+		}
+		status, statusCode, statusOutput := inst.run("status", "--json")
+		if statusCode != 0 || status["running"] == true {
+			t.Errorf("test cleanup left host running: %s", statusOutput)
+		}
+		if pid, ok := status["host"].(map[string]any)["pid"].(float64); ok && host.ProcessAlive(int(pid)) {
+			t.Errorf("test cleanup host process %d is still alive", int(pid))
+		}
+	})
+	return inst
+}
+
+func newEmptyInstallation(t *testing.T) installation {
+	t.Helper()
+	launcher, _ := binaries(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+	root := t.TempDir()
+	kbHome := t.TempDir()
+	t.Setenv(host.KBHomeEnv, kbHome)
+	state, err := host.StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
+	t.Cleanup(func() {
+		_, code, output := inst.run("stop", "--json")
+		if code != 0 {
+			t.Errorf("test cleanup stop failed: %s", output)
+		}
+		layout, layoutErr := versionroot.New(inst.root)
+		if layoutErr == nil && layout.Validate() == nil {
+			status, statusCode, statusOutput := inst.run("status", "--json")
+			if statusCode != 0 || status["running"] == true {
+				t.Errorf("test cleanup left host running: %s", statusOutput)
+			}
+		}
+	})
 	return inst
 }
 
@@ -107,15 +176,72 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 	if exit, ok := err.(*exec.ExitError); ok {
 		code = exit.ExitCode()
 	}
-	if code == 0 && len(args) > 0 && (args[0] == "start" || args[0] == "restart") {
-		i.t.Cleanup(func() { _, _, _ = i.run("stop", "--json") })
-	}
 	var parsed map[string]any
 	_ = json.Unmarshal(stdout.Bytes(), &parsed)
 	if data, ok := parsed["data"].(map[string]any); ok {
 		parsed = data
 	}
+	if code == 0 && len(args) > 0 && (args[0] == "start" || args[0] == "restart") {
+		pid := 0
+		if hostStatus, ok := parsed["host"].(map[string]any); ok {
+			if value, ok := hostStatus["pid"].(float64); ok {
+				pid = int(value)
+			}
+		}
+		i.t.Cleanup(func() {
+			_, stopCode, stopOutput := i.run("stop", "--json")
+			if stopCode != 0 {
+				i.t.Errorf("test cleanup stop failed: %s", stopOutput)
+			}
+			status, statusCode, statusOutput := i.run("status", "--json")
+			if statusCode != 0 || status["running"] == true {
+				i.t.Errorf("test cleanup left host running: %s", statusOutput)
+			}
+			if pid != 0 && !waitHostExit(pid, 5*time.Second) {
+				i.t.Errorf("test cleanup host process %d did not exit", pid)
+			}
+		})
+	}
 	return parsed, code, stdout.String() + stderr.String()
+}
+
+func (i installation) runCommand(args []string, extraEnv ...string) commandResult {
+	return i.runArgv(append([]string{i.launcher}, args...), extraEnv...)
+}
+
+func (i installation) runArgv(argv []string, extraEnv ...string) commandResult {
+	if len(argv) == 0 {
+		i.t.Fatal("cannot run an empty argv")
+	}
+	program := argv[0]
+	if program == "kb-create" {
+		program = i.launcher
+	}
+	command := exec.Command(program, argv[1:]...)
+	command.Env = append(os.Environ(), "KB_HOME="+i.kbHome, "PATH="+filepath.Dir(i.launcher)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	command.Env = append(command.Env, extraEnv...)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err := command.Run()
+	code := 0
+	if exit, ok := err.(*exec.ExitError); ok {
+		code = exit.ExitCode()
+	}
+	output := stdout.String() + stderr.String()
+	var payload map[string]any
+	_ = json.Unmarshal(stdout.Bytes(), &payload)
+	if data, ok := payload["data"].(map[string]any); ok {
+		payload = data
+	}
+	return commandResult{payload: payload, code: code, output: output}
+}
+
+func waitHostExit(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for host.ProcessAlive(pid) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	return !host.ProcessAlive(pid)
 }
 
 func errorCode(payload map[string]any) string {
@@ -135,7 +261,7 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	}
 	pid := started["host"].(map[string]any)["pid"].(float64)
 
-	rootState, err := host.StateForRoot(host.State{Dir: inst.state}, inst.root)
+	rootState, err := host.StateForRoot(inst.root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,14 +276,26 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	}
 
 	status, code, raw := inst.run("status", "--json")
-	host := status["host"].(map[string]any)
-	if code != 0 || host["state"] != "running" || host["pid"].(float64) != pid {
+	hostInfo := status["host"].(map[string]any)
+	if code != 0 || hostInfo["state"] != "running" || hostInfo["pid"].(float64) != pid {
 		t.Fatalf("status: %d %s", code, raw)
+	}
+	doctor, doctorCode, doctorOutput := inst.run("doctor", "--json")
+	retention, _ := doctor["retention"].(map[string]any)
+	stateForDoctor, err := host.StateForRoot(inst.root)
+	if err != nil || doctorCode != 0 || retention["hostState"] != stateForDoctor.Dir || retention["installRoot"] == "" ||
+		retention["platformRoot"] == "" || retention["versionsDirectory"] == "" ||
+		retention["sharedState"] == "" || retention["installerState"] == "" {
+		t.Fatalf("doctor did not report container paths: code=%d retention=%#v output=%s", doctorCode, retention, doctorOutput)
 	}
 
 	restarted, code, raw := inst.run("restart", "--json")
 	if code != 0 || restarted["host"].(map[string]any)["pid"].(float64) == pid {
 		t.Fatalf("restart must replace the host process: %d %s", code, raw)
+	}
+	statusAfterRestart, statusCode, statusRaw := inst.run("status", "--json")
+	if statusCode != 0 || statusAfterRestart["host"].(map[string]any)["state"] != "running" {
+		t.Fatalf("status after restart: %d %s", statusCode, statusRaw)
 	}
 
 	stopped, code, raw := inst.run("stop", "--json")
@@ -178,34 +316,59 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	}
 }
 
+// case: S-221.5
+func TestStatusAndStopUseTheDurableHostRecordWhenLayoutMetadataIsUnreadable(t *testing.T) {
+	inst := newInstallation(t)
+	started, code, output := inst.run("start", "--json")
+	if code != 0 {
+		t.Fatalf("start: %d %s", code, output)
+	}
+	pid := int(started["host"].(map[string]any)["pid"].(float64))
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := filepath.Join(filepath.Dir(state.Dir), "layout.json")
+	if err := os.WriteFile(metadata, []byte("not valid layout metadata\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, code, output := inst.run("status", "--json")
+	if code != 0 || status["running"] != true || status["host"].(map[string]any)["pid"].(float64) != float64(pid) {
+		t.Fatalf("status did not read the durable host record: code=%d payload=%#v output=%s", code, status, output)
+	}
+	stopped, code, output := inst.run("stop", "--json")
+	result, _ := stopped["stopped"].(map[string]any)
+	if code != 0 || result["wasRunning"] != true {
+		t.Fatalf("stop did not reach the recorded process: code=%d payload=%#v output=%s", code, stopped, output)
+	}
+	if !waitHostExit(pid, 5*time.Second) {
+		t.Fatalf("recorded host process %d is still running after stop", pid)
+	}
+}
+
 // case: S-025.7, S-025.8, PC-001.10, PC-001.12
 func TestIndependentPlatformRootsOwnTheirHostLifecycle(t *testing.T) {
 	inst := newInstallation(t)
 	if _, code, output := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start A: %d %s", code, output)
 	}
-	receiptAPath := filepath.Join(inst.root, ".kb", "v2", "receipt.json")
+	receiptAPath := receipt.Path(platformRootForTest(t, inst.root))
 	receiptABefore, err := os.ReadFile(receiptAPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rootB := t.TempDir()
-	active, err := receipt.Read(inst.root)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
 	if err != nil {
 		t.Fatal(err)
 	}
-	active.Plan.Request.PlatformRoot = rootB
+	active.Plan.Request.PlatformRoot = filepath.Join(rootB, "current")
 	portB := freeLoopbackPort(t)
 	active.Plan.Host.Args = append([]string(nil), active.Plan.Host.Args...)
 	active.Plan.Host.Args[1] = fmt.Sprint(portB)
 	active.Plan.Host.HealthURL = fmt.Sprintf("http://127.0.0.1:%d/health", portB)
-	if err := receipt.Write(rootB, active); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(rootB, ".kb"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(rootB, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+	writeVersionedReceipt(t, rootB, active)
+	if err := os.WriteFile(filepath.Join(rootB, "state", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,7 +427,18 @@ func runForRoot(t *testing.T, inst installation, root, operation string) map[str
 	}
 	if data, ok := envelope["data"].(map[string]any); ok {
 		if code == 0 && operation == "start" {
-			t.Cleanup(func() { _ = runForRoot(t, inst, root, "stop") })
+			pid := 0
+			if hostStatus, ok := data["host"].(map[string]any); ok {
+				if value, ok := hostStatus["pid"].(float64); ok {
+					pid = int(value)
+				}
+			}
+			t.Cleanup(func() {
+				stopped := runForRoot(t, inst, root, "stop")
+				if stopped["ok"] != true || (pid != 0 && !waitHostExit(pid, 5*time.Second)) {
+					t.Errorf("cleanup did not stop root %s cleanly: %#v", root, stopped)
+				}
+			})
 		}
 		return data
 	}
@@ -275,12 +449,17 @@ func runForRoot(t *testing.T, inst installation, root, operation string) map[str
 // case: S-025.1, S-025.2, S-203.10
 func TestStatusAndDoctorReportReceiptChannelAndExactVersion(t *testing.T) {
 	inst := newInstallation(t)
-	active := contracts.InstallReceipt{ID: "receipt-canary", InstallationID: "installation-canary", Plan: contracts.ResolvedInstallPlan{
+	active := contracts.InstallReceipt{ID: "receipt-canary", InstallationID: "installation-r1", Plan: contracts.ResolvedInstallPlan{
 		Schema: contracts.ResolvedPlanSchema, PlatformChannel: "canary",
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "3.2.0-canary.4"},
 		Host:         &contracts.HostSpec{Command: inst.launcher, HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", inst.port)},
 	}}
-	if err := receipt.Write(inst.root, active); err != nil {
+	installationID, err := versionroot.InstallationIDForPath(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.InstallationID = installationID
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
 		t.Fatal(err)
 	}
 
@@ -300,7 +479,7 @@ func TestStatusAndDoctorReportReceiptChannelAndExactVersion(t *testing.T) {
 		t.Fatalf("doctor omitted successful unhealthy report or release identity: %v; output %s", doctor, doctorOutput)
 	}
 	_, doctorCode, doctorOutput = inst.run("doctor")
-	if doctorCode != 0 || !strings.Contains(doctorOutput, "Platform diagnosis completed.") || !strings.Contains(doctorOutput, "unhealthy") || !strings.Contains(doctorOutput, "Installation check config") {
+	if doctorCode != 0 || !strings.Contains(doctorOutput, "Platform diagnosis completed.") || !strings.Contains(doctorOutput, "unhealthy") || !strings.Contains(doctorOutput, "Platform check host-process") {
 		t.Fatalf("human doctor output omitted report status or installation finding: %d %s", doctorCode, doctorOutput)
 	}
 }
@@ -370,7 +549,11 @@ func TestForegroundStartRunsTheHostDirectly(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if _, err := os.Stat(filepath.Join(inst.state, "control.json")); !os.IsNotExist(err) {
+	rootState, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(rootState.Control()); !os.IsNotExist(err) {
 		t.Fatal("foreground mode has no control channel")
 	}
 	_ = command.Process.Signal(syscall.SIGTERM)

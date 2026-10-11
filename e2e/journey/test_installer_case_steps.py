@@ -21,6 +21,7 @@ from installer_case_steps import (_data, _seed_doctor_fixture, assert_default_se
                                   run_uninstall_decline_step, _service_ids_match,
                                   _snapshot_installation_owned_tree)
 from journey_resources import case_catalog_root
+from test_install_layout import create_test_install_container, move_test_platform_into_container
 from service_steps import Journey, record_candidate_provenance
 from service_port_assertions import assert_service_ports_preserved
 
@@ -178,9 +179,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
             def run_command(args):
                 calls.append(args)
                 if args[1] == "install":
-                    (platform / ".kb/v2/bin").mkdir(parents=True)
-                    (platform / ".kb/v2/receipt.json").write_text("{}")
-                    (platform / ".kb/v2/bin/kb").write_text("fixture")
+                    active = create_test_install_container(platform)
+                    (active / ".kb/v2/bin").mkdir(parents=True)
+                    (active / ".kb/v2/receipt.json").write_text("{}")
+                    (active / ".kb/v2/bin/kb").write_text("fixture")
                     return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{"operation":"install"}}', "")
                 if args[1] == "project":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
@@ -207,6 +209,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             receipt = root / ".kb/v2/receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text("{}")
+            move_test_platform_into_container(root)
             calls = []
 
             def run_command(args):
@@ -230,6 +233,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 "serviceGraph": {"services": [{"id": "gateway", "port": 4000},
                                                 {"id": "marketplace", "port": 5070}]},
             }}))
+            move_test_platform_into_container(root)
 
             calls = []
 
@@ -281,11 +285,12 @@ class InstallerCaseStepsTest(unittest.TestCase):
             executable = root / ".kb/v2/bin/kb"
             executable.parent.mkdir(parents=True)
             executable.touch()
+            active = move_test_platform_into_container(root)
             calls = []
             run_platform_cli(root, ["adapter", "list", "--json"],
                              lambda args: calls.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
 
-        self.assertEqual(calls, [[str(executable), "adapter", "list", "--json"]])
+        self.assertEqual(calls, [[str(active.resolve() / ".kb/v2/bin/kb"), "adapter", "list", "--json"]])
 
     def test_secondary_root_gateway_isolation_checks_running_and_stopped_legs(self):
         with tempfile.TemporaryDirectory(prefix="journey-secondary-gateway-") as temp:
@@ -300,6 +305,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     "installationId": installation,
                     "verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
                 }))
+            for root in (primary, secondary):
+                move_test_platform_into_container(root)
             calls = []
 
             def run_command(args):
@@ -361,6 +368,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         }},
                     })}]},
                 }))
+            for root in (primary, automatic):
+                move_test_platform_into_container(root)
             calls = []
 
             def run_command(args):
@@ -393,7 +402,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 root = Path(args[args.index("--platform-root") + 1])
                 gateway = args[args.index("--gateway-url") + 1]
                 port = gateway.rsplit(":", 1)[1]
-                (root / ".kb/v2").mkdir(parents=True)
+                active = create_test_install_container(root)
+                (active / ".kb/v2").mkdir(parents=True)
                 receipt = {"verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
                            "plan": {"serviceGraph": {"services": [
                                {"id": "gateway", "port": int(port)},
@@ -404,7 +414,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                    "marketplace": {"url": f"http://127.0.0.1:{int(port) + 1070}"},
                                }},
                            })}]}}
-                (root / ".kb/v2/receipt.json").write_text(json.dumps(receipt))
+                (active / ".kb/v2/receipt.json").write_text(json.dumps(receipt))
                 return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
                     "receipt": receipt,
                 }}), "")
@@ -489,14 +499,19 @@ class InstallerCaseStepsTest(unittest.TestCase):
     def test_missing_installer_fixture_is_claimless_preflight_failure(self):
         with tempfile.TemporaryDirectory(prefix="journey-missing-installer-fixture-") as temp:
             root = Path(temp)
-            stable, canary = root / "stable.json", root / "canary.json"
+            stable, update, jump, canary = (root / "stable.json", root / "update.json",
+                                            root / "jump.json", root / "canary.json")
             stable.write_text("{}")
+            update.write_text("{}")
+            jump.write_text("{}")
             canary.write_text("{}")
+            create_test_install_container(root)
             calls = []
             with patch("installer_case_steps.installer_scenario_resources",
                        return_value=[root / "missing-host-binary-linux-amd64.json"]):
                 journey = run_installer_case_steps(
-                    mode="local", launcher="kb-create", stable_index=stable, canary_index=canary,
+                    mode="local", launcher="kb-create", stable_index=stable,
+                    update_index=update, jump_index=jump, canary_index=canary,
                     platform_root=root, secret_value="secret", run_command=lambda args: calls.append(args),
                 )
 
@@ -578,12 +593,26 @@ class InstallerCaseStepsTest(unittest.TestCase):
     def test_repeat_plan_snapshot_excludes_layout_runtime_state(self):
         with tempfile.TemporaryDirectory(prefix="journey-layout-runtime-state-") as temp:
             root = Path(temp)
-            (root / ".kb/logs").mkdir(parents=True)
-            (root / ".kb/logs/host.log").write_text("runtime\n")
-            (root / ".kb/kb.config.jsonc").write_text("{}\n")
+            version_root = root / "versions/v1"
+            (version_root / ".kb").mkdir(parents=True)
+            (root / "state/logs").mkdir(parents=True)
+            (root / "state/logs/host.log").write_text("runtime\n")
+            (root / "state/data").mkdir(parents=True)
+            (root / "state/data/db.sqlite").write_text("runtime\n")
+            (root / "state/kb.config.jsonc").write_text("{}\n")
+            (version_root / ".kb/logs").symlink_to(Path("../../../state/logs"), target_is_directory=True)
+            (version_root / ".kb/kb.config.jsonc").symlink_to(Path("../../../state/kb.config.jsonc"))
+            (root / "current").symlink_to(Path("versions/v1"), target_is_directory=True)
+            (version_root / "immutable.txt").write_text("versioned\n")
             snapshot = _snapshot_installation_owned_tree(root)
 
-        self.assertEqual(set(snapshot), {".kb", ".kb/kb.config.jsonc"})
+        self.assertIn("current", snapshot)
+        self.assertIn("versions/v1/immutable.txt", snapshot)
+        self.assertNotIn("versions/v1/.kb/kb.config.jsonc", snapshot)
+        self.assertNotIn("versions/v1/.kb/logs/host.log", snapshot)
+        self.assertNotIn("state/logs/host.log", snapshot)
+        self.assertNotIn("state/data/db.sqlite", snapshot)
+        self.assertNotIn("state/kb.config.jsonc", snapshot)
 
     def test_receipt_service_graph_must_match_selected_plan_services(self):
         planned = {"services": [{"id": "api"}, {"id": "worker"}]}
@@ -644,9 +673,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
     def test_invalid_analytics_retention_claim_requires_catalogued_start_error(self):
         with tempfile.TemporaryDirectory(prefix="journey-invalid-analytics-retention-") as temp:
             root = Path(temp)
-            config_path = root / ".kb/kb.config.jsonc"
+            version_root = root / "versions/v1"
+            config_path = root / "state/kb.config.jsonc"
             config_path.parent.mkdir(parents=True)
             config_path.write_text('{"platform":{"adapterOptions":{"analytics":{"retentionDays":90}}}}\n')
+            (version_root / ".kb").mkdir(parents=True)
+            (version_root / ".kb/kb.config.jsonc").symlink_to(Path("../../../state/kb.config.jsonc"))
+            (root / "current").symlink_to(Path("versions/v1"), target_is_directory=True)
             calls = []
 
             def run_command(args):
@@ -676,6 +709,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             receipt.write_text(json.dumps({"plan": {"artifacts": [
                 {"kind": "platform", "id": "platform", "package": "@kb/platform", "version": "1.0.0"},
             ]}}))
+            move_test_platform_into_container(source)
             calls = []
 
             def run_command(args):
@@ -712,14 +746,16 @@ class InstallerCaseStepsTest(unittest.TestCase):
             source_receipt.write_text(json.dumps({"plan": {"artifacts": [
                 {"kind": "platform", "id": "platform", "package": "@kb/platform", "version": "1.0.0"},
             ]}}))
+            move_test_platform_into_container(source)
             target = root / "fixture"
             requirement = {"id": "fixture.required", "path": "/fixture/required", "required": True,
                            "secret": False, "hint": "configure fixture"}
 
             _seed_doctor_fixture(source, target, requirement=requirement)
 
-            receipt = json.loads((target / ".kb/v2/receipt.json").read_text())
-            manifest = json.loads((target / "node_modules/@kb-labs/journey-doctor-fixture/kb-create.manifest.json").read_text())
+            target_active = (target / "current").resolve()
+            receipt = json.loads((target_active / ".kb/v2/receipt.json").read_text())
+            manifest = json.loads((target_active / "node_modules/@kb-labs/journey-doctor-fixture/kb-create.manifest.json").read_text())
             fixture_artifact = next(item for item in receipt["plan"]["artifacts"]
                                     if item["id"] == "journey-doctor-fixture")
             self.assertEqual(fixture_artifact["config"], [requirement])
@@ -737,11 +773,12 @@ class InstallerCaseStepsTest(unittest.TestCase):
             receipt.write_text(json.dumps({"plan": {"artifacts": [
                 {"kind": "cli", "id": "cli", "package": "@kb-labs/cli-bin", "version": "1.0.0"},
             ]}}))
+            move_test_platform_into_container(source)
             target = root / "target"
 
             _seed_doctor_fixture(source, target)
 
-            self.assertEqual((target / "node_modules/@kb-labs/cli-bin/dist/bin.js").read_text(), "export {};\n")
+            self.assertEqual(((target / "current").resolve() / "node_modules/@kb-labs/cli-bin/dist/bin.js").read_text(), "export {};\n")
 
     def test_uninstall_decline_claim_fails_for_a_failed_fake_response(self):
         with tempfile.TemporaryDirectory(prefix="journey-uninstall-decline-") as temp:
@@ -761,12 +798,16 @@ class InstallerCaseStepsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="journey-installer-cases-") as temp:
             root = Path(temp)
             stable = root / "stable.json"
+            update = root / "update.json"
+            jump = root / "jump.json"
             canary = root / "canary.json"
             stable.write_text('{"platforms": []}')
+            update.write_text('{"channels":{"stable":"2.0.0"}}')
+            jump.write_text('{"channels":{"stable":"3.0.0"}}')
             canary.write_text('{"platforms": []}')
             installed = root / "installed"
-            installed.mkdir()
-            installed_cli_entry = installed / "node_modules/@kb-labs/cli-bin/dist/bin.js"
+            installed_active = create_test_install_container(installed)
+            installed_cli_entry = installed_active / "node_modules/@kb-labs/cli-bin/dist/bin.js"
             installed_cli_entry.parent.mkdir(parents=True)
             installed_cli_entry.write_text("export {};\n")
 
@@ -776,12 +817,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
             with patch("installer_case_steps.installer_scenario_resources",
                        return_value=[case_catalog_root()]):
                 journey = run_installer_case_steps(mode="local", launcher="kb-create", stable_index=stable,
-                                                   canary_index=canary, platform_root=installed,
+                                                   update_index=update, jump_index=jump, canary_index=canary,
+                                                   platform_root=installed,
                                                    secret_value="journey-test-secret",
                                                    run_command=fail_every_command)
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
-            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "S-025.9", "S-181.1", "S-181.2",
+            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-221.3", "S-221.4", "S-025.9", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",

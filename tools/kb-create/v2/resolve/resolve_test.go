@@ -23,7 +23,7 @@ func TestOfflinePlanReportsChecksumVerifiedCacheResolutionPerArtifact(t *testing
 	data := []byte("sealed package bytes")
 	digest := sha256.Sum256(data)
 	hash := hex.EncodeToString(digest[:])
-	cachePath := filepath.Join(root, ".kb", "v2", "cache", "packages", hash+".tgz")
+	cachePath := filepath.Join(root, "state", "cache", "packages", hash+".tgz")
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 			wanted := []byte("sealed package bytes")
 			digest := sha256.Sum256(wanted)
 			hash := hex.EncodeToString(digest[:])
-			cachePath := filepath.Join(root, ".kb", "v2", "cache", "packages", hash+".tgz")
+			cachePath := filepath.Join(root, "state", "cache", "packages", hash+".tgz")
 			if test.data != nil {
 				if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
 					t.Fatal(err)

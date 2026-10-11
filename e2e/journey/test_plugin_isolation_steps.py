@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from plugin_isolation_steps import run_project_plugin_availability_steps
 from service_steps import Journey
+from test_install_layout import create_test_install_container
 
 
 class PluginIsolationStepsTest(unittest.TestCase):
@@ -21,7 +22,9 @@ class PluginIsolationStepsTest(unittest.TestCase):
             project_a, project_b = root / "project-a", root / "project-b"
             project_a.mkdir()
             project_b.mkdir()
-            env = {"HOME": directory}
+            platform = root / "platform"
+            create_test_install_container(platform)
+            env = {"HOME": directory, "KB_PLATFORM_ROOT": str(platform)}
 
             red = Journey("local", "plugin-isolation-red")
 

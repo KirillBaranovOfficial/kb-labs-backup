@@ -10,24 +10,29 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // case: S-023.6
 func TestEqualVersionUpdateReturnsBeforeSnapshotWritesOrLifecycle(t *testing.T) {
 	inst := newInstallation(t)
-	active, err := receipt.Read(inst.root)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
 	if err != nil {
 		t.Fatal(err)
 	}
-	active.Schema, active.ID, active.InstallationID = contracts.ReceiptSchema, "active", "same-install"
+	active.Schema, active.ID, active.InstallationID = contracts.ReceiptSchema, "active", "installation-r1"
+	active.InstallationID, err = versionroot.InstallationIDForPath(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	active.Plan.Schema, active.Plan.PlatformChannel = contracts.ResolvedPlanSchema, "stable"
 	active.Plan.Request = contracts.InstallRequest{PlatformRoot: inst.root}
 	active.Plan.ServiceGraph = contracts.ServiceGraph{PlatformVersion: "3.2.0"}
 	active.Plan.Artifacts = []contracts.Artifact{{ID: "platform", Kind: "platform", Package: "@kb/platform", Version: "3.2.0"}}
-	if err := receipt.Write(inst.root, active); err != nil {
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
 		t.Fatal(err)
 	}
-	receiptPath := receipt.Path(inst.root)
+	receiptPath := receipt.Path(platformRootForTest(t, inst.root))
 	before, err := os.ReadFile(receiptPath)
 	if err != nil {
 		t.Fatal(err)
@@ -73,9 +78,11 @@ func TestEqualVersionUpdateReturnsBeforeSnapshotWritesOrLifecycle(t *testing.T) 
 	if err != nil || string(before) != string(after) {
 		t.Fatalf("equal update changed receipt: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(inst.root, ".kb", "v2", "snapshots")); !os.IsNotExist(err) {
-		t.Fatalf("equal update created snapshots: %v", err)
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
 	}
+	assertEmptyOrMissing(t, layout.SnapshotsDir())
 }
 
 func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
@@ -88,7 +95,7 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			inst := newInstallation(t)
-			active := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "active", Plan: contracts.ResolvedInstallPlan{
+			active := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "active", InstallationID: "installation-r1", Plan: contracts.ResolvedInstallPlan{
 				Schema: contracts.ResolvedPlanSchema, PlatformChannel: "stable",
 				ServiceGraph: contracts.ServiceGraph{PlatformVersion: test.installed},
 				Artifacts: func() []contracts.Artifact {
@@ -98,10 +105,15 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 					return []contracts.Artifact{{ID: "fixture-compat", Kind: test.kind, Version: "1.0.0", PlatformRange: test.componentRange}}
 				}(),
 			}}
-			if err := receipt.Write(inst.root, active); err != nil {
+			installationID, err := versionroot.InstallationIDForPath(inst.root)
+			if err != nil {
 				t.Fatal(err)
 			}
-			receiptPath := filepath.Join(inst.root, ".kb", "v2", "receipt.json")
+			active.InstallationID = installationID
+			if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
+				t.Fatal(err)
+			}
+			receiptPath := receipt.Path(platformRootForTest(t, inst.root))
 			before, err := os.ReadFile(receiptPath)
 			if err != nil {
 				t.Fatal(err)
@@ -156,9 +168,11 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 			if string(before) != string(after) {
 				t.Fatal("refused update changed active receipt")
 			}
-			if _, err := os.Stat(filepath.Join(inst.root, ".kb", "v2", "snapshots")); !os.IsNotExist(err) {
-				t.Fatalf("refused update created snapshot directory: %v", err)
+			layout, err := versionroot.New(inst.root)
+			if err != nil {
+				t.Fatal(err)
 			}
+			assertEmptyOrMissing(t, layout.SnapshotsDir())
 		})
 	}
 }

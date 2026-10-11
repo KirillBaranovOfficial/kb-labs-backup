@@ -79,9 +79,10 @@ func TestRunToolUsesHostEnvironmentAndReturnsItsExitStatus(t *testing.T) {
 
 func TestProberStartsTheDeclaredHostAndReturnsItsStopOperation(t *testing.T) {
 	port := freePort(t)
-	state := State{Dir: filepath.Join(t.TempDir(), "launcher")}
-	prober := Prober{PlatformRoot: t.TempDir(), State: state}
+	root := t.TempDir()
+	prober := Prober{PlatformRoot: root}
 	declared := contracts.HostSpec{Command: fakeHostBinary, Args: []string{"-port", fmt.Sprint(port)}, HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
+	writeReceipt(t, root, &declared)
 	stop, err := prober.Start(context.Background(), declared)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +96,7 @@ func TestProberStartsTheDeclaredHostAndReturnsItsStopOperation(t *testing.T) {
 	if err := stop(); err != nil {
 		t.Fatal(err)
 	}
-	rootState, err := StateForRoot(state, prober.PlatformRoot)
+	rootState, err := StateForRoot(prober.PlatformRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +109,10 @@ func TestProberStartsTheDeclaredHostAndReturnsItsStopOperation(t *testing.T) {
 
 func TestProberReportsAHostThatDoesNotStart(t *testing.T) {
 	port := freePort(t)
-	prober := Prober{PlatformRoot: t.TempDir(), State: State{Dir: t.TempDir()}}
+	root := t.TempDir()
+	prober := Prober{PlatformRoot: root}
 	declared := contracts.HostSpec{Command: fakeHostBinary, Args: []string{"-port", fmt.Sprint(port), "-exit", "5"}, HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10}
+	writeReceipt(t, root, &declared)
 	if _, err := prober.Start(context.Background(), declared); launcherCode(t, err) != "KB_HOST_START_FAILED" {
 		t.Fatalf("code %s", launcherCode(t, err))
 	}
