@@ -145,6 +145,8 @@ class WorkflowJourneyTests(unittest.TestCase):
             if args[:3] in (["config", "show", "--json"], ["workflow", "defs", "list"],
                             ["marketplace", "plugins", "list"], ["qa", "cases", "validate"]):
                 if not authenticated[0]:
+                    if args == ["workflow", "defs", "list"]:
+                        return CompletedProcess(args, 1, "", 'KB_AUTH_REQUIRED: Authentication is required.\nHint: Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>"')
                     return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
                         "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                         "hint": 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>".',
@@ -187,15 +189,16 @@ class WorkflowJourneyTests(unittest.TestCase):
             ["marketplace", "plugins", "list", "--json"],
             ["qa", "cases", "validate", "--json"],
         ])
-        self.assertEqual(calls[9][:2], ["auth", "login"])
-        self.assertEqual(calls[10:], calls[5:9])
+        self.assertEqual(calls[9], ["workflow", "defs", "list"])
+        self.assertEqual(calls[10][:2], ["auth", "login"])
+        self.assertEqual(calls[11:], calls[5:9])
         self.assertNotEqual(call_cwds[0], Path("/tmp/project"))
-        self.assertTrue(all(call_home != shared_home for call_home in call_homes[:9]))
-        self.assertTrue(all(call_home == shared_home for call_home in call_homes[9:]))
-        self.assertTrue(all(call_env["KB_JOURNEY_CLI_PATH"] == "/installed/bin/kb" for call_env in call_envs[:9]))
+        self.assertTrue(all(call_home != shared_home for call_home in call_homes[:10]))
+        self.assertTrue(all(call_home == shared_home for call_home in call_homes[10:]))
+        self.assertTrue(all(call_env["KB_JOURNEY_CLI_PATH"] == "/installed/bin/kb" for call_env in call_envs[:10]))
         self.assertTrue(call_envs[0]["KB_PROJECT_ROOT"] is None)
         self.assertTrue(all(call_env["KB_PLATFORM_ROOT"] == "/installed/platform"
-                            and call_env["KB_PROJECT_ROOT"] == "/tmp/project" for call_env in call_envs[1:9]))
+                            and call_env["KB_PROJECT_ROOT"] == "/tmp/project" for call_env in call_envs[1:10]))
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-007.4", "kind": "journey", "status": "PASS"},
             {"claimId": "S-041.12", "kind": "journey", "status": "PASS"},

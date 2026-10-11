@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toErrorEnvelope, validateErrorEnvelope } from '@kb-labs/core-platform';
+import { createProductErrorEnvelope } from '@kb-labs/core-platform';
 import {
   AbortError,
   ConfigError,
@@ -18,8 +19,8 @@ describe('core toErrorEnvelope for plugin errors', () => {
     ['permission', new PermissionError('no', { plugin: 'commit', permission: 'fs.write' }), 'KB_PLUGIN_PERMISSION_DENIED'],
     ['rate limit', new RateLimitError('slow down', 2500), 'KB_RUNTIME_RATE_LIMITED'],
     ['platform', new PlatformError('llm', 'down'), 'KB_HOST_ADAPTER_UNAVAILABLE'],
-    ['abort', new AbortError(), 'PLUGIN_ABORTED'],
-    ['custom', new PluginError('boom', 'COMMIT_PUSH_REJECTED'), 'COMMIT_PUSH_REJECTED'],
+    ['abort', new AbortError(), 'KB_PLUGIN_ABORTED'],
+    ['platform code without a product hint', new PluginError('boom', 'KB_RUNTIME_COMMAND_FAILED'), 'KB_RUNTIME_COMMAND_FAILED'],
   ];
 
   for (const [name, error, code] of cases) {
@@ -32,13 +33,17 @@ describe('core toErrorEnvelope for plugin errors', () => {
   }
 
   it('renders details into catalog templates', () => {
-    expect(toErrorEnvelope(new ConfigError('x', { path: 'llm.model' })).message).toContain('llm.model');
-    expect(toErrorEnvelope(new RateLimitError('x', 2500)).message).toContain('3s');
+    expect(toErrorEnvelope(new ConfigError('Invalid config.', { path: 'llm.model' }))).toMatchObject({
+      code: 'KB_CONFIG_INVALID', message: 'Invalid config.', details: { path: 'llm.model' },
+    });
+    expect(toErrorEnvelope(new RateLimitError('Rate limit reached.', 2500))).toMatchObject({
+      code: 'KB_RUNTIME_RATE_LIMITED', message: 'Rate limit reached.', details: { retryAfter: '3s' },
+    });
   });
 
   it('rejects structured details rather than serializing them into strings', () => {
-    const envelope = toErrorEnvelope(new PluginError('bad', 'CUSTOM_FAILURE', {
-      report: { findings: [] },
+    const envelope = toErrorEnvelope(new PluginError('bad', 'KB_RUNTIME_COMMAND_FAILED', {
+      report: '{"findings":[]}',
     }), { correlationId: 'c2' });
     expect(envelope).toMatchObject({
       code: 'KB_PLUGIN_CONTRACT_VIOLATION',
@@ -49,5 +54,31 @@ describe('core toErrorEnvelope for plugin errors', () => {
 
   it('delegates non-plugin errors to core-platform', () => {
     expect(toErrorEnvelope(new Error('boom')).code).toBe('KB_RUNTIME_UNEXPECTED');
+  });
+
+  it('keeps a validated product plugin code and rejects a missing hint', () => {
+    const productError = createProductErrorEnvelope({
+      code: 'COMMIT_NOTHING_STAGED',
+      message: 'Nothing is staged.',
+      hint: 'Stage the intended changes, then retry.',
+      retryable: false,
+    });
+    const error = new PluginError(
+      'Nothing is staged.',
+      productError.code,
+      undefined,
+      'Stage the intended changes, then retry.',
+    );
+    const restored = PluginError.fromJSON(error.toJSON());
+
+    expect(toErrorEnvelope(restored)).toMatchObject({
+      code: 'COMMIT_NOTHING_STAGED',
+      message: 'Nothing is staged.',
+      hint: 'Stage the intended changes, then retry.',
+      area: 'product',
+    });
+    expect(toErrorEnvelope(new PluginError('Nothing is staged.', productError.code))).toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+    });
   });
 });

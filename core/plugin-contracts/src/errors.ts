@@ -4,6 +4,8 @@
  * Standardized errors with codes for proper handling across IPC boundaries.
  */
 
+import type { ErrorCode as PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
+
 /**
  * Base plugin error class
  */
@@ -11,22 +13,25 @@ export class PluginError extends Error {
   /**
    * Error code for programmatic handling
    */
-  public readonly code: string;
+  public readonly code: ErrorCode;
 
   /**
    * Additional error details
    */
-  public readonly details?: Record<string, unknown>;
+  public readonly details?: Record<string, string>;
+  public readonly hint?: string;
 
   constructor(
     message: string,
-    code: string,
-    details?: Record<string, unknown>
+    code: ErrorCode,
+    details?: Record<string, string>,
+    hint?: string,
   ) {
     super(message);
     this.name = 'PluginError';
     this.code = code;
     this.details = details;
+    this.hint = hint;
 
     // Ensure prototype chain is correct
     Object.setPrototypeOf(this, new.target.prototype);
@@ -41,6 +46,7 @@ export class PluginError extends Error {
       message: this.message,
       code: this.code,
       details: this.details,
+      hint: this.hint,
       stack: this.stack,
     };
   }
@@ -49,7 +55,7 @@ export class PluginError extends Error {
    * Create from serialized error (from IPC)
    */
   static fromJSON(data: SerializedError): PluginError {
-    const error = new PluginError(data.message, data.code, data.details);
+    const error = new PluginError(data.message, data.code, data.details, data.hint);
     error.stack = data.stack;
     return error;
   }
@@ -59,8 +65,8 @@ export class PluginError extends Error {
  * Permission denied error
  */
 export class PermissionError extends PluginError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'PERMISSION_DENIED', details);
+  constructor(message: string, details?: Record<string, string>) {
+    super(message, 'KB_PLUGIN_PERMISSION_DENIED', details);
     this.name = 'PermissionError';
   }
 }
@@ -69,8 +75,8 @@ export class PermissionError extends PluginError {
  * Operation timeout error
  */
 export class TimeoutError extends PluginError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'TIMEOUT', details);
+  constructor(message: string, details?: Record<string, string>) {
+    super(message, 'KB_RUNTIME_TIMEOUT', details);
     this.name = 'TimeoutError';
   }
 }
@@ -80,7 +86,7 @@ export class TimeoutError extends PluginError {
  */
 export class AbortError extends PluginError {
   constructor(message: string = 'Operation aborted') {
-    super(message, 'ABORTED');
+    super(message, 'KB_PLUGIN_ABORTED');
     this.name = 'AbortError';
   }
 }
@@ -89,8 +95,8 @@ export class AbortError extends PluginError {
  * Configuration error
  */
 export class ConfigError extends PluginError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'CONFIG_ERROR', details);
+  constructor(message: string, details?: Record<string, string>) {
+    super(message, 'KB_CONFIG_INVALID', details);
     this.name = 'ConfigError';
   }
 }
@@ -99,8 +105,8 @@ export class ConfigError extends PluginError {
  * Validation error
  */
 export class ValidationError extends PluginError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'VALIDATION_ERROR', details);
+  constructor(message: string, details?: Record<string, string>) {
+    super(message, 'KB_RUNTIME_INPUT_INVALID', details);
     this.name = 'ValidationError';
   }
 }
@@ -109,8 +115,8 @@ export class ValidationError extends PluginError {
  * Not found error
  */
 export class NotFoundError extends PluginError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super(message, 'NOT_FOUND', details);
+  constructor(message: string, details?: Record<string, string>) {
+    super(message, 'KB_RUNTIME_RESOURCE_NOT_FOUND', details);
     this.name = 'NotFoundError';
   }
 }
@@ -123,7 +129,7 @@ export class RateLimitError extends PluginError {
     message: string = 'Rate limit exceeded',
     public readonly retryAfterMs?: number
   ) {
-    super(message, 'RATE_LIMIT', { retryAfterMs });
+    super(message, 'KB_RUNTIME_RATE_LIMITED', retryAfterMs === undefined ? undefined : { retryAfter: `${Math.ceil(retryAfterMs / 1000)}s` });
     this.name = 'RateLimitError';
   }
 }
@@ -135,9 +141,9 @@ export class PlatformError extends PluginError {
   constructor(
     public readonly service: string,
     message: string,
-    details?: Record<string, unknown>
+    details?: Record<string, string>
   ) {
-    super(message, 'PLATFORM_ERROR', { service, ...details });
+    super(message, 'KB_HOST_ADAPTER_UNAVAILABLE', { service, ...details });
     this.name = 'PlatformError';
   }
 }
@@ -148,28 +154,11 @@ export class PlatformError extends PluginError {
 export interface SerializedError {
   name: string;
   message: string;
-  code: string;
-  details?: Record<string, unknown>;
+  code: ErrorCode;
+  details?: Record<string, string>;
+  hint?: string;
   stack?: string;
 }
-
-/**
- * Error codes enum for type safety
- */
-export const ErrorCode = {
-  PERMISSION_DENIED: 'PERMISSION_DENIED',
-  TIMEOUT: 'TIMEOUT',
-  ABORTED: 'ABORTED',
-  CONFIG_ERROR: 'CONFIG_ERROR',
-  VALIDATION_ERROR: 'VALIDATION_ERROR',
-  NOT_FOUND: 'NOT_FOUND',
-  RATE_LIMIT: 'RATE_LIMIT',
-  PLATFORM_ERROR: 'PLATFORM_ERROR',
-  INTERNAL_ERROR: 'INTERNAL_ERROR',
-  IPC_ERROR: 'IPC_ERROR',
-} as const;
-
-export type ErrorCodeType = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 /**
  * Check if an error is a PluginError
@@ -181,7 +170,7 @@ export function isPluginError(error: unknown): error is PluginError {
 /**
  * Wrap any error as a PluginError
  */
-export function wrapError(error: unknown, defaultCode: string = 'INTERNAL_ERROR'): PluginError {
+export function wrapError(error: unknown, defaultCode: ErrorCode = 'KB_RUNTIME_UNEXPECTED'): PluginError {
   if (error instanceof PluginError) {
     return error;
   }
@@ -189,9 +178,10 @@ export function wrapError(error: unknown, defaultCode: string = 'INTERNAL_ERROR'
   if (error instanceof Error) {
     return new PluginError(error.message, defaultCode, {
       originalName: error.name,
-      stack: error.stack,
+      ...(error.stack ? { stack: error.stack } : {}),
     });
   }
 
   return new PluginError(String(error), defaultCode);
 }
+type ErrorCode = PlatformErrorCode;

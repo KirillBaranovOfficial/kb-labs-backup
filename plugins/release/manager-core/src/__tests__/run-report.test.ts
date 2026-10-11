@@ -1,5 +1,8 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import type { CheckResult } from '../types';
+import { errorCatalog, getCatalogEntry, isErrorCode } from '@kb-labs/core-platform/error-envelope';
 import {
   classifyFailure,
   buildReleaseRunReport,
@@ -7,8 +10,6 @@ import {
   renderFailureLines,
   redact,
   createReleaseError,
-  describeReleaseError,
-  KB_RELEASE_CODES,
 } from '../run-report';
 
 // Real-looking failures, modelled on scripts/gates/check-pack-install.sh output
@@ -231,28 +232,27 @@ describe('redact', () => {
 });
 
 describe('KB_RELEASE codes', () => {
-  it('covers every code from 09 §3.1 with envelope field names', () => {
-    for (const code of [
-      'KB_RELEASE_BRANCH_NOT_MASTER', 'KB_RELEASE_TREE_DIRTY', 'KB_RELEASE_DOCKER_UNAVAILABLE',
-      'KB_RELEASE_REGISTRY_UNREACHABLE', 'KB_RELEASE_TOKEN_MISSING', 'KB_RELEASE_BASELINE_DRIFT',
-      'KB_RELEASE_PLAN_INVALID', 'KB_RELEASE_STAGING_FAILED', 'KB_RELEASE_CHECK_FAILED',
-      'KB_RELEASE_CHECK_TIMEOUT', 'KB_RELEASE_GIT_PUSH_REJECTED', 'KB_RELEASE_INDEX_SEAL_FAILED',
-      'KB_RELEASE_BUILD_FAILED', 'KB_RELEASE_REGISTRY_BINDING_FAILED', 'KB_RELEASE_SMOKE_FAILED',
-      'KB_RELEASE_PROMOTE_FAILED',
-    ]) {
-      expect(KB_RELEASE_CODES).toContain(code);
+  it('covers every code returned by release checks in the platform catalog', () => {
+    const releaseCodes = errorCatalog.codes.filter((entry) => entry.area === 'release');
+    expect(releaseCodes.length).toBeGreaterThan(0);
+    for (const entry of releaseCodes) {
+      expect(entry.code.startsWith('KB_RELEASE_')).toBe(true);
+      expect(getCatalogEntry(entry.code)).toEqual(entry);
+    }
+    const sourceDirectory = fileURLToPath(new URL('../run-report/', import.meta.url));
+    const sourceFiles = readdirSync(sourceDirectory).filter((file) => file.endsWith('.ts'));
+    const returnedCodes = sourceFiles.flatMap((file) => {
+      const source = readFileSync(new URL(`../run-report/${file}`, import.meta.url), 'utf8');
+      return [...source.matchAll(/:\s*['"](KB_RELEASE_[A-Z0-9_]+)['"]/g)].map((match) => match[1] ?? '');
+    });
+    expect(returnedCodes.length).toBeGreaterThan(0);
+    for (const code of returnedCodes) {
+      expect(isErrorCode(code), `${code} must exist in the platform catalog`).toBe(true);
+      if (isErrorCode(code)) expect(getCatalogEntry(code)?.area).toBe('release');
     }
     const e = createReleaseError({ code: 'KB_RELEASE_PROMOTE_FAILED', hint: 'x' });
     expect(Object.keys(e).sort()).toEqual(['area', 'code', 'hint', 'message', 'retryable', 'severity', 'stage']);
     expect(e.area).toBe('release');
-  });
-
-  it('codes are unique and namespaced; every code has a catalog entry', () => {
-    expect(new Set(KB_RELEASE_CODES).size).toBe(KB_RELEASE_CODES.length);
-    for (const c of KB_RELEASE_CODES) {
-      expect(c.startsWith('KB_RELEASE_')).toBe(true);
-      expect(describeReleaseError(c).message.length).toBeGreaterThan(0);
-    }
   });
 });
 

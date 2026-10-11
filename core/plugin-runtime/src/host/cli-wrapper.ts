@@ -7,31 +7,47 @@
 import type {
   RunResult,
   ExecutionMeta,
-  CommandFailure,
   CommandResult,
   CommandResultWithMeta,
   StandardMeta,
   PluginContextDescriptor,
 } from '@kb-labs/plugin-contracts';
+import { toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 
 /**
  * A command failure is the only structured handler result. Success values are
  * always plain command data, even when that data contains an `ok` field.
  */
-function isCommandFailure(value: unknown): value is CommandFailure {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'ok' in value &&
-    value.ok === false &&
-    'error' in value &&
-    typeof value.error === 'object' && value.error !== null
-  );
+function commandFailureError(value: unknown): ErrorEnvelope | undefined {
+  if (!isUxResultCandidate(value) || value.ok !== false || !('error' in value)) {
+    return undefined;
+  }
+  const error = value.error;
+  if (typeof error !== 'object' || error === null || Array.isArray(error) ||
+      !('code' in error) || typeof error.code !== 'string' ||
+      !('message' in error) || typeof error.message !== 'string' ||
+      !('hint' in error) || typeof error.hint !== 'string') {
+    return undefined;
+  }
+  return toErrorEnvelope(error);
 }
 
-export function isHandlerSuccessEnvelope(value: unknown): boolean {
-  return typeof value === 'object' && value !== null &&
-    'ok' in value && value.ok === true && 'data' in value;
+function isFailureClaim(value: unknown): boolean {
+  return isUxResultCandidate(value) && value.ok === false;
+}
+
+function contractViolation(meta: StandardMeta): CommandResultWithMeta<never> {
+  return {
+    exitCode: 1,
+    ok: false,
+    error: {
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      message: 'Plugin command violated the command result contract.',
+      hint: 'Return command data, or return a typed failure with a catalogued code, message, and hint.',
+    },
+    meta: meta as StandardMeta & Record<string, unknown>,
+  };
 }
 
 /**
@@ -73,21 +89,17 @@ export function wrapCliResult<T>(
   const standardMeta = toStandardMeta(executionMeta, descriptor);
 
   // A handler must return its payload; only this boundary builds the success envelope.
-  if (isHandlerSuccessEnvelope(data)) {
-    return {
-      exitCode: 1,
-      ok: false,
-      error: {
-        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
-        message: 'Command handlers must return plain command data.',
-        hint: 'Return the payload without the { ok: true, data: ... } envelope, then retry the command.',
-      },
-      meta: standardMeta as StandardMeta & Record<string, unknown>,
-    };
+  if (isUxResult(data)) {
+    return contractViolation(standardMeta);
+  }
+
+  const failureError = commandFailureError(data);
+  if (isFailureClaim(data) && !failureError) {
+    return contractViolation(standardMeta);
   }
 
   // Case 1: Handler returned the shared typed failure.
-  if (isCommandFailure(data)) {
+  if (failureError) {
     const mergedMeta: StandardMeta & Record<string, unknown> = {
       ...standardMeta,
     };
@@ -95,7 +107,7 @@ export function wrapCliResult<T>(
     return {
       exitCode: 1,
       ok: false,
-      error: data.error,
+      error: failureError,
       meta: mergedMeta,
     };
   }

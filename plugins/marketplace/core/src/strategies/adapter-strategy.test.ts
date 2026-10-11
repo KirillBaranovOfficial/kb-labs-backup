@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createMarketplaceEntry } from '@kb-labs/core-discovery';
 import type { ILogger } from '@kb-labs/core-platform';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 import type { MarketplaceServiceAPI } from '@kb-labs/marketplace-contracts';
 import { AdapterManifestLoadError, AdapterStrategy } from './adapter-strategy.js';
 
@@ -13,6 +14,17 @@ describe('AdapterStrategy', () => {
   afterEach(async () => {
     if (platformRoot) {await fs.rm(platformRoot, { recursive: true, force: true });}
     platformRoot = undefined;
+  });
+
+  it('maps a failed adapter manifest load to its catalogued platform error', () => {
+    const envelope = toErrorEnvelope(new AdapterManifestLoadError('/workspace/adapter', 'manifest is invalid'));
+
+    expect(envelope).toMatchObject({
+      code: 'KB_ADAPTER_MANIFEST_LOAD',
+      area: 'plugin',
+      message: 'The adapter manifest could not be loaded.',
+      hint: 'Correct the adapter manifest, rebuild the adapter package, then run `kb marketplace plugins doctor --scope platform` to verify it.',
+    });
   });
 
   async function writeAdapter(root: string, identity: string, role: string, requires?: string[]): Promise<void> {

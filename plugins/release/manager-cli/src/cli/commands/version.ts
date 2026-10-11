@@ -161,8 +161,26 @@ export default defineCommand({
         versionLoader.fail(`${updates.filter(u => !u.updated).length} update(s) failed`);
       }
 
+      const failedUpdates = updates.filter((update) => !update.updated);
+      const outcome = ok
+        ? { ok: true, updated, updates }
+        : {
+            ok: false as const,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: `Failed to update ${failedUpdates.length} package version(s).`,
+              hint: 'Review the failed package updates, resolve the reported issues, then rerun `kb release version`.',
+              diagnostics: failedUpdates.map((update) => ({
+                code: 'RELEASE_PACKAGE_VERSION_UPDATE_FAILED',
+                severity: 'error' as const,
+                path: update.package,
+                message: `Could not update ${update.package} from ${update.from} to ${update.to}.`,
+              })),
+            },
+          };
+
       if (flags.json) {
-        return { ok, updated, updates };
+        return outcome;
       }
 
       ctx.ui?.sideBox?.({
@@ -171,7 +189,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok, updated, updates } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release version --help` to review its inputs and recovery steps, then retry." } };
+      return outcome;
     },
   },
 });

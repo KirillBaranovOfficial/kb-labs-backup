@@ -29,6 +29,8 @@ export interface ErrorDefinition {
   /** Error message - can be string or function for parameterized messages */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   message: string | ((...args: any[]) => string);
+  /** Actionable next step required by ADR-0049 for product error codes. */
+  hint: string;
   /** Optional additional details */
   details?: Record<string, unknown>;
 }
@@ -44,6 +46,7 @@ export type ErrorDefinitions = Record<string, ErrorDefinition>;
 export class PluginError extends Error {
   public readonly statusCode: number;
   public readonly errorCode: string;
+  public hint?: string;
   public readonly details?: Record<string, unknown>;
 
   constructor(
@@ -151,6 +154,7 @@ export function defineError<TDefs extends ErrorDefinitions>(
       constructor(...args: unknown[]) {
         const { message, details } = buildMessageAndDetails(def, args);
         super(errorCode, message, def.code, details);
+        this.hint = def.hint;
         this.name = `${prefix}Error`;
       }
     }
@@ -223,6 +227,7 @@ export const commonErrors = {
   ValidationFailed: {
     code: 400,
     message: 'Validation failed',
+    hint: 'Correct the invalid input, then retry the request.',
   },
 
   /**
@@ -231,6 +236,7 @@ export const commonErrors = {
   NotFound: {
     code: 404,
     message: (resource: string) => `${resource} not found`,
+    hint: 'Check the resource name and confirm it exists before retrying.',
   },
 
   /**
@@ -239,6 +245,7 @@ export const commonErrors = {
   Unauthorized: {
     code: 401,
     message: 'Unauthorized',
+    hint: 'Authenticate with an identity allowed to perform this operation.',
   },
 
   /**
@@ -247,6 +254,7 @@ export const commonErrors = {
   Forbidden: {
     code: 403,
     message: 'Forbidden',
+    hint: 'Use an identity with permission to perform this operation.',
   },
 
   /**
@@ -255,6 +263,7 @@ export const commonErrors = {
   InternalError: {
     code: 500,
     message: 'Internal server error',
+    hint: 'Retry the request; if it persists, contact the plugin maintainer with the correlation ID.',
   },
 
   /**
@@ -263,6 +272,7 @@ export const commonErrors = {
   ServiceUnavailable: {
     code: 503,
     message: (service: string) => `Service '${service}' is unavailable`,
+    hint: 'Check the service health and retry after it is available.',
   },
 
   /**
@@ -271,6 +281,7 @@ export const commonErrors = {
   Timeout: {
     code: 504,
     message: (operation: string) => `Operation '${operation}' timed out`,
+    hint: 'Retry the operation; if it continues to time out, inspect the service logs.',
   },
 
   /**
@@ -279,5 +290,6 @@ export const commonErrors = {
   Conflict: {
     code: 409,
     message: (resource: string) => `${resource} already exists`,
+    hint: 'Choose a different resource name or remove the conflicting resource, then retry.',
   },
 } satisfies ErrorDefinitions;

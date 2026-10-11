@@ -28,11 +28,6 @@ export default defineCommand<unknown, CLIInput<BuildOrderFlags>, unknown>({
       });
 
       if (result.hasCircular) {
-        if (flags.json) {
-          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'The command operation failed.', hint: "Run `kb quality build order --help` to review the failure and next steps." } };
-        } else {
-
-        }
         return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Circular dependencies prevent a complete build order.', hint: 'Run `kb quality build-order --help`, resolve the reported dependency cycle, then rerun `kb quality build-order`.' } };
       }
 

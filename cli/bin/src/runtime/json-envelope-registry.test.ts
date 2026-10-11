@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,7 +73,7 @@ vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => ({
 
 import { executeCli } from './bootstrap.js';
 
-const workspaceRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+const workspaceRoot = path.resolve(fileURLToPath(new URL('../../../../', import.meta.url)));
 function isSuccessMarker(node: ts.Expression): boolean {
   return node.kind === ts.SyntaxKind.TrueKeyword ||
     (ts.isAsExpression(node) && isSuccessMarker(node.expression)) ||
@@ -133,6 +133,129 @@ function isCommandHandlerReturn(node: ts.ObjectLiteralExpression): boolean {
 function matchesCataloguedCondition(message: string, conditions: string[]): boolean {
   const normalized = message.replace(/\s+/g, ' ').trim();
   return conditions.some((condition) => normalized.includes(condition));
+}
+
+async function reachableHandlerSources(seeds: Iterable<string>): Promise<Set<string>> {
+  const options: ts.CompilerOptions = {
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    target: ts.ScriptTarget.Latest,
+    resolveJsonModule: true,
+  };
+  const visited = new Set<string>();
+  const queue = [...seeds];
+  while (queue.length > 0) {
+    const file = path.resolve(queue.pop()!);
+    let canonical: string;
+    try {
+      canonical = await realpath(file);
+    } catch {
+      continue;
+    }
+    if (!canonical.startsWith(`${workspaceRoot}${path.sep}`) || visited.has(canonical)) continue;
+    visited.add(canonical);
+    const text = await readFile(canonical, 'utf8');
+    const source = ts.createSourceFile(canonical, text, ts.ScriptTarget.Latest, true);
+    const imports: string[] = [];
+    const findImports = (node: ts.Node) => {
+      const specifier = ts.isImportDeclaration(node) || ts.isExportDeclaration(node)
+        ? node.moduleSpecifier
+        : undefined;
+      if (specifier && ts.isStringLiteral(specifier)) imports.push(specifier.text);
+      ts.forEachChild(node, findImports);
+    };
+    findImports(source);
+    for (const specifier of imports) {
+      const resolved = ts.resolveModuleName(specifier, canonical, options, ts.sys).resolvedModule?.resolvedFileName;
+      if (!resolved) continue;
+      const realResolved = await realpath(resolved).catch(() => resolved);
+      const sourceCandidate = realResolved
+        .replace(`${path.sep}dist${path.sep}`, `${path.sep}src${path.sep}`)
+        .replace(/\.d\.[cm]?ts$/, '.ts');
+      if (/\.[cm]?tsx?$/.test(sourceCandidate) && !sourceCandidate.includes(`${path.sep}node_modules${path.sep}`)) {
+        queue.push(sourceCandidate);
+      }
+    }
+  }
+  return visited;
+}
+
+function sourceFailureCodes(source: ts.SourceFile): Array<{ code: string; line: number }> {
+  const variableInitializers = new Map<string, ts.Expression[]>();
+  const collectDeclarations = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      variableInitializers.set(node.name.text, [...(variableInitializers.get(node.name.text) ?? []), node.initializer]);
+    }
+    ts.forEachChild(node, collectDeclarations);
+  };
+  collectDeclarations(source);
+
+  const failures: Array<{ code: string; line: number }> = [];
+  const codesIn = (expression: ts.Expression, seen = new Set<string>()): string[] => {
+    const codes: string[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isStringLiteralLike(node) && /^KB_[A-Z0-9]+(?:_[A-Z0-9]+)+$/.test(node.text)) {
+        codes.push(node.text);
+      } else if (ts.isIdentifier(node) && !seen.has(node.text)) {
+        const initializers = variableInitializers.get(node.text) ?? [];
+        if (initializers.length > 0) {
+          const nextSeen = new Set(seen).add(node.text);
+          for (const initializer of initializers) codes.push(...codesIn(initializer, nextSeen));
+          return;
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(expression);
+    return codes;
+  };
+  const failureCodesIn = (expression: ts.Expression, seen = new Set<string>()): string[] => {
+    if (ts.isObjectLiteralExpression(expression)) {
+      const code = expression.properties.find((property) =>
+        ts.isPropertyAssignment(property) &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        property.name.text === 'code',
+      );
+      return code && ts.isPropertyAssignment(code) ? codesIn(code.initializer) : [];
+    }
+    if (ts.isIdentifier(expression) && !seen.has(expression.text)) {
+      const initializers = variableInitializers.get(expression.text) ?? [];
+      const nextSeen = new Set(seen).add(expression.text);
+      return initializers.flatMap((initializer) => failureCodesIn(initializer, nextSeen));
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return [
+        ...failureCodesIn(expression.whenTrue, seen),
+        ...failureCodesIn(expression.whenFalse, seen),
+      ];
+    }
+    if (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression) || ts.isTypeAssertionExpression(expression)) {
+      return failureCodesIn(expression.expression, seen);
+    }
+    return [];
+  };
+
+  const visit = (node: ts.Node) => {
+    if (ts.isObjectLiteralExpression(node)) {
+      const failed = node.properties.some((property) =>
+        ts.isPropertyAssignment(property) &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        property.name.text === 'ok' && property.initializer.kind === ts.SyntaxKind.FalseKeyword,
+      );
+      const error = node.properties.find((property) =>
+        ts.isPropertyAssignment(property) &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        property.name.text === 'error',
+      );
+      if (failed && error && ts.isPropertyAssignment(error)) {
+        const { line } = source.getLineAndCharacterOfPosition(error.getStart(source));
+        for (const code of failureCodesIn(error.initializer)) failures.push({ code, line: line + 1 });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return failures;
 }
 
 let isolatedHome: string;
@@ -370,13 +493,33 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     ]).filter((condition) => condition.length > 0);
     expect(matchesCataloguedCondition('Authentication is required.', catalogConditions)).toBe(true);
     const violations: string[] = [];
+    const scannedErrorCodes = new Set<string>();
+    const codeClasses = new Map<string, 'platform' | 'product' | 'invalid'>();
 
-    for (const absolutePath of handlerSources) {
+    const reachableSources = await reachableHandlerSources(handlerSources);
+    const registeredHandlerSources = new Set(await Promise.all([...handlerSources].map((sourcePath) => realpath(sourcePath))));
+    expect([...reachableSources].filter((sourcePath) => registeredHandlerSources.has(sourcePath)).sort())
+      .toEqual([...registeredHandlerSources].sort());
+
+    for (const absolutePath of reachableSources) {
       const relativePath = path.relative(workspaceRoot, absolutePath);
       const text = await readFile(absolutePath, 'utf8');
       const source = ts.createSourceFile(relativePath, text, ts.ScriptTarget.Latest, true);
+      for (const { code, line } of sourceFailureCodes(source)) {
+        scannedErrorCodes.add(code);
+        const isPlatformCode = code.startsWith('KB_');
+        const belongsToCatalog = catalog.codes.some((entry) => entry.code === code);
+        const isProductCode = !isPlatformCode && /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(code);
+        const codeClass = isPlatformCode
+          ? belongsToCatalog ? 'platform' : 'invalid'
+          : isProductCode ? 'product' : 'invalid';
+        codeClasses.set(code, codeClass);
+        if (codeClass === 'invalid') {
+          violations.push(`${relativePath}:${line} (${isPlatformCode ? 'uncatalogued platform' : 'invalid product'} failure code ${code})`);
+        }
+      }
       const visit = (node: ts.Node) => {
-        if (ts.isObjectLiteralExpression(node) && isReturnedObjectLiteral(node) && isCommandHandlerReturn(node)) {
+        if (registeredHandlerSources.has(absolutePath) && ts.isObjectLiteralExpression(node) && isReturnedObjectLiteral(node) && isCommandHandlerReturn(node)) {
           const okProperty = node.properties.find((property) =>
             ts.isPropertyAssignment(property) &&
             (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
@@ -437,9 +580,9 @@ describe('JSON envelope coverage for the live CLI registry', () => {
       };
       visit(source);
     }
-
-    expect(violations).toEqual([]);
-  });
+    expect(scannedErrorCodes.size).toBeGreaterThan(0);
+    expect(violations, `failure code classes: ${[...codeClasses].sort(([left], [right]) => left.localeCompare(right)).map(([code, codeClass]) => `${code} → ${codeClass}`).join(', ')}`).toEqual([]);
+  }, 60_000);
 
   // case: S-203.1, S-203.2
   it('checks declared safe-valid and invalid-input paths for every system command', async () => {

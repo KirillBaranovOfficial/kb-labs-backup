@@ -48,8 +48,9 @@ import {
   createUxFailureResult,
   createUxSuccessResult,
   isUxResult,
+  isUxResultCandidate,
 } from "@kb-labs/core-platform/ux-result";
-import { createErrorEnvelope, getCatalogEntry } from "@kb-labs/core-platform/error-envelope";
+import { createErrorEnvelope, isErrorCode, normalizeHttpFailure, statusForHttpFailure } from "@kb-labs/core-platform";
 import type { ExecutionBackend } from "../types.js";
 import { createExecutionId, normalizeHeaders } from "../utils.js";
 
@@ -199,6 +200,10 @@ export async function mountRoutes(
               String(Math.round(result.executionTimeMs)),
             );
 
+            if (isUxResultCandidate(result.data) && result.data.ok === false && 'error' in result.data) {
+              const failure = normalizeHttpFailure(result.data, { correlationId: requestId, statusCode: 502 });
+              return reply.code(statusForHttpFailure(result.data, 502)).send(failure);
+            }
             return reply.send(isUxResult(result.data) ? result.data : createUxSuccessResult(result.data));
           } else {
             // Error response
@@ -280,7 +285,7 @@ function toRestErrorEnvelope(error: unknown, correlationId: string) {
       hint: "Correct the request fields and retry.",
     });
   }
-  if (code && getCatalogEntry(code)) {
+  if (code && isErrorCode(code)) {
     return createErrorEnvelope(code, {
       correlationId,
       ...(code === "KB_RUNTIME_INPUT_INVALID" ? { hint: "Correct the request fields and retry." } : {}),

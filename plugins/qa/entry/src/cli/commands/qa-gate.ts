@@ -36,16 +36,26 @@ export default defineCommand<unknown, CLIInput<QaGateFlags>, unknown>({
 
       if (flags.save) store.saveGate(raw, durationMs, git);
 
-      if (flags.json) {
-        return raw;
-      } else if (raw.ok) {
-        ctx.ui?.success?.(`Gate passed. ${raw.staged_files} staged file(s), no violations.`);
-      } else {
-        const items = raw.violations.map(v => `[${v.severity}] ${v.package}  ${v.check}: ${v.message}`);
+      const result = raw.ok ? raw : {
+        ok: false as const,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: 'QA gate failed',
+          hint: 'Review the reported gate violations, then rerun `kb qa gate`.',
+          diagnostics: raw.violations.map((violation) => ({
+            code: 'KB_QA_GATE_VIOLATION',
+            severity: violation.severity,
+            path: violation.package,
+            message: `${violation.check}: ${violation.message}`,
+          })),
+        },
+      };
 
+      if (!flags.json && raw.ok) {
+        ctx.ui?.success?.(`Gate passed. ${raw.staged_files} staged file(s), no violations.`);
       }
 
-      return raw.ok ? raw : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'QA gate failed', hint: 'Review the reported gate violations, then rerun `kb qa gate`.', diagnostics: raw.violations.map((violation) => ({ code: 'KB_QA_GATE_VIOLATION', severity: violation.severity, path: violation.package, message: `${violation.check}: ${violation.message}` })) } };
+      return result;
     },
   },
 });

@@ -8,7 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { normalizeBasePath, resolvePaths } from './path-helpers';
 import { platform } from '@kb-labs/core-runtime';
-import type { IAnalytics } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createProductErrorEnvelope, type IAnalytics } from '@kb-labs/core-platform';
 import type { AnalyticsEvent } from '@kb-labs/core-platform/adapters';
 
 /**
@@ -258,10 +258,12 @@ export async function registerAdaptersRoutes(
       if (!analytics.getEvents) {
         return reply.code(501).send({
           ok: false,
-          error: {
+          error: createProductErrorEnvelope({
             code: 'ANALYTICS_NOT_IMPLEMENTED',
             message: 'Analytics adapter does not support reading events',
-          },
+            hint: 'Configure an analytics adapter that supports reading events, then retry.',
+            retryable: false,
+          }),
         });
       }
 
@@ -462,10 +464,10 @@ export async function registerAdaptersRoutes(
         if (error instanceof Error && error.message.includes('Invalid')) {
           return reply.code(400).send({
             ok: false,
-            error: {
-              code: 'INVALID_DATE_RANGE',
+            error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
               message: error.message,
-            },
+              hint: 'Use ISO 8601 date-time values for the from and to filters, then retry.',
+            }),
           });
         }
 
@@ -473,10 +475,7 @@ export async function registerAdaptersRoutes(
 
         return reply.code(500).send({
           ok: false,
-          error: {
-            code: 'LLM_USAGE_STATS_ERROR',
-            message: error instanceof Error ? error.message : 'Failed to fetch LLM usage statistics',
-          },
+          error: createErrorEnvelope('KB_RUNTIME_UNEXPECTED'),
         });
       }
     });
@@ -493,10 +492,12 @@ export async function registerAdaptersRoutes(
       if (!analytics.getDailyStats) {
         return reply.code(501).send({
           ok: false,
-          error: {
+          error: createProductErrorEnvelope({
             code: 'DAILY_STATS_NOT_IMPLEMENTED',
             message: 'Analytics adapter does not support daily statistics',
-          },
+            hint: 'Configure an analytics adapter that supports daily statistics, then retry.',
+            retryable: false,
+          }),
         });
       }
 
@@ -528,15 +529,15 @@ export async function registerAdaptersRoutes(
         if (error instanceof Error && error.message.includes('Invalid')) {
           return reply.code(400).send({
             ok: false,
-            error: { code: 'INVALID_DATE_RANGE', message: error.message },
+            error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+              message: error.message,
+              hint: 'Use ISO 8601 date-time values for the from and to filters, then retry.',
+            }),
           });
         }
         return reply.code(500).send({
           ok: false,
-          error: {
-            code: 'DAILY_STATS_ERROR',
-            message: error instanceof Error ? error.message : 'Failed to fetch daily statistics',
-          },
+          error: createErrorEnvelope('KB_RUNTIME_UNEXPECTED'),
         });
       }
     });
@@ -553,10 +554,12 @@ export async function registerAdaptersRoutes(
       if (!analytics.getDailyStats) {
         return reply.code(501).send({
           ok: false,
-          error: {
+          error: createProductErrorEnvelope({
             code: 'DAILY_STATS_NOT_IMPLEMENTED',
             message: 'Analytics adapter does not support daily statistics',
-          },
+            hint: 'Configure an analytics adapter that supports daily statistics, then retry.',
+            retryable: false,
+          }),
         });
       }
 
@@ -577,15 +580,15 @@ export async function registerAdaptersRoutes(
         if (error instanceof Error && error.message.includes('Invalid')) {
           return reply.code(400).send({
             ok: false,
-            error: { code: 'INVALID_DATE_RANGE', message: error.message },
+            error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+              message: error.message,
+              hint: 'Use ISO 8601 date-time values for the from and to filters, then retry.',
+            }),
           });
         }
         return reply.code(500).send({
           ok: false,
-          error: {
-            code: 'DAILY_STATS_ERROR',
-            message: error instanceof Error ? error.message : 'Failed to fetch daily statistics',
-          },
+          error: createErrorEnvelope('KB_RUNTIME_UNEXPECTED'),
         });
       }
     });
@@ -601,10 +604,12 @@ export async function registerAdaptersRoutes(
       if (!analytics.getEvents) {
         return reply.code(501).send({
           ok: false,
-          error: {
+          error: createProductErrorEnvelope({
             code: 'ANALYTICS_NOT_IMPLEMENTED',
             message: 'Analytics adapter does not support reading events',
-          },
+            hint: 'Configure an analytics adapter that supports reading events, then retry.',
+            retryable: false,
+          }),
         });
       }
 
@@ -727,20 +732,17 @@ export async function registerAdaptersRoutes(
         if (error instanceof Error && error.message.includes('Invalid')) {
           return reply.code(400).send({
             ok: false,
-            error: {
-              code: 'INVALID_DATE_RANGE',
+            error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
               message: error.message,
-            },
+              hint: 'Use ISO 8601 date-time values for the from and to filters, then retry.',
+            }),
           });
         }
 
         platform.logger.error('Failed to fetch Embeddings usage stats', error instanceof Error ? error : new Error(String(error)));
         return reply.code(500).send({
           ok: false,
-          error: {
-            code: 'EMBEDDINGS_USAGE_STATS_ERROR',
-            message: error instanceof Error ? error.message : 'Failed to fetch embeddings statistics',
-          },
+          error: createErrorEnvelope('KB_RUNTIME_UNEXPECTED'),
         });
       }
     });

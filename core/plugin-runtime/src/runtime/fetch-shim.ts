@@ -51,7 +51,7 @@ export function createFetchShim(options: CreateFetchShimOptions): FetchShim {
     if (!isAllowed) {
       throw new PermissionError(`Network access denied`, {
         url,
-        allowedPatterns: permissions.network?.fetch ?? [],
+        allowedPatterns: (permissions.network?.fetch ?? []).join(', '),
       });
     }
 

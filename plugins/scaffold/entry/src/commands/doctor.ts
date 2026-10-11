@@ -42,30 +42,14 @@ export default defineCommand({
         findings: scan.findings,
       };
 
-      if (input.json) {
-        return hasErrors
-          ? {
-              ok: false,
-              error: {
-                code: 'KB_RUNTIME_COMMAND_FAILED',
-                message: `${errorCount} error(s) found`,
-                hint: 'Inspect error.diagnostics and fix the affected plugin manifests, then rerun `kb scaffold doctor`.',
-                diagnostics: scan.findings.filter((finding) => finding.severity !== 'info').map((finding) => ({
-                  code: 'KB_SCAFFOLD_DOCTOR_FINDING',
-                  severity: finding.severity === 'warn' ? 'warning' : 'error',
-                  message: `${finding.package}: ${finding.message}`,
-                })),
-              },
-            }
-          : result;
-      } else if (scan.findings.length === 0) {
+      if (!input.json && scan.findings.length === 0) {
         ctx.ui?.success?.(`Scanned ${scan.packagesScanned} package(s) — no issues found.`, {
           title: 'scaffold doctor',
           sections: [
             { items: [`Path: ${root}`] },
           ],
         });
-      } else {
+      } else if (!input.json) {
         const byPkg = new Map<string, Finding[]>();
         for (const f of scan.findings) {
           const list = byPkg.get(f.package) ?? [];
@@ -95,7 +79,7 @@ export default defineCommand({
               hint: 'Inspect error.diagnostics above and fix the affected plugin manifests, then rerun `kb scaffold doctor`.',
               diagnostics: scan.findings.filter((finding) => finding.severity !== 'info').map((finding) => ({
                 code: 'KB_SCAFFOLD_DOCTOR_FINDING',
-                severity: finding.severity === 'warn' ? 'warning' : 'error',
+                severity: finding.severity === 'warn' ? 'warning' as const : 'error' as const,
                 message: `${finding.package}: ${finding.message}`,
               })),
             },

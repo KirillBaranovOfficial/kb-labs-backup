@@ -39,17 +39,7 @@ export default defineCommand({
       }
 
       const report = await runChecks(repos, policyConfig, workspaceRoot);
-
-      if (flags.json) {
-        return report;
-      } else {
-        renderHumanReport(ctx, report);
-      }
-
-      if (report.passed) {
-        return report;
-      }
-      return {
+      const outcome: CommandResult<CheckResult> = report.passed ? report : {
         ok: false,
         error: {
           code: 'KB_RUNTIME_COMMAND_FAILED',
@@ -63,6 +53,12 @@ export default defineCommand({
           }))),
         },
       };
+
+      if (!flags.json) {
+        renderHumanReport(ctx, report);
+      }
+
+      return outcome;
     },
   },
 });

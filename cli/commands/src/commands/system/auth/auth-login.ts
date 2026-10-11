@@ -16,7 +16,7 @@
 
 import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { AuthSessionOwner } from '@kb-labs/cli-runtime/gateway';
-import { isErrorEnvelope } from '@kb-labs/core-platform';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { promptForPassword, readPasswordFromStdin } from './password-input.js';
 
@@ -129,8 +129,8 @@ function shellQuote(value: string): string {
 }
 
 function reportLoginFailure(error: unknown): never {
-  if (typeof error === 'object' && error !== null && 'envelope' in error && isErrorEnvelope(error.envelope)) {
-    throwSystemCataloguedError(error.envelope);
+  if (typeof error === 'object' && error !== null && 'envelope' in error) {
+    throwSystemCataloguedError(toErrorEnvelope(error.envelope));
   }
   throwSystemCommandError('Gateway authentication failed. Check the Gateway URL and credentials, then retry.',
     'Run `kb auth login --help` to review valid inputs and recovery steps, then retry.');

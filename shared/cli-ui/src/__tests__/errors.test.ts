@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createProductErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import { handleError, renderErrorEnvelope } from '../utils/errors.js';
 
 describe('handleError', () => {
@@ -41,6 +42,32 @@ describe('handleError', () => {
         hint: 'Run "kb auth login".',
         cause: 'No saved authentication session was found.',
       },
+    });
+  });
+
+  it('preserves a validated product code from an ErrorEnvelopeError', () => {
+    const envelope = createProductErrorEnvelope({
+      code: 'PLUGIN_OPERATION_FAILED',
+      message: 'The operation failed.',
+      hint: 'Correct the plugin input, then retry.',
+      retryable: false,
+    });
+
+    const failure = handleError(new ErrorEnvelopeError(envelope));
+    expect(failure).toMatchObject({
+      ok: false,
+      error: {
+        code: 'PLUGIN_OPERATION_FAILED',
+        message: 'The operation failed.',
+        hint: 'Correct the plugin input, then retry.',
+      },
+    });
+    expect(renderErrorEnvelope(failure.error)).toContain(
+      'The operation failed. [PLUGIN_OPERATION_FAILED]\n  Hint:  Correct the plugin input, then retry.',
+    );
+    expect(JSON.parse(JSON.stringify(failure))).toMatchObject({
+      ok: false,
+      error: { code: 'PLUGIN_OPERATION_FAILED', message: 'The operation failed.', hint: 'Correct the plugin input, then retry.' },
     });
   });
 

@@ -96,7 +96,7 @@ export function createInvokeAPI(options: CreateInvokeAPIOptions): InvokeAPI {
       if (!allowedPlugins.some((pattern) => matchesPermissionPattern(pluginId, pattern))) {
         throw new PermissionError(`Plugin not in whitelist`, {
           pluginId,
-          allowedPlugins,
+          allowedPlugins: allowedPlugins.join(', '),
         });
       }
 

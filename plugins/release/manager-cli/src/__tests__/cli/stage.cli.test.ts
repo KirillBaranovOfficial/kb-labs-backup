@@ -98,6 +98,20 @@ beforeEach(() => {
 
 // Default path: pnpm. Packing and static artifact verification use pnpm.
 describe('release:stage — default packageManager (pnpm)', () => {
+  // case: S-203.1
+  it('returns the same no-packages failure in human and JSON modes', async () => {
+    vi.mocked(discoverCurrentPackages).mockResolvedValueOnce([] as never);
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui, cwd: '/project' });
+
+    const humanResult = await stageCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'sdk' } }));
+    vi.mocked(discoverCurrentPackages).mockResolvedValueOnce([] as never);
+    const jsonResult = await stageCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'sdk', json: true } }));
+
+    expect(humanResult).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
+    expect(jsonResult).toEqual(humanResult);
+  });
+
   it('packs and verifies via pnpm while leaving workspace resolution to pnpm', async () => {
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: '/project' });

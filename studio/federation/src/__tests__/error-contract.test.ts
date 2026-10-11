@@ -20,6 +20,37 @@ describe('Studio error boundary contract', () => {
     });
   });
 
+  it('rejects an uncatalogued KB code and preserves a valid product code from an API failure', () => {
+    expect(normalizeStudioFailure({
+      error: {
+        code: 'KB_FAKE',
+        message: 'Forged failure.',
+        hint: 'Retry the request.',
+        area: 'product',
+      },
+    })).toMatchObject({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' });
+
+    expect(normalizeStudioFailure({
+      ok: false,
+      error: {
+        code: 'COMMIT_PUSH_REJECTED',
+        area: 'product',
+        stage: 'run',
+        severity: 'error',
+        retryable: false,
+        message: 'The remote rejected the push.',
+        hint: 'Fetch the latest changes, resolve conflicts, then retry.',
+        details: { remote: 'origin' },
+        correlationId: 'corr-product',
+      },
+    })).toMatchObject({
+      code: 'COMMIT_PUSH_REJECTED',
+      message: 'The remote rejected the push.',
+      hint: 'Fetch the latest changes, resolve conflicts, then retry.',
+      correlationId: 'corr-product',
+    });
+  });
+
   // case: S-203.5
   it('maps unknown failures to a correlated safe unexpected failure', () => {
     const failure = normalizeStudioFailure(new Error('private stack detail'));

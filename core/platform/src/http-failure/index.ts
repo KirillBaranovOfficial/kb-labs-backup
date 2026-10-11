@@ -1,5 +1,5 @@
-import { createErrorEnvelope, getCatalogEntry, isErrorEnvelope, type ErrorEnvelope } from '../error-envelope/index.js';
-import { createUxFailureResult, isUxResult, type UxFailureResult } from '../ux-result/index.js';
+import { createErrorEnvelope, getCatalogEntry, isErrorCode, toErrorEnvelope, type ErrorCode, type ErrorEnvelope } from '../error-envelope/index.js';
+import { createUxFailureResult, type UxFailureResult } from '../ux-result/index.js';
 
 export interface HttpFailureOptions {
   correlationId: string;
@@ -8,7 +8,7 @@ export interface HttpFailureOptions {
 
 export function statusForHttpFailure(payload: unknown, transportStatusCode: number): number {
   const parts = failureParts(payload, transportStatusCode);
-  if (!parts.cataloguedPayload) return transportStatusCode;
+  if (!parts.cataloguedPayload || !isErrorCode(parts.code)) return transportStatusCode;
 
   const entry = getCatalogEntry(parts.code);
   if (!entry) {
@@ -20,52 +20,38 @@ export function statusForHttpFailure(payload: unknown, transportStatusCode: numb
   return entry.httpStatus;
 }
 
-function rawCode(value: unknown): string | undefined {
-  if (!value || typeof value !== 'object' || !('code' in value)) return undefined;
-  return typeof value.code === 'string' ? value.code : undefined;
-}
-
 interface HttpFailureParts {
-  code: string;
+  code: ErrorCode;
   cataloguedPayload: boolean;
-  error?: ErrorEnvelope;
+  error: ErrorEnvelope;
 }
 
 function failureParts(payload: unknown, statusCode: number): HttpFailureParts {
-  if (isUxResult(payload) && !payload.ok && getCatalogEntry(payload.error.code)) {
-    return { code: payload.error.code, cataloguedPayload: true, error: payload.error };
+  const nested = payload && typeof payload === 'object' && 'error' in payload ? payload.error : undefined;
+  const candidate = hasCode(nested) ? nested : hasCode(payload) ? payload : undefined;
+  if (candidate !== undefined) {
+    const error = toErrorEnvelope(candidate);
+    return { code: error.code, cataloguedPayload: isErrorCode(candidate.code), error };
   }
+  const code = statusCode === 401 ? 'KB_AUTH_REQUIRED'
+    : statusCode === 403 ? 'KB_AUTH_FORBIDDEN'
+      : statusCode === 400 ? 'KB_RUNTIME_INPUT_INVALID'
+        : 'KB_RUNTIME_UNEXPECTED';
+  return { code, cataloguedPayload: false, error: createErrorEnvelope(code) };
+}
 
-  const nestedError = payload && typeof payload === 'object' && 'error' in payload ? payload.error : undefined;
-  const typedError = isErrorEnvelope(nestedError) && getCatalogEntry(nestedError.code)
-    ? nestedError
-    : isErrorEnvelope(payload) && getCatalogEntry(payload.code) ? payload : undefined;
-  const nestedCode = rawCode(nestedError);
-  const directCode = rawCode(payload);
-  const code = typedError?.code
-    ?? (nestedCode && getCatalogEntry(nestedCode) ? nestedCode : undefined)
-    ?? (directCode && getCatalogEntry(directCode) ? directCode : undefined)
-    ?? (statusCode === 401 ? 'KB_AUTH_REQUIRED'
-      : statusCode === 403 ? 'KB_AUTH_FORBIDDEN'
-        : statusCode === 400 ? 'KB_RUNTIME_INPUT_INVALID' : 'KB_RUNTIME_UNEXPECTED');
-  const cataloguedPayload = Boolean(
-    typedError
-    || (nestedCode && getCatalogEntry(nestedCode))
-    || (directCode && getCatalogEntry(directCode)),
-  );
-  return { code, cataloguedPayload, ...(typedError ? { error: typedError } : {}) };
+function hasCode(value: unknown): value is Record<string, unknown> & { code: string } {
+  return typeof value === 'object' && value !== null && 'code' in value && typeof value.code === 'string';
 }
 
 /** Select the catalog code for an HTTP failure without constructing its result envelope. */
-export function codeForHttpFailure(payload: unknown, statusCode: number): string {
+export function codeForHttpFailure(payload: unknown, statusCode: number): ErrorCode {
   return failureParts(payload, statusCode).code;
 }
 
 /** Convert every HTTP failure shape to the ADR-0049 error result once. */
 export function normalizeHttpFailure(payload: unknown, options: HttpFailureOptions): UxFailureResult {
   const parts = failureParts(payload, options.statusCode);
-  const error = parts.error
-    ? { ...parts.error, correlationId: parts.error.correlationId || options.correlationId }
-    : createErrorEnvelope(parts.code, { correlationId: options.correlationId });
+  const error = { ...parts.error, correlationId: parts.error.correlationId || options.correlationId };
   return createUxFailureResult(error);
 }

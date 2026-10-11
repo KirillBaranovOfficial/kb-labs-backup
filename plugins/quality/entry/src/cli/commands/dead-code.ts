@@ -27,49 +27,21 @@ export default defineCommand<unknown, CLIInput<DeadCodeFlags>, unknown>({
 
       const report = await runKnip({ shell: ctx.api.shell, rootDir: cwd });
 
-      if (flags.json) {
-        return report.totalIssues > 0
-          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Dead code found', hint: 'Review the dead-code report, then rerun `kb quality dead-code`.', diagnostics: report.unusedFiles.map((file) => ({ code: 'KB_QUALITY_UNUSED_FILE', severity: 'warning', path: file, message: 'File is unused.' })).concat(report.unusedExports.map((entry) => ({ code: 'KB_QUALITY_UNUSED_EXPORT', severity: 'warning', path: entry.file, message: `Unused export: ${entry.symbol}` }))) } }
-          : report;
-      }
-
       if (report.totalIssues === 0) {
-        ctx.ui?.success?.('No dead code detected');
-        return {  };
+        if (!flags.json) { ctx.ui?.success?.('No dead code detected'); }
+        return flags.json ? report : {};
       }
 
-      const sections: Array<{ header: string; items: string[] }> = [];
-
-      if (report.unusedFiles.length > 0) {
-        sections.push({
-          header: `Unused files (${report.unusedFiles.length})`,
-          items: report.unusedFiles,
-        });
-      }
-
-      if (report.unusedExports.length > 0) {
-        sections.push({
-          header: `Unused exports (${report.unusedExports.length})`,
-          items: report.unusedExports.map(e => `${e.file}  ${e.symbol}`),
-        });
-      }
-
-      if (report.unusedDependencies.length > 0) {
-        sections.push({
-          header: `Unused dependencies (${report.unusedDependencies.length})`,
-          items: report.unusedDependencies.map(d => `${d.package}  in ${d.workspace}`),
-        });
-      }
-
-      if (report.unlistedDependencies.length > 0) {
-        sections.push({
-          header: `Unlisted dependencies (${report.unlistedDependencies.length})`,
-          items: report.unlistedDependencies.map(d => `${d.package}  in ${d.workspace}`),
-        });
-      }
-
-
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${report.totalIssues} dead code issue(s) found.`, hint: 'Review the reported unused files and dependencies, then rerun `kb quality dead-code`.' } };
+      return {
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: `${report.totalIssues} dead code issue(s) found.`,
+          hint: 'Review the reported unused files and dependencies, then rerun `kb quality dead-code`.',
+          diagnostics: report.unusedFiles.map((file) => ({ code: 'KB_QUALITY_UNUSED_FILE', severity: 'warning' as const, path: file, message: 'File is unused.' }))
+            .concat(report.unusedExports.map((entry) => ({ code: 'KB_QUALITY_UNUSED_EXPORT', severity: 'warning' as const, path: entry.file, message: `Unused export: ${entry.symbol}` }))),
+        },
+      };
     },
   },
 });

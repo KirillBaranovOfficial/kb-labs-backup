@@ -91,8 +91,24 @@ export default defineCommand({
         verifyLoader.fail(`${results.filter(r => !r.success).length} package(s) have issues`);
       }
 
+      const outcome = ok
+        ? { ok: true, issues, results }
+        : {
+            ok: false as const,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: `Package verification failed with ${issues.length} issue(s).`,
+              hint: 'Review the listed package verification issues, resolve them, then rerun `kb release pack`.',
+              diagnostics: results.flatMap((result) => result.issues.map((issue) => ({
+                code: 'RELEASE_PACKAGE_VERIFY_FAILED',
+                severity: 'error' as const,
+                message: `${result.name}: ${issue}`,
+              }))),
+            },
+          };
+
       if (flags.json) {
-        return { ok, issues, results };
+        return outcome;
       }
 
       ctx.ui?.sideBox?.({
@@ -101,7 +117,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok, issues, results } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release pack --help` to review its inputs and recovery steps, then retry." } };
+      return outcome;
     },
   },
 });

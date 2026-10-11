@@ -138,7 +138,7 @@ process.on('message', async (msg: ParentMessage) => {
     if (typeof handler.execute !== 'function') {
       throw new PluginError(
         `Handler at ${handlerPath} does not export an execute function`,
-        'INVALID_HANDLER'
+        'KB_PLUGIN_LOAD_FAILED'
       );
     }
 

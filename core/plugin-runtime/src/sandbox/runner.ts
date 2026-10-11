@@ -140,7 +140,7 @@ export async function runInProcess<T = unknown>(
     if (typeof handler.execute !== 'function') {
       throw new PluginError(
         `Handler at ${handlerPath} does not export an execute function`,
-        'INVALID_HANDLER'
+        'KB_PLUGIN_LOAD_FAILED'
       );
     }
 
@@ -333,8 +333,8 @@ export async function runInSubprocess<T = unknown>(
         } else {
           reject(new PluginError(
             `Plugin process exited with code ${code}`,
-            'PROCESS_EXIT',
-            { code }
+            'KB_PLUGIN_CRASHED',
+            { code: String(code) }
           ));
         }
       }

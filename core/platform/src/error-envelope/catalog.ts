@@ -10,11 +10,11 @@ import type {
   ErrorAction,
   ErrorCatalog,
   ErrorCatalogEntry,
+  ErrorCode,
+  PlatformErrorCode,
   ErrorEnvelope,
   PlatformDiagnostic,
 } from './types.js';
-
-export type ErrorCode = (typeof catalogData.codes)[number]['code'];
 
 // The JSON is validated structurally by the catalog lint test; the cast keeps
 // the literal union types (area, severity) that JSON inference widens to string.
@@ -24,12 +24,16 @@ const byCode = new Map<string, ErrorCatalogEntry>(
   errorCatalog.codes.map((entry) => [entry.code, entry]),
 );
 
-export function getCatalogEntry(code: string): ErrorCatalogEntry | undefined {
+export function isErrorCode(code: string): code is PlatformErrorCode {
+  return byCode.has(code);
+}
+
+export function getCatalogEntry(code: PlatformErrorCode): ErrorCatalogEntry | undefined {
   return byCode.get(code);
 }
 
 /** Map catalogued command failures to the CLI usage exit code at shared boundaries. */
-export function mapErrorEnvelopeToExitCode(code: string): number {
+export function mapErrorEnvelopeToExitCode(code: ErrorCode): number {
   return code === 'KB_RUNTIME_INPUT_INVALID' ? 2 : 1;
 }
 
@@ -50,10 +54,11 @@ export interface CreateEnvelopeOptions {
   /** Override a catalog message when a typed error carries a more specific explanation. */
   message?: string;
   diagnostics?: PlatformDiagnostic[];
+  severity?: ErrorEnvelope['severity'];
 }
 
 /** Builds an envelope from a catalog code. Throws for a code that is not in the catalog. */
-export function createErrorEnvelope(code: string, options: CreateEnvelopeOptions = {}): ErrorEnvelope {
+export function createErrorEnvelope(code: PlatformErrorCode, options: CreateEnvelopeOptions = {}): ErrorEnvelope {
   const entry = byCode.get(code);
   if (!entry) {
     throw new Error(`Unknown error code "${code}": add it to errors.catalog.json`);
@@ -74,7 +79,7 @@ export function createErrorEnvelope(code: string, options: CreateEnvelopeOptions
     code: entry.code,
     area: entry.area,
     stage: entry.stage,
-    severity: entry.severity,
+    severity: options.severity ?? entry.severity,
     retryable: entry.retryable,
     message: options.message ?? renderTemplate(entry.message, details),
     hint: options.hint ?? renderTemplate(entry.hint, details),

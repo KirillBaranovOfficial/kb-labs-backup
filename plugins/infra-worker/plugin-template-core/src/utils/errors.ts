@@ -22,14 +22,17 @@ export const TemplateError = defineError('TEMPLATE', {
   BusinessRuleViolation: {
     code: 400,
     message: (rule: string) => `Business rule violated: ${rule}`,
+    hint: 'Update the input to satisfy the reported rule, then retry.',
   },
   QuotaExceeded: {
     code: 429,
     message: (resource: string) => `Quota exceeded for ${resource}`,
+    hint: 'Wait for quota to reset or request a higher limit, then retry.',
   },
   MissingConfig: {
     code: 500,
     message: (key: string) => `Missing configuration: ${key}`,
+    hint: 'Set the named configuration value and retry the command.',
   },
 });
 

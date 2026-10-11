@@ -1,6 +1,7 @@
 import { KBError, errorCodes } from '../errors/kb-error';
 import type { ResponseError } from './types';
-import { isUxResult } from '@kb-labs/core-platform/ux-result';
+import { isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
+import { toErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import type { ErrorEnvelope as RestApiErrorEnvelope } from '@kb-labs/rest-api-contracts';
 import { ulid } from 'ulid';
 
@@ -16,14 +17,15 @@ export function mapFetchError(error: unknown, response?: Response): KBError {
   }
 
   const parsedBody = error;
-  if (isUxResult(parsedBody) && !parsedBody.ok) {
+  if (isUxResultCandidate(parsedBody) && parsedBody.ok === false && 'error' in parsedBody) {
+    const envelope = toErrorEnvelope(parsedBody.error);
     return new KBError(
-      parsedBody.error.code,
-      parsedBody.error.message,
+      envelope.code,
+      envelope.message,
       response.status,
       undefined,
-      parsedBody.error.hint,
-      parsedBody.error.correlationId,
+      envelope.hint,
+      envelope.correlationId,
     );
   }
 

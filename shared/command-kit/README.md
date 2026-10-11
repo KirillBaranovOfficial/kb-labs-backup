@@ -329,20 +329,23 @@ export const MindError = defineError('MIND', {
   ValidationFailed: {
     code: 400,
     message: 'Validation failed',
+    hint: 'Correct the invalid input, then retry the request.',
   },
   IndexNotFound: {
     code: 404,
     message: (scope: string) => `Index '${scope}' not found`,
+    hint: 'Check the index name and confirm it exists before retrying.',
   },
   QueryFailed: {
     code: 500,
     message: 'Query execution failed',
+    hint: 'Retry the query; if it persists, inspect the plugin logs.',
   },
 });
 
 // Usage
 throw new MindError.IndexNotFound('default');
-// Error: "Index 'default' not found" (HTTP 404)
+// Error: "Index 'default' not found" (HTTP 404), with its product code and hint
 
 throw new MindError.ValidationFailed({
   details: { field: 'cwd', reason: 'missing' }
@@ -361,6 +364,7 @@ export const MyError = defineError('MY_PLUGIN', {
   CustomError: {
     code: 400,
     message: 'Custom error message',
+    hint: 'Correct the request, then retry.',
   },
 });
 ```
@@ -556,7 +560,7 @@ export const handler = defineRestHandler({
   async handler(request, ctx) {
     // Throw errors with errorCode
     const MyError = defineError('MY', {
-      NotFound: { code: 404, message: 'Not found' },
+      NotFound: { code: 404, message: 'Not found', hint: 'Check the resource identifier and retry.' },
     });
 
     throw new MyError.NotFound();
