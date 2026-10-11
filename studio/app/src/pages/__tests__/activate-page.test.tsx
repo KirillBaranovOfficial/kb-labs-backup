@@ -70,7 +70,7 @@ function mockActivateFetch(result: 'ok' | 'expired' | 'weak_password') {
         ok: false,
         status: 400,
         json: () => Promise.resolve({ ok: false, error: {
-          code: 'KB_AUTH_WEAK_PASSWORD', message: 'password_too_weak',
+          code: 'KB_RUNTIME_INPUT_INVALID', message: 'password_too_weak',
           hint: 'Choose a stronger password.', correlationId: 'password-correlation',
         } }),
       });

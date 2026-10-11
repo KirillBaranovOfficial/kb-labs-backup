@@ -66,6 +66,7 @@ describe('core toErrorEnvelope for command-kit errors', () => {
     );
   });
 
+  // case: S-203.2
   it('maps ValidationError issues into details', () => {
     const envelope = toErrorEnvelope(
       new ValidationError('bad input', [
