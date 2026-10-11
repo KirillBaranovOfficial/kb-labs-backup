@@ -196,6 +196,19 @@ describe("studio hosting enabled", () => {
     }
   });
 
+  it("does not serve the Studio SPA for an unmounted Platform API path", async () => {
+    const app = await studioApp();
+    const response = await app.inject({ method: "GET", url: "/platform/v1/unknown/resource" });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.headers["content-type"]).toContain("application/json");
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: { code: "KB_RUNTIME_RESOURCE_NOT_FOUND" },
+    });
+    expect(response.body).not.toContain("KB Labs Studio");
+  });
+
   it("serves the SPA shell without credentials while auth is enforced", async () => {
     const app = await studioApp();
     const res = await app.inject({ method: "GET", url: "/login" });

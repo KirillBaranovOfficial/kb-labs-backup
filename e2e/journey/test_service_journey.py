@@ -296,7 +296,7 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(result.status, "PASS")
         self.assertEqual(result.details["selectionRole"], "lifecycle")
 
-    def test_failed_prerequisite_fails_the_selected_step(self):
+    def test_failed_prerequisite_blocks_the_selected_step_with_reason(self):
         def selection_environment(*, cases):
             return {
                 "KB_JOURNEY_SELECTED_STEPS": cases[0],
@@ -305,13 +305,17 @@ class ServiceJourneyTests(unittest.TestCase):
 
         with patch.dict(os.environ, selection_environment(cases=["S-042.1"]), clear=False):
             journey = Journey("local", "failed-selected-prerequisite")
-            journey.step("project registration", "platform.project", lambda: "registration failed",
-                         requires=("project registration",))
+            journey.step("project registration", "platform.project", lambda: "registration failed")
             target = journey.step("update", "platform.update", lambda: None, cases=["S-042.1"],
                                   requires=("project registration",))
 
-        self.assertEqual(target.status, "FAIL")
+        self.assertEqual(target.status, "BLOCKED")
         self.assertIn("project registration ended FAIL", target.message)
+        self.assertEqual(target.details["prerequisiteFailures"],
+                         ["project registration ended FAIL: registration failed"])
+        self.assertEqual(journey.result().case_run["claims"], [
+            {"claimId": "S-042.1", "kind": "journey", "status": "BLOCKED"},
+        ])
 
     def test_service_step_exception_is_saved_and_later_steps_continue(self):
         journey = Journey("local", "raised-step")

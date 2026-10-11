@@ -90,7 +90,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         responses = iter([
             (201, {"data": {"session": session}}, {}),
             (200, {"data": {"sessions": [session], "total": 1}}, {}),
-            (200, {"data": {"sessionId": "session-1"}}, {}),
+            (200, {"data": {"session": session}}, {}),
             (200, {"data": {"turns": []}}, {}),
             (200, {"data": {"sessionId": "session-1", "plan": None}}, {}),
             (404, {"error": {"message": "session-does-not-exist not found"}}, {}),
@@ -196,12 +196,16 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             row for row in checks("local") if row[0] == "platform readiness (gateway + project workflow)")
         self.assertEqual((name, capability, cases), (
             "platform readiness (gateway + project workflow)", "gateway", ["PC-002.3"]))
-        with patch("service_runner.expect_json", side_effect=[None, None]) as expect_json:
+        with patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": "test-token"}), \
+                patch("service_runner.expect_json", return_value=None) as expect_json, \
+                patch("service_runner.expect_project_service_health", return_value=None) as expect_health:
             self.assertIsNone(check())
 
-        self.assertEqual(
-            [call.args[0] for call in expect_json.call_args_list],
-            ["/ready", f"/api/v1/projects/{service_runner.PROJECT_ID or '%7BprojectId%7D'}/workflow/health"],
+        expect_json.assert_called_once_with("/ready", "gateway readiness")
+        expect_health.assert_called_once_with(
+            f"/api/v1/projects/{service_runner.PROJECT_ID or '%7BprojectId%7D'}/workflow/health",
+            "workflow",
+            token="test-token",
         )
 
     def test_secured_platform_readiness_logs_in_before_checking_protected_workflow_health(self):
@@ -219,7 +223,8 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 patch("service_runner.ADMIN_EMAIL", "admin@example.test"), \
                 patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": ""}), \
                 patch("service_runner.request", side_effect=request), \
-                patch("service_runner.expect_json", side_effect=[None, None]) as expect_json:
+                patch("service_runner.expect_json", return_value=None) as expect_json, \
+                patch("service_runner.expect_project_service_health", return_value=None) as expect_health:
             rows = list(checks("secured"))
             login_name, _, login_check, _ = rows[0]
             readiness_name, _, readiness_check, _ = next(
@@ -231,7 +236,10 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         self.assertEqual(calls[0][0], "/auth/login/cli")
         self.assertEqual(calls[1], ("/auth/me", "session-token"))
-        self.assertEqual(expect_json.call_args_list[1].kwargs["token"], "session-token")
+        self.assertEqual(expect_json.call_count, 1)
+        self.assertEqual(expect_health.call_args_list[0].args,
+                         (f"/api/v1/projects/{service_runner.PROJECT_ID or '%7BprojectId%7D'}/workflow/health", "workflow"))
+        self.assertEqual(expect_health.call_args_list[0].kwargs["token"], "session-token")
 
     def test_registered_runtime_identity_checks_canonical_registry_path(self):
         project_root = "/tmp/journey-project"
@@ -251,6 +259,17 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             [call.args[0] for call in request.call_args_list],
             ["/api/v1/projects/prj_a", "/health", "/api/v1/projects/prj_a/rest/health"],
         )
+
+    def test_project_health_claim_rejects_unhealthy_payload_and_accepts_service_health_status(self):
+        from service_runner import expect_project_service_health
+
+        with patch("service_runner.request_ux_success", return_value=(200, {"status": "ok"}, {})):
+            self.assertIsNone(expect_project_service_health("/health", "workflow"))
+        with patch("service_runner.request_ux_success", return_value=(200, {"status": "unhealthy"}, {})):
+            self.assertIn("reported unhealthy", expect_project_service_health("/health", "workflow"))
+        with patch("service_runner.request_ux_success", return_value=(502, {
+                "code": "KB_PROJECT_RUNTIME_START_FAILED"}, {})):
+            self.assertIn("HTTP 502", expect_project_service_health("/health", "workflow"))
 
     def test_ux_contract_claim_discovers_and_checks_every_live_registry_tool(self):
         tools = [
