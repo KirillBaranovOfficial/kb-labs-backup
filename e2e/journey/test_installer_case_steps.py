@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import shlex
 import tempfile
 import unittest
 import json
@@ -949,7 +950,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
     def test_doctor_root_isolation_claim_checks_repair_and_main_status(self):
         with tempfile.TemporaryDirectory(prefix="journey-doctor-isolation-") as temp:
             root = Path(temp)
-            source = root / "source"
+            source = root / "KB Labs ' primary"
             receipt = source / ".kb/v2/receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text(json.dumps({"plan": {"artifacts": [
@@ -957,18 +958,28 @@ class InstallerCaseStepsTest(unittest.TestCase):
             ]}}))
             move_test_platform_into_container(source)
             calls = []
+            primary_running = True
 
             def run_command(args):
+                nonlocal primary_running
                 calls.append(args)
                 if args[1:3] == ["doctor", "--fix"]:
                     output = {"ok": True, "data": {"operation": "doctor-fix", "hostRestarted": False}}
+                elif args[1] == "start" and str(source) in args:
+                    primary_running = True
+                    output = {"ok": True, "data": {"operation": "start"}}
                 elif args[1] == "start":
                     output = {"ok": False, "error": {"code": "KB_HOST_ALREADY_RUNNING",
                                "message": f"The KB Labs host for platform root {source.resolve()} is already running (pid 42).",
-                               "hint": f"Stop that platform first with `kb-create stop --platform-root {source}`.",
+                               "hint": f"Stop that platform first with `kb-create stop --platform-root {shlex.quote(str(source.resolve()))}`.",
                                "meta": {"pid": "42"}}}
                     return subprocess.CompletedProcess(args, 1, json.dumps(output), "")
-                elif args[1] == "status" and str(source) not in " ".join(args):
+                elif args[1] == "stop":
+                    primary_running = False
+                    output = {"ok": True, "data": {"operation": "stop"}}
+                elif args[1] == "status" and str(source) in args:
+                    output = {"ok": True, "data": {"host": {"state": "running" if primary_running else "stopped"}}}
+                elif args[1] == "status":
                     output = {"ok": True, "data": {"host": {"state": "stopped"}}}
                 else:
                     output = {"ok": True, "data": {"host": {"state": "running"}}}
@@ -981,7 +992,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[0].status, "PASS")
         self.assertEqual(journey.steps[1].cases, ["S-025.8"])
         self.assertEqual(journey.steps[1].status, "PASS")
-        self.assertEqual(len(calls), 5)
+        self.assertEqual(len(calls), 9)
+        self.assertEqual(calls[-1][1], "start")
 
     def test_doctor_fixture_requirement_matches_receipt_and_manifest_projection(self):
         with tempfile.TemporaryDirectory(prefix="journey-doctor-fixture-") as temp:
@@ -1088,7 +1100,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
-                        "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",
+                        "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
                         "S-187.4", "S-187.5", "S-187.6", "S-187.9"}
             self.assertEqual(set(claims), expected)
             self.assertTrue(all(claims[claim] == "FAIL" for claim in expected))

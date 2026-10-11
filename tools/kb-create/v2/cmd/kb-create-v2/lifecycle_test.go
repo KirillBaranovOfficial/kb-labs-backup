@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -93,7 +92,7 @@ func TestRecoveryRequiresYesWithoutTTY(t *testing.T) {
 
 	registry := "https://registry.example.test"
 	payload, code, raw := invoke(t, operationTestSetup{Operation: "uninstall", PlatformRoot: root, Registry: registry, JSON: true})
-	wantHint := "rerun `kb-create uninstall --platform-root " + strconv.Quote(root) + " --registry " + registry + " --json --yes`"
+	wantHint := "rerun `" + contracts.ShellCommand("kb-create", "uninstall", "--platform-root", root, "--registry", registry, "--json", "--yes") + "`"
 	errorPayload, _ := payload["error"].(map[string]any)
 	if code != 2 || errorCode(payload) != "KB_INSTALL_CONFIRMATION_REQUIRED" || errorPayload["hint"] != wantHint {
 		t.Fatalf("unexpected confirmation envelope: %d %s", code, raw)
@@ -350,7 +349,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 		}
 	}
 	if adapterCheck == nil || !strings.Contains(adapterCheck["detail"].(string), "cannot be checked") ||
-		adapterCheck["hint"] != fmt.Sprintf("Run `kb-create start --platform-root %q`.", inst.root) {
+		adapterCheck["hint"] != fmt.Sprintf("Run `%s`.", contracts.ShellCommand("kb-create", "start", "--platform-root", inst.root)) {
 		t.Fatalf("stopped doctor adapter check = %#v", adapterCheck)
 	}
 	textValue, textFailure, textCode, _ := executeForTest(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root})
@@ -359,7 +358,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	}
 	textBytes := []byte(renderDoctor(textValue))
 	if !strings.Contains(string(textBytes), "Adapter status cannot be checked") ||
-		!strings.Contains(string(textBytes), fmt.Sprintf("kb-create start --platform-root %q", inst.root)) {
+		!strings.Contains(string(textBytes), contracts.ShellCommand("kb-create", "start", "--platform-root", inst.root)) {
 		t.Fatalf("stopped text doctor omits the adapter limitation or start command: %s", textBytes)
 	}
 

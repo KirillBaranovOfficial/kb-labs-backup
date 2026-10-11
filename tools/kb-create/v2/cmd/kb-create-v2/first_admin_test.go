@@ -157,7 +157,7 @@ func TestBootstrapContractFailureNamesInternalMismatchAndNextDiagnosticCommand(t
 	if !errors.As(err, &diagnostic) {
 		t.Fatalf("bootstrap contract diagnostic = %T; want catalogued diag", err)
 	}
-	if diagnostic.Message != "Gateway returned an invalid first-administrator health response." || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, `kb-create doctor --platform-root "`+store.PlatformRoot+`"`) {
+	if diagnostic.Message != "Gateway returned an invalid first-administrator health response." || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) {
 		t.Fatalf("bootstrap contract diagnostic = %#v", diagnostic)
 	}
 	if strings.Contains(diagnostic.Hint, "Update the Gateway") {
@@ -174,7 +174,7 @@ func TestUnknownGatewayBootstrapFailsWithCataloguedDiagnostic(t *testing.T) {
 	store := secrets.Store{PlatformRoot: t.TempDir()}
 	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, "kb-create doctor --platform-root") {
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) {
 		t.Fatalf("unknown bootstrap status error = %#v, want catalogued apply diagnostic with next step", err)
 	}
 	if _, present, err := store.Get(secrets.BootstrapCompleted); err != nil || present {
@@ -221,7 +221,7 @@ func TestMissingGatewayRequiredHealthFieldsAreInternalContractFailures(t *testin
 			store := secrets.Store{PlatformRoot: t.TempDir()}
 			err = readBootstrapOutcome(context.Background(), server.URL+"/health", store)
 			var diagnostic *diag.Diag
-			wantDoctor := `kb-create doctor --platform-root "` + store.PlatformRoot + `"`
+			wantDoctor := contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)
 			if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, wantDoctor) {
 				t.Fatalf("missing required Gateway field %q = %#v, want internal contract mismatch", required, err)
 			}
@@ -241,7 +241,7 @@ func TestValidGatewayBootstrapFailureDirectsOperatorToAuthReadiness(t *testing.T
 	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "bootstrap did not complete") {
 		t.Fatalf("valid Gateway bootstrap failure = %#v", err)
 	}
-	if !strings.Contains(diagnostic.Hint, "inspect Gateway authentication readiness") || !strings.Contains(diagnostic.Hint, "kb-create doctor --platform-root") || strings.Contains(diagnostic.Hint, "contract mismatch") || strings.Contains(diagnostic.Hint, "Update the Gateway") {
+	if !strings.Contains(diagnostic.Hint, "inspect Gateway authentication readiness") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) || strings.Contains(diagnostic.Hint, "contract mismatch") || strings.Contains(diagnostic.Hint, "Update the Gateway") {
 		t.Fatalf("valid Gateway bootstrap failure hint = %q", diagnostic.Hint)
 	}
 }
@@ -292,7 +292,7 @@ func TestNonSuccessGatewayBodyGetsInternalMismatchWithoutSecrets(t *testing.T) {
 	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed {
 		t.Fatalf("non-success Gateway body = %#v, want catalogued internal mismatch", err)
 	}
-	wantDoctor := `kb-create doctor --platform-root "` + store.PlatformRoot + `"`
+	wantDoctor := contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)
 	if !strings.Contains(diagnostic.Hint, wantDoctor) || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") {
 		t.Fatalf("non-success Gateway diagnostic hint = %q", diagnostic.Hint)
 	}

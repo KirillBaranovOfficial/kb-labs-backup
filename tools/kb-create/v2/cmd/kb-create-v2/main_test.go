@@ -233,7 +233,7 @@ func TestReceiptArtifactIdentityFailureGivesExactReinstallCommand(t *testing.T) 
 	if failure == nil || failure.Code != contracts.CodeArtifactIdentityInvalid {
 		t.Fatalf("identity failure = %#v", failure)
 	}
-	want := "Reinstall this platform with `kb-create apply --index " + contracts.ShellQuote(index) + " --platform-root " + contracts.ShellQuote(platformRoot) + "`."
+	want := "Reinstall this platform with `" + contracts.ShellCommand("kb-create", "apply", "--index", index, "--platform-root", platformRoot) + "`."
 	if failure.Hint != want {
 		t.Fatalf("hint = %q, want %q", failure.Hint, want)
 	}
@@ -262,7 +262,7 @@ func TestShimFailureNamesPathReasonAndRepairCommand(t *testing.T) {
 	if failure.Code != contracts.CodeApplyFailed || failure.Meta["path"] != path || failure.Meta["reason"] != "permission denied" {
 		t.Fatalf("shim failure omitted its code, path, or filesystem reason: %#v", failure)
 	}
-	if !strings.Contains(failure.Hint, `kb-create doctor --fix --platform-root "/tmp/platform root"`) {
+	if !strings.Contains(failure.Hint, contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", "/tmp/platform root")) {
 		t.Fatalf("shim failure omitted its repair command: %#v", failure)
 	}
 	if !strings.Contains(failure.Cause, path) || !strings.Contains(failure.Cause, "permission denied") {
@@ -483,7 +483,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code %d, failure=%v, screen:\n%s", code, failure, screen.String())
 	}
-	for _, expected := range []string{"Resolve (", "Download and verify artifacts (", "Install packages (", "Render config (", "Verify installation (", "Start host (", "Create kb shim (", "KB Labs is installed", "kb project add <path>"} {
+	for _, expected := range []string{"Resolve (", "Download and verify artifacts (", "Install packages (", "Render config (", "Verify installation (", "Start host (", "Create kb shim (", "KB Labs is installed", contracts.ShellCommand("kb", "project", "add", "<path>")} {
 		if !strings.Contains(screen.String(), expected) {
 			t.Errorf("screen missing %q:\n%s", expected, screen.String())
 		}
@@ -628,7 +628,7 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	if code != 0 || registered != projectRoot {
 		t.Fatalf("code=%d failure=%v registered=%q screen:\n%s", code, failure, registered, screen.String())
 	}
-	for _, expected := range []string{projectRoot, "prj_test123", "Verification: platform installed", "kb project show prj_test123"} {
+	for _, expected := range []string{projectRoot, "prj_test123", "Verification: platform installed", contracts.ShellCommand("kb", "project", "show", projectRoot)} {
 		if !strings.Contains(screen.String(), expected) {
 			t.Errorf("screen missing %q:\n%s", expected, screen.String())
 		}
@@ -652,7 +652,7 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	})
 	if failedCode != 1 || failure == nil || failure.Code != contracts.CodeApplyFailed ||
 		failure.Message != "The platform is installed, but the selected project could not be registered." ||
-		!strings.Contains(failure.Hint, "kb project add") {
+		!strings.Contains(failure.Hint, contracts.ShellCommand("kb", "project", "add", projectRoot)) {
 		t.Fatalf("project registration failure = code %d, output %#v", failedCode, failure)
 	}
 	if _, err := os.Stat(receipt.Path(platformRootForTest(t, failedRoot))); err != nil {
@@ -678,7 +678,7 @@ func TestHumanInstallRejectsMissingProjectBeforeCreatingPlatformRoot(t *testing.
 			return "", nil
 		},
 	})
-	if code != 2 || failure == nil || failure.Code != contracts.CodeInputRequired || !strings.Contains(failure.Hint, "mkdir -p") {
+	if code != 2 || failure == nil || failure.Code != contracts.CodeInputRequired || !strings.Contains(failure.Hint, contracts.ShellCommand("mkdir", "-p", projectRoot)) {
 		t.Fatalf("install missing-project validation = exit %d, failure %#v", code, failure)
 	}
 	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
@@ -710,7 +710,7 @@ func TestApplyRejectsMissingProjectBeforeSavingScenarioAnswers(t *testing.T) {
 		Direct:     directRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot},
 		ScenarioID: "custom", ScenarioAnswers: `{"access.mode":"local"}`,
 	})
-	if code != 2 || failure == nil || failure.Code != contracts.CodeInputRequired || !strings.Contains(failure.Hint, "mkdir -p") {
+	if code != 2 || failure == nil || failure.Code != contracts.CodeInputRequired || !strings.Contains(failure.Hint, contracts.ShellCommand("mkdir", "-p", projectRoot)) {
 		t.Fatalf("apply missing-project validation = exit %d, failure %#v", code, failure)
 	}
 	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
@@ -851,7 +851,7 @@ func TestApplyRequestValidationHintUsesActualRetryArguments(t *testing.T) {
 	if failure == nil || code == 0 || failure.Code != contracts.CodeInputRequired {
 		t.Fatalf("invalid request exit=%d failure=%v output=%s", code, failure, output)
 	}
-	want := "Correct platformRoot in request file '" + requestPath + "', then retry: kb-create apply --index '" + index + "' --input '" + requestPath + "' --json"
+	want := "Correct platformRoot in request file '" + requestPath + "', then retry: " + contracts.ShellCommand("kb-create", "apply", "--index", index, "--input", requestPath, "--json")
 	if !strings.Contains(failure.Hint, want) || !strings.Contains(failure.Hint, "Set `platformRoot` to a non-empty directory") {
 		t.Fatalf("validation hint = %q, want validation guidance and exact retry instruction %q", failure.Hint, want)
 	}

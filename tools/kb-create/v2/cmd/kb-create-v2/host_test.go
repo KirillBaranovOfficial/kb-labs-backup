@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	goruntime "runtime"
 	"strings"
 	"sync"
@@ -34,7 +35,7 @@ func TestStartStatusErrorRemainsAnError(t *testing.T) {
 	}
 }
 
-// case: S-053.4, S-053.5, S-053.7
+// case: S-053.4, S-053.5, S-053.7, S-053.8
 func TestBuiltCLICompatibilityRefusalsMatchCasesWithoutMutatingRoots(t *testing.T) {
 	launcher, _ := binaries(t)
 	_, sourceFile, _, ok := goruntime.Caller(0)
@@ -62,12 +63,12 @@ func TestBuiltCLICompatibilityRefusalsMatchCasesWithoutMutatingRoots(t *testing.
 		}
 	}
 
-	runPlan := func(t *testing.T, index, root string, extra ...string) map[string]any {
+	runPlanWithPlatform := func(t *testing.T, index, root string, platformSelection []string, extra ...string) map[string]any {
 		t.Helper()
 		home := t.TempDir()
 		args := []string{"plan", "--json", "--index", index,
-			"--platform-version", "3.2.0", "--sdk-version", "3.0.0",
 			"--policy", "compatible", "--platform-root", root}
+		args = append(args[:4], append(platformSelection, args[4:]...)...)
 		args = append(args, extra...)
 		command := exec.Command(launcher, args...)
 		command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": home,
@@ -86,6 +87,9 @@ func TestBuiltCLICompatibilityRefusalsMatchCasesWithoutMutatingRoots(t *testing.
 			t.Fatalf("plan error = %#v, want %s", envelope.Error, contracts.CodeIncompatibleComponents)
 		}
 		return envelope.Error
+	}
+	runPlan := func(t *testing.T, index, root string, extra ...string) map[string]any {
+		return runPlanWithPlatform(t, index, root, []string{"--platform-version", "3.2.0"}, extra...)
 	}
 	assertDetails := func(t *testing.T, failure map[string]any, kind, id, version, requiredRange, hint string) {
 		t.Helper()
@@ -111,9 +115,11 @@ func TestBuiltCLICompatibilityRefusalsMatchCasesWithoutMutatingRoots(t *testing.
 	t.Run("S-053.5 missing binary identity", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "missing-binary-root")
 		failure := runPlan(t, missingBinary, root)
+		assertDetails(t, failure, "binary", "kb-create", "3.2.0", "",
+			"Choose compatible versions or pass an explicit supported provider.")
 		details, ok := failure["details"].(map[string]any)
-		if !ok || details["kind"] != "binary" || details["id"] == "" || failure["hint"] == "" {
-			t.Fatalf("missing binary error lacks case identity or hint: %#v", failure)
+		if !ok || details["target"] != fixtureOS+"/"+arch {
+			t.Fatalf("missing binary target = %#v, want %s", failure["details"], fixtureOS+"/"+arch)
 		}
 	})
 	t.Run("S-053.5 out-of-range SDK", func(t *testing.T) {
@@ -130,12 +136,33 @@ func TestBuiltCLICompatibilityRefusalsMatchCasesWithoutMutatingRoots(t *testing.
 	t.Run("S-053.7 missing binary leaves isolated root absent", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "missing-binary-root")
 		failure := runPlan(t, missingBinary, root)
+		assertDetails(t, failure, "binary", "kb-create", "3.2.0", "",
+			"Choose compatible versions or pass an explicit supported provider.")
 		details, ok := failure["details"].(map[string]any)
-		if !ok || details["kind"] != "binary" || details["id"] == "" || failure["hint"] == "" {
-			t.Fatalf("missing binary error lacks case identity or hint: %#v", failure)
+		if !ok || details["target"] != fixtureOS+"/"+arch {
+			t.Fatalf("missing binary target = %#v, want %s", failure["details"], fixtureOS+"/"+arch)
 		}
 		if _, err := os.Lstat(root); !os.IsNotExist(err) {
 			t.Fatalf("missing binary refusal changed isolated install root: %v", err)
+		}
+	})
+
+	t.Run("S-053.8 companion SDK range from explicit platform version", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "plugin-sdk-range-explicit")
+		failure := runPlanWithPlatform(t, matrix, root, []string{"--platform-version", "3.2.0"}, "--plugins", "fixture-sdk-incompat@1.0.0")
+		assertDetails(t, failure, "plugin", "fixture-sdk-incompat", "3.0.0", "<3.0.0",
+			"Choose compatible versions or pass an explicit supported provider.")
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("incompatible plugin SDK range changed install root: %v", err)
+		}
+	})
+	t.Run("S-053.8 companion SDK range from platform channel", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "plugin-sdk-range-channel")
+		failure := runPlanWithPlatform(t, matrix, root, []string{"--platform-channel", "stable"}, "--plugins", "fixture-sdk-incompat@1.0.0")
+		assertDetails(t, failure, "plugin", "fixture-sdk-incompat", "3.0.0", "<3.0.0",
+			"Choose compatible versions or pass an explicit supported provider.")
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("incompatible plugin SDK range changed install root: %v", err)
 		}
 	})
 }
@@ -313,7 +340,11 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
-	root := t.TempDir()
+	return newInstallationWithRoot(t, launcher, fakehost, t.TempDir(), t.TempDir(), port, hostArgs...)
+}
+
+func newInstallationWithRoot(t *testing.T, launcher, fakehost, root, kbHome string, port int, hostArgs ...string) installation {
+	t.Helper()
 	spec := &contracts.HostSpec{Command: fakehost, Args: append([]string{"-port", fmt.Sprint(port)}, hostArgs...), HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: spec,
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}}}
@@ -324,7 +355,6 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 	if err := os.WriteFile(filepath.Join(root, "current", ".kb", "marketplace.lock"), []byte("old package set\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	kbHome := t.TempDir()
 	t.Setenv(host.KBHomeEnv, kbHome)
 	state, err := host.StateHome()
 	if err != nil {
@@ -708,6 +738,126 @@ func TestStartReportsPortInUse(t *testing.T) {
 	payload, code, raw := inst.run("start", "--json")
 	if code != 1 || errorCode(payload) != "KB_INSTALL_PORT_IN_USE" {
 		t.Fatalf("start: %d %s", code, raw)
+	}
+}
+
+// case: S-025.8, PC-001.9
+func TestPrintedStopCommandWorksForRootWithSpacesAndQuote(t *testing.T) {
+	launcher, fakehost := binaries(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	kbHome := t.TempDir()
+	rootA := filepath.Join(t.TempDir(), "KB Labs ' primary")
+	rootB := filepath.Join(t.TempDir(), "secondary")
+	a := newInstallationWithRoot(t, launcher, fakehost, rootA, kbHome, port)
+	b := newInstallationWithRoot(t, launcher, fakehost, rootB, kbHome, port)
+	if _, code, output := a.run("start", "--json"); code != 0 {
+		t.Fatalf("start platform A: %d %s", code, output)
+	}
+	layoutA, err := versionroot.New(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeReceiptRoot := layoutA.PlatformRoot()
+	if err := (gateway.Registry{Path: filepath.Join(kbHome, "launcher", "gateway-roots.json")}).Register(activeReceiptRoot, fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receipt.Read(activeReceiptRoot); err != nil {
+		t.Fatalf("registered active receipt root %s is unreadable: %v", activeReceiptRoot, err)
+	}
+	rootState, err := host.StateForRoot(activeReceiptRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processRecord, err := os.ReadFile(rootState.HostPID())
+	if err != nil {
+		t.Fatalf("active host record %s is unreadable: %v", rootState.HostPID(), err)
+	}
+	var recorded struct {
+		PID             int    `json:"pid"`
+		ProcessIdentity string `json:"processIdentity"`
+		PlatformRoot    string `json:"platformRoot"`
+	}
+	if err := json.Unmarshal(processRecord, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(recorded.PlatformRoot) != filepath.Clean(activeReceiptRoot) {
+		t.Fatalf("active record root %q differs from registered root %q", recorded.PlatformRoot, activeReceiptRoot)
+	}
+	if !host.ProcessIdentityMatches(recorded.PID, recorded.ProcessIdentity) {
+		t.Fatalf("registered host PID %d does not match its recorded identity", recorded.PID)
+	}
+	payload, code, output := b.run("start", "--json")
+	if code != 1 || errorCode(payload) != "KB_HOST_ALREADY_RUNNING" {
+		t.Fatalf("start platform B: %d %s", code, output)
+	}
+	hint, _ := payload["error"].(map[string]any)["hint"].(string)
+	commandParts := strings.Split(hint, "`")
+	if len(commandParts) < 3 {
+		t.Fatalf("stop command missing from hint: %q", hint)
+	}
+	commands, err := contracts.ParseShellCommands(commandParts[1])
+	want := []string{"kb-create", "stop", "--platform-root", layoutA.InstallRoot()}
+	if err != nil || len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
+		t.Fatalf("printed stop command does not preserve root: %#v, %v", commands, err)
+	}
+	command := exec.Command("/bin/sh", "-c", commandParts[1]+" --json")
+	command.Env = append(os.Environ(), "KB_HOME="+kbHome, "PATH="+filepath.Dir(launcher)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	stopped, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute printed stop command: %v\n%s", err, stopped)
+	}
+	status, statusCode, statusOutput := a.run("status", "--json")
+	if statusCode != 0 || status["host"].(map[string]any)["state"] != "stopped" {
+		t.Fatalf("printed stop command did not stop platform A: %d %s", statusCode, statusOutput)
+	}
+}
+
+func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *testing.T) {
+	inst := newInstallation(t)
+	started, code, output := inst.run("start", "--json")
+	if code != 0 {
+		t.Fatalf("start host: %d %s", code, output)
+	}
+	hostPID := int(started["host"].(map[string]any)["pid"].(float64))
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSupervisorRecord, err := os.ReadFile(state.SupervisorPID())
+	if err != nil {
+		t.Fatalf("read active supervisor record: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.WriteFile(state.SupervisorPID(), originalSupervisorRecord, 0o600); err != nil {
+			t.Errorf("restore active supervisor record: %v", err)
+		}
+	})
+	// A live supervisor.pid from the previous format has no process identity.
+	oldRecord, err := json.Marshal(map[string]any{"pid": os.Getpid(), "platformRoot": inst.root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state.SupervisorPID(), oldRecord, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restarted, code, output := inst.run("restart", "--json")
+	if code != 1 || errorCode(restarted) != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("restart did not diagnose the old supervisor record: %d %s", code, output)
+	}
+	status, code, output := inst.run("status", "--json")
+	if code != 1 || errorCode(status) != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("status did not diagnose the old supervisor record: %d %s", code, output)
+	}
+	if !host.ProcessAlive(os.Getpid()) {
+		t.Fatal("restart signalled the process whose PID was reused")
+	}
+	if !host.ProcessAlive(hostPID) {
+		t.Fatal("restart stopped the genuine host while rejecting the stale supervisor")
 	}
 }
 

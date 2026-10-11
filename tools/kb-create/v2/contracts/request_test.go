@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -65,7 +66,9 @@ func TestValidateProjectSelectionRejectsMissingProjectBeforePlatformMutation(t *
 	if !errors.As(err, &validation) {
 		t.Fatalf("Normalize() error = %T %v, want RequestValidationError", err, err)
 	}
-	if validation.Code != CodeInputRequired || validation.Field != "projectRoot" || !strings.Contains(validation.Hint, "mkdir -p") {
+	commands, parseErr := ParseShellCommands(strings.TrimSuffix(strings.TrimPrefix(validation.Hint, "Create it with `"), "` or pass an existing project directory, then retry."))
+	want := []string{"mkdir", "-p", missingProject}
+	if validation.Code != CodeInputRequired || validation.Field != "projectRoot" || parseErr != nil || len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
 		t.Fatalf("validation error = %#v, want actionable projectRoot input error", validation)
 	}
 	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
