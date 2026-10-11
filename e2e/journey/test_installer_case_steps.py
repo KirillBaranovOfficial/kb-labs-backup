@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import shlex
 import tempfile
 import unittest
 import json
@@ -18,7 +19,7 @@ from installer_case_steps import (_data, _seed_doctor_fixture,
                                   run_invalid_request_step,
                                   run_offline_plan_step, run_repeat_plan_readonly_step,
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
-                                  run_gateway_allocation_step,
+                                  run_gateway_allocation_step, run_port_conflict_step,
                                   assert_root_offset, run_json_install_project_step,
                                   installer_primary_host_guard, run_fixture_group,
                                   run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
@@ -362,7 +363,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                 '{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
                                 '"area":"install","stage":"resolve","severity":"error",'
                                 '"retryable":false,"message":"project changed",'
-                                '"hint":"kb auth login --gateway-url URL --email EMAIL, then kb project add PATH, then kb project show PATH",'
+                                "\"hint\":\"Run `'kb' 'auth' 'login' '--gateway-url' 'URL' '--email' 'EMAIL'`, "
+                                "then `'kb' 'project' 'add' 'PATH'`, then `'kb' 'project' 'show' 'PATH'`.\","
                                 '"correlationId":"fixture"}}', "")
                     active_root = active_platform_root(install_root)
                     (active_root / ".kb/v2/bin").mkdir(parents=True, exist_ok=True)
@@ -385,7 +387,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         registry_path.write_text(json.dumps({"projects": [{"id": "prj_test", "path": selected_path}]}))
                         return subprocess.CompletedProcess(args, 0,
                             "First administrator credentials (shown once)\nPassword: x18-journey-first-admin\n"
-                            "Verification: project registered. Next: run kb-create status and kb project show prj_test.\n", "")
+                            f"Verification: project registered. Next: run `'kb-create' 'status'` and "
+                            f"`'kb' 'project' 'show' '{selected_path}'`.\n", "")
                     return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{"operation":"install"}}', "")
                 if args[1] == "update":
                     return subprocess.CompletedProcess(args, 0,
@@ -395,7 +398,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         '{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
                         '"area":"install","stage":"resolve","severity":"error",'
                         '"retryable":false,"message":"project changed",'
-                        '"hint":"kb auth login --gateway-url URL --email EMAIL, then kb project add PATH, then kb project show PATH",'
+                        "\"hint\":\"Run `'kb' 'auth' 'login' '--gateway-url' 'URL' '--email' 'EMAIL'`, "
+                        "then `'kb' 'project' 'add' 'PATH'`, then `'kb' 'project' 'show' 'PATH'`.\","
                         '"correlationId":"fixture"}}', "")
                 if args[1] == "project":
                     if len(args) > 2 and args[2] == "show":
@@ -668,6 +672,36 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(calls[1][calls[1].index("--gateway-url") + 1], "http://127.0.0.1:4200")
         self.assertEqual(calls[2][calls[2].index("--platform-root") + 1], str(explicit.parent / "root-d"))
 
+    def test_port_conflict_claim_binds_the_gateway_port_from_the_plan(self):
+        with tempfile.TemporaryDirectory(prefix="journey-port-conflict-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir()
+            index = Path(temp) / "release-index.json"
+            index.write_text("{}")
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                if args[1] == "plan":
+                    payload = {"ok": True, "data": {"plan": {
+                        "host": {"healthUrl": "http://127.0.0.1:4173/health"}}}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+                error = {"code": "KB_INSTALL_PORT_IN_USE", "area": "install", "stage": "preflight",
+                         "severity": "error", "retryable": False, "message": "port is in use",
+                         "hint": "Stop process 42 (fixture) and rerun `kb-create apply`.",
+                         "details": {"port": "4173", "pid": "42", "command": "fixture"}}
+                return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": error}), "")
+
+            with patch("installer_case_steps.socket.socket") as socket_factory:
+                journey = run_port_conflict_step(mode="local", launcher="kb-create", stable_index=index,
+                                                 platform_root=root, run_command=run_command)
+            owner = socket_factory.return_value.__enter__.return_value
+
+        self.assertEqual(journey.steps[0].cases, ["PC-001.9"])
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        owner.bind.assert_called_once_with(("127.0.0.1", 4173))
+        self.assertEqual([args[1] for args in calls], ["plan", "apply"])
+
     def test_repeat_plan_compares_install_owned_files_while_host_stays_running(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:
             root = Path(temp) / "platform"
@@ -738,6 +772,73 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(calls, ["status", "plan", "plan", "status", "status"])
         self.assertNotIn("state/logs/host-runtime.log", installed_files)
         self.assertFalse(any(path.endswith(".kb/logs/host-runtime.log") for path in installed_files))
+
+    def test_repeat_plan_excludes_database_under_declared_shared_runtime_path(self):
+        with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-database-") as temp:
+            root = Path(temp) / "platform"
+            create_test_install_container(root)
+            database_dir = root / "state/data/database"
+            database_dir.mkdir(parents=True)
+            (database_dir / "kb.sqlite-wal").write_bytes(b"before")
+            index = Path(temp) / "release-index.json"
+            index.write_text("{}")
+
+            def run_command(args):
+                command = args[1]
+                if command == "status":
+                    data = {"host": {"state": "running"}, "running": True, "reachable": True}
+                elif command == "plan":
+                    (database_dir / "kb.sqlite-wal").write_bytes(b"after")
+                    data = {"plan": {"planHash": "same", "artifacts": [], "serviceGraph": {}}}
+                else:
+                    data = {"operation": command}
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            journey = run_repeat_plan_readonly_step(mode="local", launcher="kb-create", stable_index=index,
+                                                    platform_root=root, run_command=run_command)
+            installed_files = _snapshot_installation_owned_tree(root)
+
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertNotIn("state/data/database/kb.sqlite-wal", installed_files)
+
+    def test_invalid_retention_stops_running_host_before_start_and_restores_it(self):
+        with tempfile.TemporaryDirectory(prefix="journey-invalid-retention-") as temp:
+            root = Path(temp) / "platform"
+            active = create_test_install_container(root)
+            config_path = active / ".kb/kb.config.jsonc"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(json.dumps({"platform": {}}))
+            calls = []
+            running = True
+
+            def run_command(args):
+                nonlocal running
+                calls.append(args[1])
+                command = args[1]
+                if command == "status":
+                    data = {"host": {"state": "running" if running else "stopped"}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+                if command in {"stop", "start"}:
+                    if command == "start":
+                        invalid = json.loads(config_path.read_text())["platform"].get("adapterOptions", {}).get("analytics", {}).get("retentionDays") == 0
+                        if invalid:
+                            running = False
+                            error = {"code": "KB_CONFIG_INVALID", "message": "retentionDays must be a positive integer",
+                                     "hint": "kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90"}
+                            return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": error}), "")
+                        running = True
+                        return subprocess.CompletedProcess(args, 0,
+                                                            json.dumps({"ok": True, "data": {"operation": "start"}}), "")
+                    running = False
+                    return subprocess.CompletedProcess(args, 0,
+                                                        json.dumps({"ok": True, "data": {"operation": "stop"}}), "")
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            journey = run_analytics_invalid_retention_step(mode="local", launcher="kb-create",
+                                                           platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertEqual(calls, ["status", "stop", "start", "status", "start"])
 
     def test_missing_installer_fixture_is_claimless_preflight_failure(self):
         with tempfile.TemporaryDirectory(prefix="journey-missing-installer-fixture-") as temp:
@@ -949,7 +1050,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
     def test_doctor_root_isolation_claim_checks_repair_and_main_status(self):
         with tempfile.TemporaryDirectory(prefix="journey-doctor-isolation-") as temp:
             root = Path(temp)
-            source = root / "source"
+            source = root / "KB Labs ' primary"
             receipt = source / ".kb/v2/receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text(json.dumps({"plan": {"artifacts": [
@@ -957,18 +1058,28 @@ class InstallerCaseStepsTest(unittest.TestCase):
             ]}}))
             move_test_platform_into_container(source)
             calls = []
+            primary_running = True
 
             def run_command(args):
+                nonlocal primary_running
                 calls.append(args)
                 if args[1:3] == ["doctor", "--fix"]:
                     output = {"ok": True, "data": {"operation": "doctor-fix", "hostRestarted": False}}
+                elif args[1] == "start" and str(source) in args:
+                    primary_running = True
+                    output = {"ok": True, "data": {"operation": "start"}}
                 elif args[1] == "start":
                     output = {"ok": False, "error": {"code": "KB_HOST_ALREADY_RUNNING",
                                "message": f"The KB Labs host for platform root {source.resolve()} is already running (pid 42).",
-                               "hint": f"Stop that platform first with `kb-create stop --platform-root {source}`.",
+                               "hint": f"Stop that platform first with `kb-create stop --platform-root {shlex.quote(str(source.resolve()))}`.",
                                "meta": {"pid": "42"}}}
                     return subprocess.CompletedProcess(args, 1, json.dumps(output), "")
-                elif args[1] == "status" and str(source) not in " ".join(args):
+                elif args[1] == "stop":
+                    primary_running = False
+                    output = {"ok": True, "data": {"operation": "stop"}}
+                elif args[1] == "status" and str(source) in args:
+                    output = {"ok": True, "data": {"host": {"state": "running" if primary_running else "stopped"}}}
+                elif args[1] == "status":
                     output = {"ok": True, "data": {"host": {"state": "stopped"}}}
                 else:
                     output = {"ok": True, "data": {"host": {"state": "running"}}}
@@ -981,7 +1092,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[0].status, "PASS")
         self.assertEqual(journey.steps[1].cases, ["S-025.8"])
         self.assertEqual(journey.steps[1].status, "PASS")
-        self.assertEqual(len(calls), 5)
+        self.assertEqual(len(calls), 9)
+        self.assertEqual(calls[-1][1], "start")
 
     def test_doctor_fixture_requirement_matches_receipt_and_manifest_projection(self):
         with tempfile.TemporaryDirectory(prefix="journey-doctor-fixture-") as temp:
@@ -999,7 +1111,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
             _seed_doctor_fixture(source, target, requirement=requirement)
 
-            target_active = (target / "current").resolve()
+            target_active = active_platform_root(target)
             receipt = json.loads((target_active / ".kb/v2/receipt.json").read_text())
             manifest = json.loads((target_active / "node_modules/@kb-labs/journey-doctor-fixture/kb-create.manifest.json").read_text())
             fixture_artifact = next(item for item in receipt["plan"]["artifacts"]
@@ -1088,7 +1200,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
-                        "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",
+                        "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
                         "S-187.4", "S-187.5", "S-187.6", "S-187.9", "S-187.11", "S-187.12", "S-124.14"}
             self.assertEqual(set(claims), expected)
             self.assertTrue(all(claims[claim] == "FAIL" for claim in expected))

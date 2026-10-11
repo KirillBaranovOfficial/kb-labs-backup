@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
@@ -112,8 +111,7 @@ func receiptArtifactIdentityFailure(err error, index, platformRoot string) *diag
 	if !errors.As(err, &failure) || failure.Code != contracts.CodeArtifactIdentityInvalid {
 		return nil
 	}
-	failure.Hint = fmt.Sprintf("Reinstall this platform with `kb-create apply --index %s --platform-root %s`.",
-		contracts.ShellQuote(index), contracts.ShellQuote(platformRoot))
+	failure.Hint = "Reinstall this platform with `" + contracts.ShellCommand("kb-create", "apply", "--index", index, "--platform-root", platformRoot) + "`."
 	return failure
 }
 
@@ -307,7 +305,7 @@ func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
 	args := []string{"kb-create", operation}
 	appendFlag := func(name, value string) {
 		if value != "" {
-			args = append(args, "--"+name, contracts.ShellQuote(value))
+			args = append(args, "--"+name, value)
 		}
 	}
 	appendFlag("index", input.Index)
@@ -331,7 +329,7 @@ func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
 		appendFlag("scenario", input.ScenarioID)
 	}
 	args = append(args, "--json")
-	command := strings.Join(args, " ")
+	command := contracts.ShellCommand(args...)
 	var retry string
 	if input.RequestFile != "" {
 		retry = fmt.Sprintf("Correct %s in request file %s, then retry: %s", field, contracts.ShellQuote(input.RequestFile), command)

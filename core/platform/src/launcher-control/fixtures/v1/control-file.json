@@ -5,6 +5,7 @@
     "address": "$string",
     "token": "$string",
     "pid": "$number",
+    "processIdentity": "$string",
     "version": "$string"
   }
 }

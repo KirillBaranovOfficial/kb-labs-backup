@@ -71,9 +71,9 @@ func TestEveryOperationUsesJSONAndHumanOutputBoundary(t *testing.T) {
 
 func TestUpdateHumanOutputRendersPendingRestartFields(t *testing.T) {
 	pending := &contracts.PendingRestart{Services: []contracts.PendingRestartService{{ID: "gateway", RunningVersion: "1.0.0"}},
-		InstalledVersion: "2.0.0", Command: `kb-create restart --platform-root "/opt/kb-platform"`}
+		InstalledVersion: "2.0.0", Command: contracts.ShellCommand("kb-create", "restart", "--platform-root", "/opt/kb-platform")}
 	got := renderUpdate(updateCommandResult{PendingRestart: pending})
-	want := "Platform update completed.\nPending restart: gateway (running 1.0.0); installed 2.0.0. Run kb-create restart --platform-root \"/opt/kb-platform\""
+	want := "Platform update completed.\nPending restart: gateway (running 1.0.0); installed 2.0.0. Run " + contracts.ShellCommand("kb-create", "restart", "--platform-root", "/opt/kb-platform")
 	if got != want {
 		t.Fatalf("update human output = %q, want %q", got, want)
 	}

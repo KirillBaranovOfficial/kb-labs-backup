@@ -26,6 +26,15 @@ func TestShellQuoteAndParseShellCommandsRoundTripArgv(t *testing.T) {
 	}
 }
 
+func TestShellCommandRoundTripsEveryArgument(t *testing.T) {
+	want := []string{"kb-create", "stop", "--platform-root", "/tmp/KB Labs/'prod' $HOME `printf x`\nnext"}
+	encoded := ShellCommand(want...)
+	got, err := ParseShellCommands(encoded)
+	if err != nil || len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("ShellCommand(%q) = %#v, %v; want %#v", encoded, got, err, want)
+	}
+}
+
 func TestParseShellCommandsRejectsUnsupportedOrIncompleteInput(t *testing.T) {
 	for _, input := range []string{"", "cmd &&", "cmd & next", "cmd 'unterminated"} {
 		if _, err := ParseShellCommands(input); err == nil {

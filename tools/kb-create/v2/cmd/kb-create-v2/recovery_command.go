@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -52,14 +51,15 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 	if root == "" {
 		return recoveryCommandResult{}, inputFailure(contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil))
 	}
-	hint := fmt.Sprintf("rerun `kb-create uninstall --platform-root %s", strconv.Quote(root))
+	commandArgs := []string{"kb-create", "uninstall", "--platform-root", root}
 	if input.Registry != "" {
-		hint += " --registry " + input.Registry
+		commandArgs = append(commandArgs, "--registry", input.Registry)
 	}
 	if input.JSON {
-		hint += " --json"
+		commandArgs = append(commandArgs, "--json")
 	}
-	hint += " --yes`"
+	commandArgs = append(commandArgs, "--yes")
+	hint := "rerun `" + contracts.ShellCommand(commandArgs...) + "`"
 	if failure := confirmDestructive(input.Yes, "This will remove platform root "+root+", its installed services, active receipt, and saved snapshots. Project files are kept. Continue? [y/N] ",
 		hint, input.Command); failure != nil {
 		return recoveryCommandResult{}, failure
@@ -152,14 +152,15 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	if running := refuseForeignHost(root); running != nil {
 		return recoveryCommandResult{}, running
 	}
-	commandLine := fmt.Sprintf("rerun `kb-create rollback --platform-root %s", strconv.Quote(root))
+	commandArgs := []string{"kb-create", "rollback", "--platform-root", root}
 	if input.Snapshot != "" {
-		commandLine += " --snapshot " + strconv.Quote(input.Snapshot)
+		commandArgs = append(commandArgs, "--snapshot", input.Snapshot)
 	}
 	if input.JSON {
-		commandLine += " --json"
+		commandArgs = append(commandArgs, "--json")
 	}
-	commandLine += " --yes`"
+	commandArgs = append(commandArgs, "--yes")
+	commandLine := "rerun `" + contracts.ShellCommand(commandArgs...) + "`"
 	if failure := confirmDestructive(input.Yes, "This will replace platform root "+root+" and its active receipt with a saved snapshot. Continue? [y/N] ", commandLine, input.Command); failure != nil {
 		return recoveryCommandResult{}, failure
 	}
@@ -194,7 +195,7 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	if restored, readErr := receipt.Read(platformRoot); readErr == nil && restored.Plan.Host != nil {
 		origin, originErr := gateway.OriginFromHealthURL(restored.Verification.HostHealthURL)
 		if originErr != nil {
-			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the restored Gateway address could not be recorded", fmt.Sprintf("rerun `kb-create rollback --platform-root %q --snapshot %q --yes`", root, target), originErr)
+			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the restored Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "rollback", "--platform-root", root, "--snapshot", target, "--yes")+"`", originErr)
 		}
 		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(platformRoot, origin); err != nil {
 			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the rollback succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create rollback`", err)

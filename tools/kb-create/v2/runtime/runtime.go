@@ -212,7 +212,7 @@ func installationID(platformRoot string, store *secrets.Store) (string, error) {
 		if active.InstallationID == "" {
 			return "", contracts.NewDiag(contracts.CodeReceiptUnavailable,
 				"The active install receipt has no installation ID.",
-				fmt.Sprintf("Run `kb-create update --platform-root %q` or reinstall the platform, then retry.", platformRoot), nil)
+				"Run `"+contracts.ShellCommand("kb-create", "update", "--platform-root", platformRoot)+"` or reinstall the platform, then retry.", nil)
 		}
 		if store != nil {
 			stored, present, err := store.Get("installation.id")
@@ -222,7 +222,7 @@ func installationID(platformRoot string, store *secrets.Store) (string, error) {
 			if present && stored != active.InstallationID {
 				return "", contracts.NewDiag(contracts.CodeReceiptUnavailable,
 					"The active receipt and persistent installation ID do not match.",
-					fmt.Sprintf("Run `kb-create update --platform-root %q` or reinstall the platform, then retry.", platformRoot), nil)
+					"Run `"+contracts.ShellCommand("kb-create", "update", "--platform-root", platformRoot)+"` or reinstall the platform, then retry.", nil)
 			}
 			if !present {
 				if store.ReadOnly {
@@ -252,7 +252,7 @@ func installationID(platformRoot string, store *secrets.Store) (string, error) {
 			if present && stored != ownerID {
 				return "", contracts.NewDiag(contracts.CodeReceiptUnavailable,
 					"The install-root ownership record and persistent installation ID do not match.",
-					fmt.Sprintf("Run `kb-create doctor --platform-root %q` before continuing.", platformRoot), nil)
+					"Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot)+"` before continuing.", nil)
 			}
 			if !present {
 				if err := store.Put("installation.id", ownerID); err != nil {

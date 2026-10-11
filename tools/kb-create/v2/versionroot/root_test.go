@@ -817,13 +817,18 @@ func TestVersionRootsShareMutableDataInsteadOfCopyingIt(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "install")
 	layout, active := initialLayout(t, root, "1.0.0")
 	data := filepath.Join(root, "state", "data")
-	if err := os.MkdirAll(data, 0o700); err != nil {
+	database := filepath.Join(data, "database")
+	if err := os.MkdirAll(database, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(data, "after-update.db"), []byte("latest"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(database, "after-update.db"), []byte("latest"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	wantData, err := filepath.EvalSymlinks(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDatabase, err := filepath.EvalSymlinks(database)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -838,6 +843,10 @@ func TestVersionRootsShareMutableDataInsteadOfCopyingIt(t *testing.T) {
 	if err != nil || filepath.Clean(activeData) != filepath.Clean(wantData) {
 		t.Fatalf("active data path = %q, %v; want shared install-root data %q", activeData, err, data)
 	}
+	activeDatabase, err := filepath.EvalSymlinks(filepath.Join(active, ".kb", "data", "database"))
+	if err != nil || filepath.Clean(activeDatabase) != filepath.Clean(wantDatabase) {
+		t.Fatalf("active database path = %q, %v; want shared install-root database %q", activeDatabase, err, database)
+	}
 	writeReceipt(t, stage, "2.0.0", "receipt-2")
 	if _, err := layout.Activate(stage, "2.0.0", "plan-2", ""); err != nil {
 		t.Fatal(err)
@@ -849,6 +858,30 @@ func TestVersionRootsShareMutableDataInsteadOfCopyingIt(t *testing.T) {
 	activatedData, err := filepath.EvalSymlinks(filepath.Join(active, ".kb", "data"))
 	if err != nil || filepath.Clean(activatedData) != filepath.Clean(wantData) {
 		t.Fatalf("activated data path = %q, %v; want shared install-root data %q", activatedData, err, data)
+	}
+	activatedDatabase, err := filepath.EvalSymlinks(filepath.Join(active, ".kb", "data", "database"))
+	if err != nil || filepath.Clean(activatedDatabase) != filepath.Clean(wantDatabase) {
+		t.Fatalf("activated database path = %q, %v; want shared install-root database %q", activatedDatabase, err, database)
+	}
+	if err := layout.RecordHealthy(); err != nil {
+		t.Fatal(err)
+	}
+	stage, err = layout.Stage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, stage, "3.0.0", "receipt-3")
+	if _, err := layout.Activate(stage, "3.0.0", "plan-3", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(layout.SharedStateDir(), "data", "database", "after-update.db")); err != nil || string(got) != "latest" {
+		t.Fatalf("database data after update = %q, %v", got, err)
+	}
+	if _, err := layout.RestorePrevious(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(layout.PlatformRoot(), ".kb", "data", "database", "after-update.db")); err != nil || string(got) != "latest" {
+		t.Fatalf("database data after rollback = %q, %v", got, err)
 	}
 	if _, err := os.Stat(filepath.Join(active, ".kb", "marketplace.lock")); !os.IsNotExist(err) {
 		t.Fatalf("empty marketplace lock was expected in this catalog fixture, got %v", err)

@@ -100,7 +100,7 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	if in.Executable != "" {
 		if _, dangling := shim.Dangling(in.Executable); dangling {
 			response.Findings = append(response.Findings, doctor.Finding{Code: "KB_INSTALL_SHIM_DANGLING", Severity: doctor.SeverityError,
-				Component: "kb-create", Path: shim.Path(in.Executable), Hint: fmt.Sprintf("Run `kb-create doctor --fix --platform-root %q`.", root)})
+				Component: "kb-create", Path: shim.Path(in.Executable), Hint: "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "`."})
 		}
 	}
 	if active, readErr := receipt.Read(platformRoot); readErr == nil {
@@ -135,7 +135,7 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	}
 	installation := doctor.InspectInstallation(platformRoot, state)
 	if in.Executable != "" && !shim.Correct(in.Executable, platformRoot) {
-		installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: fmt.Sprintf("Run `kb-create doctor --fix --platform-root %q` to repair the command shim when its current owner has been removed.", root)})
+		installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "` to repair the command shim when its current owner has been removed."})
 		installation.OK = false
 	}
 	platform := in.inspectPlatform()

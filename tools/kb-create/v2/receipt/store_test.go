@@ -44,6 +44,30 @@ func TestReadRefusesReceiptWithDuplicateArtifactIdentity(t *testing.T) {
 	}
 }
 
+func TestReadRefusesPluginReceiptWithPackageButNoID(t *testing.T) {
+	root := t.TempDir()
+	data, err := json.Marshal(contracts.InstallReceipt{
+		Schema: contracts.ReceiptSchema,
+		Plan: contracts.ResolvedInstallPlan{Artifacts: []contracts.Artifact{{
+			Kind: "plugin", Package: "@kb/fixture-plugin", Version: "1.0.0",
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(Path(root)), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(root), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Read(root)
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodeArtifactIdentityInvalid {
+		t.Fatalf("receipt error = %#v, want catalogued missing-identity diagnostic", err)
+	}
+}
+
 func TestWriteRejectsDuplicateArtifactIdentity(t *testing.T) {
 	err := Write(t.TempDir(), contracts.InstallReceipt{Plan: contracts.ResolvedInstallPlan{Artifacts: []contracts.Artifact{
 		{ID: "sqlite", Kind: "platform-member", Package: "@kb/adapters-sqlite"},

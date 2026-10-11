@@ -2,7 +2,6 @@ package v2cli
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -19,7 +18,7 @@ func pendingRestart(active contracts.InstallReceipt, running host.Status, root s
 		services = append(services, contracts.PendingRestartService{ID: id, RunningVersion: running.PlatformVersion})
 	}
 	return &contracts.PendingRestart{Services: services, InstalledVersion: version,
-		Command: fmt.Sprintf("kb-create restart --platform-root %s", strconv.Quote(root))}
+		Command: contracts.ShellCommand("kb-create", "restart", "--platform-root", root)}
 }
 
 func renderPendingRestart(pending *contracts.PendingRestart) string {

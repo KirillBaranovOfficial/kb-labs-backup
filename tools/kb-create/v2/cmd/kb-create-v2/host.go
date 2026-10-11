@@ -137,7 +137,7 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	if executable == "" {
 		var err error
 		if executable, err = os.Executable(); err != nil {
-			return host.Info{}, host.StartFailure(state, err, map[string]string{"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot)})
+			return host.Info{}, host.StartFailure(state, err, map[string]string{"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 		}
 	}
 	logFile, err := os.OpenFile(state.SupervisorLog(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -149,7 +149,7 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	host.ConfigureDetached(cmd)
 	if err := cmd.Start(); err != nil {
-		return host.Info{}, host.StartFailure(state, err, map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot)})
+		return host.Info{}, host.StartFailure(state, err, map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 	}
 	exited := make(chan struct{})
 	waitErr := make(chan error, 1)
@@ -172,14 +172,14 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 			return host.Info{}, host.StartFailure(state, errors.New("supervisor did not report a healthy host in time"), map[string]string{
 				"supervisorLog": state.SupervisorLog(), "readinessURL": process.Spec.HealthURL,
 				"waited":      time.Since(started).Round(time.Millisecond).String(),
-				"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot),
+				"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot),
 			})
 		case <-ctx.Done():
 			host.KillProcess(cmd.Process.Pid)
 			return host.Info{}, host.StartFailure(state, ctx.Err(), map[string]string{
 				"supervisorLog": state.SupervisorLog(), "readinessURL": process.Spec.HealthURL,
 				"waited":      time.Since(started).Round(time.Millisecond).String(),
-				"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot),
+				"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot),
 			})
 		case <-ticker.C:
 		}
@@ -207,7 +207,7 @@ func supervisorFailure(state host.State, exit error, readinessURL string, waited
 	return host.StartFailure(state, fmt.Errorf("supervisor exited before host readiness: %v", exit), map[string]string{
 		"supervisorLog": state.SupervisorLog(), "supervisorExit": fmt.Sprint(exit),
 		"readinessURL": readinessURL, "waited": waited.Round(time.Millisecond).String(),
-		"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", platformRoot),
+		"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", platformRoot),
 	})
 }
 
@@ -234,11 +234,13 @@ func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopR
 	if process, ok := runner.(*host.ProcessRunner); ok {
 		platformRoot = process.InstallRoot
 	}
-	if pid, alive := supervisor.LivePID(state, platformRoot); alive {
-		host.TerminateProcess(pid)
-		if !waitExit(pid, stopBudget(runner)) {
-			host.KillProcess(pid)
-			waitExit(pid, 5*time.Second)
+	if record, stale := supervisor.StaleRecord(state); stale {
+		return host.StopResult{Runner: runner.Name()}, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
+	}
+	if record, alive := supervisor.ReadRecord(state); alive && record.PlatformRoot == platformRoot {
+		if host.TerminateProcessIfIdentity(record.PID, record.ProcessIdentity) && !waitExit(record.PID, record.ProcessIdentity, stopBudget(runner)) {
+			host.KillProcessIfIdentity(record.PID, record.ProcessIdentity)
+			waitExit(record.PID, record.ProcessIdentity, 5*time.Second)
 		}
 	}
 	result, err := runner.Stop(ctx)
@@ -259,18 +261,21 @@ func stopBudget(runner host.Runner) time.Duration {
 	return 15 * time.Second
 }
 
-func waitExit(pid int, timeout time.Duration) bool {
+func waitExit(pid int, processStart string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !host.ProcessAlive(pid) {
+		if !host.ProcessIdentityMatches(pid, processStart) {
 			return true
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return !host.ProcessAlive(pid)
+	return !host.ProcessIdentityMatches(pid, processStart)
 }
 
 func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {
+	if record, stale := supervisor.StaleRecord(state); stale {
+		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot, host.GatewayURLForState(state))
+	}
 	// A live supervisor owns the host: restart through its channel so its view
 	// of the child stays consistent.
 	if client, err := control.Connect(state); err == nil {

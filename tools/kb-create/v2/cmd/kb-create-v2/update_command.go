@@ -132,18 +132,20 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 }
 
 func updateSecretDiagnostic(root, secret, index, requestFile, env string) *diag.Diag {
-	command := "kb-create stop --platform-root " + contracts.ShellQuote(root) + " && kb-create apply --platform-root " + contracts.ShellQuote(root)
+	stopCommand := contracts.ShellCommand("kb-create", "stop", "--platform-root", root)
+	applyArgs := []string{"kb-create", "apply", "--platform-root", root}
 	if index != "" {
-		command += " --index " + contracts.ShellQuote(index)
+		applyArgs = append(applyArgs, "--index", index)
 	}
 	if requestFile != "" {
-		command += " --input " + contracts.ShellQuote(requestFile)
+		applyArgs = append(applyArgs, "--input", requestFile)
 	}
 	if env != "" {
-		command += " --secret-env " + contracts.ShellQuote(secret+"="+env)
+		applyArgs = append(applyArgs, "--secret-env", secret+"="+env)
 	} else {
-		command += " --secret-env " + contracts.ShellQuote(secret+"=ENV_VAR")
+		applyArgs = append(applyArgs, "--secret-env", secret+"=ENV_VAR")
 	}
+	command := stopCommand + " && " + contracts.ShellCommand(applyArgs...)
 	return contracts.NewDiag(contracts.CodeUpdateSecretRefused,
 		"Update cannot create or change installation secret "+secret+".",
 		"Set the environment variable to the intended secret, then run `"+command+"`.", nil)
@@ -185,7 +187,7 @@ func requireUpdateSecrets(plan contracts.ResolvedInstallPlan, store secrets.Stor
 func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot string, plan contracts.ResolvedInstallPlan, state, launcherState host.State, runtimeOverrides *runtime.Dependencies) (updateCommandResult, *diag.Diag) {
 	layout, err := versionroot.New(installRoot)
 	if err != nil {
-		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The install root cannot use the required atomic layout.", "Run `kb-create install --platform-root NEW_ROOT` on Linux or macOS.", err)
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The install root cannot use the required atomic layout.", "Run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"` on Linux or macOS.", err)
 	}
 	root := layout.PlatformRoot()
 	if _, err := receipt.Read(root); err != nil {
@@ -231,7 +233,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	defer transcript.Close()
 	activeRoot, err := layout.Active()
 	if err != nil {
-		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The active version root could not be resolved for read-only update inputs.", "Run `kb-create doctor --platform-root "+installRoot+"` before retrying the update.", err)
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The active version root could not be resolved for read-only update inputs.", "Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the update.", err)
 	}
 	store := secrets.Store{PlatformRoot: activeRoot, ReadOnly: true}
 	release, err := state.AcquireOperation("update")
@@ -305,7 +307,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	if updated.Plan.Host != nil {
 		origin, originErr := gateway.OriginFromHealthURL(updated.Verification.HostHealthURL)
 		if originErr != nil {
-			return updateCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the updated Gateway address could not be recorded", fmt.Sprintf("rerun `kb-create update --platform-root %q` after checking the receipt", installRoot), originErr)
+			return updateCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the updated Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"` after checking the receipt", originErr)
 		}
 		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(root, origin); err != nil {
 			return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the update succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create update`", err)

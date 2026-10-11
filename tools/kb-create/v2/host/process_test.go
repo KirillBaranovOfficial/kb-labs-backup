@@ -4,6 +4,7 @@ package host
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
@@ -11,17 +12,59 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
 var fakeHostBinary string
+
+func TestLifecycleRecordReadersNeverSeePartialPublication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "host.pid")
+	type record struct {
+		PID      int    `json:"pid"`
+		Identity string `json:"identity"`
+	}
+	first, _ := json.Marshal(record{PID: 1, Identity: strings.Repeat("a", 32*1024)})
+	second, _ := json.Marshal(record{PID: 2, Identity: strings.Repeat("b", 32*1024)})
+	if err := WriteRecordFile(path, first); err != nil {
+		t.Fatal(err)
+	}
+	var writers sync.WaitGroup
+	writers.Add(1)
+	go func() {
+		defer writers.Done()
+		for i := 0; i < 400; i++ {
+			data := first
+			if i%2 == 0 {
+				data = second
+			}
+			if err := WriteRecordFile(path, data); err != nil {
+				t.Errorf("publish record: %v", err)
+				return
+			}
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read record during publication: %v", err)
+		}
+		var got record
+		if err := json.Unmarshal(data, &got); err != nil || (got.PID != 1 && got.PID != 2) || len(got.Identity) != 32*1024 {
+			t.Fatalf("reader saw a partial lifecycle record: pid=%d identity length=%d err=%v", got.PID, len(got.Identity), err)
+		}
+	}
+	writers.Wait()
+}
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "kb-create-fakehost-")
@@ -197,7 +240,7 @@ func TestRunnerDoesNotObserveOrStopAHostForAnotherRoot(t *testing.T) {
 	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_HOST_ALREADY_RUNNING" ||
 		typed.Meta["platformRoot"] != rootA || typed.Meta["pid"] != strconv.Itoa(info.PID) ||
-		!strings.Contains(typed.Hint, "kb-create stop --platform-root "+rootA) {
+		!strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "stop", "--platform-root", rootA)) {
 		t.Fatalf("other-root start error = %#v; want typed root refusal", err)
 	}
 	status, err = f.runner.Status(context.Background())
@@ -249,6 +292,73 @@ func TestPortInUse(t *testing.T) {
 	}
 }
 
+// case: S-025.8, PC-001.9
+func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "KB Labs ' root")
+	writeReceipt(t, root, &contracts.HostSpec{Command: fakeHostBinary, HealthURL: "http://127.0.0.1:4100/health"})
+	platformRoot := filepath.Join(root, "current")
+	launcherHome := t.TempDir()
+	t.Setenv(KBHomeEnv, launcherHome)
+	expectedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := StateForRoot(platformRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	processIdentity, err := ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(state.HostPID(), pidRecord{PID: os.Getpid(), ProcessIdentity: processIdentity, PlatformRoot: platformRoot}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receipt.Read(platformRoot); err != nil {
+		t.Fatalf("fixture receipt: %v", err)
+	}
+	if active, ok := ActiveHost(state); !ok || active.PID != os.Getpid() || filepath.Clean(active.PlatformRoot) != filepath.Clean(platformRoot) {
+		t.Fatalf("fixture active host = %#v, %t", active, ok)
+	}
+	launcherState, err := StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(platformRoot, "http://127.0.0.1:4100"); err != nil {
+		t.Fatal(err)
+	}
+	if roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Read(); err != nil || len(roots) != 1 {
+		t.Fatalf("fixture Gateway roots = %#v, %v", roots, err)
+	}
+
+	failure := portConflictError("4100", "127.0.0.1:4100", "gateway", portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", nil)
+	if failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["platformRoot"] != expectedRoot || failure.Meta["pid"] != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("known installation conflict = %#v", failure)
+	}
+	stopCommand := contracts.ShellCommand("kb-create", "stop", "--platform-root", expectedRoot)
+	if !strings.Contains(failure.Hint, stopCommand) {
+		t.Fatalf("known installation conflict omitted its stop command: %#v", failure)
+	}
+	commands, err := contracts.ParseShellCommands(stopCommand)
+	want := []string{"kb-create", "stop", "--platform-root", expectedRoot}
+	if err != nil || len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
+		t.Fatalf("stop command does not preserve a root containing spaces and quote: %#v, %v", commands, err)
+	}
+	if err := writeJSONFile(state.HostPID(), map[string]any{
+		"pid": os.Getpid(), "processIdentity": "different-process-identity", "platformRoot": platformRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale := portConflictError("4100", "127.0.0.1:4100", "gateway",
+		portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", nil)
+	if stale.Code != contracts.CodeHostProcessIdentityStale || strings.Contains(stale.Message, "already running") {
+		t.Fatalf("reused PID was identified as the registered installation: %#v", stale)
+	}
+}
+
 func TestStalePidFileIsRecovered(t *testing.T) {
 	f := newRunner(t, 10, 5)
 	dead := exec.Command(fakeHostBinary, "-exit", "0")
@@ -269,6 +379,110 @@ func TestStalePidFileIsRecovered(t *testing.T) {
 	_ = writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, PlatformRoot: f.runner.PlatformRoot, StartedAt: time.Now()})
 	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatalf("start over stale pid: %v", err)
+	}
+}
+
+func TestActiveHostRejectsAReusedPID(t *testing.T) {
+	state := State{Dir: t.TempDir()}
+	if err := state.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	configureHostProcess(child)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		killProcessGroup(child.Process.Pid)
+		_ = child.Wait()
+	})
+	if err := writeJSONFile(state.HostPID(), map[string]any{
+		"pid": child.Process.Pid, "platformRoot": "/tmp/recorded-kb-root", "processIdentity": "different-process-identity",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if active, ok := ActiveHost(state); ok {
+		t.Fatalf("reused PID was accepted as the recorded host: %#v", active)
+	}
+}
+
+func TestStopDoesNotSignalAReusedPID(t *testing.T) {
+	f := newRunner(t, 10, 1)
+	if err := f.runner.State.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	configureHostProcess(child)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		killProcessGroup(child.Process.Pid)
+		_ = child.Wait()
+	})
+	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
+		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot, "processIdentity": "different-process-identity",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runner.Status(context.Background()); err == nil {
+		t.Fatal("status accepted a process whose identity differs from the recorded host")
+	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("stale process record diagnostic = %#v", err)
+	}
+	if _, err := f.runner.Stop(context.Background()); err == nil {
+		t.Fatal("stop accepted a process whose identity differs from the recorded host")
+	}
+	if !processAlive(child.Process.Pid) {
+		t.Fatal("stop signalled the process after its PID identity failed validation")
+	}
+}
+
+func TestOldHostRecordWithoutIdentityIsDiagnosedAndNeverSignalled(t *testing.T) {
+	f := newRunner(t, 10, 1)
+	if err := f.runner.State.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	configureHostProcess(child)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		killProcessGroup(child.Process.Pid)
+		_ = child.Wait()
+	})
+	// This is the host.pid shape written before processIdentity was required.
+	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
+		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runner.Status(context.Background()); err == nil {
+		t.Fatal("status silently treated the old live record as stopped")
+	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("old host record diagnostic = %#v", err)
+	}
+	if _, err := f.runner.Stop(context.Background()); err == nil {
+		t.Fatal("stop accepted the old record without process identity")
+	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("old host record stop diagnostic = %#v", err)
+	}
+	if !processAlive(child.Process.Pid) {
+		t.Fatal("stop signalled the process for an old record without identity")
+	}
+}
+
+func TestProcessIdentityDistinguishesAReusedPID(t *testing.T) {
+	identity, err := ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ProcessIdentityMatches(os.Getpid(), identity) {
+		t.Fatal("current process did not match its captured start identity")
+	}
+	if ProcessIdentityMatches(os.Getpid(), identity+"-reused") {
+		t.Fatal("current process matched a different process-start identity")
 	}
 }
 
@@ -536,8 +750,9 @@ func TestRootConflictNamesPidWhenRootIsUnknown(t *testing.T) {
 	if !strings.Contains(failure.Hint, "Stop process 4242") || strings.Contains(failure.Hint, "--platform-root") {
 		t.Fatalf("hint must name the pid, not an unmatchable stop command: %q", failure.Hint)
 	}
-	known := RootConflict("/opt/kb-a", 7)
-	if !strings.Contains(known.Hint, "kb-create stop --platform-root /opt/kb-a") {
+	known := RootConflict("/tmp/KB Labs ' A", 7)
+	want := contracts.ShellCommand("kb-create", "stop", "--platform-root", "/tmp/KB Labs ' A")
+	if !strings.Contains(known.Hint, want) {
 		t.Fatalf("hint = %q", known.Hint)
 	}
 }

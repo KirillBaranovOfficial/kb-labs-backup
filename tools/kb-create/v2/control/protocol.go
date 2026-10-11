@@ -18,11 +18,12 @@ const ProtocolVersion = 1
 // File is control.json: how a local client finds and authenticates to the
 // launcher. It is written 0600 and removed when the launcher exits.
 type File struct {
-	Protocol int    `json:"protocol"`
-	Address  string `json:"address"`
-	Token    string `json:"token"`
-	PID      int    `json:"pid"`
-	Version  string `json:"version"`
+	Protocol        int    `json:"protocol"`
+	Address         string `json:"address"`
+	Token           string `json:"token"`
+	PID             int    `json:"pid"`
+	ProcessIdentity string `json:"processIdentity"`
+	Version         string `json:"version"`
 }
 
 // LauncherInfo identifies the running launcher.

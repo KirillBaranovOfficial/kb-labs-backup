@@ -10,6 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	goruntime "runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,7 +20,9 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -29,6 +34,243 @@ func TestStartStatusErrorRemainsAnError(t *testing.T) {
 	if got.Code != statusErr.Code || got.Message != statusErr.Message {
 		t.Fatalf("status diagnostic = %#v, want the status failure", got)
 	}
+}
+
+// case: S-053.4, S-053.5, S-053.7, S-053.8
+func TestBuiltCLICompatibilityRefusalsMatchCasesWithoutMutatingRoots(t *testing.T) {
+	launcher, _ := binaries(t)
+	_, sourceFile, _, ok := goruntime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate command test source")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "../../../../.."))
+	fixtureDir := filepath.Join(repoRoot, "e2e", "platform", "fixtures", "installer-cases")
+	arch := goruntime.GOARCH
+	if arch == "x86_64" {
+		arch = "amd64"
+	}
+	if arch == "aarch64" {
+		arch = "arm64"
+	}
+	fixtureOS := goruntime.GOOS
+	if fixtureOS != "linux" && fixtureOS != "darwin" {
+		t.Skip("compatibility command fixtures cover Linux and macOS")
+	}
+	matrix := filepath.Join(fixtureDir, "compatibility-matrix-"+fixtureOS+"-"+arch+".json")
+	missingBinary := filepath.Join(fixtureDir, "missing-host-binary-"+fixtureOS+"-"+arch+".json")
+	for _, path := range []string{matrix, missingBinary} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("required release fixture %q: %v", path, err)
+		}
+	}
+
+	runPlanWithPlatform := func(t *testing.T, index, root string, platformSelection []string, extra ...string) map[string]any {
+		t.Helper()
+		home := t.TempDir()
+		args := []string{"plan", "--json", "--index", index,
+			"--policy", "compatible", "--platform-root", root}
+		args = append(args[:4], append(platformSelection, args[4:]...)...)
+		args = append(args, extra...)
+		command := exec.Command(launcher, args...)
+		command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": home,
+			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": ""})
+		output, err := command.CombinedOutput()
+		if err == nil {
+			t.Fatalf("plan unexpectedly succeeded: %s", output)
+		}
+		var envelope struct {
+			Error map[string]any `json:"error"`
+		}
+		if err := json.Unmarshal(output, &envelope); err != nil {
+			t.Fatalf("plan output is not the structured JSON error: %s (%v)", output, err)
+		}
+		if envelope.Error["code"] != contracts.CodeIncompatibleComponents {
+			t.Fatalf("plan error = %#v, want %s", envelope.Error, contracts.CodeIncompatibleComponents)
+		}
+		return envelope.Error
+	}
+	runPlan := func(t *testing.T, index, root string, extra ...string) map[string]any {
+		return runPlanWithPlatform(t, index, root, []string{"--platform-version", "3.2.0"}, extra...)
+	}
+	assertDetails := func(t *testing.T, failure map[string]any, kind, id, version, requiredRange, hint string) {
+		t.Helper()
+		details, ok := failure["details"].(map[string]any)
+		if !ok || details["kind"] != kind || details["id"] != id || details["selectedVersion"] != version || details["requiredRange"] != requiredRange {
+			t.Fatalf("error details = %#v, want kind=%q id=%q selectedVersion=%q requiredRange=%q", failure["details"], kind, id, version, requiredRange)
+		}
+		if failure["hint"] != hint {
+			t.Fatalf("error hint = %#v, want %q", failure["hint"], hint)
+		}
+	}
+
+	t.Run("S-053.4 explicit adapter range", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "adapter-range-root")
+		failure := runPlan(t, matrix, root, "--adapters", "fixture-adapter@1.0.0")
+		assertDetails(t, failure, "adapter", "fixture-adapter", "3.2.0", "<3.2.0",
+			"Choose compatible versions or pass an explicit supported provider.")
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("incompatible adapter plan changed install root: %v", err)
+		}
+	})
+
+	t.Run("S-053.5 missing binary identity", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "missing-binary-root")
+		failure := runPlan(t, missingBinary, root)
+		assertDetails(t, failure, "binary", "kb-create", "3.2.0", "",
+			"Choose compatible versions or pass an explicit supported provider.")
+		details, ok := failure["details"].(map[string]any)
+		if !ok || details["target"] != fixtureOS+"/"+arch {
+			t.Fatalf("missing binary target = %#v, want %s", failure["details"], fixtureOS+"/"+arch)
+		}
+	})
+	t.Run("S-053.5 out-of-range SDK", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "sdk-range-root")
+		args := []string{"--sdk-version", "4.0.0"}
+		failure := runPlan(t, matrix, root, args...)
+		assertDetails(t, failure, "sdk", "sdk", "4.0.0", ">=3.0.0 <4.0.0",
+			"Choose compatible versions or pass an explicit supported provider.")
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("out-of-range SDK plan changed install root: %v", err)
+		}
+	})
+
+	t.Run("S-053.7 missing binary leaves isolated root absent", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "missing-binary-root")
+		failure := runPlan(t, missingBinary, root)
+		assertDetails(t, failure, "binary", "kb-create", "3.2.0", "",
+			"Choose compatible versions or pass an explicit supported provider.")
+		details, ok := failure["details"].(map[string]any)
+		if !ok || details["target"] != fixtureOS+"/"+arch {
+			t.Fatalf("missing binary target = %#v, want %s", failure["details"], fixtureOS+"/"+arch)
+		}
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("missing binary refusal changed isolated install root: %v", err)
+		}
+	})
+
+	t.Run("S-053.8 companion SDK range from explicit platform version", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "plugin-sdk-range-explicit")
+		failure := runPlanWithPlatform(t, matrix, root, []string{"--platform-version", "3.2.0"}, "--plugins", "fixture-sdk-incompat@1.0.0")
+		assertDetails(t, failure, "plugin", "fixture-sdk-incompat", "3.0.0", "<3.0.0",
+			"Choose compatible versions or pass an explicit supported provider.")
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("incompatible plugin SDK range changed install root: %v", err)
+		}
+	})
+	t.Run("S-053.8 companion SDK range from platform channel", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "plugin-sdk-range-channel")
+		failure := runPlanWithPlatform(t, matrix, root, []string{"--platform-channel", "stable"}, "--plugins", "fixture-sdk-incompat@1.0.0")
+		assertDetails(t, failure, "plugin", "fixture-sdk-incompat", "3.0.0", "<3.0.0",
+			"Choose compatible versions or pass an explicit supported provider.")
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("incompatible plugin SDK range changed install root: %v", err)
+		}
+	})
+}
+
+// case: PC-001.10, PC-001.16
+func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
+	launcher, _ := binaries(t)
+	home := t.TempDir()
+	rootDir := t.TempDir()
+	rootA := filepath.Join(rootDir, "root-a")
+	rootB := filepath.Join(rootDir, "root-b")
+	rootC := filepath.Join(rootDir, "root-c")
+	rootD := filepath.Join(rootDir, "root-d")
+	registry := gateway.Registry{Path: filepath.Join(home, ".kb", "launcher", "gateway-roots.json")}
+	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
+		t.Fatal(err)
+	}
+
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {
+		PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}},
+	}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
+	release, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(home, "release-index.json")
+	encoded, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := func(t *testing.T, root, explicitURL string) contracts.ResolvedInstallPlan {
+		t.Helper()
+		args := []string{"plan", "--json", "--index", indexPath, "--platform-root", root}
+		if explicitURL != "" {
+			args = append(args, "--gateway-url", explicitURL)
+		}
+		command := exec.Command(launcher, args...)
+		command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": home,
+			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": ""})
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("built kb-create plan %s: %v\n%s", root, err, output)
+		}
+		var envelope struct {
+			Data struct {
+				Plan contracts.ResolvedInstallPlan `json:"plan"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(output, &envelope); err != nil {
+			t.Fatalf("built kb-create plan output is invalid: %s (%v)", output, err)
+		}
+		return envelope.Data.Plan
+	}
+	registerAppliedRoot := func(root string, plan contracts.ResolvedInstallPlan) {
+		origin, err := gateway.OriginFromHealthURL(plan.Host.HealthURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.Register(root, origin); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	planB := plan(t, rootB, "")
+	if planB.Host.HealthURL != "http://127.0.0.1:4100/health" || planB.ServiceGraph.Services[0].Port != 4100 {
+		t.Fatalf("root B plan did not receive the next 100-port offset: %#v", planB)
+	}
+	registerAppliedRoot(rootB, planB)
+
+	planC := plan(t, rootC, "http://127.0.0.1:4200")
+	if planC.Host.HealthURL != "http://127.0.0.1:4200/health" {
+		t.Fatalf("explicit root C Gateway was not preserved in its plan: %#v", planC)
+	}
+	registerAppliedRoot(rootC, planC)
+
+	planD := plan(t, rootD, "")
+	if planD.Host.HealthURL != "http://127.0.0.1:4300/health" || planD.ServiceGraph.Services[0].Port != 4300 {
+		t.Fatalf("root D plan did not advance past stopped roots: %#v", planD)
+	}
+	if retained := plan(t, rootB, ""); retained.Host.HealthURL != planB.Host.HealthURL ||
+		retained.ServiceGraph.Services[0].Port != planB.ServiceGraph.Services[0].Port {
+		t.Fatalf("replanning root B changed its Gateway allocation: %#v", retained)
+	}
+}
+
+func childEnvironment(base []string, overrides map[string]string) []string {
+	env := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, overridden := overrides[key]; overridden {
+			continue
+		}
+		env = append(env, entry)
+	}
+	for key, value := range overrides {
+		if value != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }
 
 var (
@@ -99,7 +341,11 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
-	root := t.TempDir()
+	return newInstallationWithRoot(t, launcher, fakehost, t.TempDir(), t.TempDir(), port, hostArgs...)
+}
+
+func newInstallationWithRoot(t *testing.T, launcher, fakehost, root, kbHome string, port int, hostArgs ...string) installation {
+	t.Helper()
 	spec := &contracts.HostSpec{Command: fakehost, Args: append([]string{"-port", fmt.Sprint(port)}, hostArgs...), HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: spec,
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}}}
@@ -110,7 +356,6 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 	if err := os.WriteFile(filepath.Join(root, "current", ".kb", "marketplace.lock"), []byte("old package set\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	kbHome := t.TempDir()
 	t.Setenv(host.KBHomeEnv, kbHome)
 	state, err := host.StateHome()
 	if err != nil {
@@ -494,6 +739,206 @@ func TestStartReportsPortInUse(t *testing.T) {
 	payload, code, raw := inst.run("start", "--json")
 	if code != 1 || errorCode(payload) != "KB_INSTALL_PORT_IN_USE" {
 		t.Fatalf("start: %d %s", code, raw)
+	}
+}
+
+// case: S-025.8, PC-001.9
+func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
+	launcher, fakehost := binaries(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	kbHome := t.TempDir()
+	rootA := filepath.Join(t.TempDir(), "KB Labs ' $ROOT `tick`\nline")
+	rootB := filepath.Join(t.TempDir(), "secondary")
+	a := newInstallationWithRoot(t, launcher, fakehost, rootA, kbHome, port)
+	b := newInstallationWithRoot(t, launcher, fakehost, rootB, kbHome, port)
+	if _, code, output := a.run("start", "--json"); code != 0 {
+		t.Fatalf("start platform A: %d %s", code, output)
+	}
+	t.Cleanup(func() { _, _, _ = a.run("stop", "--json") })
+	layoutA, err := versionroot.New(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeReceiptRoot := layoutA.PlatformRoot()
+	if err := (gateway.Registry{Path: filepath.Join(kbHome, "launcher", "gateway-roots.json")}).Register(activeReceiptRoot, fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receipt.Read(activeReceiptRoot); err != nil {
+		t.Fatalf("registered active receipt root %s is unreadable: %v", activeReceiptRoot, err)
+	}
+	rootState, err := host.StateForRoot(activeReceiptRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processRecord, err := os.ReadFile(rootState.HostPID())
+	if err != nil {
+		t.Fatalf("active host record %s is unreadable: %v", rootState.HostPID(), err)
+	}
+	var recorded struct {
+		PID             int    `json:"pid"`
+		ProcessIdentity string `json:"processIdentity"`
+		PlatformRoot    string `json:"platformRoot"`
+	}
+	if err := json.Unmarshal(processRecord, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(recorded.PlatformRoot) != filepath.Clean(activeReceiptRoot) {
+		t.Fatalf("active record root %q differs from registered root %q", recorded.PlatformRoot, activeReceiptRoot)
+	}
+	if !host.ProcessIdentityMatches(recorded.PID, recorded.ProcessIdentity) {
+		t.Fatalf("registered host PID %d does not match its recorded identity", recorded.PID)
+	}
+	payload, code, output := b.run("start", "--json")
+	if code != 1 || errorCode(payload) != "KB_HOST_ALREADY_RUNNING" {
+		t.Fatalf("start platform B: %d %s", code, output)
+	}
+	hint, _ := payload["error"].(map[string]any)["hint"].(string)
+	commandText := strings.TrimSuffix(strings.TrimPrefix(hint, "Stop that platform first with "), ".")
+	commandText = strings.TrimSuffix(strings.TrimPrefix(commandText, "`"), "`")
+	commands, err := contracts.ParseShellCommands(commandText)
+	want := []string{"kb-create", "stop", "--platform-root", layoutA.InstallRoot()}
+	if err != nil || len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
+		t.Fatalf("printed stop command does not preserve root: %#v, %v", commands, err)
+	}
+	command := exec.Command("/bin/sh", "-c", commandText+" --json")
+	command.Env = append(os.Environ(), "KB_HOME="+kbHome, "PATH="+filepath.Dir(launcher)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	stopped, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute printed stop command: %v\n%s", err, stopped)
+	}
+	status, statusCode, statusOutput := a.run("status", "--json")
+	if statusCode != 0 || status["host"].(map[string]any)["state"] != "stopped" {
+		t.Fatalf("printed stop command did not stop platform A: %d %s", statusCode, statusOutput)
+	}
+}
+
+func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *testing.T) {
+	inst := newInstallation(t)
+	started, code, output := inst.run("start", "--json")
+	if code != 0 {
+		t.Fatalf("start host: %d %s", code, output)
+	}
+	t.Cleanup(func() { _, _, _ = inst.run("stop", "--json") })
+	hostPID := int(started["host"].(map[string]any)["pid"].(float64))
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSupervisorRecord, err := os.ReadFile(state.SupervisorPID())
+	if err != nil {
+		t.Fatalf("read active supervisor record: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.WriteFile(state.SupervisorPID(), originalSupervisorRecord, 0o600); err != nil {
+			t.Errorf("restore active supervisor record: %v", err)
+		}
+	})
+	// A live supervisor.pid from the previous format has no process identity.
+	oldRecord, err := json.Marshal(map[string]any{"pid": os.Getpid(), "platformRoot": inst.root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state.SupervisorPID(), oldRecord, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restarted, code, output := inst.run("restart", "--json")
+	if code != 1 || errorCode(restarted) != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("restart did not diagnose the old supervisor record: %d %s", code, output)
+	}
+	status, code, output := inst.run("status", "--json")
+	if code != 1 || errorCode(status) != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("status did not diagnose the old supervisor record: %d %s", code, output)
+	}
+	if !host.ProcessAlive(os.Getpid()) {
+		t.Fatal("restart signalled the process whose PID was reused")
+	}
+	if !host.ProcessAlive(hostPID) {
+		t.Fatal("restart stopped the genuine host while rejecting the stale supervisor")
+	}
+}
+
+func TestStaleLiveHostRecoveryEndsAtPortConflict(t *testing.T) {
+	launcher, fakehost := binaries(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	kbHome := t.TempDir()
+	rootA := filepath.Join(t.TempDir(), "platform A")
+	rootB := filepath.Join(t.TempDir(), "platform B")
+	a := newInstallationWithRoot(t, launcher, fakehost, rootA, kbHome, port)
+	b := newInstallationWithRoot(t, launcher, fakehost, rootB, kbHome, port)
+	if _, code, output := a.run("start", "--json"); code != 0 {
+		t.Fatalf("start A: %d %s", code, output)
+	}
+	state, err := host.StateForRoot(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layoutA, err := versionroot.New(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (gateway.Registry{Path: filepath.Join(kbHome, "launcher", "gateway-roots.json")}).Register(
+		layoutA.PlatformRoot(), fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(state.HostPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := host.WriteRecordFile(state.HostPID(), original); err != nil {
+			t.Errorf("restore host record for cleanup: %v", err)
+		}
+		_, _, _ = a.run("stop", "--json")
+	})
+	var record map[string]any
+	if err := json.Unmarshal(original, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["processIdentity"] = "mismatched-process-identity"
+	stale, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state.HostPID(), stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, code, output := a.run("status", "--json")
+	if code != 1 || errorCode(status) != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("stale status: %d %s", code, output)
+	}
+	staleError := status["error"].(map[string]any)
+	hint := staleError["hint"].(string)
+	if !strings.Contains(staleError["message"].(string), "is running") || !strings.Contains(staleError["message"].(string), "will not signal") {
+		t.Fatalf("stale diagnostic does not say the process is running: %#v", status["error"])
+	}
+	if !strings.Contains(hint, contracts.ShellCommand("curl", "--fail", "--show-error", "--max-time", "2")) ||
+		!strings.Contains(hint, contracts.ShellCommand("lsof", "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN")) ||
+		!strings.Contains(hint, state.HostPID()) || !strings.Contains(hint, "port conflict") {
+		t.Fatalf("stale diagnostic lacks verification and recovery steps: %s", hint)
+	}
+	if !host.ProcessAlive(int(record["pid"].(float64))) {
+		t.Fatal("diagnosing stale identity stopped the host")
+	}
+	if err := os.Remove(state.HostPID()); err != nil {
+		t.Fatal(err)
+	}
+	status, code, output = a.run("status", "--json")
+	if code != 1 || errorCode(status) != contracts.CodePortInUse {
+		t.Fatalf("status after stale-record removal: %d %s", code, output)
+	}
+	blocked, code, output := b.run("start", "--json")
+	if code != 1 || errorCode(blocked) != contracts.CodePortInUse {
+		t.Fatalf("start after stale-record removal: %d %s", code, output)
 	}
 }
 

@@ -422,7 +422,7 @@ func TestUpdateRejectsReceiptWithoutInstallationIdentity(t *testing.T) {
 	}
 	_, _, err := Update(context.Background(), planIn(root, "new-plan"), Dependencies{Artifacts: &fakeInstaller{}})
 	var failure *diag.Diag
-	if !errors.As(err, &failure) || failure.Code != contracts.CodeReceiptUnavailable || !strings.Contains(failure.Hint, "kb-create update --platform-root") {
+	if !errors.As(err, &failure) || failure.Code != contracts.CodeReceiptUnavailable || !strings.Contains(failure.Hint, contracts.ShellCommand("kb-create", "update", "--platform-root", root)) {
 		t.Fatalf("missing installation ID error = %v", err)
 	}
 }

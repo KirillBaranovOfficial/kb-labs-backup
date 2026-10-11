@@ -111,7 +111,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	platformRoot = layout.PlatformRoot()
 	if _, receiptErr := receipt.Read(platformRoot); receiptErr != nil {
 		if !os.IsNotExist(receiptErr) {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable, "the active receipt could not be read", "run `kb-create doctor --platform-root "+root+"` before reinstalling", receiptErr)
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable, "the active receipt could not be read", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` before reinstalling", receiptErr)
 		}
 		if err := layout.ValidateInitialTarget(); err != nil {
 			return applyCommandResult{}, unsupportedPlatformLayout(root, err)
@@ -124,7 +124,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			operationRoot = platformRoot
 			planned.Request.PlatformRoot = platformRoot
 		} else if !os.IsNotExist(activeErr) {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable, "the recovered active receipt could not be read", "run `kb-create doctor --platform-root "+root+"` before reinstalling", activeErr)
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable, "the recovered active receipt could not be read", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` before reinstalling", activeErr)
 		} else {
 			stage, stageErr := layout.StageInitial()
 			if stageErr != nil {
@@ -226,7 +226,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		if bootstrapCompleted && !adminPasswordPresent {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
 				"the secured Gateway was bootstrapped, but its stored first administrator password is missing",
-				fmt.Sprintf("Recover the account with `kb-create doctor --recover --platform-root %q`.", root), nil)
+				"Recover the account with `"+contracts.ShellCommand("kb-create", "doctor", "--recover", "--platform-root", root)+"`.", nil)
 		}
 	}
 	if err := secrets.EnsureGenerated(&planned, store); err != nil {
@@ -300,7 +300,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		store = secrets.Store{PlatformRoot: activeRoot}
 		applied.Plan.Request.PlatformRoot = platformRoot
 		if err := receipt.Write(platformRoot, applied); err != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the activated installation receipt could not be finalized", "run `kb-create doctor --platform-root "+root+"` and resolve the reported layout issue", err)
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the activated installation receipt could not be finalized", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` and resolve the reported layout issue", err)
 		}
 		if planned.Host != nil {
 			starter := postInstallStarter
@@ -320,7 +320,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 				startErr = errors.Join(startErr, runtimeDeps.Progress.Emit(runtime.ProgressEvent{Phase: "Start host"}))
 			}
 			if startErr != nil {
-				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installed host did not become healthy", "run `kb-create doctor --platform-root "+root+"` to inspect the installation, then rerun `kb-create start --platform-root "+root+"`", startErr)
+				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installed host did not become healthy", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` to inspect the installation, then rerun `"+contracts.ShellCommand("kb-create", "start", "--platform-root", root)+"`", startErr)
 			}
 		}
 	} else {
@@ -355,7 +355,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 		origin, originErr := gateway.OriginFromHealthURL(applied.Verification.HostHealthURL)
 		if originErr != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the applied Gateway address could not be recorded", "rerun `kb-create update --platform-root PATH` after checking the receipt", originErr)
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the applied Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", root)+"` after checking the receipt", originErr)
 		}
 		roots = append(roots, gateway.Root{PlatformRoot: platformRoot, URL: origin})
 		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).RegisterMany(roots); err != nil {
@@ -400,8 +400,8 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 func unsupportedPlatformLayout(root string, cause error) *diag.Diag {
 	failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 		"This platform root does not use the supported versioned installation layout.",
-		"Choose a fresh writable path, then run `kb-create install --platform-root NEW_ROOT`.", cause)
-	failure.Meta = map[string]any{"platformRoot": root, "nextCommand": "kb-create install --platform-root NEW_ROOT"}
+		"Choose a fresh writable path, then run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"`.", cause)
+	failure.Meta = map[string]any{"platformRoot": root, "nextCommand": contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")}
 	failure.ProcessExitCode = diag.ExitInput
 	return failure
 }
@@ -478,11 +478,11 @@ func shimFailure(code, root string, cause error) *diag.Diag {
 			reason = failureCause.Cause.Error()
 		}
 		diagnostic := contracts.NewDiag(code, fmt.Sprintf("Platform files and receipt remain applied at %s, but the kb command shim could not be created.", root),
-			fmt.Sprintf("Fix the filesystem reason for the shim path, then run `kb-create doctor --fix --platform-root %q`.", root), cause)
+			"Fix the filesystem reason for the shim path, then run `"+contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root)+"`.", cause)
 		diagnostic.Reason = fmt.Sprintf("The filesystem refused shim path %s: %s", failureCause.Path, reason)
 		diagnostic.Meta = map[string]any{"path": failureCause.Path, "reason": reason}
 		return diagnostic
 	}
 	return contracts.NewDiag(code, fmt.Sprintf("Platform files and receipt remain applied at %s, but the kb command shim could not be created: %s", root, cause),
-		fmt.Sprintf("Fix the filesystem reason for the shim path, then run `kb-create doctor --fix --platform-root %q`.", root), cause)
+		"Fix the filesystem reason for the shim path, then run `"+contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root)+"`.", cause)
 }
