@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
@@ -397,6 +398,55 @@ func TestPlanKeepsPlatformPackageOnceWhenAlsoSelectedAsMemberAdapter(t *testing.
 	}
 	if err := contracts.ValidatePlanArtifactIdentities(plan); err != nil {
 		t.Fatalf("resolved plan has duplicate artifact identity: %v", err)
+	}
+}
+
+func bundledSDKCatalog() catalog.Catalog {
+	sdk := catalog.Component{ID: "sdk", Version: "2.0.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk-2.0.0.tgz", SHA256: "sdk-2.0.0"}
+	return catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+			Members:  []catalog.Component{sdk},
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+		}},
+		SDKs: []catalog.Component{sdk, {ID: "sdk", Version: "2.1.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk-2.1.0.tgz", SHA256: "sdk-2.1.0"}},
+	}
+}
+
+// case: S-053.1
+func TestPlanRecordsBundledSDKOnceUnderItsSelectedRole(t *testing.T) {
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), SDK: contracts.VersionSelector{Version: "2.0.0"}}, bundledSDKCatalog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []contracts.Artifact
+	for _, item := range plan.Artifacts {
+		if item.Package == "@kb/sdk" {
+			records = append(records, item)
+		}
+	}
+	if len(records) != 1 || records[0].Kind != "sdk" || records[0].Version != "2.0.0" || records[0].SHA256 != "sdk-2.0.0" {
+		t.Fatalf("bundled SDK selected by the request must be one sdk record, got %#v", records)
+	}
+	unselected, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir()}, bundledSDKCatalog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range unselected.Artifacts {
+		if item.Package == "@kb/sdk" && item.Kind != "platform-member" {
+			t.Fatalf("bundled SDK without an SDK selector must stay a platform member, got %#v", item)
+		}
+	}
+}
+
+func TestPlanRefusesAnSDKVersionThatDiffersFromTheBundledOne(t *testing.T) {
+	_, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), SDK: contracts.VersionSelector{Version: "2.1.0"}}, bundledSDKCatalog())
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != contracts.CodeIncompatibleComponents ||
+		!strings.Contains(failure.Message, "platform 2.0.0 bundles @kb/sdk 2.0.0") {
+		t.Fatalf("expected a compatibility refusal naming the bundled SDK, got %v", err)
 	}
 }
 
