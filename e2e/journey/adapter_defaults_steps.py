@@ -91,6 +91,31 @@ def _project_state_dir(project_root: Path, env: dict[str, str]) -> Path:
     return kb_home / "state" / project["id"]
 
 
+def _restore_platform_adapter_fixture(
+    config_path: Path,
+    original_config: bytes | None,
+    project_root: Path,
+    platform_root: Path,
+    env: dict[str, str],
+    runner: CommandRunner,
+) -> str | None:
+    try:
+        current_config = config_path.read_bytes() if config_path.exists() else None
+        if current_config == original_config:
+            return None
+        if original_config is None:
+            config_path.unlink(missing_ok=True)
+        else:
+            config_path.write_bytes(original_config)
+        restart = ["kb-create", "restart", "--platform-root", str(platform_root), "--json"]
+        result = _run(runner, restart, project_root, env)
+        if _json(result, restart).get("ok") is not True:
+            return "platform host did not restart after restoring its original adapter config"
+        return None
+    except Exception as error:
+        return f"platform adapter config could not be restored: {error}"
+
+
 def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                               env: dict[str, str] | None = None,
                               runner: CommandRunner = run_command) -> None:
@@ -125,6 +150,10 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
     project_b = Path(tempfile.mkdtemp(prefix="kb-adapter-project-b-", dir=base_env["HOME"]))
     project_b_registered = False
+    platform_config_path = platform_root / ".kb" / "kb.config.jsonc"
+    if not platform_config_path.exists():
+        platform_config_path = platform_root / ".kb" / "kb.config.json"
+    original_platform_config = platform_config_path.read_bytes() if platform_config_path.exists() else None
 
     def cli(args: list[str], cwd: Path = project_a) -> subprocess.CompletedProcess[str]:
         return _run(runner, ["kb", *args], cwd, base_env)
@@ -690,13 +719,28 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     except Exception as error:
         journey.step("project adapter and plugin isolation checks", "adapter", lambda: str(error))
     finally:
+        cleanup_errors: list[str] = []
+        restore_error = _restore_platform_adapter_fixture(
+            platform_config_path, original_platform_config, project_a, platform_root, base_env, runner,
+        )
+        if restore_error:
+            cleanup_errors.append(restore_error)
         if project_b_registered:
             try:
                 command = ["project", "remove", str(project_b), "--yes", "--json"]
-                cli(command)
+                result = cli(command)
+                if result.returncode != 0:
+                    cleanup_errors.append(f"project B could not be unregistered: {(result.stderr or result.stdout).strip()}")
             except Exception as error:
-                journey.step("unregister adapter project B", "adapter", lambda: str(error))
-        shutil.rmtree(project_b, ignore_errors=True)
+                cleanup_errors.append(f"project B could not be unregistered: {error}")
+        if project_b.exists():
+            try:
+                shutil.rmtree(project_b)
+            except OSError as error:
+                cleanup_errors.append(f"adapter project B fixture could not be removed: {error}")
+        if cleanup_errors:
+            message = "; ".join(cleanup_errors)
+            journey.step("restore adapter journey fixture state", "adapter", lambda: message)
 
 
 def _save_run(run_workflow, project):

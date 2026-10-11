@@ -12,7 +12,57 @@ from invocations import (decode_ux_error_result, decode_ux_success_result, invoc
                          read_ux_cli_result, run_command)
 
 
-def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
+def workspace_checkout_problem(repo_root: Path) -> str | None:
+    required = (
+        "cli/bin/dist/bin.js",
+        "core/project-registry/dist/index.js",
+        ".kb/marketplace.lock",
+        "plugins",
+    )
+    missing = [path for path in required if not (repo_root / path).exists()]
+    lock_path = repo_root / ".kb/marketplace.lock"
+    if lock_path.is_file():
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            for plugin in lock.get("plugins", {}).values():
+                relative_root = plugin.get("link")
+                if not isinstance(relative_root, str):
+                    continue
+                package_root = repo_root / relative_root
+                package_json = package_root / "package.json"
+                try:
+                    manifest_path = json.loads(package_json.read_text(encoding="utf-8")).get("kb", {}).get("manifest")
+                except (OSError, json.JSONDecodeError, AttributeError):
+                    missing.append(f"{relative_root}/package.json")
+                    continue
+                if isinstance(manifest_path, str) and not (package_root / manifest_path).is_file():
+                    missing.append(f"{relative_root}/{manifest_path.removeprefix('./')}")
+        except (OSError, json.JSONDecodeError, AttributeError):
+            missing.append(".kb/marketplace.lock (valid workspace plugin registry)")
+    if missing:
+        return (
+            f"workspace checkout {repo_root} is missing {', '.join(missing)}; "
+            "stage the repository at KB_JOURNEY_WORKSPACE_ROOT and run "
+            "`kb-devkit run build --affected` before the journey"
+        )
+    return None
+
+
+def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bool = False) -> None:
+    if not prechecked:
+        problem = workspace_checkout_problem(repo_root)
+        if problem:
+            journey.step(
+                "workspace checkout is staged and built",
+                "workspace-cli",
+                lambda: problem,
+                cases=[
+                    "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
+                    "S-142.5", "S-203.1", "S-203.19", "S-204.7",
+                ],
+            )
+            return
+
     cli = repo_root / "cli/bin/dist/bin.js"
     with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-home-") as home:
         env = {**os.environ, "HOME": home}
