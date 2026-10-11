@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 )
 
@@ -29,6 +30,9 @@ func Write(platformRoot string, receipt contracts.InstallReceipt) error {
 	}
 	if receipt.Schema != contracts.ReceiptSchema {
 		return fmt.Errorf("unsupported receipt schema %q", receipt.Schema)
+	}
+	if identity, duplicated := contracts.DuplicateArtifactIdentity(receipt.Plan.Artifacts); duplicated {
+		return artifactIdentityDiagnostic(platformRoot, "the receipt contains", identity)
 	}
 	data, err := json.MarshalIndent(receipt, "", "  ")
 	if err != nil {
@@ -159,7 +163,15 @@ func Read(platformRoot string) (contracts.InstallReceipt, error) {
 	if result.Schema != contracts.ReceiptSchema {
 		return contracts.InstallReceipt{}, fmt.Errorf("unsupported receipt schema %q", result.Schema)
 	}
+	if identity, duplicated := contracts.DuplicateArtifactIdentity(result.Plan.Artifacts); duplicated {
+		return contracts.InstallReceipt{}, artifactIdentityDiagnostic(platformRoot, "the active receipt contains", identity)
+	}
 	return result, nil
+}
+
+func artifactIdentityDiagnostic(platformRoot, subject, identity string) *diag.Diag {
+	hint := fmt.Sprintf("Reinstall this platform with `kb-create apply --index <sealed-index> --platform-root %q`.", platformRoot)
+	return contracts.ArtifactIdentityDiagnostic(subject, identity, hint)
 }
 
 // Delete removes only the active V2 receipt. Snapshots are intentionally kept

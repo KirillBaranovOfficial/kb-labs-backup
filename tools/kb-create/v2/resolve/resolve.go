@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -106,7 +107,10 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	for _, member := range platform.Members {
 		item := artifact(member, "platform-member")
 		item.Registry = registryKind(source, member.Package)
-		artifacts = append(artifacts, item)
+		artifacts, err = appendPlatformMember(artifacts, item)
+		if err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
 	}
 	binaryForTarget := false
 	for _, binary := range platform.Binaries {
@@ -147,6 +151,9 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: clientArtifacts,
 			ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version),
 			ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest,
+		}
+		if err := contracts.ValidatePlanArtifactIdentities(plan); err != nil {
+			return contracts.ResolvedInstallPlan{}, err
 		}
 		plan.PlanHash = hash(plan)
 		return plan, nil
@@ -198,7 +205,10 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			}
 		}
 		bindings = append(bindings, contracts.ProviderBinding{Capability: need.Capability, AdapterID: adapter.ID, Package: adapter.Package, Version: adapter.Version})
-		artifacts = append(artifacts, artifact(adapter.Component, "adapter"))
+		artifacts, err = appendSelectedAdapter(artifacts, adapter)
+		if err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
 	}
 	// Explicit adapters are materialized even if the selected profile does not yet
 	// require them: CI and future commands may rely on an intentional binding.
@@ -207,9 +217,15 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("adapter", item.ID, "requested version is not present in the release index")
 		}
-		artifacts = append(artifacts, artifact(adapter.Component, "adapter"))
+		artifacts, err = appendSelectedAdapter(artifacts, adapter)
+		if err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
 	}
-	artifacts = uniqueArtifacts(artifacts)
+	if err := contracts.ValidateArtifactIdentities(artifacts); err != nil {
+		return contracts.ResolvedInstallPlan{}, err
+	}
+	sortArtifacts(artifacts)
 	if err := annotateArtifactResolution(request, artifacts); err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
@@ -237,6 +253,52 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version), ProviderBindings: bindings, Host: selectedHost, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
 	plan.PlanHash = hash(plan)
 	return plan, nil
+}
+
+func appendSelectedAdapter(artifacts []contracts.Artifact, adapter catalog.Adapter) ([]contracts.Artifact, error) {
+	for _, existing := range artifacts {
+		if existing.Identity() != adapter.Package {
+			continue
+		}
+		adapterRole := existing.Kind == "adapter" || existing.Registry == "adapter"
+		if !adapterRole || existing.Version != adapter.Version || existing.SHA256 != adapter.SHA256 || existing.Tarball != adapter.Tarball {
+			return nil, contracts.PlanArtifactIdentityFailure(adapter.Package)
+		}
+		return artifacts, nil
+	}
+	return append(artifacts, artifact(adapter.Component, "adapter")), nil
+}
+
+func appendPlatformMember(artifacts []contracts.Artifact, member contracts.Artifact) ([]contracts.Artifact, error) {
+	for index, existing := range artifacts {
+		if existing.Identity() != member.Identity() {
+			continue
+		}
+		if existing.Kind != "platform" || existing.ID != member.ID || existing.Version != member.Version ||
+			existing.SHA256 != member.SHA256 || existing.Tarball != member.Tarball || (existing.Registry != "" && existing.Registry != member.Registry) ||
+			!reflect.DeepEqual(existing.Config, member.Config) {
+			return nil, contracts.PlanArtifactIdentityFailure(member.Identity())
+		}
+		artifacts[index].Registry = member.Registry
+		return artifacts, nil
+	}
+	return append(artifacts, member), nil
+}
+
+func sortArtifacts(artifacts []contracts.Artifact) {
+	sort.Slice(artifacts, func(i, j int) bool {
+		left, right := artifacts[i], artifacts[j]
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.ID != right.ID {
+			return left.ID < right.ID
+		}
+		if left.Version != right.Version {
+			return left.Version < right.Version
+		}
+		return left.Package < right.Package
+	})
 }
 
 func configureGatewayAddress(address string, graph *contracts.ServiceGraph, host *contracts.HostSpec, patches []contracts.ConfigPatch) error {
@@ -500,39 +562,6 @@ func provides(adapter catalog.Adapter, capability string) bool {
 		}
 	}
 	return false
-}
-func uniqueArtifacts(values []contracts.Artifact) []contracts.Artifact {
-	// Keying on Kind+ID+Version alone silently collapses two genuinely
-	// different npm packages whenever they happen to compute the same
-	// catalog ID (for example a service package like @kb-labs/marketplace-app,
-	// whose id is its declared service id "marketplace", and its paired CLI
-	// plugin entry like @kb-labs/marketplace-entry, whose id falls back to
-	// "marketplace" once idFor strips the "-entry" suffix in
-	// prepare-release-index.mjs). Package is the actual installation unit, so
-	// it must be part of the uniqueness key: without it, one of the two
-	// packages simply never gets installed, and its service never starts.
-	seen := map[string]contracts.Artifact{}
-	for _, v := range values {
-		seen[v.Kind+"/"+v.ID+"@"+v.Version+"#"+v.Package] = v
-	}
-	result := make([]contracts.Artifact, 0, len(seen))
-	for _, v := range seen {
-		result = append(result, v)
-	}
-	sort.Slice(result, func(i, j int) bool {
-		left, right := result[i], result[j]
-		if left.Kind != right.Kind {
-			return left.Kind < right.Kind
-		}
-		if left.ID != right.ID {
-			return left.ID < right.ID
-		}
-		if left.Version != right.Version {
-			return left.Version < right.Version
-		}
-		return left.Package < right.Package
-	})
-	return result
 }
 func uniqueBindings(values []contracts.ProviderBinding) []contracts.ProviderBinding {
 	seen := map[string]contracts.ProviderBinding{}

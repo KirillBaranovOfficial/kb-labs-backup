@@ -11,16 +11,16 @@ import (
 )
 
 func SummarizeUpdate(active contracts.InstallReceipt, target contracts.ResolvedInstallPlan, source catalog.Catalog) (contracts.UpdateSummary, error) {
+	if err := contracts.ValidatePlanArtifactIdentities(active.Plan); err != nil {
+		return contracts.UpdateSummary{}, err
+	}
+	if err := contracts.ValidatePlanArtifactIdentities(target); err != nil {
+		return contracts.UpdateSummary{}, err
+	}
 	installedVersion := active.Plan.ServiceGraph.PlatformVersion
 	targetVersion := target.ServiceGraph.PlatformVersion
-	installed, err := indexUpdateArtifacts(active.Plan.Artifacts)
-	if err != nil {
-		return contracts.UpdateSummary{}, fmt.Errorf("index installed update artifacts: %w", err)
-	}
-	planned, err := indexUpdateArtifacts(target.Artifacts)
-	if err != nil {
-		return contracts.UpdateSummary{}, fmt.Errorf("index planned update artifacts: %w", err)
-	}
+	installed := indexUpdateArtifacts(active.Plan.Artifacts)
+	planned := indexUpdateArtifacts(target.Artifacts)
 	keys := make([]string, 0, len(installed)+len(planned))
 	seen := make(map[string]struct{}, len(installed)+len(planned))
 	for key := range installed {
@@ -106,17 +106,11 @@ func SummarizeUpdate(active contracts.InstallReceipt, target contracts.ResolvedI
 	return summary, nil
 }
 
-func indexUpdateArtifacts(artifacts []contracts.Artifact) (map[string]contracts.Artifact, error) {
+func indexUpdateArtifacts(artifacts []contracts.Artifact) map[string]contracts.Artifact {
 	indexed := make(map[string]contracts.Artifact, len(artifacts))
 	for _, artifact := range artifacts {
-		key := artifact.Package
-		if key == "" {
-			key = "binary:" + artifact.ID + ":" + artifact.Target
-		}
-		if _, exists := indexed[key]; exists {
-			return nil, fmt.Errorf("duplicate update artifact identity %q", key)
-		}
+		key := artifact.Identity()
 		indexed[key] = artifact
 	}
-	return indexed, nil
+	return indexed
 }
