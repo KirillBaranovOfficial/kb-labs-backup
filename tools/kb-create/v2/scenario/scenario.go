@@ -283,6 +283,13 @@ func SaveState(platformRoot string, value Scenario, state State) error {
 	if state.ScenarioID != value.ID {
 		return fmt.Errorf("state does not belong to scenario %q", value.ID)
 	}
+	layout, err := versionroot.New(platformRoot)
+	if err != nil {
+		return err
+	}
+	if err := layout.PrepareInitialTarget(); err != nil {
+		return fmt.Errorf("classify install root before saving scenario state: %w", err)
+	}
 	copy := State{ScenarioID: state.ScenarioID, Answers: map[string]json.RawMessage{}}
 	for _, field := range allFields(value) {
 		if field.Secret {

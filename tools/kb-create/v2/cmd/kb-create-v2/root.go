@@ -41,8 +41,8 @@ var operationDescriptors = []operationDescriptor{
 		}
 		return executeInstall(ctx, input, deps)
 	}},
-	{Name: "plan", Short: "Resolve an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderPlan, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
-		input := planCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Resume: flags.Bool("resume"), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable), TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+	{Name: "plan", Short: "Resolve an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "registry", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderPlan, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		input := planCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Registry: flags.String("registry"), Resume: flags.Bool("resume"), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable), TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
 		return executePlan(ctx, input)
 	}},
 	{Name: "apply", Short: "Apply an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "scenario", "scenario-answers", "telemetry-endpoint", "telemetry-consent"}, Human: renderApply, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
@@ -105,6 +105,10 @@ func executablePath() string {
 }
 
 func newRootCommand() *cobra.Command {
+	return newRootCommandWithDependencyFactory(productionCommandDependencies)
+}
+
+func newRootCommandWithDependencyFactory(dependencyFactory func(*cobra.Command) commandDependencies) *cobra.Command {
 	root := &cobra.Command{Use: "kb-create", Short: "Install, update, and diagnose a local KB Labs platform", SilenceUsage: true, SilenceErrors: true}
 	registerPersistentFlags(root)
 	for _, registered := range operationDescriptors {
@@ -112,7 +116,7 @@ func newRootCommand() *cobra.Command {
 		values := make(map[string]any, len(descriptor.Flags))
 		child := &cobra.Command{Use: descriptor.Name, Short: descriptor.Short, Args: descriptor.Args,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return callDescriptor(cmd, descriptor, values, productionCommandDependencies(cmd))
+				return callDescriptor(cmd, descriptor, values, dependencyFactory(cmd))
 			}}
 		child.Hidden = descriptor.Hidden
 		registerLocalFlags(child, descriptor.Flags, values)

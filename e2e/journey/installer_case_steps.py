@@ -30,6 +30,16 @@ from service_steps import Journey
 CommandRunner = Callable[..., subprocess.CompletedProcess]
 
 
+def parse_install_refusal(stdout: str) -> dict | None:
+    """Return the typed product envelope from a failed JSON install stream."""
+    for line in stdout.splitlines():
+        try:
+            return decode_ux_error_result(json.loads(line))
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            continue
+    return None
+
+
 def _hint_has_argv(text: str, expected: list[str]) -> bool:
     for command in re.findall(r"`([^`]*)`", text):
         try:
@@ -1197,6 +1207,29 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             if list(parent.iterdir()):
                 raise RuntimeError("interrupted install retry cleanup left owned paths behind")
 
+        with tempfile.TemporaryDirectory(prefix="pc001-empty-install-root-") as temporary:
+            parent = Path(temporary)
+            install_root = parent / "install"
+            install_root.mkdir()
+            try:
+                result = _data(run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                            "--platform-root", str(install_root),
+                                            "--service-profile", "default", "--scenario", "commit"]),
+                               "PC-001 empty-root install")
+                if (result.get("operation") != "apply" or not (install_root / "current").is_symlink()
+                        or sorted(path.name for path in parent.iterdir()) != ["install"]):
+                    raise RuntimeError("install into an empty target did not create only its versioned container")
+            except Exception as error:
+                try:
+                    cleanup_installer_fixture_root(install_root, launcher, run_command)
+                except Exception as cleanup_error:
+                    error.add_note(f"empty-root install cleanup also failed: {cleanup_error}")
+                raise
+            else:
+                cleanup_installer_fixture_root(install_root, launcher, run_command)
+            if list(parent.iterdir()):
+                raise RuntimeError("empty-root install cleanup left owned paths behind")
+
         with tempfile.TemporaryDirectory(prefix="pc001-interrupted-uninstall-") as temporary:
             parent = Path(temporary)
             install_root = parent / "install"
@@ -1215,7 +1248,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             foreign_root.mkdir()
             foreign_file = foreign_root / "keep.txt"
             foreign_file.write_text("user data\n")
-            refused = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+            refused = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                    "--platform-root", str(foreign_root),
                                    "--service-profile", "default", "--scenario", "commit"])
             _, error = _diagnostic(refused, "PC-001 foreign target")
@@ -1223,6 +1256,19 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                     or "kb-create install --platform-root" not in error.get("hint", "")
                     or foreign_file.read_text() != "user data\n"):
                 raise RuntimeError("fresh install did not refuse a foreign non-empty directory unchanged")
+
+        with tempfile.TemporaryDirectory(prefix="pc001-damaged-target-") as temporary:
+            damaged_root = Path(temporary) / "damaged"
+            (damaged_root / "current").mkdir(parents=True)
+            before = snapshot_tree(damaged_root)
+            refused = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                   "--platform-root", str(damaged_root),
+                                   "--service-profile", "default", "--scenario", "commit"])
+            _, error = _diagnostic(refused, "PC-001 damaged target")
+            if (error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
+                    or "kb-create install --platform-root" not in error.get("hint", "")
+                    or snapshot_tree(damaged_root) != before):
+                raise RuntimeError("install did not refuse the damaged current entry unchanged")
 
         with tempfile.TemporaryDirectory(prefix="s050-foreign-container-") as temporary:
             parent = Path(temporary)

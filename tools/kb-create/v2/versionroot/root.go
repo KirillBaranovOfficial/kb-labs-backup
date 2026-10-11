@@ -38,8 +38,9 @@ type Metadata struct {
 }
 
 type Ownership struct {
-	Schema         string `json:"schema"`
-	InstallationID string `json:"installationId"`
+	Schema              string `json:"schema"`
+	InstallationID      string `json:"installationId"`
+	InitialInstallState string `json:"initialInstallState,omitempty"`
 }
 
 const LayoutMetadataSchema = "kb.create.installation-layout/v2"
@@ -107,8 +108,9 @@ func (l Layout) InstallRoot() string  { return l.Root }
 func (l Layout) PlatformRoot() string { return contracts.CurrentPlatformRoot(l.Root) }
 
 // ExistingPlatformRoot resolves only a complete installed container. A
-// missing or empty target has no platform root; every other invalid shape is
-// an error for the caller to report as an unsupported layout.
+// missing, empty, or validated initial-install scaffold has no platform root;
+// every other invalid shape is an error for the caller to report as an
+// unsupported layout.
 func (l Layout) ExistingPlatformRoot() (string, error) {
 	info, err := os.Lstat(l.Root)
 	if os.IsNotExist(err) {
@@ -126,6 +128,14 @@ func (l Layout) ExistingPlatformRoot() (string, error) {
 	}
 	if len(entries) == 0 {
 		return "", ErrPlatformNotInstalled
+	}
+	if _, currentErr := os.Lstat(l.PlatformRoot()); os.IsNotExist(currentErr) {
+		if err := l.ValidateInitialTarget(); err != nil {
+			return "", err
+		}
+		return "", ErrPlatformNotInstalled
+	} else if currentErr != nil {
+		return "", currentErr
 	}
 	if err := l.ValidateStructure(); err != nil {
 		return "", err
@@ -260,48 +270,50 @@ func (l Layout) ValidateInitialTarget() error {
 	} else if !os.IsNotExist(currentErr) {
 		return currentErr
 	}
-	recovered, err := l.recoverInterruptedInitialActivation()
+	if err := l.validateOwnedContainerEntries(entries, true, false); err != nil {
+		return err
+	}
+	if err := l.validatePreinstallTree(); err != nil {
+		return err
+	}
+	owner, err := l.readOwnership()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && len(entries) == 1 && entries[0].Name() == filepath.Base(l.ownershipPath()) {
+			return nil
+		}
+		return fmt.Errorf("read installation ownership: %w", err)
+	}
+	if owner.InitialInstallState != "in-progress" {
+		return fmt.Errorf("installation root has no valid in-progress ownership record")
+	}
+	// Recovery is a write. It is reached only after this same classifier has
+	// validated the ownership identity, root-entry set, entry types, and tree.
+	recovered, err := l.recoverInterruptedInitialActivation(owner)
 	if err != nil {
 		return err
 	}
 	if recovered {
 		return nil
 	}
-	if l.hasOwnershipMarker() {
-		for _, entry := range entries {
-			if !l.isInitialContainerEntry(entry.Name()) {
-				return fmt.Errorf("installation root contains undeclared data at %s", entry.Name())
-			}
-		}
-		return nil
-	}
-	if owned, err := l.validateInterruptedInitialScaffold(); err != nil {
+	return nil
+}
+
+// PrepareInitialTarget is the shared write gate for pre-install state. It
+// records installer ownership before a caller can persist scenario answers.
+func (l Layout) PrepareInitialTarget() error {
+	if err := l.ValidateInitialTarget(); err != nil {
 		return err
-	} else if owned {
+	}
+	if _, err := os.Lstat(l.PlatformRoot()); err == nil {
 		return nil
+	} else if !os.IsNotExist(err) {
+		return err
 	}
-	allowed := make([]string, 0)
-	for _, shared := range contracts.SharedRuntimeProjections() {
-		if shared.Preinstall {
-			allowed = append(allowed, filepath.ToSlash(shared.StatePath))
-		}
+	if err := os.MkdirAll(l.Root, 0o700); err != nil {
+		return err
 	}
-	return filepath.WalkDir(l.Root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		relative, err := filepath.Rel(l.Root, path)
-		if err != nil || relative == "." {
-			return err
-		}
-		relative = filepath.ToSlash(relative)
-		for _, valid := range allowed {
-			if relative == valid || strings.HasPrefix(relative, valid+"/") || strings.HasPrefix(valid, relative+"/") {
-				return nil
-			}
-		}
-		return fmt.Errorf("installation root contains undeclared data at %s", relative)
-	})
+	_, err := l.ensureOwnership()
+	return err
 }
 
 func (l Layout) StageInitial() (string, error) {
@@ -384,30 +396,37 @@ func (l Layout) ensureOwnership() (string, error) {
 	if owner, err := l.readOwnership(); err == nil && owner.InstallationID != "" {
 		return owner.InstallationID, nil
 	} else if err != nil && !os.IsNotExist(err) {
-		// A truncated marker is a reachable first-write crash state. The marker
-		// path itself is reserved by the layout contract and is rewritten here.
+		return "", err
+	}
+	if info, err := os.Lstat(l.ownershipPath()); err == nil {
+		if !info.Mode().IsRegular() || info.Size() != 0 {
+			return "", fmt.Errorf("incomplete installation ownership record is not empty")
+		}
+		if err := os.Remove(l.ownershipPath()); err != nil {
+			return "", err
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
 	}
 	var identity [16]byte
 	if _, err := rand.Read(identity[:]); err != nil {
 		return "", fmt.Errorf("generate installation identity: %w", err)
 	}
-	owner := Ownership{Schema: OwnershipSchema, InstallationID: hex.EncodeToString(identity[:])}
+	owner := Ownership{Schema: OwnershipSchema, InstallationID: hex.EncodeToString(identity[:]),
+		InitialInstallState: "in-progress"}
 	data, err := json.Marshal(owner)
 	if err != nil {
 		return "", err
 	}
 	data = append(data, '\n')
-	file, err := os.OpenFile(l.ownershipPath(), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(l.ownershipPath(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", err
 	}
 	if _, err := file.Write(data); err != nil {
 		return "", errors.Join(err, file.Close())
 	}
-	if err := errors.Join(file.Sync(), file.Close()); err != nil {
-		return "", err
-	}
-	if err := syncDirectory(l.Root); err != nil {
+	if err := errors.Join(file.Sync(), file.Close(), syncDirectory(l.Root)); err != nil {
 		return "", err
 	}
 	return owner.InstallationID, nil
@@ -418,17 +437,50 @@ func (l Layout) readOwnership() (Ownership, error) {
 	if err != nil {
 		return Ownership{}, err
 	}
+	if len(data) == 0 {
+		return Ownership{}, os.ErrNotExist
+	}
 	var owner Ownership
 	if err := json.Unmarshal(data, &owner); err != nil {
 		return Ownership{}, err
 	}
-	if owner.Schema != OwnershipSchema || len(owner.InstallationID) != 32 {
+	if owner.Schema != OwnershipSchema || len(owner.InstallationID) != 32 ||
+		(owner.InitialInstallState != "" && owner.InitialInstallState != "in-progress" && owner.InitialInstallState != "complete") {
 		return Ownership{}, fmt.Errorf("invalid install-root ownership record")
 	}
 	if _, err := hex.DecodeString(owner.InstallationID); err != nil {
 		return Ownership{}, fmt.Errorf("invalid install-root ownership identity: %w", err)
 	}
 	return owner, nil
+}
+
+func (l Layout) completeInitialInstallOwnership() error {
+	owner, err := l.readOwnership()
+	if err != nil {
+		return err
+	}
+	owner.InitialInstallState = "complete"
+	data, err := json.Marshal(owner)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	temp, err := os.CreateTemp(l.InstallerStateDir(), ".ownership-*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err := temp.Write(data); err != nil {
+		return errors.Join(err, temp.Close())
+	}
+	if err := errors.Join(temp.Sync(), temp.Close()); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, l.ownershipPath()); err != nil {
+		return err
+	}
+	return syncDirectory(l.Root)
 }
 
 func (l Layout) hasOwnershipMarker() bool {
@@ -753,6 +805,9 @@ func (l Layout) activateInitial(stage, version, planHash string, after func(Hand
 	if err := supportedOS(runtime.GOOS); err != nil {
 		return "", err
 	}
+	if err := l.ValidateInitialTarget(); err != nil {
+		return "", err
+	}
 	if info, err := os.Lstat(l.Root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("installation root changed before activation")
 	}
@@ -760,10 +815,8 @@ func (l Layout) activateInitial(stage, version, planHash string, after func(Hand
 	if err != nil {
 		return "", err
 	}
-	for _, entry := range entries {
-		if !l.isInitialContainerEntry(entry.Name()) {
-			return "", fmt.Errorf("installation root changed before activation at %s", entry.Name())
-		}
+	if err := l.validateOwnedContainerEntries(entries, true, false); err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(l.Root, 0o700); err != nil {
 		return "", err
@@ -831,6 +884,9 @@ func (l Layout) activateInitial(stage, version, planHash string, after func(Hand
 	if err := syncDirectory(l.Root); err != nil {
 		return "", err
 	}
+	if err := l.completeInitialInstallOwnership(); err != nil {
+		return "", err
+	}
 	if after != nil {
 		if err := after(HandoffInitialLinkSwitched); err != nil {
 			return target, err
@@ -839,7 +895,7 @@ func (l Layout) activateInitial(stage, version, planHash string, after func(Hand
 	return target, nil
 }
 
-func (l Layout) recoverInterruptedInitialActivation() (bool, error) {
+func (l Layout) recoverInterruptedInitialActivation(owner Ownership) (bool, error) {
 	if _, err := os.Lstat(l.PlatformRoot()); err == nil {
 		return false, nil
 	} else if !os.IsNotExist(err) {
@@ -854,6 +910,9 @@ func (l Layout) recoverInterruptedInitialActivation() (bool, error) {
 	}
 	if metadata.InitialTarget == "" || filepath.Base(metadata.InitialTarget) != metadata.InitialTarget {
 		return false, nil
+	}
+	if owner.InitialInstallState != "in-progress" || metadata.InstallationID != owner.InstallationID {
+		return false, fmt.Errorf("interrupted install identity does not match the validated ownership record")
 	}
 	target := filepath.Join(l.VersionsDir(), metadata.InitialTarget)
 	if _, err := os.Lstat(target); os.IsNotExist(err) {
@@ -886,47 +945,195 @@ func (l Layout) recoverInterruptedInitialActivation() (bool, error) {
 	return true, nil
 }
 
-func (l Layout) validateInterruptedInitialScaffold() (bool, error) {
-	metadata, err := l.readMetadata()
-	if os.IsNotExist(err) {
-		return false, nil
+func (l Layout) validateOwnedContainerEntries(entries []os.DirEntry, rejectForeign, requireAll bool) error {
+	kinds := contracts.OwnedInstallEntryKinds()
+	present := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		kind, declared := kinds[name]
+		if !declared {
+			if rejectForeign {
+				return fmt.Errorf("installation root contains undeclared data at %s", name)
+			}
+			continue
+		}
+		present[name] = true
+		if err := validatePathKind(filepath.Join(l.Root, name), kind, kind == "symlink"); err != nil {
+			return err
+		}
 	}
-	if err != nil || metadata.InitialTarget == "" || filepath.Base(metadata.InitialTarget) != metadata.InitialTarget {
-		return false, nil
+	if requireAll {
+		for entry := range kinds {
+			if !present[entry] {
+				return fmt.Errorf("installation root is missing declared entry %s", entry)
+			}
+		}
 	}
+	return nil
+}
+
+func validatePathKind(path, kind string, validateCurrentTarget bool) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	switch kind {
+	case "directory":
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("declared install directory %s is not a real directory", path)
+		}
+	case "file":
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("declared install file %s is not a regular file", path)
+		}
+	case "symlink":
+		if info.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("declared install link %s is not a symbolic link", path)
+		}
+		if validateCurrentTarget {
+			target, err := os.Readlink(path)
+			if err != nil || filepath.IsAbs(target) {
+				return fmt.Errorf("install-root current link must use a relative target")
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported install-root entry kind %q", kind)
+	}
+	return nil
+}
+
+func (l Layout) validatePreinstallTree() error {
 	entries, err := os.ReadDir(l.Root)
 	if err != nil {
-		return false, err
+		return err
 	}
 	for _, entry := range entries {
-		if !l.isInitialContainerEntry(entry.Name()) {
-			return false, nil
+		path := filepath.Join(l.Root, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			var treeErr error
+			if entry.Name() == filepath.Base(l.VersionsDir()) {
+				treeErr = l.validateVersionTreeSymlinks()
+			} else {
+				treeErr = validateNoSymlinks(path)
+			}
+			if treeErr != nil {
+				return treeErr
+			}
 		}
 	}
-	versionEntries, err := os.ReadDir(l.VersionsDir())
-	if err != nil {
-		return false, err
+	return l.validateContractStatePaths()
+}
+
+func validateNoSymlinks(root string) error {
+	return filepath.WalkDir(root, func(path string, _ os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("install container cannot contain a symbolic link at %s", path)
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("install container entry %s is not a regular file or directory", path)
+		}
+		return nil
+	})
+}
+
+func (l Layout) validateVersionTreeSymlinks() error {
+	return filepath.WalkDir(l.VersionsDir(), func(path string, _ os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			if !info.IsDir() && !info.Mode().IsRegular() {
+				return fmt.Errorf("version tree entry %s is not a regular file or directory", path)
+			}
+			return nil
+		}
+		linkTarget, err := os.Readlink(path)
+		if err != nil {
+			return err
+		}
+		target := linkTarget
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		target = filepath.Clean(target)
+		if !pathInside(l.Root, target) {
+			return fmt.Errorf("version tree symbolic link %s escapes the install root", path)
+		}
+		if resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(target)); err == nil {
+			if !pathInside(l.Root, resolvedParent) {
+				return fmt.Errorf("version tree symbolic link %s escapes the install root", path)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("resolve version tree symbolic link parent %s: %w", path, err)
+		}
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			if !pathInside(l.Root, resolved) {
+				return fmt.Errorf("version tree symbolic link %s escapes the install root", path)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("resolve version tree symbolic link %s: %w", path, err)
+		}
+		return nil
+	})
+}
+
+func pathInside(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func (l Layout) validateContractStatePaths() error {
+	check := func(relative, kind string) error {
+		path := filepath.Join(l.Root, filepath.FromSlash(relative))
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("declared install state path %s cannot be a symbolic link", relative)
+		}
+		if (kind == "directory" && !info.IsDir()) || (kind == "file" && !info.Mode().IsRegular()) {
+			return fmt.Errorf("declared install state path %s has the wrong filesystem type", relative)
+		}
+		return nil
 	}
-	for _, entry := range versionEntries {
-		if entry.Name() != metadata.InitialTarget && (!strings.HasPrefix(entry.Name(), ".stage-") || !entry.IsDir()) {
-			return false, nil
+	dataRoot := contracts.PlatformDataRootPath()
+	if err := check(dataRoot.StatePath, "directory"); err != nil {
+		return err
+	}
+	for _, shared := range contracts.SharedRuntimePaths() {
+		if err := check(shared.StatePath, shared.Kind); err != nil {
+			return err
 		}
 	}
-	return true, nil
-}
-
-func (l Layout) isInitialContainerEntry(name string) bool {
-	return ownedInstallEntryNames()[name]
-}
-
-func ownedInstallEntryNames() map[string]bool {
-	entries := contracts.OwnedInstallEntries()
-	owned := make(map[string]bool, len(entries))
-	for _, entry := range entries {
-		first, _, _ := strings.Cut(filepath.ToSlash(entry), "/")
-		owned[first] = true
+	for _, path := range contracts.InstallerRecordDirectories(l.Root) {
+		relative, err := filepath.Rel(l.Root, path)
+		if err != nil {
+			return err
+		}
+		if err := check(filepath.ToSlash(relative), "directory"); err != nil {
+			return err
+		}
 	}
-	return owned
+	return nil
 }
 
 func (l Layout) Validate() error {
@@ -970,6 +1177,25 @@ func (l Layout) ValidateStructure() error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("install root %s is not a real directory", l.Root)
 	}
+	entries, err := os.ReadDir(l.Root)
+	if err != nil {
+		return err
+	}
+	if err := l.validateOwnedContainerEntries(entries, false, true); err != nil {
+		return err
+	}
+	if err := l.validateContractStatePaths(); err != nil {
+		return err
+	}
+	if err := validateNoSymlinks(l.SharedStateDir()); err != nil {
+		return err
+	}
+	if err := validateNoSymlinks(l.InstallerStateDir()); err != nil {
+		return err
+	}
+	if err := l.validateVersionTreeSymlinks(); err != nil {
+		return err
+	}
 	metadata, err := l.readMetadata()
 	if err != nil {
 		return fmt.Errorf("read installation identity: %w", err)
@@ -984,10 +1210,6 @@ func (l Layout) ValidateStructure() error {
 	active, err := l.Active()
 	if err != nil {
 		return fmt.Errorf("resolve install-root current link: %w", err)
-	}
-	currentInfo, err := os.Lstat(l.PlatformRoot())
-	if err != nil || currentInfo.Mode()&os.ModeSymlink == 0 {
-		return fmt.Errorf("install-root current entry is not a symbolic link")
 	}
 	linkTarget, err := os.Readlink(l.PlatformRoot())
 	if err != nil || filepath.IsAbs(linkTarget) {
@@ -1320,7 +1542,7 @@ func (l Layout) RemoveOwned() error {
 }
 
 func (l Layout) PreservedEntries() ([]string, error) {
-	owned := ownedInstallEntryNames()
+	owned := contracts.OwnedInstallEntryKinds()
 	entries, err := os.ReadDir(l.Root)
 	if err != nil {
 		return nil, err
@@ -1328,7 +1550,7 @@ func (l Layout) PreservedEntries() ([]string, error) {
 	preserved := make([]string, 0)
 	for _, entry := range entries {
 		name := entry.Name()
-		if !owned[name] {
+		if _, declared := owned[name]; !declared {
 			preserved = append(preserved, filepath.Join(l.Root, name))
 		}
 	}

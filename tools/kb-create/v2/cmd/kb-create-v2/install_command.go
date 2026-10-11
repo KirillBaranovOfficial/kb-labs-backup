@@ -15,6 +15,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/preflight"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/kb-labs/create/v2/wizard"
 )
 
@@ -61,6 +62,9 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	root, err = filepath.Abs(root)
 	if err != nil {
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "PATH")+"`.", err)
+	}
+	if failure := validateInstallTarget(root); failure != nil {
+		return applyCommandResult{}, failure
 	}
 	if err := preflight.CheckInstallResources(root); err != nil {
 		return applyCommandResult{}, asDiag(err)
@@ -159,6 +163,17 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		return applyCommandResult{}, progressWriteFailure(err, "install")
 	}
 	return result, nil
+}
+
+func validateInstallTarget(root string) *diag.Diag {
+	layout, err := versionroot.New(root)
+	if err != nil {
+		return unsupportedPlatformLayout(root, err)
+	}
+	if err := layout.ValidateInitialTarget(); err != nil {
+		return unsupportedPlatformLayout(root, err)
+	}
+	return nil
 }
 
 func mergeDirectRequest(request contracts.InstallRequest, direct directRequest) (contracts.InstallRequest, error) {
