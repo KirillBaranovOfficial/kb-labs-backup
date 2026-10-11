@@ -38,13 +38,20 @@ beforeEach(() => {
 });
 
 describe('quality:check-layers', () => {
-  it('returns a typed failure with structured diagnostics when JSON findings exist', async () => {
-    const { ui } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+  // case: S-203.1
+  it('returns the same typed failure with structured diagnostics in JSON and human modes', async () => {
+    const jsonUI = createCapturedUI().ui;
+    const jsonResult = await checkLayersCommand.execute(
+      createMockContext({ ui: jsonUI, cwd: '/project' }) as never,
+      mockCLIInput({ flags: { json: true } }),
+    );
+    const humanUI = createCapturedUI().ui;
+    const humanResult = await checkLayersCommand.execute(
+      createMockContext({ ui: humanUI, cwd: '/project' }) as never,
+      mockCLIInput({ flags: {} }),
+    );
 
-    const result = await checkLayersCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
-
-    expect(result).toMatchObject({
+    expect(jsonResult).toMatchObject({
       ok: false,
       error: {
         code: 'KB_RUNTIME_COMMAND_FAILED',
@@ -56,6 +63,7 @@ describe('quality:check-layers', () => {
         }],
       },
     });
-    expect(result).not.toHaveProperty('result');
+    expect(humanResult).toEqual(jsonResult);
+    expect(jsonResult).not.toHaveProperty('result');
   });
 });

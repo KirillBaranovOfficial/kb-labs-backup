@@ -8,8 +8,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { toErrorEnvelope } from '@kb-labs/core-platform';
+import { createProductErrorEnvelope, toErrorEnvelope } from '@kb-labs/core-platform';
 import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
+import type { CommandResult } from '@kb-labs/plugin-contracts';
 import { defineSystemCommand, defineSystemCommandGroup } from '../define-system-command';
 
 describe('defineSystemCommand', () => {
@@ -72,6 +73,85 @@ describe('defineSystemCommand', () => {
   });
 
   describe('Basic Command Creation', () => {
+    it.each(['returned', 'thrown'] as const)('%s product failure preserves its contract in human and JSON output', async (failureKind) => {
+      const productEnvelope = createProductErrorEnvelope({
+        code: 'COMMIT_NOTHING_STAGED',
+        message: 'Nothing is staged.',
+        hint: 'Stage the intended changes, then retry.',
+        retryable: false,
+      });
+      const productError = Object.assign(new Error(productEnvelope.message), {
+        code: productEnvelope.code,
+        hint: productEnvelope.hint,
+        details: productEnvelope.details,
+      });
+      const returnedFailure = {
+        ok: false as const,
+        error: {
+          code: productEnvelope.code,
+          message: productEnvelope.message,
+          hint: productEnvelope.hint,
+          ...(productEnvelope.details ? { details: productEnvelope.details } : {}),
+        },
+      };
+      const command = defineSystemCommand({
+        name: 'product-error-contract',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'Product error contract fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => failureKind === 'returned'
+          ? returnedFailure
+          : Promise.reject(productError),
+      });
+
+      for (const jsonMode of [false, true]) {
+        mockUI.json.mockClear();
+        mockUI.error.mockClear();
+        const exitCode = await command.run(mockCtx, [], { json: jsonMode });
+        expect(exitCode).toBe(1);
+        if (jsonMode) {
+          expect(mockUI.json).toHaveBeenCalledWith({
+            ok: false,
+            error: expect.objectContaining({
+              code: 'COMMIT_NOTHING_STAGED',
+              message: 'Nothing is staged.',
+              hint: 'Stage the intended changes, then retry.',
+            }),
+          });
+        } else {
+          expect(mockUI.error).toHaveBeenCalledWith(
+            expect.stringContaining('COMMIT_NOTHING_STAGED'),
+            { hint: 'Stage the intended changes, then retry.' },
+          );
+          expect(mockUI.error.mock.calls[0]?.[0]).toContain('Nothing is staged.');
+        }
+      }
+    });
+
+    it('turns a top-level product failure without a hint into a contract violation', async () => {
+      const malformed = {
+        ok: false,
+        error: { code: 'COMMIT_NOTHING_STAGED', message: 'Nothing is staged.' },
+      } as unknown as CommandResult;
+      const command = defineSystemCommand({
+        name: 'product-error-without-hint',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'Malformed product error fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => malformed,
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledWith({
+        ok: false,
+        error: expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }),
+      });
+    });
+
     it('uses the usage exit code for catalogued invalid input', async () => {
       const command = defineSystemCommand({
         name: 'system-input-error',
@@ -163,6 +243,23 @@ describe('defineSystemCommand', () => {
         ok: false,
         error: expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }),
       }));
+    });
+
+    it('keeps a domain value with ok and data fields when the shared validator says it is not an envelope', async () => {
+      const domainValue = { ok: true as const, data: 'domain data', status: 'healthy' };
+      const command = defineSystemCommand({
+        name: 'system-domain-result',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System domain result fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => domainValue,
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(0);
+      expect(mockUI.json).toHaveBeenCalledWith({ ok: true, data: domainValue });
     });
 
     it('rejects handler JSON writes with the catalogued contract violation', async () => {

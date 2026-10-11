@@ -88,6 +88,24 @@ describe('release:checks', () => {
     });
   });
 
+  it('returns the same typed failure for failed checks in human and JSON modes', async () => {
+    vi.mocked(runReleaseChecks).mockResolvedValue([
+      { id: 'dist-exports', ok: false, details: { error: 'missing export' }, timingMs: 5 },
+    ] as never);
+
+    const jsonResult = await checksCommand.execute(
+      createMockContext({ ui: createCapturedUI().ui, cwd: '/project' }) as never,
+      mockCLIInput({ flags: { json: true } }),
+    );
+    const textResult = await checksCommand.execute(
+      createMockContext({ ui: createCapturedUI().ui, cwd: '/project' }) as never,
+      mockCLIInput({ flags: {} }),
+    );
+
+    expect(jsonResult).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
+    expect(jsonResult).toEqual(textResult);
+  });
+
   it('CB-04: --flow selects flow checks instead of the global check list', async () => {
     vi.mocked(useConfig).mockResolvedValue({
       checks: [{ id: 'global-typecheck', command: 'pnpm', args: ['type-check'] }],
@@ -163,6 +181,27 @@ describe('release:checks', () => {
     const { ui: ui2 } = createCapturedUI();
     await checksCommand.execute(createMockContext({ ui: ui2, cwd: '/project' }) as never, mockCLIInput({ flags: { json: true } }));
     expect(runPreflightFor).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the same typed preflight failure in human and JSON modes', async () => {
+    const error = { code: 'KB_RELEASE_DOCKER_UNAVAILABLE', area: 'release', stage: 'preflight', severity: 'error', retryable: true, message: 'Docker is not available.', cause: 'down', hint: 'Start Docker' };
+    vi.mocked(runPreflightFor).mockResolvedValue({
+      ok: false,
+      durationMs: 5,
+      checks: [{ id: 'docker', status: 'failed', durationMs: 5, message: 'Docker daemon not reachable', error }],
+    } as never);
+
+    const jsonResult = await checksCommand.execute(
+      createMockContext({ ui: createCapturedUI().ui, cwd: '/project' }) as never,
+      mockCLIInput({ flags: { json: true, preflight: true } }),
+    );
+    const textResult = await checksCommand.execute(
+      createMockContext({ ui: createCapturedUI().ui, cwd: '/project' }) as never,
+      mockCLIInput({ flags: { preflight: true } }),
+    );
+
+    expect(jsonResult).toMatchObject({ ok: false, error: { code: 'KB_RELEASE_DOCKER_UNAVAILABLE' } });
+    expect(jsonResult).toEqual(textResult);
   });
 
   it('CB-06: --preflight passing proceeds to checks', async () => {

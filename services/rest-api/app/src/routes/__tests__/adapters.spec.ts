@@ -257,7 +257,11 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
       expect(response.statusCode).toBe(501);
       const payload = response.json();
       expect(payload.ok).toBe(false);
-      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
+      expect(payload.error).toMatchObject({
+        code: 'ANALYTICS_NOT_IMPLEMENTED',
+        area: 'product',
+        hint: expect.any(String),
+      });
 
       await app.close();
     });

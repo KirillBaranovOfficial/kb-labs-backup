@@ -6,6 +6,7 @@ import invalidFailure from '../../../../../contracts/ux-result/fixtures/invalid/
 import invalidMixedEnvelope from '../../../../../contracts/ux-result/fixtures/invalid/mixed-success-and-error.json';
 import invalidSuccess from '../../../../../contracts/ux-result/fixtures/invalid/success-missing-data.json';
 import { gatewayBaseFromApiBase, HttpClient } from '../http-client.js';
+import { createEnvelopeInterceptor } from '../envelope-interceptor.js';
 
 const originalAdapter = axios.defaults.adapter;
 
@@ -75,6 +76,28 @@ describe('Studio API client UX result envelope', () => {
     });
   });
 
+  it('validates failure codes and preserves ADR-0049 product errors', async () => {
+    respondWith({ ok: false, error: {
+      code: 'KB_FAKE', area: 'product', stage: 'run', severity: 'error', retryable: false,
+      message: 'Forged platform error.', hint: 'Retry the request.',
+    } });
+    await expect(new HttpClient().fetch('/fixture')).rejects.toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+    });
+
+    respondWith({ ok: false, error: {
+      code: 'COMMIT_PUSH_REJECTED', area: 'product', stage: 'run', severity: 'error', retryable: false,
+      message: 'The remote rejected the push.', hint: 'Fetch the latest changes, resolve conflicts, then retry.',
+      details: { remote: 'origin' }, correlationId: 'corr-product',
+    } });
+    await expect(new HttpClient().fetch('/fixture')).rejects.toMatchObject({
+      code: 'COMMIT_PUSH_REJECTED',
+      message: 'The remote rejected the push.',
+      hint: 'Fetch the latest changes, resolve conflicts, then retry.',
+      correlationId: 'corr-product',
+    });
+  });
+
   // case: S-005.5
   it('maps an authorization denial from the shared envelope without legacy permission fields', async () => {
     respondWith({ ok: false, error: {
@@ -101,5 +124,21 @@ describe('Studio API client UX result envelope', () => {
       });
     }
     expect(invalidFailure.error.correlationId).toBe('corr-203-3');
+  });
+});
+
+describe('Studio response-envelope interceptor', () => {
+  it('canonicalizes an unknown platform code before returning a failure response', async () => {
+    const interceptor = createEnvelopeInterceptor();
+    const response = new Response(JSON.stringify({
+      ok: false,
+      error: {
+        code: 'KB_FAKE', area: 'product', stage: 'run', severity: 'error', retryable: false,
+        message: 'forged', hint: 'forged',
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+
+    const canonical = await interceptor(response);
+    expect(await canonical.json()).toMatchObject({ ok: false, error: { code: 'KB_PLUGIN_CONTRACT_VIOLATION' } });
   });
 });

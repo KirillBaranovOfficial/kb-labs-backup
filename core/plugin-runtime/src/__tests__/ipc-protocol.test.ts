@@ -161,7 +161,7 @@ describe('IPC Protocol', () => {
         error: {
           name: 'PluginError',
           message: 'Something went wrong',
-          code: 'INTERNAL_ERROR',
+          code: 'KB_RUNTIME_UNEXPECTED',
           stack: 'Error: Something went wrong\n  at ...',
         },
       };
@@ -169,7 +169,7 @@ describe('IPC Protocol', () => {
       expect(msg.type).toBe('error');
       expect(msg.error.name).toBe('PluginError');
       expect(msg.error.message).toBe('Something went wrong');
-      expect(msg.error.code).toBe('INTERNAL_ERROR');
+      expect(msg.error.code).toBe('KB_RUNTIME_UNEXPECTED');
       expect(msg.error.stack).toContain('Error');
     });
 
@@ -179,7 +179,7 @@ describe('IPC Protocol', () => {
         error: {
           name: 'Error',
           message: 'Test error',
-          code: 'UNKNOWN',
+          code: 'KB_RUNTIME_UNEXPECTED',
         },
       };
 
@@ -322,7 +322,7 @@ describe('IPC Protocol', () => {
         error: {
           name: 'PermissionError',
           message: 'Access denied',
-          code: 'PERMISSION_DENIED',
+          code: 'KB_PLUGIN_PERMISSION_DENIED',
           stack: 'Error: Access denied\n  at ...',
           details: { path: '/forbidden' },
         },
@@ -334,7 +334,7 @@ describe('IPC Protocol', () => {
       expect(parsed.type).toBe('error');
       expect(parsed.error.name).toBe('PermissionError');
       expect(parsed.error.message).toBe('Access denied');
-      expect(parsed.error.code).toBe('PERMISSION_DENIED');
+      expect(parsed.error.code).toBe('KB_PLUGIN_PERMISSION_DENIED');
       expect(parsed.error.stack).toContain('Error');
       expect(parsed.error.details).toEqual({ path: '/forbidden' });
     });
@@ -367,7 +367,7 @@ describe('IPC Protocol', () => {
         { type: 'result', data: { test: 'data' } },
         {
           type: 'error',
-          error: { name: 'Error', message: 'test', code: 'UNKNOWN' },
+          error: { name: 'Error', message: 'test', code: 'KB_RUNTIME_UNEXPECTED' },
         },
       ];
 

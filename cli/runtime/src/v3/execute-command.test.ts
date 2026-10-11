@@ -120,11 +120,11 @@ describe('executeCommandV3 plugin command result output', () => {
   });
 
   // case: S-203.2
-  it('preserves plain data that resembles a legacy string failure', async () => {
+  it('preserves nested plain data that resembles a legacy string failure', async () => {
     const json = vi.fn();
     const execute = vi.fn(async () => ({
       ok: true as const,
-      data: { ok: false, error: 'free text failure' },
+      data: { payload: { ok: false, error: 'free text failure' } },
       executionTimeMs: 1,
     }));
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
@@ -144,7 +144,7 @@ describe('executeCommandV3 plugin command result output', () => {
     expect(json).toHaveBeenCalledOnce();
     expect(json).toHaveBeenCalledWith({
       ok: true,
-      data: { ok: false, error: 'free text failure' },
+      data: { payload: { ok: false, error: 'free text failure' } },
       meta: expect.any(Object),
     });
   });

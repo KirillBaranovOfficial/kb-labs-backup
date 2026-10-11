@@ -119,6 +119,22 @@ describe('registerEnvelopeMiddleware', () => {
       expect(body.meta).toEqual({ custom: 'meta' });
       expect(body.data.ok).toBeUndefined();
     });
+
+    it('canonicalizes failure-shaped success responses through the shared error validator', async () => {
+      app.get('/forged-failure', async () => ({
+        ok: false,
+        error: {
+          code: 'KB_FAKE', area: 'product', stage: 'run', severity: 'error', retryable: false,
+          message: 'forged', hint: 'forged', details: { nested: JSON.stringify({ value: 1 }) },
+        },
+      }));
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/forged-failure' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_PLUGIN_CONTRACT_VIOLATION' } });
+      expect(response.body).not.toContain('KB_FAKE');
+    });
   });
 
   describe('error responses', () => {
@@ -170,7 +186,7 @@ describe('registerEnvelopeMiddleware', () => {
       await app.ready();
 
       const body = (await app.inject({ method: 'GET', url: '/detailed-error' })).json();
-      expect(body.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(body.error.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
       expect(body.error.details).toBeUndefined();
     });
 
@@ -216,7 +232,7 @@ describe('registerEnvelopeMiddleware', () => {
       // Must be ErrorEnvelope, not { ok: true, data: PluginErrorEnvelope }
       expect(body.ok).toBe(false);
       expect(body.error).toBeDefined();
-      expect(body.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(body.error.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
       expect(body.error.correlationId).toBeDefined();
       expect(JSON.stringify(body)).not.toContain('my-plugin');
       expect(body.data).toBeUndefined();

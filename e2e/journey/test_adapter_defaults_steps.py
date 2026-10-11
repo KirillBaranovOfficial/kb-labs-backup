@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from adapter_defaults_steps import _assert_required_upstreams_ready, run_adapter_default_steps
+from invocations import invocation_context
 from service_steps import Journey
 
 
@@ -31,7 +32,9 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             home = Path(directory)
             project_a = home / "project-a"
             (project_a / ".kb").mkdir(parents=True)
-            (project_a / ".kb" / "kb.config.json").write_text("{}\n")
+            (project_a / ".kb" / "kb.config.json").write_text(json.dumps({
+                "plugins": {"@kb-labs/e2e-analytics-emitter": True},
+            }) + "\n")
             (project_a / "README.md").write_text("adapter defaults fixture\n")
             project_id = "prj_" + hashlib.sha256(unicodedata.normalize("NFC", str(project_a.resolve())).encode()).hexdigest()[:16]
             registry_home = (home / ".kb").resolve()
@@ -241,7 +244,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     record = base_dir / "workflows" / f"{run_id}.json"
                     record.parent.mkdir(parents=True, exist_ok=True)
                     record.write_text(json.dumps({"runId": run_id, "status": "success"}))
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"runId": run_id}}), "")
+                    diagnostic = ('[discover] error COMMAND_HANDLER_MISSING: Command handler "./commands/emit.js#default" '
+                                  'declared by plugin "@kb-labs/e2e-analytics-emitter" was not found.\n')
+                    return subprocess.CompletedProcess(command, 0,
+                        json.dumps({"ok": True, "data": {"runId": run_id}}), diagnostic)
                 if args[:3] == ["workflow", "runs", "watch"]:
                     return subprocess.CompletedProcess(command, 0, "Run SUCCESS.\n", "")
                 if args[:3] == ["workflow", "runs", "view"]:
@@ -344,13 +350,25 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                             {"projectId": project_id, "state": "ready"}]}}}).encode())
                 return io.BytesIO(json.dumps({"ok": True, "data": health_adapters()}).encode())
 
-            with patch("adapter_defaults_steps.urllib.request.urlopen", side_effect=fake_urlopen):
-                run_adapter_default_steps(journey, project_a, env, fake_run)
+            report_root = home / "journey-report"
+            with invocation_context(report_root=report_root):
+                with patch("adapter_defaults_steps.urllib.request.urlopen", side_effect=fake_urlopen):
+                    run_adapter_default_steps(journey, project_a, env, fake_run)
 
             expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(claims, expected)
+            workflow_rows = [
+                json.loads(line)
+                for line in (report_root / "invocations" / "calls.jsonl").read_text().splitlines()
+                if json.loads(line).get("argv", [])[1:3] == ["workflow", "run"]
+            ]
+            self.assertTrue(workflow_rows)
+            for row in workflow_rows:
+                self.assertTrue(json.loads(row["stdout"])["ok"])
+                self.assertNotIn("[discover]", row["stdout"])
+                self.assertIn("[discover]", row["stderr"])
             self.assertIn(("kb", "adapter", "list", "--json"), calls)
             self.assertIn(("kb", "adapter", "unbind", "storage", "--json"), calls)
             self.assertIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)

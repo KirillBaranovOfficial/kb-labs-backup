@@ -5,10 +5,18 @@ import { ServiceNotConfiguredError } from '../helpers/platform';
 import { ValidationError } from '../helpers/validation';
 
 describe('core toErrorEnvelope for command-kit errors', () => {
-  it('maps a defineError PluginError to a product envelope', () => {
+  it('preserves a valid defineError product code and its required hint', () => {
     const MindError = defineError('MIND', {
-      IndexNotFound: { code: 404, message: (scope: string) => `Index '${scope}' not found` },
-      Timeout: { code: 504, message: 'Query timed out' },
+      IndexNotFound: {
+        code: 404,
+        message: (scope: string) => `Index '${scope}' not found`,
+        hint: 'Check the index name and confirm it exists before retrying.',
+      },
+      Timeout: {
+        code: 504,
+        message: 'Query timed out',
+        hint: 'Retry the query; if it continues to time out, inspect the service logs.',
+      },
     });
 
     const notFound = toErrorEnvelope(new MindError.IndexNotFound('default'), { correlationId: 'c1' });
@@ -19,12 +27,13 @@ describe('core toErrorEnvelope for command-kit errors', () => {
       severity: 'error',
       retryable: false,
       message: "Index 'default' not found",
+      hint: 'Check the index name and confirm it exists before retrying.',
       correlationId: 'c1',
-      details: { statusCode: '404' },
     });
 
     const timeout = toErrorEnvelope(new MindError.Timeout());
-    expect(timeout.retryable).toBe(true);
+    expect(timeout.code).toBe('MIND_TIMEOUT');
+    expect(timeout.hint).toContain('Retry the query');
   });
 
   it('rejects structured PluginError details with a catalogued contract violation', () => {

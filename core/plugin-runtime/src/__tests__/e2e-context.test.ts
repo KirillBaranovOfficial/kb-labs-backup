@@ -252,7 +252,15 @@ describe('E2E Context Tests', () => {
     const result = wrapCliResult(runResult, descriptor);
 
     expect(result.exitCode).toBe(1);
-    expect(result.error).toEqual({ code: 'KB_RUNTIME_COMMAND_FAILED', message: 'command failed', hint: 'Resolve the failure, then retry.' });
+    expect(result.error).toEqual({
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      area: 'runtime',
+      stage: 'run',
+      severity: 'error',
+      retryable: false,
+      message: 'command failed',
+      hint: 'Resolve the failure, then retry.',
+    });
     expect(result.meta).toBeDefined();
   });
 

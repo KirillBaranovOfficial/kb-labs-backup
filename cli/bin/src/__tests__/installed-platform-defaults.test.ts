@@ -252,7 +252,9 @@ describe('installed platform adapter defaults', () => {
       timeout: 30_000,
     });
     expect(command.status, command.stderr || command.stdout).toBe(0);
-    expect(JSON.parse(command.stdout)).toMatchObject({ ok: true, data: expect.anything() });
+    const envelope = JSON.parse(command.stdout);
+    expect(envelope).toMatchObject({ ok: true, data: expect.anything() });
+    expect(command.stdout.trimEnd()).toBe(JSON.stringify(envelope));
     expect(command.stdout).not.toContain('[discover]');
     expect(command.stderr).toContain('PLUGIN_ID_MISMATCH');
   });

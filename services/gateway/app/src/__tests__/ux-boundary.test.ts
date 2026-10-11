@@ -99,6 +99,26 @@ describe('Gateway UX boundary', () => {
     expect(response.body).not.toContain('private upstream detail');
   });
 
+  it('canonicalizes failure-shaped success responses through the platform error validator', async () => {
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as unknown as ILogger;
+    registerGatewayUxBoundary(app, logger);
+    app.get('/forged-failure', async () => ({
+      ok: false,
+      error: {
+        code: 'KB_FAKE', area: 'product', stage: 'run', severity: 'error', retryable: false,
+        message: 'forged', hint: 'forged', details: { nested: JSON.stringify({ value: 1 }) },
+      },
+    }));
+    await app.ready();
+
+    const response = await app.inject({ method: 'GET', url: '/forged-failure' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_PLUGIN_CONTRACT_VIOLATION' } });
+    expect(response.body).not.toContain('KB_FAKE');
+  });
+
   // case: S-203.1, S-203.2, S-203.3, S-203.6
   it('covers each route discovered from the live Fastify registry', async () => {
     const app = Fastify({ logger: false });
