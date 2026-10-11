@@ -62,7 +62,7 @@ export {
 // Per-project runtime state location (ADR-0044). Adapters and plugins resolve
 // caches, traces and other runtime files here instead of writing into the
 // project's `.kb/` directory.
-export { resolvePlatformDataPath, resolveRuntimeStatePath } from "@kb-labs/core-project-registry";
+export { resolveRuntimeStatePath } from "@kb-labs/core-project-registry";
 
 // Test utilities (legacy — prefer `@kb-labs/sdk/testing` for full mock builders)
 export {
