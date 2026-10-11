@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -64,13 +65,23 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	}
 	platform, ok := findPlatform(source.Platforms, platformVersion)
 	if !ok {
-		return contracts.ResolvedInstallPlan{}, incompatible("platform", platformVersion, platformVersion, "platform "+platformVersion, "is not present in the release index")
+		return contracts.ResolvedInstallPlan{}, incompatible("platform", "platform", platformVersion, "platform "+platformVersion, "is not present in the release index")
 	}
 	sdkVersion := request.SDK.Version
 	if sdkVersion == "" {
-		sdkVersion = source.Channels[request.SDK.Channel]
+		targetPlatform := platform.Version
+		if request.SDK.Channel != "" {
+			if channelPlatform, ok := source.Channels[request.SDK.Channel]; ok {
+				targetPlatform = channelPlatform
+			}
+		}
+		if matrixSDK := catalog.PlatformSDKVersion(source, targetPlatform); matrixSDK != "" {
+			sdkVersion = matrixSDK
+		} else if request.SDK.Channel != "" {
+			sdkVersion = source.Channels[request.SDK.Channel]
+		}
 	}
-	if request.Policy == contracts.PolicyCompatible && platform.SDKRange != "" {
+	if request.Policy == contracts.PolicyCompatible && platform.SDKRange != "" && sdkVersion != "" {
 		if err := compatible(platform.SDKRange, sdkVersion, "sdk", "sdk", "platform SDK"); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
@@ -117,14 +128,14 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			binaryForTarget = true
 			if source.Compatibility != nil {
 				if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, binary.ID, binary.OS, binary.Arch, request.Policy); err != nil {
-					return contracts.ResolvedInstallPlan{}, incompatible("binary", binary.ID, platform.Version, "binary "+binary.ID, err.Error())
+					return contracts.ResolvedInstallPlan{}, incompatibleBinary(binary.ID, platform.Version, binary.OS+"/"+binary.Arch, "binary "+binary.ID, err.Error())
 				}
 			}
 			artifacts = append(artifacts, contracts.Artifact{ID: binary.ID, Kind: "binary", Version: platform.Version, SHA256: binary.SHA256, SizeBytes: binary.SizeBytes, URL: binary.URL, Target: binary.ID})
 		}
 	}
 	if len(platform.Binaries) > 0 && !binaryForTarget {
-		return contracts.ResolvedInstallPlan{}, incompatible("binary", "kb-create", platform.Version, "binary "+goos+"/"+goarch, "platform "+platform.Version+" ships no binary for this OS/arch")
+		return contracts.ResolvedInstallPlan{}, incompatibleBinary("kb-create", platform.Version, goos+"/"+goarch, "binary "+goos+"/"+goarch, "platform "+platform.Version+" ships no binary for this OS/arch")
 	}
 	if graph.Profile == "client" {
 		var clientBinary []contracts.Artifact
@@ -134,7 +145,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			}
 		}
 		if len(clientBinary) != 1 {
-			return contracts.ResolvedInstallPlan{}, incompatible("binary", "kb-create", platform.Version, "client binary "+platform.Version, "release index must contain exactly one kb-create binary for "+goos+"/"+goarch)
+			return contracts.ResolvedInstallPlan{}, incompatibleBinary("kb-create", platform.Version, goos+"/"+goarch, "client binary "+platform.Version, "release index must contain exactly one kb-create binary for "+goos+"/"+goarch)
 		}
 		var clientCLI []contracts.Artifact
 		for _, member := range platform.Members {
@@ -249,7 +260,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		host := cloneHost(*platform.Host)
 		selectedHost = &host
 	} else if graph.Profile != "client" {
-		return contracts.ResolvedInstallPlan{}, incompatible("platform", platform.ID, platform.Version, "platform "+platform.Version, "declares no host to run")
+		return contracts.ResolvedInstallPlan{}, incompatible("platform", "platform", platform.Version, "platform "+platform.Version, "declares no host to run")
 	}
 	if request.GatewayURL != "" {
 		if selectedHost == nil {
@@ -492,10 +503,11 @@ func cloneHost(host contracts.HostSpec) contracts.HostSpec {
 }
 
 func profileName(value string) string {
-	if value == "" {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
 		return "default"
 	}
-	return value
+	return trimmed
 }
 
 // registryKind reports whether a package the platform bundles is also a
@@ -744,12 +756,33 @@ func incompatible(kind, id, selectedVersion, label, reason string) error {
 		compatibilityIdentity{kind: kind, id: id, selectedVersion: selectedVersion},
 		label+" is incompatible: "+reason, "Choose compatible versions or pass an explicit supported provider.", nil)
 }
+
+func incompatibleBinary(id, selectedVersion, target, label, reason string) error {
+	extra := map[string]string{}
+	if target != "" {
+		extra["target"] = target
+	}
+	return compatibilityFailure(contracts.CodeIncompatibleComponents,
+		compatibilityIdentity{kind: "binary", id: id, selectedVersion: selectedVersion},
+		label+" is incompatible: "+reason, "Choose compatible versions or pass an explicit supported provider.", extra)
+}
+
 func resolutionDiag(code, message string, details map[string]string) error {
 	d := diag.New(code, message, diag.WithMeta(stringMap(details)))
 	d.Hint = "Choose compatible versions or pass an explicit supported provider."
 	return d
 }
 
+// compatibilityIdentity represents the canonical component identity for compatibility diagnostics.
+// The identity rule per kind is:
+//   - "platform":        id is "platform" (the platform bundle identity; selectedVersion is platform version)
+//   - "sdk":             id is "sdk" (the SDK component identity; selectedVersion is sdk version)
+//   - "binary":          id is the logical binary id (e.g. "kb-create"; target is structured <os>/<arch>)
+//   - "plugin":          id is the plugin identifier
+//   - "adapter":         id is the adapter identifier
+//   - "platform-member": id is the package name (e.g. "@kb-labs/cli-bin")
+//   - "service profile": id is the service profile name (e.g. "default")
+//   - "release set":     id is "release set"
 type compatibilityIdentity struct {
 	kind, id, selectedVersion, requiredRange string
 }

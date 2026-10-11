@@ -60,7 +60,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
-		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `kb-create install --platform-root PATH`.", err)
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "PATH")+"`.", err)
 	}
 	if err := preflight.CheckInstallResources(root); err != nil {
 		return applyCommandResult{}, asDiag(err)
@@ -134,7 +134,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		}
 	}
 	if plan.Request.ProjectRoot == "" {
-		if _, err := fmt.Fprintf(out, "\nKB Labs is installed at %s.\nNext: register a project with `kb project add <path>`.\n", root); err != nil {
+		if _, err := fmt.Fprintf(out, "\nKB Labs is installed at %s.\nNext: register a project with `%s`.\n", root, contracts.ShellCommand("kb", "project", "add", "<path>")); err != nil {
 			return applyCommandResult{}, progressWriteFailure(err, "install")
 		}
 		return result, nil
@@ -143,7 +143,8 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	if err != nil {
 		return applyCommandResult{}, projectRegistrationFailure(root, plan.Request.ProjectRoot, err)
 	}
-	if _, err := fmt.Fprintf(out, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `kb-create status --platform-root %q` and `kb project show %s`.\n", root, projectID, plan.Request.ProjectRoot, root, projectID); err != nil {
+	if _, err := fmt.Fprintf(out, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `%s` and `%s`.\n", root, projectID, plan.Request.ProjectRoot,
+		contracts.ShellCommand("kb-create", "status", "--platform-root", root), contracts.ShellCommand("kb", "project", "show", plan.Request.ProjectRoot)); err != nil {
 		return applyCommandResult{}, progressWriteFailure(err, "install")
 	}
 	return result, nil

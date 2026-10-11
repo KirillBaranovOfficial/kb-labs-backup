@@ -30,6 +30,7 @@ import (
 // host: stop and status from another launcher invocation rely on it.
 type pidRecord struct {
 	PID             int       `json:"pid"`
+	ProcessIdentity string    `json:"processIdentity,omitempty"`
 	PlatformRoot    string    `json:"platformRoot"`
 	TreeRoot        string    `json:"treeRoot,omitempty"`
 	StartedAt       time.Time `json:"startedAt"`
@@ -57,15 +58,28 @@ func NewProcessIdentity(active contracts.InstallReceipt, platformRoot, treeRoot 
 		ReceiptID: active.ID, ServiceIDs: serviceIDs, TreeRoot: filepath.Clean(treeRoot)}
 	if identity.InstallationID == "" || identity.PlatformVersion == "" || identity.ReceiptID == "" || len(identity.ServiceIDs) == 0 || identity.TreeRoot == "." || platformRoot == "" {
 		return ProcessIdentity{}, hostError(contracts.CodeReceiptUnavailable, "The active receipt cannot identify a complete running host.",
-			"Run `kb-create doctor --platform-root \"$PLATFORM_ROOT\"` and reinstall the platform if the receipt is incomplete.", nil, map[string]string{"platformRoot": platformRoot})
+			"Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot)+"` and reinstall the platform if the receipt is incomplete.", nil, map[string]string{"platformRoot": platformRoot})
 	}
 	return identity, nil
 }
 
+func StaleProcessIdentityFailure(recordPath, kind string, pid int, platformRoot string) *diag.Diag {
+	message := fmt.Sprintf("The recorded %s process identity for PID %d is missing or does not match the current process; no process was signalled.", kind, pid)
+	recoverRecord := contracts.ShellCommand("rm", recordPath)
+	statusCommand := contracts.ShellCommand("kb-create", "status", "--platform-root", platformRoot)
+	hint := fmt.Sprintf("Remove only the stale record with `%s`, then verify the installation with `%s`.", recoverRecord, statusCommand)
+	failure := diag.New(contracts.CodeHostProcessIdentityStale, message, diag.WithMeta(map[string]any{
+		"pid": strconv.Itoa(pid), "record": recordPath, "platformRoot": platformRoot,
+	}))
+	failure.Hint = hint
+	return failure
+}
+
 // ActiveHostRecord identifies a live host process in the installation container.
 type ActiveHostRecord struct {
-	PID          int
-	PlatformRoot string
+	PID             int
+	PlatformRoot    string
+	ProcessIdentity string
 }
 
 // ActiveHost reads the live host record without deciding whether it belongs to
@@ -83,7 +97,10 @@ func ActiveHost(state State) (ActiveHostRecord, bool) {
 		_ = os.Remove(state.HostPID())
 		return ActiveHostRecord{}, false
 	}
-	return ActiveHostRecord{PID: record.PID, PlatformRoot: record.PlatformRoot}, true
+	if !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+		return ActiveHostRecord{}, false
+	}
+	return ActiveHostRecord{PID: record.PID, PlatformRoot: record.PlatformRoot, ProcessIdentity: record.ProcessIdentity}, true
 }
 
 // ProcessRunner spawns the host command directly in its own process group,
@@ -104,12 +121,13 @@ type ProcessRunner struct {
 	// (the platform's private store). It is read on every Start.
 	SecretEnv func() (map[string]string, error)
 
-	mu      sync.Mutex
-	pid     int
-	exited  chan struct{}
-	waitErr error
-	stderr  *tailBuffer
-	secrets []string
+	mu              sync.Mutex
+	pid             int
+	exited          chan struct{}
+	waitErr         error
+	stderr          *tailBuffer
+	secrets         []string
+	processIdentity string
 }
 
 const startupStderrLimit = 8 * 1024
@@ -161,13 +179,16 @@ func (r *ProcessRunner) client() *http.Client {
 func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	if r.Identity.InstallationID == "" || r.Identity.PlatformVersion == "" || r.Identity.ReceiptID == "" || len(r.Identity.ServiceIDs) == 0 || r.Identity.TreeRoot == "" || filepath.Clean(r.Identity.TreeRoot) != filepath.Clean(r.TreeRoot) {
 		return Info{}, hostError(contracts.CodeReceiptUnavailable, "The running host identity is incomplete.",
-			"Run `kb-create doctor --platform-root \"$PLATFORM_ROOT\"` and repair or reinstall the platform receipt.", nil, map[string]string{"platformRoot": r.PlatformRoot})
+			"Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", r.PlatformRoot)+"` and repair or reinstall the platform receipt.", nil, map[string]string{"platformRoot": r.PlatformRoot})
 	}
 	if err := r.State.Ensure(); err != nil {
 		return Info{}, hostError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+r.State.Dir+".", "Fix the directory permissions or free disk space.", err, map[string]string{"path": r.State.Dir})
 	}
 	if record, ok := r.readPID(); ok {
-		if processAlive(record.PID) {
+		if processAlive(record.PID) && !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+			return Info{}, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot)
+		}
+		if ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
 			if record.PlatformRoot != r.PlatformRoot {
 				return Info{}, RootConflict(record.PlatformRoot, record.PID)
 			}
@@ -201,9 +222,16 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		_ = logFile.Close()
 		return Info{}, r.startFailed(err, nil)
 	}
+	processIdentity, err := ProcessIdentityForPID(cmd.Process.Pid)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = logFile.Close()
+		return Info{}, r.startFailed(err, nil)
+	}
 	exited := make(chan struct{})
 	r.mu.Lock()
 	r.pid, r.exited, r.waitErr = cmd.Process.Pid, exited, nil
+	r.processIdentity = processIdentity
 	r.mu.Unlock()
 	go func() {
 		err := cmd.Wait()
@@ -213,7 +241,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		r.mu.Unlock()
 		close(exited)
 	}()
-	record := pidRecord{PID: cmd.Process.Pid, PlatformRoot: r.PlatformRoot, TreeRoot: r.Identity.TreeRoot, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command,
+	record := pidRecord{PID: cmd.Process.Pid, ProcessIdentity: processIdentity, PlatformRoot: r.PlatformRoot, TreeRoot: r.Identity.TreeRoot, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command,
 		PlatformVersion: r.Identity.PlatformVersion, ReceiptID: r.Identity.ReceiptID, ServiceIDs: append([]string(nil), r.Identity.ServiceIDs...)}
 	if err := writeJSONFile(r.State.HostPID(), record); err != nil {
 		r.kill(cmd.Process.Pid)
@@ -352,7 +380,7 @@ func (r *ProcessRunner) startFailed(cause error, evidence map[string]string) *di
 		if root == "" {
 			root = "<platform-root>"
 		}
-		evidence["nextCommand"] = fmt.Sprintf("kb-create start --platform-root %q", root)
+		evidence["nextCommand"] = contracts.ShellCommand("kb-create", "start", "--platform-root", root)
 	}
 	return StartFailure(r.State, cause, evidence)
 }
@@ -555,7 +583,9 @@ func portInUseError(port, address, purpose string, owner portOwner, operation st
 
 func portConflictError(port, address, purpose string, owner portOwner, operation string, cause error) *diag.Diag {
 	if pid, err := strconv.Atoi(owner.PID); err == nil {
-		if root := registeredLiveGatewayRoot(port, pid); root != "" {
+		if root, staleRecord := registeredGatewayRoot(port, pid); staleRecord != "" {
+			return StaleProcessIdentityFailure(staleRecord, "host", pid, root)
+		} else if root != "" {
 			if layout, layoutErr := versionroot.ForPlatformPath(root); layoutErr == nil {
 				return RootConflict(layout.InstallRoot(), pid)
 			}
@@ -564,14 +594,14 @@ func portConflictError(port, address, purpose string, owner portOwner, operation
 	return portInUseError(port, address, purpose, owner, operation, cause)
 }
 
-func registeredLiveGatewayRoot(port string, pid int) string {
+func registeredGatewayRoot(port string, pid int) (string, string) {
 	launcherState, err := StateHome()
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Read()
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	for _, candidate := range roots {
 		origin, err := url.Parse(candidate.URL)
@@ -585,12 +615,22 @@ func registeredLiveGatewayRoot(port string, pid int) string {
 		if err != nil {
 			continue
 		}
-		active, ok := ActiveHost(rootState)
-		if ok && active.PID == pid && filepath.Clean(active.PlatformRoot) == filepath.Clean(candidate.PlatformRoot) {
-			return active.PlatformRoot
+		data, err := os.ReadFile(rootState.HostPID())
+		if err != nil {
+			continue
+		}
+		var record pidRecord
+		if json.Unmarshal(data, &record) != nil || record.PID != pid || filepath.Clean(record.PlatformRoot) != filepath.Clean(candidate.PlatformRoot) {
+			continue
+		}
+		if ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+			return record.PlatformRoot, ""
+		}
+		if processAlive(record.PID) {
+			return record.PlatformRoot, rootState.HostPID()
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // RootConflict reports that the installation's live host serves another
@@ -602,7 +642,8 @@ func RootConflict(platformRoot string, pid int) *diag.Diag {
 	if platformRoot == "" {
 		return hostError("KB_HOST_ALREADY_RUNNING", "A KB Labs host started by an earlier launcher is already running (pid "+pidText+").", "Stop process "+pidText+", then rerun the command.", nil, meta)
 	}
-	return hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host for platform root "+platformRoot+" is already running (pid "+pidText+").", "Stop that platform first with `kb-create stop --platform-root "+platformRoot+"`.", nil, meta)
+	command := contracts.ShellCommand("kb-create", "stop", "--platform-root", platformRoot)
+	return hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host for platform root "+platformRoot+" is already running (pid "+pidText+").", "Stop that platform first with `"+command+"`.", nil, meta)
 }
 
 func listenerOwner(port string) portOwner {
@@ -698,9 +739,16 @@ func (r *ProcessRunner) verifyListenerOwner(pid int) error {
 
 // kill force-terminates a host that failed to become ready and clears its pid file.
 func (r *ProcessRunner) kill(pid int) {
-	killProcessGroup(pid)
-	r.waitGone(pid, 5*time.Second)
-	_ = os.Remove(r.State.HostPID())
+	r.mu.Lock()
+	processIdentity := r.processIdentity
+	r.mu.Unlock()
+	if ProcessIdentityMatches(pid, processIdentity) {
+		killProcessGroup(pid)
+		r.waitGone(pid, processIdentity, 5*time.Second)
+	}
+	if record, ok := r.readPID(); ok && record.PID == pid && record.ProcessIdentity == processIdentity {
+		_ = os.Remove(r.State.HostPID())
+	}
 }
 
 func (r *ProcessRunner) healthy(ctx context.Context) bool {
@@ -712,37 +760,44 @@ func (r *ProcessRunner) healthy(ctx context.Context) bool {
 func (r *ProcessRunner) Stop(ctx context.Context) (StopResult, error) {
 	result := StopResult{Runner: r.Name()}
 	record, ok := r.readPID()
-	if ok && processAlive(record.PID) && record.PlatformRoot != r.PlatformRoot {
+	if ok && processAlive(record.PID) && !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+		return result, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot)
+	}
+	if ok && ProcessIdentityMatches(record.PID, record.ProcessIdentity) && record.PlatformRoot != r.PlatformRoot {
 		return result, nil
 	}
-	if !ok || !processAlive(record.PID) {
+	if !ok || !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
 		_ = os.Remove(r.State.HostPID())
 		return result, nil
 	}
 	result.WasRunning, result.PID = true, record.PID
 	terminateProcessGroup(record.PID)
-	if r.waitGoneCtx(ctx, record.PID, r.Spec.StopGrace) {
+	if r.waitGoneCtx(ctx, record.PID, record.ProcessIdentity, r.Spec.StopGrace) {
 		result.Graceful = true
+		_ = os.Remove(r.State.HostPID())
+		return result, nil
+	}
+	if !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
 		_ = os.Remove(r.State.HostPID())
 		return result, nil
 	}
 	killProcessGroup(record.PID)
 	result.Forced = true
-	if !r.waitGoneCtx(ctx, record.PID, 5*time.Second) {
-		return result, hostError("KB_HOST_STOP_FAILED", fmt.Sprintf("The host process %d did not stop.", record.PID), "Run \"kb-create stop\" again, or end the process manually and remove the stale pid file.", nil, pidDetail(record.PID))
+	if !r.waitGoneCtx(ctx, record.PID, record.ProcessIdentity, 5*time.Second) {
+		return result, hostError("KB_HOST_STOP_FAILED", fmt.Sprintf("The host process %d did not stop.", record.PID), "Run `"+contracts.ShellCommand("kb-create", "stop", "--platform-root", r.PlatformRoot)+"` again, then check its status.", nil, pidDetail(record.PID))
 	}
 	_ = os.Remove(r.State.HostPID())
 	return result, nil
 }
 
-func (r *ProcessRunner) waitGone(pid int, timeout time.Duration) bool {
-	return r.waitGoneCtx(context.Background(), pid, timeout)
+func (r *ProcessRunner) waitGone(pid int, processStart string, timeout time.Duration) bool {
+	return r.waitGoneCtx(context.Background(), pid, processStart, timeout)
 }
 
 // waitGoneCtx waits for pid to disappear. When this runner spawned the process
 // its own Wait goroutine reaps it, so the exit channel is authoritative;
 // otherwise the pid is polled (the owner of the child reaps it).
-func (r *ProcessRunner) waitGoneCtx(ctx context.Context, pid int, timeout time.Duration) bool {
+func (r *ProcessRunner) waitGoneCtx(ctx context.Context, pid int, processStart string, timeout time.Duration) bool {
 	r.mu.Lock()
 	var exited chan struct{}
 	if r.pid == pid {
@@ -760,7 +815,7 @@ func (r *ProcessRunner) waitGoneCtx(ctx context.Context, pid int, timeout time.D
 				return true
 			default:
 			}
-		} else if !processAlive(pid) {
+		} else if !ProcessIdentityMatches(pid, processStart) {
 			return true
 		}
 		select {
@@ -781,6 +836,9 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 	if !ok {
 		return status, nil
 	}
+	if processAlive(record.PID) && !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+		return status, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot)
+	}
 	if record.PlatformRoot != r.PlatformRoot {
 		return status, nil
 	}
@@ -788,7 +846,7 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 	status.TreeRoot = record.TreeRoot
 	status.ReceiptID = record.ReceiptID
 	status.ServiceIDs = append([]string(nil), record.ServiceIDs...)
-	if !processAlive(record.PID) {
+	if !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
 		_ = os.Remove(r.State.HostPID())
 		status.StalePID = true
 		return status, nil

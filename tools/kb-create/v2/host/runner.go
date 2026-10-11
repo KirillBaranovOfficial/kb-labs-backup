@@ -77,12 +77,12 @@ func NewRunner(platformRoot string) (*ProcessRunner, error) {
 	if err != nil {
 		return nil, contracts.NewDiag(contracts.CodeReceiptUnavailable,
 			"The active install receipt could not be read.",
-			fmt.Sprintf("Run `kb-create update --platform-root %q` or reinstall the platform, then retry.", platformRoot), err)
+			"Run `"+contracts.ShellCommand("kb-create", "update", "--platform-root", platformRoot)+"` or reinstall the platform, then retry.", err)
 	}
 	if active.InstallationID == "" {
 		return nil, contracts.NewDiag(contracts.CodeReceiptUnavailable,
 			"The active install receipt has no installation ID.",
-			fmt.Sprintf("Run `kb-create update --platform-root %q` or reinstall the platform, then retry.", platformRoot), nil)
+			"Run `"+contracts.ShellCommand("kb-create", "update", "--platform-root", platformRoot)+"` or reinstall the platform, then retry.", nil)
 	}
 	spec, err := LoadSpec(platformRoot)
 	if err != nil {

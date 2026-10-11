@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strconv"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
@@ -38,7 +37,7 @@ func RestartWithRecovery(ctx context.Context, root string, previous *ProcessRunn
 		if pruneErr := receipt.PruneSnapshots(layout.SnapshotsDir(), contracts.SnapshotRetention()); pruneErr != nil {
 			return RestartOutcome{Stopped: stopped, Info: info, Runner: active}, contracts.NewDiag(contracts.CodeOperationFailed,
 				"the new version is healthy but recovery snapshot retention could not be completed.",
-				fmt.Sprintf("Run `kb-create doctor --platform-root %s` to inspect disk permissions, then retry restart.", strconv.Quote(root)), pruneErr)
+				"Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` to inspect disk permissions, then retry restart.", pruneErr)
 		}
 		return RestartOutcome{Stopped: stopped, Info: info, Runner: active}, nil
 	}
@@ -64,19 +63,19 @@ func RestartWithRecovery(ctx context.Context, root string, previous *ProcessRunn
 	}
 	failure := contracts.NewDiag(contracts.CodeUpdateHostNotHealthy,
 		fmt.Sprintf("The installed version failed its restart health check; snapshot %s was restored and the last healthy version was started.", metadata.SnapshotID),
-		fmt.Sprintf("Run `kb-create status --platform-root %s` to confirm the restored version is healthy.", strconv.Quote(root)), nil)
+		"Run `"+contracts.ShellCommand("kb-create", "status", "--platform-root", root)+"` to confirm the restored version is healthy.", nil)
 	failure.Meta = map[string]any{"attemptedRoot": filepath.Clean(active.TreeRoot), "recoveryRoot": filepath.Clean(failedRoot), "recoveryStage": "restored-last-healthy",
 		"runningVersion": restored.Identity.PlatformVersion, "snapshotId": metadata.SnapshotID, "logPath": filepath.Join(layout.InstallRoot(), metadata.LogPath),
-		"nextCommand": fmt.Sprintf("kb-create status --platform-root %s", strconv.Quote(root)), "failureReason": "target host did not pass its health check"}
+		"nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", root), "failureReason": "target host did not pass its health check"}
 	return RestartOutcome{Stopped: stopped, Info: restoredInfo, Runner: restored}, failure
 }
 
 func recoveryFailure(root, attemptedRoot, stage, recoveryRoot, snapshotID string, cause error, restoredHealthy bool) *diag.Diag {
-	next := fmt.Sprintf("kb-create doctor --platform-root %s", strconv.Quote(root))
+	next := contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)
 	message := "Restart recovery could not restore and start the last healthy version."
 	if restoredHealthy {
 		message = "The last healthy version was restored and started, but restart recovery metadata could not be read."
-		next = fmt.Sprintf("kb-create status --platform-root %s", strconv.Quote(root))
+		next = contracts.ShellCommand("kb-create", "status", "--platform-root", root)
 	}
 	failure := contracts.NewDiag(contracts.CodeUpdateHostNotHealthy, message,
 		"Run `"+next+"` to inspect the installed and running versions.", nil)

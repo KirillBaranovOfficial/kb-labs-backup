@@ -36,6 +36,22 @@ func killProcessGroup(pid int) {
 func TerminateProcess(pid int) { terminateProcessGroup(pid) }
 func KillProcess(pid int)      { killProcessGroup(pid) }
 
+func TerminateProcessIfIdentity(pid int, processStart string) bool {
+	if !ProcessIdentityMatches(pid, processStart) {
+		return false
+	}
+	TerminateProcess(pid)
+	return true
+}
+
+func KillProcessIfIdentity(pid int, processStart string) bool {
+	if !ProcessIdentityMatches(pid, processStart) {
+		return false
+	}
+	KillProcess(pid)
+	return true
+}
+
 func ProcessAlive(pid int) bool { return processAlive(pid) }
 
 func processAlive(pid int) bool {

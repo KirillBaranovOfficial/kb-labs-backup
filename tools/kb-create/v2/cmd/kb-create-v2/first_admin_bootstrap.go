@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
@@ -135,12 +134,12 @@ func validateGatewayRequiredFields(payload []byte, required []string) (map[strin
 
 func bootstrapContractFailure(message string, cause error, platformRoot string) *diag.Diag {
 	return contracts.NewDiag(contracts.CodeApplyFailed, message,
-		"The installer and Gateway returned incompatible first-administrator health data. This is an internal installer/Gateway contract mismatch. Run `kb-create doctor --platform-root "+strconv.Quote(platformRoot)+"` to capture installation diagnostics, then provide the diagnostic file and output to KB Labs support.", cause)
+		"The installer and Gateway returned incompatible first-administrator health data. This is an internal installer/Gateway contract mismatch. Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot)+"` to capture installation diagnostics, then provide the diagnostic file and output to KB Labs support.", cause)
 }
 
 func bootstrapOutcomeFailure(platformRoot string) *diag.Diag {
 	return contracts.NewDiag(contracts.CodeApplyFailed, "Gateway reported that first-administrator bootstrap did not complete.",
-		"Run `kb-create doctor --platform-root "+strconv.Quote(platformRoot)+"` to inspect Gateway authentication readiness and resolve its reported issue, then rerun `kb-create install`.", nil)
+		"Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot)+"` to inspect Gateway authentication readiness and resolve its reported issue, then rerun `kb-create install`.", nil)
 }
 
 func errorsJoinStop(cause error, stop func() error) error {

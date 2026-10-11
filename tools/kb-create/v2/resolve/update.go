@@ -19,6 +19,12 @@ const (
 // ValidateUpdate checks downgrade and installed extension compatibility before
 // an update can create a snapshot, stop the host, or write package/config state.
 func ValidateUpdate(active contracts.InstallReceipt, target contracts.ResolvedInstallPlan, source catalog.Catalog) (UpdateDisposition, error) {
+	if err := contracts.ValidatePlanArtifactIdentities(active.Plan); err != nil {
+		return UpdateRequired, err
+	}
+	if err := contracts.ValidatePlanArtifactIdentities(target); err != nil {
+		return UpdateRequired, err
+	}
 	installedVersion := active.Plan.ServiceGraph.PlatformVersion
 	targetVersion := target.ServiceGraph.PlatformVersion
 	comparison, err := semrange.Compare(targetVersion, installedVersion)

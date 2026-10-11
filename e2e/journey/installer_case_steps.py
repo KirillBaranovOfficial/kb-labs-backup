@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 import hashlib
 import platform
+import re
 import shutil
+import shlex
 import socket
 import subprocess
 import sys
@@ -1373,8 +1375,11 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         binary_meta = binary_error.get("details", {})
         if binary_result.returncode == 0 or binary_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(binary_meta, dict):
             raise RuntimeError("missing host binary plan did not fail with the typed incompatibility")
-        if binary_meta.get("kind") != "binary" or not binary_meta.get("id") or not binary_error.get("hint"):
-            raise RuntimeError(f"missing binary error omitted its binary identity or hint: {binary_error}")
+        if (binary_meta.get("kind") != "binary"
+                or binary_meta.get("id") != "kb-create"
+                or binary_meta.get("target") != f"{host_os}/{host_arch}"
+                or not binary_error.get("hint")):
+            raise RuntimeError(f"missing binary error omitted its binary identity, target, or hint: {binary_error}")
 
     exact_step("refuse an SDK outside range and a release missing the host binary", sdk_and_binary_ranges, capability="platform.install", cases=["S-053.5"])
 
@@ -1395,12 +1400,37 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         after_exists = target.exists()
         if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
             raise RuntimeError("missing host binary did not refuse planning with the typed incompatibility")
-        if meta.get("kind") != "binary" or not meta.get("id") or not error.get("hint"):
-            raise RuntimeError("missing binary refusal omitted its kind/id or correction hint")
+        if (meta.get("kind") != "binary"
+                or meta.get("id") != "kb-create"
+                or meta.get("target") != f"{host_os}/{host_arch}"
+                or not error.get("hint")):
+            raise RuntimeError("missing binary refusal omitted its kind/id, target, or correction hint")
         if before != after or before_directories != after_directories or before_exists != after_exists:
             raise RuntimeError("missing binary refusal changed the isolated install root")
 
     exact_step("refuse planning without the runner binary", missing_host_binary_before_mutation, capability="platform.install", cases=["S-053.7"])
+
+    def incompatible_plugin_sdk_range() -> None:
+        for label, platform_selection in (("explicit-version", ["--platform-version", "3.2.0"]),
+                                          ("channel", ["--platform-channel", "stable"])):
+            target = scratch / f"plugin-sdk-range-{label}"
+            result = run_command([launcher, "plan", "--json", "--index", str(matrix),
+                                  *platform_selection,
+                                  "--plugins", "fixture-sdk-incompat@1.0.0", "--policy", "compatible",
+                                  "--platform-root", str(target)])
+            _, error = _diagnostic(result, f"plugin sdk-range plan selected by {label}")
+            meta = error.get("details", {})
+            if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
+                raise RuntimeError(f"incompatible plugin SDK range did not refuse planning with the typed incompatibility: {error}")
+            if (meta.get("kind") != "plugin" or meta.get("id") != "fixture-sdk-incompat"
+                    or meta.get("selectedVersion") != "3.0.0" or meta.get("requiredRange") != "<3.0.0"):
+                raise RuntimeError(f"plugin SDK range refusal omitted its component details: {meta}")
+            if error.get("hint") != "Choose compatible versions or pass an explicit supported provider.":
+                raise RuntimeError("plugin SDK range refusal omitted its correction hint")
+            if target.exists():
+                raise RuntimeError("plugin SDK range refusal changed the isolated install root")
+
+    exact_step("refuse a plugin outside its channel-selected SDK range", incompatible_plugin_sdk_range, capability="platform.install", cases=["S-053.8"])
 
     def incompatible_plugin_request() -> None:
         result = run_command([launcher, "plan", "--json", "--index", str(matrix),
@@ -1587,19 +1617,27 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, platform_root: P
                  repair_fixture_without_stopping_main, cases=["S-025.7"])
 
     def refuse_start_for_other_root() -> None:
-        result = run_command([launcher, "start", "--platform-root", str(root), "--json"])
-        envelope, error = _diagnostic(result, "cross-root host start")
-        details = error.get("meta", error.get("details", {}))
-        if (result.returncode == 0 or envelope.get("ok") is not False
-                or error.get("code") != "KB_HOST_ALREADY_RUNNING"
-                or str(platform_root.resolve()) not in error.get("message", "")
-                or not isinstance(details, dict) or not details.get("pid")
-                or f"kb-create stop --platform-root {platform_root}" not in error.get("hint", "")):
-            raise RuntimeError(f"cross-root start did not identify the active platform and stop command: {error}")
-        main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
-                            "main status after refused cross-root start")
-        if main_status.get("host", {}).get("state") != "running":
-            raise RuntimeError("refused start for platform B affected platform A")
+        lifecycle = InstallerHostLifecycle(launcher, run_command)
+        with lifecycle.preserve([platform_root]) as initial:
+            result = run_command([launcher, "start", "--platform-root", str(root), "--json"])
+            envelope, error = _diagnostic(result, "cross-root host start")
+            details = error.get("meta", error.get("details", {}))
+            hint = error.get("hint", "")
+            commands = re.findall(r"`([^`]+)`", hint)
+            stop_argv = shlex.split(commands[0]) if commands else []
+            expected_stop = ["kb-create", "stop", "--platform-root", str(platform_root.resolve())]
+            if (result.returncode == 0 or envelope.get("ok") is not False
+                    or error.get("code") != "KB_HOST_ALREADY_RUNNING"
+                    or str(platform_root.resolve()) not in error.get("message", "")
+                    or not isinstance(details, dict) or not details.get("pid")
+                    or stop_argv != expected_stop):
+                raise RuntimeError(f"cross-root start did not identify the active platform and runnable stop command: {error}")
+            stopped = run_command(stop_argv + ["--json"])
+            _data(stopped, "execute printed cross-root stop command")
+            main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
+                                "main status after suggested stop command")
+            if main_status.get("host", {}).get("state") != "stopped":
+                raise RuntimeError("executing the printed stop command did not stop platform A")
         shutil.rmtree(root, ignore_errors=True)
 
     journey.step("refuse to start a second platform while the user's host is running", "platform.install",

@@ -381,6 +381,15 @@
       "hint": "Use \"kb-create status\" or \"kb-create restart\"."
     },
     {
+      "code": "KB_HOST_PROCESS_IDENTITY_STALE",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The recorded host process identity is stale and the process cannot be safely signalled.",
+      "hint": "Recover the stale host record and retry the command."
+    },
+    {
       "code": "KB_INSTALL_PORT_IN_USE",
       "area": "install",
       "stage": "preflight",

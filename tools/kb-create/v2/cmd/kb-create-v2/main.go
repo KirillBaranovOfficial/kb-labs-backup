@@ -140,7 +140,8 @@ func progressWriteFailure(err error, next string) *diag.Diag {
 func projectRegistrationFailure(platformRoot, projectRoot string, cause error) *diag.Diag {
 	failure := contracts.NewDiag(contracts.CodeApplyFailed,
 		"The platform is installed, but the selected project could not be registered.",
-		fmt.Sprintf("Run `kb project add %q`, then verify with `kb project show %q`.", projectRoot, projectRoot), cause)
+		"Run `"+contracts.ShellCommand("kb", "project", "add", projectRoot)+"`, then verify with `"+
+			contracts.ShellCommand("kb", "project", "show", projectRoot)+"`.", cause)
 	failure.Meta = map[string]any{"platformRoot": platformRoot, "projectRoot": projectRoot}
 	return failure
 }

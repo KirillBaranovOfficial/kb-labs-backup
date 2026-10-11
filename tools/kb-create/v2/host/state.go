@@ -100,13 +100,13 @@ func (s State) AcquireOperation(operation string) (func(), error) {
 			return nil, s.unwritable(err)
 		}
 		if holder, alive := s.lockHolder(); alive {
-			failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %d).", holder), "Wait for it to finish; if no launcher is running, remove the stale lock file "+path+".", nil)
+			failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %d).", holder), "Wait for it to finish; if no launcher is running, remove the stale lock with `"+contracts.ShellCommand("rm", path)+"`.", nil)
 			failure.Meta = map[string]any{"pid": strconv.Itoa(holder), "path": path}
 			return nil, failure
 		}
 		_ = os.Remove(path)
 	}
-	return nil, contracts.NewDiag(contracts.CodeOperationInProgress, "Another launcher operation is already running.", "Wait for it to finish; if no launcher is running, remove the stale lock file "+path+".", nil)
+	return nil, contracts.NewDiag(contracts.CodeOperationInProgress, "Another launcher operation is already running.", "Wait for it to finish; if no launcher is running, remove the stale lock with `"+contracts.ShellCommand("rm", path)+"`.", nil)
 }
 
 func (s State) lockHolder() (int, bool) {

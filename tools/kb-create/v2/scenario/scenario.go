@@ -175,18 +175,8 @@ func ValidateCatalog(source catalog.Catalog) error {
 }
 
 func sdkVersionFor(source catalog.Catalog, platformVersion string) string {
-	if source.Compatibility != nil {
-		platformLabel := "platform@" + platformVersion
-		for _, label := range source.Compatibility.Labels {
-			if label.ID != platformLabel {
-				continue
-			}
-			for _, relation := range label.Requires {
-				if strings.HasPrefix(relation.Label, "sdk@") {
-					return strings.TrimPrefix(relation.Label, "sdk@")
-				}
-			}
-		}
+	if sdk := catalog.PlatformSDKVersion(source, platformVersion); sdk != "" {
+		return sdk
 	}
 	return platformVersion
 }

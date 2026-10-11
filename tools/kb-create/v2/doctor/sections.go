@@ -97,10 +97,10 @@ func hostSpecCheck(platformRoot string, active contracts.InstallReceipt) Check {
 	}
 	spec, err := host.NewSpec(platformRoot, *active.Plan.Host)
 	if err != nil {
-		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host specification is invalid: " + err.Error() + ".", Hint: fmt.Sprintf("Run `kb-create apply --platform-root %q` to regenerate the installed host specification.", platformRoot)}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host specification is invalid: " + err.Error() + ".", Hint: "Run `" + contracts.ShellCommand("kb-create", "apply", "--platform-root", platformRoot) + "` to regenerate the installed host specification."}
 	}
 	if _, err := exec.LookPath(spec.Command); err != nil {
-		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host command " + spec.Command + " is not installed.", Hint: fmt.Sprintf("Run `kb-create apply --platform-root %q` or `kb-create rollback --platform-root %q` to restore the platform files.", platformRoot, platformRoot)}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host command " + spec.Command + " is not installed.", Hint: "Run `" + contracts.ShellCommand("kb-create", "apply", "--platform-root", platformRoot) + "` or `" + contracts.ShellCommand("kb-create", "rollback", "--platform-root", platformRoot) + "` to restore the platform files."}
 	}
 	return Check{ID: "host-spec", OK: true, Detail: spec.Command}
 }
@@ -111,7 +111,7 @@ func stateCheck(platformRoot string, state host.State) Check {
 		if layoutErr != nil {
 			return Check{ID: "host-state", Detail: "Cannot write to " + state.Dir + ": " + err.Error(), Hint: "Fix the permissions on the path shown, then rerun `kb-create doctor`."}
 		}
-		return Check{ID: "host-state", Detail: "Cannot write to " + state.Dir + ": " + err.Error(), Hint: fmt.Sprintf("Fix permissions on the install-root state directory, then rerun `kb-create doctor --platform-root %q`.", layout.InstallRoot())}
+		return Check{ID: "host-state", Detail: "Cannot write to " + state.Dir + ": " + err.Error(), Hint: "Fix permissions on the install-root state directory, then rerun `" + contracts.ShellCommand("kb-create", "doctor", "--platform-root", layout.InstallRoot()) + "`."}
 	}
 	return Check{ID: "host-state", OK: true, Detail: state.Dir}
 }

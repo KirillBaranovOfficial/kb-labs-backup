@@ -74,6 +74,7 @@ const (
 	CodePlatformLayoutUnsupported = "KB_PLATFORM_LAYOUT_UNSUPPORTED"
 	CodeHostSpecInvalid           = "KB_HOST_SPEC_INVALID"
 	CodeHostStateDirUnwritable    = "KB_HOST_STATE_DIR_UNWRITABLE"
+	CodeHostProcessIdentityStale  = "KB_HOST_PROCESS_IDENTITY_STALE"
 )
 
 // NewDiag constructs the shared clikit diagnostic for a kb-create error code.
