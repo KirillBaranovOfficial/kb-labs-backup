@@ -186,7 +186,7 @@ func TestFreshPlatformInstallResolvesAndBindsBuiltinFilesystemStorage(t *testing
 			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
 			Profiles: map[string]contracts.ServiceGraph{"default": {}},
 			Requires: []catalog.Requirement{{Capability: "storage", RequiredBy: "platform"}},
-			Config:   []catalog.ConfigRequirement{{ID: "storage.default", Path: "/platform/adapterOptions/storage", Default: `{"baseDir":".kb/data"}`}},
+			Config:   []catalog.ConfigRequirement{{ID: "storage.default", Path: "/platform/adapterOptions/storage", Default: `{"baseDir":"storage"}`}},
 		}},
 		Adapters: []catalog.Adapter{{
 			Component: catalog.Component{ID: "fs-storage", Version: "2.0.0", Package: "@kb-labs/adapters-fs", SHA256: "fs"},

@@ -108,6 +108,60 @@ func TestRollbackSnapshotSurvivesVersionRootPruning(t *testing.T) {
 	}
 }
 
+// case: S-023.10, S-024.6
+func TestPlatformDataSurvivesUpdateAndRollback(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	layout, v1 := initialLayout(t, root, "1.0.0")
+	if err := layout.RecordHealthy(); err != nil {
+		t.Fatal(err)
+	}
+	projection := contracts.PlatformDataRootPath()
+	dataRoot, err := layout.SharedRuntimePath(projection.PlatformPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, value string) string {
+		t.Helper()
+		path := filepath.Join(dataRoot, name)
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	beforeUpdate := write("before-update", "written before staging")
+	v2 := stageVersion(t, layout, "2.0.0")
+	duringStage := write("during-stage", "written after staging and before switch")
+	v2Active, err := layout.Activate(v2, "2.0.0", "plan-2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterSwitch := write("after-switch", "written after switch")
+	if active, err := layout.Active(); err != nil || active == v1 {
+		t.Fatalf("active version after update = %q, %v; want updated root", active, err)
+	}
+	restored, err := layout.RestorePrevious()
+	if err != nil || restored != v1 {
+		t.Fatalf("restored root = %q, %v; want %q", restored, err, v1)
+	}
+	if active, err := layout.Active(); err != nil || active != v1 {
+		t.Fatalf("active root after rollback = %q, %v; want %q", active, err, v1)
+	}
+	for path, want := range map[string]string{
+		beforeUpdate: "written before staging",
+		duringStage:  "written after staging and before switch",
+		afterSwitch:  "written after switch",
+	} {
+		if got, err := os.ReadFile(path); err != nil || string(got) != want {
+			t.Errorf("platform data %q = %q, %v; want %q", path, got, err, want)
+		}
+	}
+	projectedData := filepath.Join(v2Active, filepath.FromSlash(projection.PlatformPath))
+	info, err := os.Lstat(projectedData)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("version root platform data projection = %#v, %v; want shared-state symlink", info, err)
+	}
+}
+
 func writeReceipt(t *testing.T, root, version, id string) {
 	t.Helper()
 	installationID, err := InstallationIDForPath(root)
@@ -785,14 +839,11 @@ func TestVersionRootsShareMutableDataInsteadOfCopyingIt(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(stage, ".kb", "data")); !os.IsNotExist(err) {
 		t.Fatalf("staged version has a writable shared-state route before activation: %v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(stage, ".kb", "database")); !os.IsNotExist(err) {
-		t.Fatalf("staged version has a writable shared-database route before activation: %v", err)
-	}
 	activeData, err := filepath.EvalSymlinks(filepath.Join(active, ".kb", "data"))
 	if err != nil || filepath.Clean(activeData) != filepath.Clean(wantData) {
 		t.Fatalf("active data path = %q, %v; want shared install-root data %q", activeData, err, data)
 	}
-	activeDatabase, err := filepath.EvalSymlinks(filepath.Join(active, ".kb", "database"))
+	activeDatabase, err := filepath.EvalSymlinks(filepath.Join(active, ".kb", "data", "database"))
 	if err != nil || filepath.Clean(activeDatabase) != filepath.Clean(wantDatabase) {
 		t.Fatalf("active database path = %q, %v; want shared install-root database %q", activeDatabase, err, database)
 	}
@@ -808,7 +859,7 @@ func TestVersionRootsShareMutableDataInsteadOfCopyingIt(t *testing.T) {
 	if err != nil || filepath.Clean(activatedData) != filepath.Clean(wantData) {
 		t.Fatalf("activated data path = %q, %v; want shared install-root data %q", activatedData, err, data)
 	}
-	activatedDatabase, err := filepath.EvalSymlinks(filepath.Join(active, ".kb", "database"))
+	activatedDatabase, err := filepath.EvalSymlinks(filepath.Join(active, ".kb", "data", "database"))
 	if err != nil || filepath.Clean(activatedDatabase) != filepath.Clean(wantDatabase) {
 		t.Fatalf("activated database path = %q, %v; want shared install-root database %q", activatedDatabase, err, database)
 	}
@@ -829,7 +880,7 @@ func TestVersionRootsShareMutableDataInsteadOfCopyingIt(t *testing.T) {
 	if _, err := layout.RestorePrevious(); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := os.ReadFile(filepath.Join(layout.PlatformRoot(), ".kb", "database", "after-update.db")); err != nil || string(got) != "latest" {
+	if got, err := os.ReadFile(filepath.Join(layout.PlatformRoot(), ".kb", "data", "database", "after-update.db")); err != nil || string(got) != "latest" {
 		t.Fatalf("database data after rollback = %q, %v", got, err)
 	}
 	if _, err := os.Stat(filepath.Join(active, ".kb", "marketplace.lock")); !os.IsNotExist(err) {

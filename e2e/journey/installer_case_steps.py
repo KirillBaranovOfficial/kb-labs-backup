@@ -926,7 +926,7 @@ def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Pat
 def _runtime_state_paths() -> tuple[str, ...]:
     layout_path = workspace_resource("tools", "kb-create", "v2", "contracts", "platform-layout.json")
     layout = json.loads(layout_path.read_text(encoding="utf-8"))
-    return tuple(layout["runtimeStatePaths"])
+    return tuple(layout["runtimeStatePaths"]) + (layout["platformDataRoot"]["statePath"],)
 
 
 def _snapshot_installation_owned_tree(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
@@ -934,7 +934,8 @@ def _snapshot_installation_owned_tree(root: Path) -> dict[str, tuple[str, bytes 
     layout = json.loads(layout_path.read_text(encoding="utf-8"))
     runtime_paths = tuple(Path(path).parts for path in _runtime_state_paths())
     runtime_paths += tuple(Path(item["statePath"]).parts for item in layout.get("sharedRuntimePaths", []))
-    shared_platform_paths = tuple(Path(item["platformPath"]).parts for item in layout.get("sharedRuntimePaths", []))
+    shared_platform_paths = (Path(layout["platformDataRoot"]["platformPath"]).parts,)
+    shared_platform_paths += tuple(Path(item["platformPath"]).parts for item in layout.get("sharedRuntimePaths", []))
     version_root = Path(layout["versionRoots"]["path"]).parts
     version_state_paths = tuple(Path(path).parts for path in layout.get("versionStatePaths", []))
     version_state_paths += shared_platform_paths

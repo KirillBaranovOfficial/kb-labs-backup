@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { deriveProjectId } from '../project-id.js';
 import { createProjectRegistry } from '../registry.js';
-import { resolveProjectStateDir, resolveRuntimeStatePath } from '../state-dir.js';
+import { resolvePlatformDataPath, resolveProjectStateDir, resolveRuntimeStatePath } from '../state-dir.js';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 
 let sandbox: string;
 let kbHome: string;
@@ -91,5 +92,43 @@ describe('resolveRuntimeStatePath', () => {
     const resolved = resolveRuntimeStatePath(legacyOnly, segments, { root: kbHome });
     expect(resolved.startsWith(legacyOnly)).toBe(false);
     expect(existsSync(resolved)).toBe(false);
+  });
+});
+
+describe('resolvePlatformDataPath', () => {
+  // case: S-054.22
+  it('resolves relative paths under platform data and preserves absolute paths', () => {
+    const dataRoot = '/install/state/data';
+    const context = { dataRoot };
+    expect(resolvePlatformDataPath('database/kb.sqlite', context, 'platform.adapterOptions.documentDatabase.filename'))
+      .toBe('/install/state/data/database/kb.sqlite');
+    expect(resolvePlatformDataPath('/var/lib/kb/external.sqlite', context, 'platform.adapterOptions.documentDatabase.filename'))
+      .toBe('/var/lib/kb/external.sqlite');
+  });
+
+  // case: S-054.22
+  it('rejects repository-prefixed and escaping relative adapter paths with corrected commands', () => {
+    const optionPath = 'platform.adapterOptions.documentDatabase.filename';
+    const capture = (value: string): unknown => {
+      try {
+        resolvePlatformDataPath(value, { dataRoot: '/install/state/data' }, optionPath);
+      } catch (error) {
+        return error;
+      }
+      throw new Error(`expected ${value} to be rejected`);
+    };
+    const prefixed = capture('.kb/database/kb.sqlite');
+    expect(prefixed).toMatchObject({ name: 'AdapterConfigError' });
+    expect(toErrorEnvelope(prefixed)).toMatchObject({
+      code: 'KB_CONFIG_INVALID',
+      details: { path: optionPath },
+      hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.documentDatabase.filename 'database/kb.sqlite'"),
+    });
+    const escaping = capture('../outside.sqlite');
+    expect(toErrorEnvelope(escaping)).toMatchObject({
+      code: 'KB_CONFIG_INVALID',
+      details: { path: optionPath },
+      hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.documentDatabase.filename 'outside.sqlite'"),
+    });
   });
 });

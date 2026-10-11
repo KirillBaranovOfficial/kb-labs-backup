@@ -37,18 +37,12 @@ describe('SQLiteAnalytics default path (ADR-0044)', () => {
     expect(existsSync(join(project, '.kb'))).toBe(false);
   });
 
-  it('keeps an explicit relative path under the project', () => {
-    const db = new SQLiteAnalytics({ workspace: { cwd: project }, dbPath: 'data/a.sqlite', context });
+  it('uses an explicit absolute path without deriving it from the project workspace', () => {
+    const externalPath = join(kbHome, 'platform-data', 'analytics.sqlite');
+    const db = new SQLiteAnalytics({ workspace: { cwd: project }, dbPath: externalPath, context });
     db.close();
 
-    expect(existsSync(join(project, 'data', 'a.sqlite'))).toBe(true);
+    expect(existsSync(externalPath)).toBe(true);
     expect(existsSync(resolveRuntimeStatePath(project, ['analytics']))).toBe(false);
-  });
-
-  it('honours the filename alias', () => {
-    const db = new SQLiteAnalytics({ workspace: { cwd: project }, filename: 'alias.sqlite', context });
-    db.close();
-
-    expect(existsSync(join(project, 'alias.sqlite'))).toBe(true);
   });
 });

@@ -162,7 +162,7 @@ func ForPlatformPath(platformPath string) (Layout, error) {
 }
 
 func (l Layout) SharedRuntimePath(platformPath string) (string, error) {
-	for _, shared := range contracts.SharedRuntimePaths() {
+	for _, shared := range contracts.SharedRuntimeProjections() {
 		if shared.PlatformPath == platformPath {
 			return filepath.Join(l.Root, filepath.FromSlash(shared.StatePath)), nil
 		}
@@ -281,7 +281,7 @@ func (l Layout) ValidateInitialTarget() error {
 		return nil
 	}
 	allowed := make([]string, 0)
-	for _, shared := range contracts.SharedRuntimePaths() {
+	for _, shared := range contracts.SharedRuntimeProjections() {
 		if shared.Preinstall {
 			allowed = append(allowed, filepath.ToSlash(shared.StatePath))
 		}
@@ -513,7 +513,7 @@ func (l Layout) prepareVersionRoot(root string, linkSharedState bool) error {
 	if !linkSharedState {
 		return nil
 	}
-	for _, shared := range contracts.SharedRuntimePaths() {
+	for _, shared := range contracts.SharedRuntimeProjections() {
 		linkPath := filepath.Join(root, filepath.FromSlash(shared.PlatformPath))
 		statePath := filepath.Join(l.Root, filepath.FromSlash(shared.StatePath))
 		if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
@@ -708,7 +708,7 @@ func (l Layout) prepareCurrentLink(target string) (string, error) {
 }
 
 func (l Layout) linkSharedRuntimeState(root string) error {
-	for _, shared := range contracts.SharedRuntimePaths() {
+	for _, shared := range contracts.SharedRuntimeProjections() {
 		linkPath := filepath.Join(root, filepath.FromSlash(shared.PlatformPath))
 		statePath := filepath.Join(l.Root, filepath.FromSlash(shared.StatePath))
 		if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {

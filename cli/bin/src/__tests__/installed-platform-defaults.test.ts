@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createServer, type Server } from 'node:http';
@@ -84,12 +84,19 @@ describe('installed platform adapter defaults', () => {
     const primaryPlatformRoot = path.join(tempRoot, 'primary-platform');
     const projectRoot = path.join(tempRoot, 'project');
     const home = path.join(tempRoot, 'home');
+    const dataRoot = path.join(tempRoot, 'state', 'data');
     await Promise.all([
-      mkdir(path.join(platformRoot, '.kb'), { recursive: true }),
+      mkdir(path.join(platformRoot, '.kb', 'v2'), { recursive: true }),
+      mkdir(dataRoot, { recursive: true }),
       mkdir(path.join(primaryPlatformRoot, '.kb', 'v2'), { recursive: true }),
       mkdir(projectRoot, { recursive: true }),
       mkdir(home, { recursive: true }),
     ]);
+    await writeFile(
+      path.join(platformRoot, '.kb', 'v2', 'platform-layout.json'),
+      await readFile(path.join(workspaceRoot, 'tools/kb-create/v2/contracts/platform-layout.json')),
+    );
+    await symlink(dataRoot, path.join(platformRoot, '.kb', 'data'), 'dir');
 
     primaryGatewayServer = createServer((request, response) => {
       response.setHeader('content-type', 'application/json');
@@ -234,6 +241,224 @@ describe('installed platform adapter defaults', () => {
     });
   });
 
+  // case: S-204.1, S-204.2, S-204.8, S-204.9, S-204.10, S-204.11
+  // case: S-054.21, S-054.22
+  it('resolves configured adapter paths from the shared platform data root for system and plugin commands', async () => {
+    const workspaceRoot = path.resolve(process.cwd(), '../..');
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-platform-data-root-'));
+    const installRoot = path.join(tempRoot, 'install');
+    const versionRoot = path.join(installRoot, 'versions', 'v1');
+    const platformRoot = path.join(installRoot, 'current');
+    const projectRoot = path.join(tempRoot, 'project');
+    const secondProjectRoot = path.join(tempRoot, 'project-b');
+    const home = path.join(tempRoot, 'home');
+    const dataRoot = path.join(installRoot, 'state', 'data');
+    await Promise.all([
+      mkdir(path.join(versionRoot, '.kb', 'v2'), { recursive: true }),
+      mkdir(dataRoot, { recursive: true }),
+      mkdir(projectRoot, { recursive: true }),
+      mkdir(secondProjectRoot, { recursive: true }),
+      mkdir(home, { recursive: true }),
+    ]);
+    const initialized = spawnSync('git', ['init', '--quiet', projectRoot], { encoding: 'utf8' });
+    expect(initialized.status, initialized.stderr).toBe(0);
+    const gitRepositories = new Set([projectRoot]);
+    await symlink(versionRoot, platformRoot, 'dir');
+    await writeFile(
+      path.join(versionRoot, '.kb', 'v2', 'platform-layout.json'),
+      await readFile(path.join(workspaceRoot, 'tools/kb-create/v2/contracts/platform-layout.json')),
+    );
+    await symlink(path.relative(path.join(versionRoot, '.kb'), dataRoot), path.join(versionRoot, '.kb', 'data'), 'dir');
+
+    gatewayServer = createServer((request, response) => {
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/health') {
+        response.end(JSON.stringify({ ok: true, data: { status: 'healthy' } }));
+        return;
+      }
+      if (request.url === '/health/identity') {
+        response.end(JSON.stringify({ ok: true, data: { installationId: 'platform-data-root-test' } }));
+        return;
+      }
+      if (request.url === '/health/adapters') {
+        response.end(JSON.stringify({ ok: true, data: [] }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('{}');
+    });
+    await new Promise<void>((resolve) => gatewayServer!.listen(0, '127.0.0.1', resolve));
+    const gatewayPort = (gatewayServer.address() as AddressInfo).port;
+    await writeFile(path.join(versionRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+      installationId: 'platform-data-root-test',
+      verification: { hostHealthUrl: `http://127.0.0.1:${gatewayPort}/health` },
+    }));
+
+    const configPath = path.join(versionRoot, '.kb', 'kb.config.jsonc');
+    const config = {
+      execution: { mode: 'in-process' },
+      platform: {
+        adapters: {
+          storage: '@kb-labs/adapters-fs',
+          cache: '@kb-labs/adapters-state-broker',
+          eventBus: '@kb-labs/adapters-eventbus-cache',
+          documentDatabase: '@kb-labs/adapters-sqlite',
+          kvStore: '@kb-labs/adapters-sqlite/kv',
+          analytics: '@kb-labs/adapters-analytics-sqlite',
+          logger: '@kb-labs/adapters-pino',
+          logRingBuffer: '@kb-labs/adapters-log-ringbuffer',
+          logPersistence: '@kb-labs/adapters-log-document',
+        },
+        adapterOptions: {
+          storage: { baseDir: 'storage' },
+          documentDatabase: { filename: 'database/kb.sqlite' },
+          kvStore: { filename: 'database/kb.sqlite' },
+          analytics: { dbPath: 'analytics/analytics.sqlite' },
+        },
+      },
+    };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    const adapterPackages = [
+      '@kb-labs/adapters-fs',
+      '@kb-labs/adapters-state-broker',
+      '@kb-labs/adapters-eventbus-cache',
+      '@kb-labs/adapters-sqlite',
+      '@kb-labs/adapters-analytics-sqlite',
+      '@kb-labs/adapters-pino',
+      '@kb-labs/adapters-log-ringbuffer',
+      '@kb-labs/adapters-log-document',
+    ];
+    const adapters = Object.fromEntries(adapterPackages.map(packageName => {
+      const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
+      return [packageName, {
+        version: '2.120.1',
+        integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        resolvedPath: path.relative(platformRoot, packagePath),
+        source: 'platform',
+        enabled: true,
+      }];
+    }));
+    const commitRoot = path.join(workspaceRoot, 'plugins/commit/entry');
+    const commitPackageJSON = await readFile(path.join(commitRoot, 'package.json'));
+    const commitPackage = JSON.parse(commitPackageJSON.toString('utf8')) as { version: string };
+    await writeFile(path.join(versionRoot, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@kb-labs/commit': {
+          version: commitPackage.version,
+          integrity: `sha256-${createHash('sha256').update(commitPackageJSON).digest('base64')}`,
+          package: '@kb-labs/commit-entry',
+          resolvedPath: path.relative(platformRoot, commitRoot),
+          source: 'platform',
+          enabled: true,
+        },
+      },
+      adapters,
+    }));
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      KB_HOME: path.join(home, '.kb'),
+      KB_PLATFORM_ROOT: platformRoot,
+      KB_PROJECT_ROOT: projectRoot,
+    };
+    delete env.KB_NET_OFFSET;
+    env.KB_GATEWAY_URL = `http://127.0.0.1:${gatewayPort}`;
+    env.NODE_ENV = 'production';
+    const cliPath = path.join(workspaceRoot, 'cli/bin/dist/bin.js');
+    const projectGit = spawnSync('git', ['init', '--quiet', projectRoot], { encoding: 'utf8' });
+    expect(projectGit.status, projectGit.stderr).toBe(0);
+    const projectTreeBefore = await snapshotRepositoryTree(projectRoot);
+    const secondProjectTreeBefore = await snapshotRepositoryTree(secondProjectRoot);
+    const assertRepositoriesUnchanged = async (): Promise<void> => {
+      await expect(access(path.join(projectRoot, '.kb'))).rejects.toThrow();
+      await expect(access(path.join(secondProjectRoot, '.kb'))).rejects.toThrow();
+      expect(await snapshotRepositoryTree(projectRoot)).toEqual(projectTreeBefore);
+      expect(await snapshotRepositoryTree(secondProjectRoot)).toEqual(secondProjectTreeBefore);
+      for (const repository of [projectRoot, secondProjectRoot]) {
+        if (!gitRepositories.has(repository)) continue;
+        const status = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+          cwd: repository, env, encoding: 'utf8',
+        });
+        expect(status.status, status.stderr).toBe(0);
+        expect(status.stdout).toBe('');
+      }
+    };
+    const runRepositoryCommand = async (cwd: string, args: string[]): Promise<void> => {
+      const result = spawnSync(process.execPath, [cliPath, ...args], {
+        cwd, env, encoding: 'utf8', timeout: 60_000,
+      });
+      expect(result.status, `${args.join(' ')}\n${result.stderr || result.stdout}`).toBe(0);
+      await assertRepositoriesUnchanged();
+    };
+
+    // Replay the S-204 settings flow in its recorded order. Snapshot both repos
+    // after every invocation so the first writer is attributed to its command.
+    await runRepositoryCommand(projectRoot, ['project', 'add', projectRoot, '--json']);
+    const secondProjectGit = spawnSync('git', ['init', '--quiet', secondProjectRoot], { encoding: 'utf8' });
+    expect(secondProjectGit.status, secondProjectGit.stderr).toBe(0);
+    gitRepositories.add(secondProjectRoot);
+    await assertRepositoriesUnchanged();
+    await runRepositoryCommand(secondProjectRoot, ['project', 'add', secondProjectRoot, '--json']);
+    await runRepositoryCommand(projectRoot, ['config', 'get', 'plugins.commit.llm.maxTokens', '--json']);
+    await runRepositoryCommand(projectRoot, ['config', 'set', '--scope', 'platform', 'plugins.commit.llm.maxTokens', '1900', '--json']);
+    await runRepositoryCommand(secondProjectRoot, ['config', 'get', 'plugins.commit.llm.maxTokens', '--json']);
+    await runRepositoryCommand(projectRoot, ['config', 'set', 'plugins.commit.llm.maxTokens', '1800', '--json']);
+    await runRepositoryCommand(projectRoot, ['config', 'get', 'plugins.commit.llm.maxTokens', '--json']);
+    await runRepositoryCommand(projectRoot, ['config', 'set', '--scope', 'platform', 'plugins.commit.scope.scopes', '[{"id":"journey-shared","label":"Shared","path":"."}]', '--json']);
+    await runRepositoryCommand(projectRoot, ['config', 'set', 'plugins.commit.scope.scopes', '[{"id":"journey-a","label":"Project A","path":"."}]', '--json']);
+    await runRepositoryCommand(projectRoot, ['config', 'get', 'plugins.commit.scope.scopes', '--json']);
+    await runRepositoryCommand(secondProjectRoot, ['config', 'get', 'plugins.commit.scope.scopes', '--json']);
+
+    const treeBefore = await snapshotRepositoryTree(projectRoot);
+    const statusBefore = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+      cwd: projectRoot, env, encoding: 'utf8',
+    }).stdout;
+
+    const systemCommand = spawnSync(process.execPath, [cliPath, 'adapter', 'list', '--json'], {
+      cwd: projectRoot, env, encoding: 'utf8', timeout: 60_000,
+    });
+    expect(systemCommand.status, systemCommand.stderr || systemCommand.stdout).toBe(0);
+    const canonicalDataRoot = await realpath(dataRoot);
+    expect(await realpath(path.join(dataRoot, 'database', 'kb.sqlite'))).toBe(path.join(canonicalDataRoot, 'database', 'kb.sqlite'));
+    expect(await realpath(path.join(dataRoot, 'analytics', 'analytics.sqlite'))).toBe(path.join(canonicalDataRoot, 'analytics', 'analytics.sqlite'));
+    expect(await snapshotRepositoryTree(projectRoot)).toEqual(treeBefore);
+    expect(spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: projectRoot, env, encoding: 'utf8' }).stdout)
+      .toBe(statusBefore);
+
+    for (const suffix of ['database/kb.sqlite', 'database/kb.sqlite-wal', 'database/kb.sqlite-shm', 'analytics/analytics.sqlite', 'analytics/analytics.sqlite-wal', 'analytics/analytics.sqlite-shm']) {
+      await rm(path.join(dataRoot, suffix), { force: true });
+    }
+    // This offline fixture has no installed host. Skip the receipt's live
+    // Gateway identity check so the project plugin handler runs in-process.
+    await rm(path.join(versionRoot, '.kb', 'v2', 'receipt.json'));
+    const pluginEnv = { ...env };
+    delete pluginEnv.KB_GATEWAY_URL;
+    const pluginCommand = spawnSync(process.execPath, [cliPath, 'commit', 'reset', '--json'], {
+      cwd: projectRoot, env: pluginEnv, encoding: 'utf8', timeout: 60_000,
+    });
+    expect(pluginCommand.status, pluginCommand.stderr || pluginCommand.stdout).toBe(0);
+    expect(JSON.parse(pluginCommand.stdout)).toMatchObject({ ok: true });
+    expect(await realpath(path.join(dataRoot, 'database', 'kb.sqlite'))).toBe(path.join(canonicalDataRoot, 'database', 'kb.sqlite'));
+    expect(await realpath(path.join(dataRoot, 'analytics', 'analytics.sqlite'))).toBe(path.join(canonicalDataRoot, 'analytics', 'analytics.sqlite'));
+    expect(await snapshotRepositoryTree(projectRoot)).toEqual(treeBefore);
+    expect(spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: projectRoot, env, encoding: 'utf8' }).stdout)
+      .toBe(statusBefore);
+
+    for (const invalidPath of ['.kb/database/kb.sqlite', '../outside.sqlite']) {
+      config.platform.adapterOptions.documentDatabase.filename = invalidPath;
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+      const invalid = spawnSync(process.execPath, [cliPath, 'adapter', 'list', '--json'], {
+        cwd: projectRoot, env, encoding: 'utf8', timeout: 60_000,
+      });
+      expect(invalid.status).not.toBe(0);
+      expect(invalid.stdout).toContain('KB_CONFIG_INVALID');
+      expect(invalid.stdout).toContain(invalidPath.startsWith('.kb/') ? 'database/kb.sqlite' : 'outside.sqlite');
+      expect(await snapshotRepositoryTree(projectRoot)).toEqual(treeBefore);
+    }
+  });
+
   // case: S-203.1
   it('keeps discovery diagnostics off JSON stdout', async () => {
     const workspaceRoot = path.resolve(process.cwd(), '../..');
@@ -314,4 +539,25 @@ function spawnCli(command: string, args: string[], options: { cwd: string; env: 
       resolve({ status, stdout, stderr });
     });
   });
+}
+
+async function snapshotRepositoryTree(root: string): Promise<Array<[string, string]>> {
+  const entries: Array<[string, string]> = [];
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.name === '.git') continue;
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(root, absolute);
+      if (entry.isDirectory()) {
+        entries.push([`${relative}/`, 'directory']);
+        await visit(absolute);
+      } else if (entry.isSymbolicLink()) {
+        entries.push([relative, `symlink:${await readlink(absolute)}`]);
+      } else {
+        entries.push([relative, (await readFile(absolute)).toString('base64')]);
+      }
+    }
+  };
+  await visit(root);
+  return entries.sort(([left], [right]) => left.localeCompare(right));
 }

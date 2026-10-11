@@ -137,7 +137,7 @@ const startGateway = async (choices: Choices): Promise<Instance> => {
     platform: {
       adapters: { documentDatabase: '@kb-labs/adapters-sqlite', serviceTransport: '@kb-labs/adapters-service-transport-http' },
       adapterOptions: {
-        documentDatabase: { filename: '.kb/database/kb.sqlite' },
+        documentDatabase: { filename: 'database/kb.sqlite' },
         serviceTransport: { services: { rest: { url: 'http://127.0.0.1:1' } } },
       },
     },

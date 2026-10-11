@@ -937,12 +937,16 @@ class InstallerCaseStepsTest(unittest.TestCase):
     def test_repeat_plan_snapshot_excludes_layout_runtime_state(self):
         with tempfile.TemporaryDirectory(prefix="journey-layout-runtime-state-") as temp:
             root = Path(temp)
+            layout_path = Path(__file__).resolve().parents[2] / "tools/kb-create/v2/contracts/platform-layout.json"
+            layout = json.loads(layout_path.read_text(encoding="utf-8"))
+            data_state_path = Path(layout["platformDataRoot"]["statePath"])
             version_root = root / "versions/v1"
             (version_root / ".kb").mkdir(parents=True)
             (root / "state/logs").mkdir(parents=True)
             (root / "state/logs/host.log").write_text("runtime\n")
-            (root / "state/data").mkdir(parents=True)
-            (root / "state/data/db.sqlite").write_text("runtime\n")
+            (root / data_state_path).mkdir(parents=True)
+            (root / data_state_path / "db.sqlite").write_text("runtime\n")
+            (root / "state/user-owned.txt").write_text("include this\n")
             (root / "state/kb.config.jsonc").write_text("{}\n")
             (version_root / ".kb/logs").symlink_to(Path("../../../state/logs"), target_is_directory=True)
             (version_root / ".kb/kb.config.jsonc").symlink_to(Path("../../../state/kb.config.jsonc"))
@@ -955,8 +959,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertNotIn("versions/v1/.kb/kb.config.jsonc", snapshot)
         self.assertNotIn("versions/v1/.kb/logs/host.log", snapshot)
         self.assertNotIn("state/logs/host.log", snapshot)
-        self.assertNotIn("state/data/db.sqlite", snapshot)
+        self.assertNotIn(str(data_state_path / "db.sqlite"), snapshot)
         self.assertNotIn("state/kb.config.jsonc", snapshot)
+        self.assertIn("state/user-owned.txt", snapshot)
 
     def test_receipt_service_graph_must_match_selected_plan_services(self):
         planned = {"services": [{"id": "api"}, {"id": "worker"}]}

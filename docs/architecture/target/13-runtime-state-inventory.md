@@ -17,8 +17,7 @@ workflows, overlays) stays in `.kb/`. See ADR-0044 and `03-domain-model.md` (thr
 - `KB_HOME` is respected. Nothing is created by the resolver; writers create the directories they need.
 - There is no fallback to the old in-repo location: files an earlier version left in `<project>/.kb/` are never
   read and never deleted.
-- Adapter defaults use it only when the user configured no path. An explicit path (absolute, or relative to the
-  project) is used exactly as before.
+- Adapter defaults use it only when the user configured no path. An explicit absolute path remains absolute; an explicit relative platform option resolves beneath the platform data root.
 
 ## Inventory
 
@@ -38,7 +37,7 @@ Class `state` = runtime state, `declaration` = stays in `.kb/`.
 | `plugins/host-agent/entry` build script that unlinked `../../../.kb/cache/cli-manifests.json` | build hook | none | state | hook removed: it only cleared the old file, and the cache self-invalidates by manifest integrity |
 | `.kb/logs/tmp/*`, `.kb/tmp/*` (kb-dev `logs_dir`, `pid_dir`, net-offset cache) | `tools/kb-dev` (Go) | kb-dev, `shared/testing-e2e` | state | **remains**, see below |
 | `.kb/logs/*` install transcript | `tools/kb-create/v2/logs/transcript.go` (platform root) | humans | state | **remains**: install log of the platform, not of a project |
-| `.kb/database/kb.sqlite` (`documentDatabase`, `kvStore`, `logs`) | sqlite adapters, path from the adapter options in `kb.config` | `kb logs *` via `platform.logs` | config-declared | **remains**: the adapters have no default, the path is written in the user's config (declaration). Changing it is a config change, not an adapter default |
+| `<platform data root>/database/kb.sqlite` (`documentDatabase`, `kvStore`, `logs`) | sqlite adapters, path from platform adapter options | `kb logs *` via `platform.logs` | platform state | resolves from `.kb/data` in development or install `state/data`; project defaults remain under project state |
 | `.kb/run-artifacts/`, `.kb/agents/sessions/`, `.kb/memory/sessions/`, `.kb/commit/`, `.kb/mind/`, `.kb/devkit/`, `.kb/bundle/`, `.kb/verdaccio/*`, `.kb/output` | plugins and kb-dev services | plugins | state | **remains**: plugin-owned paths; already git-ignored |
 | `.kb/kb.config.*`, `.kb/overlays/`, `.kb/marketplace.lock`, `.kb/marketplace.manifests.json`, `.kb/plugins.json`, `.kb/workflows/`, `.kb/deploy*`, `.kb/devservices*.yaml`, `.kb/lock.json` | config, marketplace, kb-create | config loader, discovery | declaration | stays |
 | `.kb/release/*` | release plugin | release plugin | release tooling state | out of scope (separate concern) |
@@ -58,5 +57,5 @@ the process runs with.
 ## Follow-ups
 
 1. kb-dev `logs_dir` / `pid_dir` into the state directory.
-2. Templates written by kb-create should stop declaring `.kb/database/...` and rely on a state-directory default
+2. Platform adapter paths resolve from the single platform data root; the install layout projects it into shared `state/data`.
    for the sqlite adapters.

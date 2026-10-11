@@ -43,6 +43,8 @@ export interface SerializableContext {
 
   // Platform configuration for worker initialization
   platformConfig?: Record<string, unknown>; // PlatformConfig from @kb-labs/core-runtime
+  platformRoot?: string;
+  workspaceDevelopment?: boolean;
 }
 
 /**
@@ -144,6 +146,8 @@ export function serializeContext(ctx: ExecutionContext): SerializableContext {
   // Include platform config if available (for worker initialization)
   if (ctx.platformConfig) {
     serializable.platformConfig = ctx.platformConfig;
+    serializable.platformRoot = ctx.platformRoot;
+    serializable.workspaceDevelopment = ctx.workspaceDevelopment;
   }
 
   return serializable;

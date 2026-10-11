@@ -39,11 +39,13 @@ describe("FileAnalytics default baseDir (ADR-0044)", () => {
     expect(existsSync(join(project, ".kb"))).toBe(false);
   });
 
-  it("keeps an explicit relative baseDir under the project", async () => {
-    const analytics = createAdapter({ workspace: { cwd: project }, analytics: context, baseDir: "events" });
+  it("writes an explicit resolved baseDir outside the project workspace", async () => {
+    const dataDir = join(kbHome, "platform-data", "events");
+    const analytics = createAdapter({ workspace: { cwd: project }, analytics: context, baseDir: dataDir });
     await analytics.track("llm.complete");
 
-    expect(readdirSync(join(project, "events")).length).toBeGreaterThan(0);
+    expect(readdirSync(dataDir).length).toBeGreaterThan(0);
+    expect(existsSync(join(project, "events"))).toBe(false);
     expect(existsSync(resolveRuntimeStatePath(project, ["analytics"]))).toBe(false);
   });
 });

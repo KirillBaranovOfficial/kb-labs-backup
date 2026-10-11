@@ -144,7 +144,7 @@ describe('deleteJsoncValue', () => {
       "storage": "@kb-labs/adapters-fs", // storage binding
       "cache": "@kb-labs/adapters-cache"
     },
-    "adapterOptions": { "storage": { "baseDir": ".kb/data" } }
+    "adapterOptions": { "storage": { "baseDir": "storage" } }
   }
 }
 `;
@@ -152,7 +152,7 @@ describe('deleteJsoncValue', () => {
     expect(parseJsonc(next)).toEqual({
       platform: {
         adapters: { cache: '@kb-labs/adapters-cache' },
-        adapterOptions: { storage: { baseDir: '.kb/data' } },
+        adapterOptions: { storage: { baseDir: 'storage' } },
       },
     });
     expect(next).toContain('// project options');

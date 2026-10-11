@@ -20,7 +20,7 @@ class PlatformStateDumpTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="journey-auth-probe-") as temporary:
             root = Path(temporary)
             active = create_test_install_container(root)
-            database = active / ".kb/database/kb.sqlite"
+            database = active / ".kb/data/database/kb.sqlite"
             database.parent.mkdir(parents=True)
             config = active / ".kb/kb.config.jsonc"
             config.write_text(json.dumps({"platform": {"adapterOptions": {
@@ -81,7 +81,11 @@ class PlatformStateDumpTests(unittest.TestCase):
             kb_home = root / "home" / ".kb"
             platform_root = root / "platform"
             active = create_test_install_container(platform_root)
-            database = active / ".kb" / "database" / "kb.sqlite"
+            data_root = platform_root / "state" / "data"
+            data_root.mkdir(parents=True)
+            (active / ".kb").mkdir(parents=True)
+            (active / ".kb" / "data").symlink_to(os.path.relpath(data_root, active / ".kb"), target_is_directory=True)
+            database = data_root / "database" / "kb.sqlite"
             database.parent.mkdir(parents=True)
             with sqlite3.connect(database) as connection:
                 connection.execute("CREATE TABLE doc_logs (id TEXT, data TEXT, created_at INT, updated_at INT)")
@@ -280,11 +284,15 @@ class PlatformStateDumpTests(unittest.TestCase):
             platform = home / "kb-platform"
             create_test_install_container(platform)
             project = home / "fresh-project"
+            project.mkdir()
             reports = home / "reports"
-            workflow_dir = project / ".kb/data/workflows"
-            log_dir = project / ".kb/logs"
+            project_state = home / ".kb/state/prj_test"
+            workflow_dir = project_state / "storage/workflows"
+            log_dir = project_state / "logs"
             workflow_dir.mkdir(parents=True)
             log_dir.mkdir(parents=True)
+            (home / ".kb").mkdir(parents=True, exist_ok=True)
+            (home / ".kb/projects.json").write_text(json.dumps({"projects": [{"id": "prj_test", "path": str(project)}]}))
             (workflow_dir / "run-success.json").write_text(
                 '{"id":"run-success","status":"success","input":{"message":"hello"},"token":"hidden"}'
             )
@@ -293,11 +301,11 @@ class PlatformStateDumpTests(unittest.TestCase):
             destination = dump_platform_state(
                 platform, reports, mode="local", front="agent", scenario="explore", variant="default",
                 first_failure="workflow did not reach a terminal status",
-                env={**os.environ, "PATH": ""}, cwd=home,
+                env={**os.environ, "HOME": str(home), "KB_HOME": str(home / ".kb"), "PATH": ""}, cwd=home,
             )
 
-            evidence = destination / "workflow-evidence/fresh-project/.kb/data/workflows/run-success.json"
-            daemon_log = destination / "workflow-evidence/fresh-project/.kb/logs/workflow-daemon.log"
+            evidence = destination / "workflow-evidence/fresh-project/project-state/storage/workflows/run-success.json"
+            daemon_log = destination / "workflow-evidence/fresh-project/project-state/logs/workflow-daemon.log"
             self.assertTrue(evidence.is_file())
             self.assertIn('"status": "success"', evidence.read_text())
             self.assertIn('"token": "[REDACTED]"', evidence.read_text())

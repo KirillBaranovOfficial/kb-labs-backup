@@ -277,7 +277,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
       };
 
       const baseOptions = {
-        baseDir: '.kb/analytics/buffer',
+        baseDir: 'analytics/buffer',
         filenamePattern: 'events-YYYYMMDD',
       };
 
@@ -298,7 +298,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
           source: { product: '@kb-labs/workspace-root' },
           runId: 'f8cb323c-54a4-45bb-afa1-8f17b5cf497e',
         },
-        baseDir: '.kb/analytics/buffer',
+        baseDir: 'analytics/buffer',
         filenamePattern: 'events-YYYYMMDD',
       });
     });

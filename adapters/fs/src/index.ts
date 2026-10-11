@@ -23,6 +23,7 @@ import fg from "fast-glob";
 import {
   resolveRuntimeStatePath,
   type IStorage,
+  type PlatformDataContext,
   type StorageMetadata,
 } from "@kb-labs/sdk/adapters";
 
@@ -35,6 +36,8 @@ export { manifest } from "./manifest.js";
 export interface FilesystemStorageConfig {
   /** Base directory for all file operations (default: platform state storage for this project) */
   baseDir?: string;
+  workspace?: { cwd: string };
+  platformData?: PlatformDataContext;
 }
 
 /**
@@ -44,7 +47,7 @@ export class FilesystemStorageAdapter implements IStorage {
   private baseDir: string;
 
   constructor(config: FilesystemStorageConfig = {}) {
-    this.baseDir = config.baseDir ?? resolveRuntimeStatePath(process.cwd(), ["storage"]);
+    this.baseDir = config.baseDir ?? resolveRuntimeStatePath(config.workspace?.cwd ?? process.cwd(), ["storage"]);
   }
 
   /**

@@ -94,9 +94,7 @@ services:
       - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
       - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
     volumes:
-      - gateway_data:/app/.kb/database
-      - gateway_storage:/app/.kb/storage
-      - gateway_analytics:/app/.kb/analytics
+      - gateway_data:/app/.kb/data
     depends_on:
       - kb-redis
     restart: unless-stopped
@@ -127,7 +125,7 @@ services:
     environment:
       - NODE_ENV=production
     volumes:
-      - workflow_analytics:/app/.kb/analytics
+      - gateway_data:/app/.kb/data
     depends_on:
       - kb-redis
     restart: unless-stopped
@@ -175,7 +173,4 @@ networks:
 volumes:
   redis_data:
   gateway_data:
-  gateway_storage:
-  gateway_analytics:
-  workflow_analytics:
   minio_data:

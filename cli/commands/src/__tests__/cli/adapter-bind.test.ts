@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { noopTraceContext, noopUI } from '@kb-labs/plugin-contracts';
@@ -67,7 +67,12 @@ beforeEach(async () => {
   platformRoot = join(sandbox, 'platform');
   projectRoot = join(sandbox, 'project');
   await mkdir(join(platformRoot, '.kb'), { recursive: true });
+  await mkdir(join(sandbox, 'state', 'data'), { recursive: true });
   await mkdir(join(projectRoot, '.kb'), { recursive: true });
+  await mkdir(join(platformRoot, '.kb', 'v2'), { recursive: true });
+  const workspaceRoot = join(process.cwd(), '../..');
+  await writeFile(join(platformRoot, '.kb', 'v2', 'platform-layout.json'), await readFile(join(workspaceRoot, 'tools/kb-create/v2/contracts/platform-layout.json')));
+  await symlink(join(sandbox, 'state', 'data'), join(platformRoot, '.kb', 'data'), 'dir');
   projectRoot = await realpath(projectRoot);
   await writeFile(join(platformRoot, '.kb', 'kb.config.json'), '{}');
   await writeFile(join(projectRoot, '.kb', 'kb.config.json'), '{}');
@@ -143,7 +148,7 @@ describe('kb adapter list', () => {
         kvStore: '@kb-labs/adapters-sqlite/kv',
         logRingBuffer: '@kb-labs/adapters-log-ringbuffer',
         logPersistence: '@kb-labs/adapters-log-document',
-      }, adapterOptions: { storage: { baseDir: '.kb/data' } } },
+      }, adapterOptions: { storage: { baseDir: 'storage' } } },
     }));
     const { ctx, outputs } = context();
     mockAdapterHealth(ctx, [
@@ -162,7 +167,7 @@ describe('kb adapter list', () => {
     expect(outputs[0]).toMatchObject({ ok: true });
     const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
     expect(adapters.find(({ slot }) => slot === 'storage')).toMatchObject({
-      implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: join(projectRoot, '.kb', 'data'), networkRequired: false,
+      implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: join(await realpath(join(sandbox, 'state', 'data')), 'storage'), networkRequired: false,
     });
     expect(adapters.find(({ slot }) => slot === 'llm')).toMatchObject({
       mode: 'unconfigured', requiresConfiguration: true, networkRequired: false,
@@ -224,7 +229,7 @@ describe('kb adapter list', () => {
       },
     });
     await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
-      platform: { adapterOptions: { storage: { baseDir: '.kb/data' } } },
+      platform: { adapterOptions: { storage: { baseDir: 'storage' } } },
     }));
     const { ctx, outputs } = context();
     mockAdapterHealth(ctx, [
@@ -236,7 +241,7 @@ describe('kb adapter list', () => {
     expect(code).toBe(0);
     const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
     expect(adapters.find(({ slot }) => slot === 'storage')).toMatchObject({
-      implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: join(projectRoot, '.kb', 'data'), networkRequired: false,
+      implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: join(await realpath(join(sandbox, 'state', 'data')), 'storage'), networkRequired: false,
     });
   });
 
@@ -459,7 +464,7 @@ describe('kb adapter bind', () => {
 describe('kb adapter unbind', () => {
   it('clears the platform binding and its options', async () => {
     await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
-      platform: { adapters: { storage: '@kb-labs/adapters-fs' }, adapterOptions: { storage: { baseDir: '.kb/data' } } },
+      platform: { adapters: { storage: '@kb-labs/adapters-fs' }, adapterOptions: { storage: { baseDir: 'storage' } } },
     }));
     const { ctx, outputs } = context();
 

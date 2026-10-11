@@ -92,6 +92,35 @@ def _project_state_dir(project_root: Path, env: dict[str, str]) -> Path:
     return kb_home / "state" / project["id"]
 
 
+def _repository_tree(root: Path) -> dict[str, bytes | str]:
+    snapshot: dict[str, bytes | str] = {}
+    for path in sorted(root.rglob("*")):
+        if ".git" in path.relative_to(root).parts:
+            continue
+        relative = str(path.relative_to(root))
+        if path.is_symlink():
+            snapshot[relative] = f"symlink:{os.readlink(path)}"
+        elif path.is_file():
+            snapshot[relative] = path.read_bytes()
+        elif path.is_dir():
+            snapshot[relative] = "directory"
+    return snapshot
+
+
+def _run_from_registered_project(
+    runner: CommandRunner,
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    **kwargs,
+) -> subprocess.CompletedProcess[str]:
+    baseline = _repository_tree(cwd)
+    result = run_with_runner(runner, command, cwd=str(cwd), env=env, **kwargs)
+    if _repository_tree(cwd) != baseline:
+        raise RuntimeError(f"{' '.join(command)} changed the registered project repository {cwd}")
+    return result
+
+
 def _restore_platform_adapter_fixture(
     config_path: Path,
     original_config: bytes | None,
@@ -123,6 +152,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     """Run S-054 and S-048 using installed `kb` commands in both auth modes."""
     project_a = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
+    registered_project_roots = {project_a}
     command_runner = runner
     def runner(command, **kwargs):
         options = dict(kwargs)
@@ -131,7 +161,20 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         text_mode = options.pop("text", True)
         options.pop("stdout", None)
         options.pop("stderr", None)
-        result = run_with_runner(command_runner, command, timeout=timeout, **options)
+        cwd_value = options.get("cwd")
+        cwd = Path(cwd_value).resolve() if cwd_value is not None else None
+        if cwd in registered_project_roots:
+            command_env = options.get("env") or base_env
+            result = _run_from_registered_project(
+                command_runner,
+                command,
+                cwd,
+                command_env,
+                timeout=timeout,
+                **{key: value for key, value in options.items() if key not in {"cwd", "env", "timeout"}},
+            )
+        else:
+            result = run_with_runner(command_runner, command, timeout=timeout, **options)
         stdout = result.stdout or ""
         stderr = result.stderr or ""
         if text_mode:
@@ -626,9 +669,13 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
 
     try:
         add = ["project", "add", str(project_b), "--json"]
+        project_b_baseline = _repository_tree(project_b)
         if _json(cli(add), add).get("ok") is not True:
             raise RuntimeError("could not register project B for adapter isolation check")
+        if _repository_tree(project_b) != project_b_baseline:
+            raise RuntimeError("project add changed the repository being registered for adapter isolation")
         project_b_registered = True
+        registered_project_roots.add(project_b.resolve())
 
         def bind_platform_adapter() -> None:
             command = ["adapter", "bind", "storage", "@kb-labs/adapters-fs", "--json"]
@@ -645,11 +692,12 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         journey.step("bind the platform storage adapter", "adapter", bind_platform_adapter, cases=["S-048.1"])
 
         def set_platform_options() -> None:
-            command = ["config", "set", "--scope", "platform", "platform.adapterOptions.storage", '{"baseDir":".kb/data"}', "--json"]
+            command = ["config", "set", "--scope", "platform", "platform.adapterOptions.storage", '{"baseDir":"storage"}', "--json"]
             if _json(cli(command, platform_root), command).get("ok") is not True:
                 raise RuntimeError("could not set platform storage options")
             for project in (project_a, project_b):
-                if rows_for(project).get("storage", {}).get("baseDir") != str(project / ".kb" / "data"):
+                expected_base = Path(os.path.realpath(platform_content_root / ".kb" / "data")) / "storage"
+                if rows_for(project).get("storage", {}).get("baseDir") != str(expected_base):
                     raise RuntimeError(f"project {project} did not use the platform storage options")
         journey.step("configure platform storage options", "adapter", set_platform_options,
                      cases=["S-048.2"], requires=("step:bind the platform storage adapter",))
@@ -698,6 +746,63 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                     raise RuntimeError(f"project {project} adapter binding changed after plugin attachment")
         journey.step("attach a plugin to project A only", "plugin", attach_project_plugin,
                      cases=["S-048.4"], requires=("step:reject project adapter configuration",))
+
+        def assert_platform_data_root_isolated() -> None:
+            for option, value in (
+                ("platform.adapterOptions.documentDatabase", {"filename": "database/kb.sqlite"}),
+                ("platform.adapterOptions.analytics", {"dbPath": "analytics/analytics.sqlite"}),
+            ):
+                command = ["config", "set", "--scope", "platform", option, json.dumps(value), "--json"]
+                if _json(cli(command, platform_root), command).get("ok") is not True:
+                    raise RuntimeError(f"could not configure platform data path {option}")
+
+            baseline = _repository_tree(project_a)
+            for command in (["adapter", "list", "--json"], ["commit", "reset", "--json"]):
+                result = cli(list(command), project_a)
+                payload = _json(result, list(command))
+                if result.returncode != 0 or payload.get("ok") is not True:
+                    raise RuntimeError(f"project command {' '.join(command)} failed while checking platform data isolation")
+                if _repository_tree(project_a) != baseline:
+                    raise RuntimeError(f"{' '.join(command)} changed the registered project repository")
+
+            data_root = Path(os.path.realpath(platform_content_root / ".kb" / "data"))
+            for relative in ("database/kb.sqlite", "analytics/analytics.sqlite"):
+                if not (data_root / relative).is_file():
+                    raise RuntimeError(f"platform adapter output is missing under {data_root}: {relative}")
+
+        journey.step("platform adapter data paths leave registered project unchanged", "adapter",
+                     assert_platform_data_root_isolated, cases=["S-054.21"])
+        if journey.steps[-1].status != "PASS":
+            return
+
+        def reject_invalid_platform_data_path() -> None:
+            baseline = _repository_tree(project_a)
+            for invalid_path, corrected in ((".kb/database/kb.sqlite", "database/kb.sqlite"),
+                                            ("../outside.sqlite", "outside.sqlite")):
+                command = ["config", "set", "--scope", "platform", "platform.adapterOptions.documentDatabase",
+                           json.dumps({"filename": invalid_path}), "--json"]
+                if _json(cli(command, platform_root), command).get("ok") is not True:
+                    raise RuntimeError("could not set the invalid platform data path for validation")
+                probe = ["adapter", "list", "--json"]
+                result = runner(["kb", *probe], cwd=str(project_a), env=base_env,
+                                capture_output=True, text=True, timeout=300)
+                payload = _json(result, probe)
+                error = payload.get("error")
+                if result.returncode == 0 or not isinstance(error, dict) or error.get("code") != "KB_CONFIG_INVALID":
+                    raise RuntimeError("invalid platform data path did not return KB_CONFIG_INVALID")
+                if corrected not in str(error.get("hint", "")):
+                    raise RuntimeError("platform path error hint omitted its corrected value")
+                if _repository_tree(project_a) != baseline:
+                    raise RuntimeError("invalid platform data path changed the registered project repository")
+            restore = ["config", "set", "--scope", "platform", "platform.adapterOptions.documentDatabase",
+                       json.dumps({"filename": "database/kb.sqlite"}), "--json"]
+            if _json(cli(restore, platform_root), restore).get("ok") is not True:
+                raise RuntimeError("could not restore the valid platform database path")
+
+        journey.step("reject platform adapter paths outside the data root", "adapter",
+                     reject_invalid_platform_data_path, cases=["S-054.22"])
+        if journey.steps[-1].status != "PASS":
+            return
 
         def verify_project_configs() -> None:
             for project in (project_a, project_b):

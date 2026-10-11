@@ -23,7 +23,7 @@ export const manifest: AdapterManifest = {
   optional: {
     adapters: ["cache"], // Optional cache dependency for stats caching
   },
-  contexts: ["workspace", "analytics"], // Request runtime contexts
+  contexts: ["workspace", "analytics", "platformData"], // Request runtime contexts
   capabilities: {
     search: true,
     custom: {
@@ -36,6 +36,7 @@ export const manifest: AdapterManifest = {
     baseDir: {
       type: "string",
       description: "Base directory for analytics logs (default: <KB_HOME>/state/<projectId>/analytics/buffer)",
+      pathBase: 'platformData',
     },
     filenamePattern: {
       type: "string",
