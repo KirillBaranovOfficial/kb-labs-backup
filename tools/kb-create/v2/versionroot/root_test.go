@@ -1,6 +1,8 @@
 package versionroot
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -397,6 +399,271 @@ func TestInterruptedInitialActivationResumesFromTheInstallContainer(t *testing.T
 	}
 }
 
+func TestInterruptedInitialRecoveryRefusesInvalidProvenanceWithoutMutation(t *testing.T) {
+	for name, corrupt := range map[string]func(*testing.T, Layout){
+		"mismatched owner": func(t *testing.T, layout Layout) {
+			owner, err := layout.readOwnership()
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner.InstallationID = "ffeeddccbbaa99887766554433221100"
+			data, err := json.Marshal(owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(layout.ownershipPath(), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"completed ownership state": func(t *testing.T, layout Layout) {
+			owner, err := layout.readOwnership()
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner.InitialInstallState = "complete"
+			data, err := json.Marshal(owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(layout.ownershipPath(), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"foreign root entry": func(t *testing.T, layout Layout) {
+			if err := os.WriteFile(filepath.Join(layout.Root, "foreign.txt"), []byte("user bytes\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			layout := interruptedFinalizedInitialInstall(t)
+			corrupt(t, layout)
+			before := snapshotLayoutTarget(t, layout.Root)
+			if err := layout.ValidateInitialTarget(); err == nil {
+				t.Fatal("recovery accepted a target without valid provenance and declared entries")
+			}
+			if after := snapshotLayoutTarget(t, layout.Root); !bytes.Equal(after, before) {
+				t.Fatalf("refused recovery target changed: before=%q after=%q", before, after)
+			}
+		})
+	}
+}
+
+func interruptedFinalizedInitialInstall(t *testing.T) Layout {
+	t.Helper()
+	layout, err := New(filepath.Join(t.TempDir(), "platform"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, stage, "1.0.0", "receipt-1")
+	crash := errors.New("simulated interruption after finalizing the staged version")
+	if _, err := layout.activateInitial(stage, "1.0.0", "plan-1", func(point HandoffPoint) error {
+		if point == HandoffInitialTargetFinalized {
+			return crash
+		}
+		return nil
+	}); !errors.Is(err, crash) {
+		t.Fatalf("initial activation error = %v, want injected interruption", err)
+	}
+	return layout
+}
+
+func TestInitialTargetRefusesSymlinkedAndWrongTypedOwnedEntries(t *testing.T) {
+	for name, setup := range map[string]func(*testing.T, Layout, string){
+		"state symlink": func(t *testing.T, layout Layout, outside string) {
+			if err := os.RemoveAll(layout.SharedStateDir()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, layout.SharedStateDir()); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"nested scenario symlink": func(t *testing.T, layout Layout, outside string) {
+			target := filepath.Join(layout.SharedStateDir(), "scenarios")
+			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, target); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"state wrong type": func(t *testing.T, layout Layout, _ string) {
+			if err := os.RemoveAll(layout.SharedStateDir()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(layout.SharedStateDir(), []byte("not a directory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			layout, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := layout.PrepareInitialTarget(); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(t.TempDir(), "outside")
+			if err := os.Mkdir(outside, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(outside, "keep.txt"), []byte("external bytes\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			outsideBefore := snapshotLayoutTarget(t, outside)
+			setup(t, layout, outside)
+			before := snapshotLayoutTarget(t, root)
+			if err := layout.ValidateInitialTarget(); err == nil {
+				t.Fatal("symlinked or wrong-typed declared entry was accepted")
+			}
+			if after := snapshotLayoutTarget(t, root); !bytes.Equal(after, before) {
+				t.Fatalf("refused root changed: before=%q after=%q", before, after)
+			}
+			if after := snapshotLayoutTarget(t, outside); !bytes.Equal(after, outsideBefore) {
+				t.Fatalf("external target changed: before=%q after=%q", outsideBefore, after)
+			}
+		})
+	}
+}
+
+func TestInitialTargetRefusesVersionLinksThatEscapeTheContainer(t *testing.T) {
+	layout, err := New(filepath.Join(t.TempDir(), "platform"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external-version-state")
+	if err := os.Mkdir(external, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(external, "keep.txt")
+	if err := os.WriteFile(marker, []byte("external version bytes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(stage, ".kb", "data")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, link); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.ValidateInitialTarget(); err == nil {
+		t.Fatal("version projection escaping the install root was accepted")
+	}
+	if after, err := os.ReadFile(marker); err != nil || string(after) != string(before) {
+		t.Fatalf("external version state changed: before=%q after=%q error=%v", before, after, err)
+	}
+}
+
+func TestInstalledStructureRefusesSymlinkedContainerDirectories(t *testing.T) {
+	for _, name := range []string{"state", "versions"} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			layout, active := initialLayout(t, root, "1.0.0")
+			outside := filepath.Join(t.TempDir(), name)
+			if name == "state" {
+				if err := os.Rename(layout.SharedStateDir(), outside); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, layout.SharedStateDir()); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.Rename(layout.VersionsDir(), outside); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, layout.VersionsDir()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := os.Stat(active); err != nil {
+				t.Fatalf("test fixture active root disappeared: %v", err)
+			}
+			if err := layout.Validate(); err == nil {
+				t.Fatalf("Validate accepted symlinked %s container directory", name)
+			}
+		})
+	}
+}
+
+func TestInitialOwnershipRecordAloneProvesInterruptedFirstInstall(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	owner := []byte("{\"schema\":\"kb.create.installation-owner/v1\",\"installationId\":\"00112233445566778899aabbccddeeff\",\"initialInstallState\":\"in-progress\"}\n")
+	if err := os.WriteFile(filepath.Join(root, "ownership.json"), owner, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.ValidateInitialTarget(); err != nil {
+		t.Fatalf("single complete ownership write was not recoverable: %v", err)
+	}
+}
+
+func TestInitialProvenanceWriteHasOneRecoverableBoundary(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	layout, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crash := errors.New("simulated process termination after ownership write")
+	if _, err := layout.stageInitial(func(point HandoffPoint) error {
+		if point == HandoffInitialOwnershipWritten {
+			return crash
+		}
+		return nil
+	}); !errors.Is(err, crash) {
+		t.Fatalf("stage error = %v, want injected termination at the ownership-write boundary", err)
+	}
+	if _, err := os.Lstat(layout.InstallerStateDir()); !os.IsNotExist(err) {
+		t.Fatalf("provenance created a second record outside the ownership entry: %v", err)
+	}
+	if err := layout.ValidateInitialTarget(); err != nil {
+		t.Fatalf("single ownership record did not prove the interrupted first install: %v", err)
+	}
+	if _, err := layout.StageInitial(); err != nil {
+		t.Fatalf("retry after the ownership-write boundary failed: %v", err)
+	}
+}
+
+func TestEmptyOwnershipFileIsRecoverableAsAnUnwrittenTarget(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ownership.json"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.PrepareInitialTarget(); err != nil {
+		t.Fatalf("empty ownership write boundary was not recoverable: %v", err)
+	}
+	owner, err := layout.readOwnership()
+	if err != nil || owner.InitialInstallState != "in-progress" {
+		t.Fatalf("repaired owner = %#v, %v", owner, err)
+	}
+}
+
 // case: PC-001.18
 func TestEveryDeclaredCrashPointCanRetryInstallOrRemoveOwnedLayout(t *testing.T) {
 	for _, point := range CrashPoints() {
@@ -700,14 +967,17 @@ func TestUnversionedDirectoryIsNotMigratedOnActivation(t *testing.T) {
 
 func TestInitialTargetAcceptsOnlyContractDeclaredRuntimeState(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "platform")
+	layout, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.PrepareInitialTarget(); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, "state", "cache"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "state", "cache", "plan.json"), []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	layout, err := New(root)
-	if err != nil {
 		t.Fatal(err)
 	}
 	if err := layout.ValidateInitialTarget(); err != nil {
@@ -719,6 +989,74 @@ func TestInitialTargetAcceptsOnlyContractDeclaredRuntimeState(t *testing.T) {
 	if err := layout.ValidateInitialTarget(); err == nil {
 		t.Fatal("unrelated user data was accepted as a fresh install target")
 	}
+}
+
+func TestInitialTargetRefusesUnattributedPreinstallAndDamagedOwnership(t *testing.T) {
+	for name, setup := range map[string]func(*testing.T, string){
+		"foreign scenario file": func(t *testing.T, root string) {
+			path := filepath.Join(root, "state", "scenarios", "foreign.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("foreign bytes\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"ownership and versions without current": func(t *testing.T, root string) {
+			if err := os.MkdirAll(filepath.Join(root, "versions", "1.0.0"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "ownership.json"), []byte(`{"schema":"kb.create.installation-owner/v1","installationId":"00112233445566778899aabbccddeeff"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			if err := os.MkdirAll(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			setup(t, root)
+			layout, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotLayoutTarget(t, root)
+			if err := layout.ValidateInitialTarget(); err == nil {
+				t.Fatal("unattributed target was accepted")
+			}
+			if after := snapshotLayoutTarget(t, root); !bytes.Equal(after, before) {
+				t.Fatalf("refused target changed: before=%q after=%q", before, after)
+			}
+		})
+	}
+}
+
+func snapshotLayoutTarget(t *testing.T, root string) []byte {
+	t.Helper()
+	var snapshot bytes.Buffer
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&snapshot, "%s %s\n", relative, info.Mode())
+		if info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			snapshot.Write(data)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot.Bytes()
 }
 
 func TestInstallRootContainerKeepsLifecycleWritesInsideTheChosenDirectory(t *testing.T) {

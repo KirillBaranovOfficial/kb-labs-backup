@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 )
 
 //go:embed platform-layout.json
@@ -123,6 +124,20 @@ func InstallerRecordPath(installRoot, record string) string {
 	return filepath.Join(installRoot, filepath.FromSlash(relative))
 }
 
+func InstallerRecordDirectories(installRoot string) []string {
+	var layout platformLayout
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil ||
+		layout.InstallerRecords.OperationLogs == "" || layout.InstallerRecords.FailureDossiers == "" ||
+		layout.InstallerRecords.Snapshots == "" {
+		panic("invalid embedded platform layout installer-record directories")
+	}
+	return []string{
+		filepath.Join(installRoot, filepath.FromSlash(layout.InstallerRecords.OperationLogs)),
+		filepath.Join(installRoot, filepath.FromSlash(layout.InstallerRecords.FailureDossiers)),
+		filepath.Join(installRoot, filepath.FromSlash(layout.InstallerRecords.Snapshots)),
+	}
+}
+
 func SnapshotRetention() int {
 	var layout platformLayout
 	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil || layout.InstallerRecords.SnapshotRetention < 0 {
@@ -137,6 +152,38 @@ func OwnedInstallEntries() []string {
 		panic("invalid embedded platform layout contract: " + err.Error())
 	}
 	return append([]string(nil), layout.OwnedEntries...)
+}
+
+// OwnedInstallEntryKinds derives each owned install-root entry's required
+// filesystem kind from the embedded layout contract.
+func OwnedInstallEntryKinds() map[string]string {
+	var layout platformLayout
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil {
+		panic("invalid embedded platform layout contract: " + err.Error())
+	}
+	kinds := map[string]string{}
+	add := func(path, kind string) {
+		rootEntry, nested, _ := strings.Cut(filepath.ToSlash(path), "/")
+		if rootEntry == "" || (nested != "" && kind != "directory") {
+			panic("invalid embedded platform layout owned-entry path: " + path)
+		}
+		if existing, ok := kinds[rootEntry]; ok && existing != kind {
+			panic("conflicting embedded platform layout owned-entry kinds: " + rootEntry)
+		}
+		kinds[rootEntry] = kind
+	}
+	add(layout.CurrentLink, "symlink")
+	add(layout.VersionRoots.Path, "directory")
+	add(layout.SharedStateDirectory, "directory")
+	add(layout.InstallerStateDirectory, "directory")
+	add(layout.OwnershipRecord, "file")
+	for _, entry := range layout.OwnedEntries {
+		rootEntry, _, _ := strings.Cut(filepath.ToSlash(entry), "/")
+		if _, ok := kinds[rootEntry]; !ok {
+			panic("embedded platform layout has an owned entry without a declared kind: " + entry)
+		}
+	}
+	return kinds
 }
 
 func SharedRuntimePaths() []SharedRuntimePath {

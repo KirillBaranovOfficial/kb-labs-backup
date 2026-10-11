@@ -26,6 +26,7 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_apply_scenario_step,
                                   run_uninstall_decline_step, run_missing_project_request_steps,
                                   run_fixture_group)
+from installer_case_steps import parse_install_refusal
 from journey_resources import case_catalog_root, journey_module, workspace_resource
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
@@ -139,11 +140,27 @@ def probe_platform_state(graph: FlowGraph, env: dict[str, str], launcher: str,
 
 
 def record_case(name: str, passed: bool, message: str, *, cases: list[str],
-                requires: tuple[str, ...] = ()) -> None:
+                requires: tuple[str, ...] = (), details: dict | None = None) -> None:
     if CASE_JOURNEY is None:
         return
     CASE_JOURNEY.step(name, "platform.install", lambda: None if passed else message, cases=cases,
-                      requires=requires)
+                      requires=requires, details=(lambda: details) if details is not None else None)
+
+
+def handle_json_install_failure(operation: str, result: subprocess.CompletedProcess) -> bool:
+    if operation != "install" or result.returncode == 0:
+        return False
+    refusal = parse_install_refusal(result.stdout)
+    if refusal is None:
+        fail("kb-create install --json: failed without a parseable product error envelope")
+        return True
+    message = (f"{refusal['code']}: {refusal['message']}; "
+               f"cause={refusal.get('cause', '')}; hint={refusal.get('hint', '')}")
+    record_case("JSON install progress", False, message,
+                cases=["PC-001.17", "S-203.10", "S-203.13"],
+                details={"productEnvelope": refusal})
+    fail(f"kb-create install --json: {message}")
+    return True
 
 
 def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
@@ -879,6 +896,9 @@ def main():
                 fail(f"relative platform root: expected a successful plan with an absolute normalized root; {' '.join(result.stdout.split())[-500:]}")
             append_summary(passed)
             return 0 if passed else failure_exit()
+        if handle_json_install_failure(operation, result):
+            append_summary(False)
+            return failure_exit()
         if not require(result, step=f"kb-create {operation} --json"):
             cleanup_partial_install(outer_graph, env, launcher)
             append_summary(False)

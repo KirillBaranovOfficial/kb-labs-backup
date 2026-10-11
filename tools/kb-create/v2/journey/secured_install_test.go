@@ -30,6 +30,13 @@ import (
 
 func primeOfflineCatalog(t *testing.T, root string, source *catalog.Catalog) {
 	t.Helper()
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.PrepareInitialTarget(); err != nil {
+		t.Fatalf("prepare owned install root before caching artifacts: %v", err)
+	}
 	write := func(kind, id string, hash *string) {
 		payload := []byte(kind + ":" + id)
 		sum := sha256.Sum256(payload)
@@ -38,10 +45,6 @@ func primeOfflineCatalog(t *testing.T, root string, source *catalog.Catalog) {
 		name := *hash + ".tgz"
 		if kind == "binary" {
 			directory, name = "binaries", *hash
-		}
-		layout, err := versionroot.New(root)
-		if err != nil {
-			t.Fatal(err)
 		}
 		cache, err := layout.SharedRuntimePath(".kb/v2/cache")
 		if err != nil {

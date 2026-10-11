@@ -270,11 +270,27 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                         front: str, scenario: str, variant: str, first_failure: str,
                         env: Mapping[str, str] | None = None, cwd: str | Path | None = None,
                         admin_password: str = "") -> Path:
-    """Write a best-effort platform snapshot and index; never raise dump errors."""
+    """Write a platform snapshot, or an explicit diagnosis when no valid root exists."""
     root = Path(platform_root)
-    active = active_platform_root(root)
     reports = Path(reports_dir)
     destination = reports / f"platform-state-{mode}-{front}-{scenario}-{variant}"
+    try:
+        active = active_platform_root(root)
+    except (FileNotFoundError, ValueError) as error:
+        destination.mkdir(parents=True, exist_ok=True)
+        diagnosis = {
+            "schema": "kb.journey.install-root-diagnosis/v1",
+            "platformRoot": str(root),
+            "layoutError": str(error),
+            "firstFailure": first_failure,
+        }
+        _write_evidence_text(
+            destination / "install-root-diagnosis.json",
+            json.dumps(diagnosis, indent=2) + "\n",
+            env=env,
+            secrets=(admin_password,) if admin_password else (),
+        )
+        return destination
     try:
         destination.mkdir(parents=True, exist_ok=True)
         used = 0

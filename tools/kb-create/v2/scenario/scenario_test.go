@@ -11,6 +11,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/render"
 	"github.com/kb-labs/create/v2/resolve"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 func TestMigratedBuiltinsCompileToSharedV2Requests(t *testing.T) {
@@ -67,6 +68,52 @@ func TestScenarioResumePersistsOnlyNonSecretAnswers(t *testing.T) {
 	loaded, err := LoadState(root, definition)
 	if err != nil || string(loaded.Answers["mode"]) != `"local"` || loaded.Answers["token"] != nil {
 		t.Fatalf("loaded/error = %#v / %v", loaded, err)
+	}
+}
+
+func TestScenarioStateRefusesSymlinkedInstallContainerWithoutExternalWrites(t *testing.T) {
+	definition, err := Load("explore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := New(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "platform")
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.PrepareInitialTarget(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(layout.SharedStateDir()); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external-state")
+	if err := os.Mkdir(external, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(external, "keep.txt")
+	if err := os.WriteFile(marker, []byte("external bytes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, layout.SharedStateDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveState(root, definition, state); err == nil {
+		t.Fatal("scenario state accepted symlinked shared state")
+	}
+	if after, err := os.ReadFile(marker); err != nil || string(after) != string(before) {
+		t.Fatalf("external state changed: before=%q after=%q error=%v", before, after, err)
+	}
+	if _, err := os.Lstat(filepath.Join(external, "scenarios")); !os.IsNotExist(err) {
+		t.Fatalf("scenario writer escaped through state link: %v", err)
 	}
 }
 

@@ -109,12 +109,12 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	platformRoot := root
 	initialStage := ""
 	platformRoot = layout.PlatformRoot()
+	if err := layout.PrepareInitialTarget(); err != nil {
+		return applyCommandResult{}, unsupportedPlatformLayout(root, err)
+	}
 	if _, receiptErr := receipt.Read(platformRoot); receiptErr != nil {
 		if !os.IsNotExist(receiptErr) {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable, "the active receipt could not be read", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` before reinstalling", receiptErr)
-		}
-		if err := layout.ValidateInitialTarget(); err != nil {
-			return applyCommandResult{}, unsupportedPlatformLayout(root, err)
 		}
 		if _, activeErr := receipt.Read(layout.PlatformRoot()); activeErr == nil {
 			if err := layout.Validate(); err != nil {

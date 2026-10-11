@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -47,12 +48,12 @@ type planResult struct {
 }
 
 type planCommandInput struct {
-	Index, RequestFile, ScenarioID, Answers, Executable string
-	Direct                                              directRequest
-	Resume                                              bool
-	KnownGateways                                       []gateway.Root
-	TelemetryEndpoint                                   string
-	TelemetryConsent                                    bool
+	Index, RequestFile, ScenarioID, Answers, Registry, Executable string
+	Direct                                                        directRequest
+	Resume                                                        bool
+	KnownGateways                                                 []gateway.Root
+	TelemetryEndpoint                                             string
+	TelemetryConsent                                              bool
 }
 
 func executePlan(_ context.Context, request planCommandInput) (planResult, *diag.Diag) {
@@ -63,6 +64,18 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 		telemetry.Send(request.TelemetryEndpoint, request.TelemetryConsent, telemetry.New("plan", outcome, errorCode,
 			string(plan.Request.Platform.Channel), string(plan.Request.Source), len(plan.Artifacts), time.Since(started)))
 	}()
+	if request.Registry != "" {
+		registry, err := url.Parse(request.Registry)
+		if err != nil || registry.Host == "" || (registry.Scheme != "http" && registry.Scheme != "https") {
+			cause := err
+			if cause == nil {
+				cause = fmt.Errorf("registry URL must use HTTP or HTTPS and include a host")
+			}
+			return planResult{}, inputFailure(failure(contracts.CodeInputRequired,
+				"--registry must be an absolute HTTP or HTTPS URL",
+				"pass a registry such as `https://registry.npmjs.org`, then rerun `kb-create plan`", cause))
+		}
+	}
 	resolved, failure := resolvePlan(planInput{Index: request.Index, RequestFile: request.RequestFile, Direct: request.Direct,
 		Operation: "plan", ScenarioID: request.ScenarioID, Answers: request.Answers, Resume: request.Resume,
 		Executable: request.Executable, KnownGateways: request.KnownGateways})
@@ -205,6 +218,11 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 					return resolvedPlan{}, diagnostic
 				}
 				return resolvedPlan{}, failure(contracts.CodeInputRequired, "project selection is invalid", "pass an existing project directory, then retry", requestErr)
+			}
+		}
+		if input.ScenarioID != "" {
+			if failure := validateInstallTarget(request.PlatformRoot); failure != nil {
+				return resolvedPlan{}, failure
 			}
 		}
 		if input.ScenarioID != "" {

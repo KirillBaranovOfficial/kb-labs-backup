@@ -16,6 +16,27 @@ from test_install_layout import create_test_install_container, move_test_platfor
 
 
 class PlatformStateDumpTests(unittest.TestCase):
+    def test_invalid_install_root_is_recorded_without_crashing_failure_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            platform = base / "kb-platform"
+            platform.mkdir()
+            (platform / "current").write_text("not a layout link\n")
+            reports = base / "reports"
+
+            destination = dump_platform_state(
+                platform, reports, mode="local", front="agent", scenario="explore",
+                variant="default", first_failure=(
+                    'kb-create install --json: exit 2; '
+                    '{"error":{"code":"KB_INSTALL_LAYOUT_UNSUPPORTED"}}'),
+            )
+
+            diagnosis = json.loads((destination / "install-root-diagnosis.json").read_text())
+            self.assertEqual(diagnosis["firstFailure"],
+                             'kb-create install --json: exit 2; '
+                             '{"error":{"code":"KB_INSTALL_LAYOUT_UNSUPPORTED"}}')
+            self.assertIn("current is not a symlink", diagnosis["layoutError"])
+
     def test_auth_state_probe_reports_aggregate_status_and_database_identity_without_tokens(self):
         with tempfile.TemporaryDirectory(prefix="journey-auth-probe-") as temporary:
             root = Path(temporary)
