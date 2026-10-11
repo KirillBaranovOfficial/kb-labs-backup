@@ -655,3 +655,16 @@ tracked only by the former shared `~/.kb/launcher/host.pid` location are not
 migrated into per-root state; users must stop and start those hosts with the
 current launcher. No compatibility reader or migration shim is maintained.
 Cases: PC-001.10, PC-001.12, PC-001.16.
+
+## 2026-10-11
+
+### Project registration belongs to the user after bootstrap
+
+A first install registers its selected project through the Gateway as the first
+administrator created by that install, without saving a CLI session. Local and
+secured installs use the same host-owned project API. Later install/apply calls
+may keep the recorded project selection or omit it; a different non-empty
+selection is refused before apply so the user can authenticate and register it
+explicitly. Duplicate registration of the same canonical path returns the
+existing record unless a conflicting name was requested. Update never
+registers projects. Cases: S-124.14, S-187.9–S-187.12, S-224.1.

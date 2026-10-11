@@ -53,8 +53,8 @@ export interface AddProjectRequest {
 }
 
 export type AddProjectOutcome =
-  | { status: 'planned'; project: ProjectRecord }
-  | { status: 'added'; project: ProjectRecord };
+  | { status: 'planned'; project: ProjectRecord; alreadyExisted: boolean }
+  | { status: 'added'; project: ProjectRecord; alreadyExisted: boolean };
 
 /**
  * Registers a project folder by canonical path. Registration never inspects
@@ -64,9 +64,9 @@ export async function addProject(registry: IProjectRegistry, request: AddProject
   const canonical = await canonicalizeProjectPath(resolve(request.cwd ?? process.cwd(), request.path));
   const planned = await registry.add(canonical, { name: request.name, dryRun: true });
   if (request.dryRun) {
-    return { status: 'planned', project: planned.project };
+    return { status: 'planned', project: planned.project, alreadyExisted: planned.alreadyExisted };
   }
 
-  const { project } = await registry.add(canonical, { name: request.name });
-  return { status: 'added', project };
+  const committed = await registry.add(canonical, { name: request.name });
+  return { status: 'added', project: committed.project, alreadyExisted: committed.alreadyExisted };
 }

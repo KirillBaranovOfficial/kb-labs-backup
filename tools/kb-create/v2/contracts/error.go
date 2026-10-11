@@ -76,6 +76,11 @@ const (
 	CodeHostStateDirUnwritable   = "KB_HOST_STATE_DIR_UNWRITABLE"
 )
 
+const (
+	CodeProjectSelectionChanged   = "KB_INSTALL_PROJECT_SELECTION_CHANGED"
+	CodeProjectRegistrationFailed = "KB_INSTALL_PROJECT_REGISTRATION_FAILED"
+)
+
 // NewDiag constructs the shared clikit diagnostic for a kb-create error code.
 // The wrapped cause remains available through Unwrap. Its sanitized text is
 // exposed in both machine and human diagnostics at this shared boundary.

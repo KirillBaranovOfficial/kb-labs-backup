@@ -172,19 +172,19 @@ describe('project add / list', () => {
     expect(existsSync(join(kbHome, 'projects.json'))).toBe(false);
   });
 
-  it('--dry-run still reports a duplicate registration', async () => {
+  it('--dry-run returns the existing record for a duplicate registration', async () => {
     const a = makeProject('alpha', true);
     await run(projectAdd, [a]);
     const res = await run(projectAdd, [a], { 'dry-run': true });
-    expect(res.code).toBe(1);
-    expect(res.json[0]?.error?.code).toBe('KB_PROJECT_ALREADY_REGISTERED');
+    expect(res.code).toBe(0);
+    expect(res.json[0]).toMatchObject({ ok: true, data: { dryRun: true, alreadyExisted: true, project: { path: a } } });
   });
 
   it('reports failures as envelopes with a mandatory hint', async () => {
     const a = makeProject('alpha', true);
     await run(projectAdd, [a]);
 
-    const dup = await run(projectAdd, [a]);
+    const dup = await run(projectAdd, [a], { name: 'different' });
     const missing = await run(projectAdd, [join(sandbox, 'nope')]);
     const file = join(sandbox, 'file.txt');
     writeFileSync(file, 'x');
@@ -197,6 +197,19 @@ describe('project add / list', () => {
       expect(r.code).toBe(1);
       expect(r.json[0]?.error?.hint.length).toBeGreaterThan(0);
     }
+  });
+
+  // case: S-124.14
+  it('returns the existing project for the same canonical path', async () => {
+    const a = makeProject('idempotent-add', true);
+    const first = await run(projectAdd, [a]);
+    const second = await run(projectAdd, [a]);
+    expect(first.code).toBe(0);
+    expect(second.code).toBe(0);
+    expect(second.json[0]).toMatchObject({
+      ok: true,
+      data: { alreadyExisted: true, project: { path: a } },
+    });
   });
 
   it('surfaces a corrupt registry as KB_PROJECT_REGISTRY_CORRUPT without redacting the file into nothing', async () => {

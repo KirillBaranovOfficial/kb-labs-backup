@@ -158,6 +158,11 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if err != nil {
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The installation lifecycle state path could not be resolved.", "Pass the install root used by this installation, then rerun `kb-create install`.", err)
 	}
+	if !initialInstall {
+		if _, failure := existingProjectSelection(platformRoot, planned.Request.ProjectRoot); failure != nil {
+			return applyCommandResult{}, failure
+		}
+	}
 	release, err := state.AcquireOperation("apply")
 	if err != nil {
 		return applyCommandResult{}, asDiag(err)

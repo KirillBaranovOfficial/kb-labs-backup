@@ -246,31 +246,57 @@ func TestValidGatewayBootstrapFailureDirectsOperatorToAuthReadiness(t *testing.T
 	}
 }
 
-// case: S-222.2
+// case: S-222.2, S-224.2
 func TestGatewayFailureEnvelopePreservesDiagnosticWithoutSecrets(t *testing.T) {
 	const bodySecret = "BODY_TOKEN_SECRET"
 	const headerSecret = "HEADER_SESSION_SECRET"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	gatewayCorrelationIDChannel := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayCorrelationID := r.Header.Get("X-Request-Id")
+		gatewayCorrelationIDChannel <- gatewayCorrelationID
+		if !diag.IsValidCorrelationID(gatewayCorrelationID) {
+			t.Errorf("bootstrap X-Request-Id = %q, want valid Gateway correlation ID", gatewayCorrelationID)
+		}
 		w.Header().Set("X-Debug-Credential", headerSecret)
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>; token=`+bodySecret+`","cause":"token=`+bodySecret+`","correlationId":"corr-auth-health"}}`)
+		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>; token=`+bodySecret+`","cause":"token=`+bodySecret+`","correlationId":"`+gatewayCorrelationID+`","details":{"leak":"`+bodySecret+`"}}}`)
 	}))
 	defer server.Close()
 	store := secrets.Store{PlatformRoot: t.TempDir()}
 	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
+	gatewayCorrelationID := <-gatewayCorrelationIDChannel
 	var diagnostic *diag.Diag
 	if !errors.As(err, &diagnostic) {
 		t.Fatalf("Gateway failure = %T %v, want catalogued diagnostic", err, err)
 	}
-	if diagnostic.Code != "KB_AUTH_FORBIDDEN" || diagnostic.Message != "Gateway auth health is unavailable." || diagnostic.Hint != `Run kb-create doctor --platform-root <root>; token="[REDACTED]"` {
+	entry, _ := diag.LookupCatalog("KB_AUTH_FORBIDDEN")
+	if diagnostic.Code != "KB_AUTH_FORBIDDEN" || diagnostic.Message != entry.Message || diagnostic.Hint != entry.Hint {
 		t.Fatalf("Gateway failure diagnostic = %#v", diagnostic)
+	}
+	if diagnostic.Meta["remoteCorrelationId"] != gatewayCorrelationID {
+		t.Fatalf("Gateway failure remote correlation ID = %#v, want %q", diagnostic.Meta["remoteCorrelationId"], gatewayCorrelationID)
+	}
+	var jsonOutput, humanOutput bytes.Buffer
+	clikitresult.RenderDiag(&jsonOutput, &humanOutput, diagnostic, clikitresult.ModeJSON)
+	clikitresult.RenderDiag(&bytes.Buffer{}, &humanOutput, diagnostic, clikitresult.ModeHuman)
+	if !strings.Contains(humanOutput.String(), "remote correlationId: "+gatewayCorrelationID) {
+		t.Fatalf("human bootstrap diagnostic omitted Gateway correlation ID: %s", humanOutput.String())
+	}
+	var rendered struct {
+		Error struct {
+			Details map[string]string `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(jsonOutput.Bytes(), &rendered); err != nil || rendered.Error.Details["remoteCorrelationId"] != gatewayCorrelationID {
+		t.Fatalf("JSON bootstrap diagnostic omitted Gateway correlation ID: %s err=%v", jsonOutput.String(), err)
 	}
 	encoded, marshalErr := json.Marshal(diagnostic)
 	if marshalErr != nil {
 		t.Fatal(marshalErr)
 	}
 	for _, secret := range []string{bodySecret, headerSecret} {
-		if strings.Contains(err.Error(), secret) || strings.Contains(string(encoded), secret) {
+		if strings.Contains(err.Error(), secret) || strings.Contains(string(encoded), secret) ||
+			strings.Contains(jsonOutput.String(), secret) || strings.Contains(humanOutput.String(), secret) {
 			t.Fatalf("Gateway failure exposed credential %q: %s %s", secret, err, encoded)
 		}
 	}

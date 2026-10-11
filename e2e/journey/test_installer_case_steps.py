@@ -4,10 +4,12 @@ import subprocess
 import tempfile
 import unittest
 import json
+import os
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
+import installer_case_steps
 from installer_case_steps import (_data, _seed_doctor_fixture,
                                   cleanup_installer_fixture_root,
                                   run_doctor_root_isolation_step,
@@ -22,7 +24,8 @@ from installer_case_steps import (_data, _seed_doctor_fixture,
                                   run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
                                   _snapshot_installation_owned_tree)
 from invocations import PtyCommandTimeout
-from journey_resources import case_catalog_root
+from journey_resources import (active_platform_root, case_catalog_root,
+                               create_fixture_install_container)
 from test_install_layout import create_test_install_container, move_test_platform_into_container
 from service_steps import Journey, record_candidate_provenance
 from service_port_assertions import assert_service_ports_preserved
@@ -340,41 +343,129 @@ class InstallerCaseStepsTest(unittest.TestCase):
             index.write_text("{}")
             calls = []
 
-            def run_command(args):
+            def run_command(args, **kwargs):
                 calls.append(args)
                 if args[1] == "install":
-                    active = create_test_install_container(platform)
-                    (active / ".kb/v2/bin").mkdir(parents=True)
-                    (active / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"request": {
-                        "platformRoot": str(platform), "projectRoot": str(project)}}}))
-                    (active / ".kb/v2/bin/kb").write_text("fixture")
+                    install_root = Path(args[args.index("--platform-root") + 1])
+                    try:
+                        active = active_platform_root(install_root)
+                    except FileNotFoundError:
+                        active = create_fixture_install_container(install_root)
+                    receipt_path = active / ".kb/v2/receipt.json"
+                    first_install = not receipt_path.exists()
+                    if receipt_path.exists():
+                        active = json.loads(receipt_path.read_text())
+                        selected = args[args.index("--project-root") + 1] if "--project-root" in args else ""
+                        recorded = active["plan"]["request"].get("projectRoot", "")
+                        if selected and selected != recorded:
+                            return subprocess.CompletedProcess(args, 1,
+                                '{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
+                                '"area":"install","stage":"resolve","severity":"error",'
+                                '"retryable":false,"message":"project changed",'
+                                '"hint":"kb auth login --gateway-url URL --email EMAIL, then kb project add PATH, then kb project show PATH",'
+                                '"correlationId":"fixture"}}', "")
+                    active_root = active_platform_root(install_root)
+                    (active_root / ".kb/v2/bin").mkdir(parents=True, exist_ok=True)
+                    (active_root / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"request": {
+                        "platformRoot": str(install_root),
+                        "projectRoot": args[args.index("--project-root") + 1] if "--project-root" in args else ""}},
+                        "verification": {"hostHealthUrl": "http://127.0.0.1:45678/health"}}))
+                    (active_root / ".kb/v2/bin/kb").write_text("fixture")
+                    if first_install and "--project-root" in args:
+                        selected_path = str(Path(args[args.index("--project-root") + 1]).resolve())
+                        registry_path = Path.home() / ".kb/projects.json"
+                        registry_path.parent.mkdir(parents=True, exist_ok=True)
+                        entries = json.loads(registry_path.read_text()).get("projects", []) if registry_path.exists() else []
+                        entries.append({"id": "prj_test", "path": selected_path})
+                        registry_path.write_text(json.dumps({"projects": entries}))
+                    if "--secret-env" in args:
+                        selected_path = str(Path(args[args.index("--project-root") + 1]).resolve())
+                        registry_path = Path.home() / ".kb/projects.json"
+                        registry_path.parent.mkdir(parents=True, exist_ok=True)
+                        registry_path.write_text(json.dumps({"projects": [{"id": "prj_test", "path": selected_path}]}))
+                        return subprocess.CompletedProcess(args, 0,
+                            "First administrator credentials (shown once)\nPassword: x18-journey-first-admin\n"
+                            "Verification: project registered. Next: run kb-create status and kb project show prj_test.\n", "")
                     return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{"operation":"install"}}', "")
                 if args[1] == "update":
                     return subprocess.CompletedProcess(args, 0,
                         '{"ok":true,"data":{"ok":true,"alreadyUpToDate":true}}', "")
+                if args[1] == "apply":
+                    return subprocess.CompletedProcess(args, 1,
+                        '{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
+                        '"area":"install","stage":"resolve","severity":"error",'
+                        '"retryable":false,"message":"project changed",'
+                        '"hint":"kb auth login --gateway-url URL --email EMAIL, then kb project add PATH, then kb project show PATH",'
+                        '"correlationId":"fixture"}}', "")
                 if args[1] == "project":
+                    if len(args) > 2 and args[2] == "show":
+                        registry_path = Path.home() / ".kb/projects.json"
+                        projects = json.loads(registry_path.read_text()).get("projects", []) if registry_path.exists() else []
+                        project = next((entry for entry in projects
+                                        if entry.get("path") == str(Path(args[3]).resolve())), None)
+                        if project is None and projects:
+                            project = projects[-1]
+                        project = project or {"id": "prj_test", "path": str(Path(args[3]).resolve())}
+                        return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                            "project": project}}), "")
+                    if len(args) > 2 and args[2] == "add":
+                        selected_path = str(Path(args[3]).resolve())
+                        registry_path = Path.home() / ".kb/projects.json"
+                        registry_path.parent.mkdir(parents=True, exist_ok=True)
+                        entries = []
+                        if registry_path.exists():
+                            entries = json.loads(registry_path.read_text()).get("projects", [])
+                        if not any(entry.get("path") == selected_path for entry in entries):
+                            entries.append({"id": "prj_test", "path": selected_path})
+                        registry_path.write_text(json.dumps({"projects": entries}))
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
-                        "project": {"id": "prj_test", "path": str(project.resolve())}}}), "")
+                        "project": {"id": "prj_test", "path": str(Path(args[3]).resolve())},
+                        "alreadyExisted": True}}), "")
                 if args[1] == "status":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
                         "host": {"state": "running"}}}), "")
+                if args[1] == "auth":
+                    if kwargs.get("input") != "x18-journey-first-admin\n":
+                        return subprocess.CompletedProcess(args, 1, "", "missing password stdin")
+                    session_path = Path.home() / ".kb/session.json"
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    session_path.write_text("{}")
+                    return subprocess.CompletedProcess(args, 0, "Logged in.\n", "")
                 return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{}}', "")
 
-            journey = run_json_install_project_step(mode="local", launcher="kb-create", stable_index=index,
-                                                    platform_root=platform, project_root=project,
-                                                    run_command=run_command)
+            isolated_home = root / "home"
+            with patch.dict(os.environ, {"HOME": str(isolated_home)}):
+                journey = run_json_install_project_step(mode="local", launcher="kb-create", stable_index=index,
+                                                        platform_root=platform, project_root=project,
+                                                        run_command=run_command)
             self.assertEqual(journey.steps[0].cases, ["S-187.6"])
             self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-            self.assertEqual(journey.steps[1].cases, ["S-187.9"])
+            self.assertEqual(journey.steps[1].cases, ["S-124.14"])
             self.assertEqual(journey.steps[1].status, "PASS", journey.steps[1].message)
+            self.assertEqual(journey.steps[2].cases, ["S-187.11"])
+            self.assertEqual(journey.steps[2].status, "PASS", journey.steps[2].message)
+            self.assertEqual(journey.steps[3].cases, ["S-187.12"])
+            self.assertEqual(journey.steps[3].status, "PASS", journey.steps[3].message)
+            self.assertEqual(journey.steps[4].cases, ["S-187.9"])
+            self.assertEqual(journey.steps[4].status, "PASS", journey.steps[4].message)
             install_args = calls[0]
             self.assertIn("--json", install_args)
             self.assertEqual(install_args[install_args.index("--scenario") + 1], "custom")
             self.assertEqual(install_args[install_args.index("--project-root") + 1], str(project))
-            self.assertEqual([call[1] for call in calls[1:]], ["project", "update", "status", "stop", "uninstall"])
-            update_args = calls[2]
+            self.assertIn("update", [call[1] for call in calls])
+            update_args = next(call for call in calls if call[1] == "update")
             self.assertEqual(update_args[1], "update")
             self.assertEqual(update_args[update_args.index("--input") + 1], str(platform.parent / "s187-receipt-request.json"))
+            with patch.dict(os.environ, {"HOME": str(isolated_home),
+                                         "KB_JOURNEY_ADMIN_PASSWORD": "x18-journey-first-admin"}), \
+                    patch.object(installer_case_steps, "evidence_run_command", run_command):
+                secured_journey = run_json_install_project_step(mode="secured", launcher="kb-create", stable_index=index,
+                                                                platform_root=platform, project_root=project,
+                                                                run_command=run_command)
+            secured_step = next(step for step in secured_journey.steps if "secured first install" in step.name)
+            self.assertEqual(secured_step.cases, ["S-187.10", "S-187.11", "S-187.12"])
+            self.assertEqual(secured_step.status, "PASS", secured_step.message)
+            self.assertFalse((isolated_home / ".kb/session.json").exists())
 
     def test_installer_fixture_cleanup_stops_running_host_before_removing_root(self):
         with tempfile.TemporaryDirectory(prefix="journey-installer-cleanup-") as temp:
@@ -993,7 +1084,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",
-                        "S-187.4", "S-187.5", "S-187.6", "S-187.9"}
+                        "S-187.4", "S-187.5", "S-187.6", "S-187.9", "S-187.11", "S-187.12", "S-124.14"}
             self.assertEqual(set(claims), expected)
             self.assertTrue(all(claims[claim] == "FAIL" for claim in expected))
 
