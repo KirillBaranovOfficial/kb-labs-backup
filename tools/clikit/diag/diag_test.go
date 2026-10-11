@@ -17,6 +17,19 @@ func TestNewUsesCatalogHint(t *testing.T) {
 	}
 }
 
+// case: S-224.2
+func TestCorrelationIDFormat(t *testing.T) {
+	id := NewCorrelationID()
+	if !IsValidCorrelationID(id) {
+		t.Fatalf("generated correlation ID %q does not use the platform format", id)
+	}
+	for _, invalid := range []string{"corr-short", "0123456789ABCDEF0123456789ABCDEF", "0123456789abcdef0123456789abcdef0"} {
+		if IsValidCorrelationID(invalid) {
+			t.Errorf("IsValidCorrelationID(%q) = true, want false", invalid)
+		}
+	}
+}
+
 func TestWithHintSurvivesBoundaryNormalization(t *testing.T) {
 	const want = "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request."
 	d := FromErrorWithLogger(New("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", WithHint(want)), slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)))

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
@@ -108,10 +109,11 @@ func TestSecuredProjectRegistrationUsesTransientGatewayLogin(t *testing.T) {
 	}
 }
 
-// case: S-224.1
+// case: S-224.1, S-224.2
 func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 	const password = "x18-bootstrap-password-marker"
 	const token = "x18-access-token-marker"
+	const installerCorrelationID = "fedcba9876543210fedcba9876543210"
 	tests := []struct {
 		name      string
 		causeCode string
@@ -128,7 +130,9 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root, home, project := t.TempDir(), t.TempDir(), t.TempDir()
 			t.Setenv("HOME", home)
-			responseWithSecrets := func(w http.ResponseWriter, status int, code string) {
+			var requestIDMu sync.Mutex
+			var lastRequestID string
+			responseWithSecrets := func(w http.ResponseWriter, status int, code, requestID string) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("X-Remote-Credential", password+" "+token)
 				w.WriteHeader(status)
@@ -143,7 +147,7 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 				body, err := json.Marshal(map[string]any{"ok": false, "error": map[string]any{
 					"code": code, "area": catalog.Area, "stage": catalog.Stage, "severity": catalog.Severity, "retryable": catalog.Retryable,
 					"message": password + " " + token, "hint": token + " " + password,
-					"cause": password + " " + token, "correlationId": token,
+					"cause": password + " " + token, "correlationId": requestID,
 					"details": map[string]string{"remote": password + " " + token},
 				}})
 				if err != nil {
@@ -157,12 +161,19 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 				_, _ = w.Write(body)
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestID := r.Header.Get("X-Request-Id")
+				if !diag.IsValidCorrelationID(requestID) {
+					t.Errorf("request correlation ID = %q, want valid Gateway correlation ID", requestID)
+				}
+				requestIDMu.Lock()
+				lastRequestID = requestID
+				requestIDMu.Unlock()
 				if r.URL.Path == "/auth/login/cli" {
 					if test.stage == "login" {
 						if test.name == "login malformed" {
-							responseWithSecrets(w, test.status, "")
+							responseWithSecrets(w, test.status, "", requestID)
 						} else {
-							responseWithSecrets(w, test.status, "KB_AUTH_INVALID_CREDENTIALS")
+							responseWithSecrets(w, test.status, "KB_AUTH_INVALID_CREDENTIALS", requestID)
 						}
 						return
 					}
@@ -181,10 +192,10 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 					return
 				}
 				if test.name == "register malformed" {
-					responseWithSecrets(w, test.status, "")
+					responseWithSecrets(w, test.status, "", requestID)
 					return
 				}
-				responseWithSecrets(w, test.status, "KB_AUTH_FORBIDDEN")
+				responseWithSecrets(w, test.status, "KB_AUTH_FORBIDDEN", requestID)
 			}))
 			defer server.Close()
 
@@ -226,9 +237,35 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 				failure.Meta["requestStage"] != test.stage || !statusMatches {
 				t.Fatalf("registration diagnostic metadata = %#v", failure.Meta)
 			}
+			failure.CorrelationID = installerCorrelationID
+			remoteCorrelationID, hasRemoteCorrelationID := failure.Meta["remoteCorrelationId"]
+			wantRemoteCorrelationID := test.name == "login refused" || test.name == "register refused"
+			requestIDMu.Lock()
+			gatewayCorrelationID := lastRequestID
+			requestIDMu.Unlock()
+			if hasRemoteCorrelationID != wantRemoteCorrelationID || (wantRemoteCorrelationID && remoteCorrelationID != gatewayCorrelationID) {
+				t.Fatalf("remote correlation metadata = %#v, want present=%v value=%q", remoteCorrelationID, wantRemoteCorrelationID, gatewayCorrelationID)
+			}
 			var jsonOutput, humanOutput bytes.Buffer
 			result.RenderDiag(&jsonOutput, &humanOutput, failure, result.ModeJSON)
 			result.RenderDiag(&bytes.Buffer{}, &humanOutput, failure, result.ModeHuman)
+			if wantRemoteCorrelationID {
+				var envelope struct {
+					Error struct {
+						CorrelationID string            `json:"correlationId"`
+						Details       map[string]string `json:"details"`
+					} `json:"error"`
+				}
+				if err := json.Unmarshal(jsonOutput.Bytes(), &envelope); err != nil {
+					t.Fatal(err)
+				}
+				if envelope.Error.CorrelationID != installerCorrelationID ||
+					envelope.Error.Details["remoteCorrelationId"] != gatewayCorrelationID ||
+					!strings.Contains(humanOutput.String(), "correlationId: "+installerCorrelationID) ||
+					!strings.Contains(humanOutput.String(), "remote correlationId: "+gatewayCorrelationID) {
+					t.Fatalf("diagnostic outputs did not retain distinct installer and Gateway IDs: json=%s human=%s", jsonOutput.String(), humanOutput.String())
+				}
+			}
 			for _, secret := range []string{password, token} {
 				if strings.Contains(failure.Message+failure.Hint+failure.Reason+failure.Cause, secret) ||
 					strings.Contains(jsonOutput.String(), secret) || strings.Contains(humanOutput.String(), secret) {
