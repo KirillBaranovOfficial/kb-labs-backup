@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,7 +18,9 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -29,6 +32,217 @@ func TestStartStatusErrorRemainsAnError(t *testing.T) {
 	if got.Code != statusErr.Code || got.Message != statusErr.Message {
 		t.Fatalf("status diagnostic = %#v, want the status failure", got)
 	}
+}
+
+// case: S-053.4, S-053.5, S-053.7
+func TestBuiltCLICompatibilityRefusalsMatchCasesWithoutMutatingRoots(t *testing.T) {
+	launcher, _ := binaries(t)
+	_, sourceFile, _, ok := goruntime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate command test source")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "../../../../.."))
+	fixtureDir := filepath.Join(repoRoot, "e2e", "platform", "fixtures", "installer-cases")
+	arch := goruntime.GOARCH
+	if arch == "x86_64" {
+		arch = "amd64"
+	}
+	if arch == "aarch64" {
+		arch = "arm64"
+	}
+	fixtureOS := goruntime.GOOS
+	if fixtureOS != "linux" && fixtureOS != "darwin" {
+		t.Skip("compatibility command fixtures cover Linux and macOS")
+	}
+	matrix := filepath.Join(fixtureDir, "compatibility-matrix-"+fixtureOS+"-"+arch+".json")
+	missingBinary := filepath.Join(fixtureDir, "missing-host-binary-"+fixtureOS+"-"+arch+".json")
+	for _, path := range []string{matrix, missingBinary} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("required release fixture %q: %v", path, err)
+		}
+	}
+
+	runPlan := func(t *testing.T, index, root string, extra ...string) map[string]any {
+		t.Helper()
+		home := t.TempDir()
+		args := []string{"plan", "--json", "--index", index,
+			"--platform-version", "3.2.0", "--sdk-version", "3.0.0",
+			"--policy", "compatible", "--platform-root", root}
+		args = append(args, extra...)
+		command := exec.Command(launcher, args...)
+		command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": home,
+			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": ""})
+		output, err := command.CombinedOutput()
+		if err == nil {
+			t.Fatalf("plan unexpectedly succeeded: %s", output)
+		}
+		var envelope struct {
+			Error map[string]any `json:"error"`
+		}
+		if err := json.Unmarshal(output, &envelope); err != nil {
+			t.Fatalf("plan output is not the structured JSON error: %s (%v)", output, err)
+		}
+		if envelope.Error["code"] != contracts.CodeIncompatibleComponents {
+			t.Fatalf("plan error = %#v, want %s", envelope.Error, contracts.CodeIncompatibleComponents)
+		}
+		return envelope.Error
+	}
+	assertDetails := func(t *testing.T, failure map[string]any, kind, id, version, requiredRange, hint string) {
+		t.Helper()
+		details, ok := failure["details"].(map[string]any)
+		if !ok || details["kind"] != kind || details["id"] != id || details["selectedVersion"] != version || details["requiredRange"] != requiredRange {
+			t.Fatalf("error details = %#v, want kind=%q id=%q selectedVersion=%q requiredRange=%q", failure["details"], kind, id, version, requiredRange)
+		}
+		if failure["hint"] != hint {
+			t.Fatalf("error hint = %#v, want %q", failure["hint"], hint)
+		}
+	}
+
+	t.Run("S-053.4 explicit adapter range", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "adapter-range-root")
+		failure := runPlan(t, matrix, root, "--adapters", "fixture-adapter@1.0.0")
+		assertDetails(t, failure, "adapter", "fixture-adapter", "3.2.0", "<3.2.0",
+			"Choose compatible versions or pass an explicit supported provider.")
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("incompatible adapter plan changed install root: %v", err)
+		}
+	})
+
+	t.Run("S-053.5 missing binary identity", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "missing-binary-root")
+		failure := runPlan(t, missingBinary, root)
+		details, ok := failure["details"].(map[string]any)
+		if !ok || details["kind"] != "binary" || details["id"] == "" || failure["hint"] == "" {
+			t.Fatalf("missing binary error lacks case identity or hint: %#v", failure)
+		}
+	})
+	t.Run("S-053.5 out-of-range SDK", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "sdk-range-root")
+		args := []string{"--sdk-version", "4.0.0"}
+		failure := runPlan(t, matrix, root, args...)
+		assertDetails(t, failure, "sdk", "sdk", "4.0.0", ">=3.0.0 <4.0.0",
+			"Choose compatible versions or pass an explicit supported provider.")
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("out-of-range SDK plan changed install root: %v", err)
+		}
+	})
+
+	t.Run("S-053.7 missing binary leaves isolated root absent", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "missing-binary-root")
+		failure := runPlan(t, missingBinary, root)
+		details, ok := failure["details"].(map[string]any)
+		if !ok || details["kind"] != "binary" || details["id"] == "" || failure["hint"] == "" {
+			t.Fatalf("missing binary error lacks case identity or hint: %#v", failure)
+		}
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("missing binary refusal changed isolated install root: %v", err)
+		}
+	})
+}
+
+// case: PC-001.10, PC-001.16
+func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
+	launcher, _ := binaries(t)
+	home := t.TempDir()
+	rootDir := t.TempDir()
+	rootA := filepath.Join(rootDir, "root-a")
+	rootB := filepath.Join(rootDir, "root-b")
+	rootC := filepath.Join(rootDir, "root-c")
+	rootD := filepath.Join(rootDir, "root-d")
+	registry := gateway.Registry{Path: filepath.Join(home, ".kb", "launcher", "gateway-roots.json")}
+	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
+		t.Fatal(err)
+	}
+
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {
+		PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}},
+	}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
+	release, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(home, "release-index.json")
+	encoded, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := func(t *testing.T, root, explicitURL string) contracts.ResolvedInstallPlan {
+		t.Helper()
+		args := []string{"plan", "--json", "--index", indexPath, "--platform-root", root}
+		if explicitURL != "" {
+			args = append(args, "--gateway-url", explicitURL)
+		}
+		command := exec.Command(launcher, args...)
+		command.Env = childEnvironment(os.Environ(), map[string]string{"HOME": home,
+			"KB_PLATFORM_ROOT": "", "KB_HOME": "", "KB_NET_OFFSET": ""})
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("built kb-create plan %s: %v\n%s", root, err, output)
+		}
+		var envelope struct {
+			Data struct {
+				Plan contracts.ResolvedInstallPlan `json:"plan"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(output, &envelope); err != nil {
+			t.Fatalf("built kb-create plan output is invalid: %s (%v)", output, err)
+		}
+		return envelope.Data.Plan
+	}
+	registerAppliedRoot := func(root string, plan contracts.ResolvedInstallPlan) {
+		origin, err := gateway.OriginFromHealthURL(plan.Host.HealthURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.Register(root, origin); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	planB := plan(t, rootB, "")
+	if planB.Host.HealthURL != "http://127.0.0.1:4100/health" || planB.ServiceGraph.Services[0].Port != 4100 {
+		t.Fatalf("root B plan did not receive the next 100-port offset: %#v", planB)
+	}
+	registerAppliedRoot(rootB, planB)
+
+	planC := plan(t, rootC, "http://127.0.0.1:4200")
+	if planC.Host.HealthURL != "http://127.0.0.1:4200/health" {
+		t.Fatalf("explicit root C Gateway was not preserved in its plan: %#v", planC)
+	}
+	registerAppliedRoot(rootC, planC)
+
+	planD := plan(t, rootD, "")
+	if planD.Host.HealthURL != "http://127.0.0.1:4300/health" || planD.ServiceGraph.Services[0].Port != 4300 {
+		t.Fatalf("root D plan did not advance past stopped roots: %#v", planD)
+	}
+	if retained := plan(t, rootB, ""); retained.Host.HealthURL != planB.Host.HealthURL ||
+		retained.ServiceGraph.Services[0].Port != planB.ServiceGraph.Services[0].Port {
+		t.Fatalf("replanning root B changed its Gateway allocation: %#v", retained)
+	}
+}
+
+func childEnvironment(base []string, overrides map[string]string) []string {
+	env := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, overridden := overrides[key]; overridden {
+			continue
+		}
+		env = append(env, entry)
+	}
+	for key, value := range overrides {
+		if value != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }
 
 var (

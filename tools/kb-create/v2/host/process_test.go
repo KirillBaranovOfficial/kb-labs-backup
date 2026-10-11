@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -246,6 +247,53 @@ func TestPortInUse(t *testing.T) {
 	}
 	if _, statErr := os.Stat(f.runner.State.HostPID()); !os.IsNotExist(statErr) {
 		t.Fatal("no process should have been spawned")
+	}
+}
+
+// case: S-025.8, PC-001.9
+func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
+	root := t.TempDir()
+	writeReceipt(t, root, &contracts.HostSpec{Command: fakeHostBinary, HealthURL: "http://127.0.0.1:4100/health"})
+	platformRoot := filepath.Join(root, "current")
+	launcherHome := t.TempDir()
+	t.Setenv(KBHomeEnv, launcherHome)
+	expectedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := StateForRoot(platformRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(state.HostPID(), pidRecord{PID: os.Getpid(), PlatformRoot: platformRoot}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receipt.Read(platformRoot); err != nil {
+		t.Fatalf("fixture receipt: %v", err)
+	}
+	if active, ok := ActiveHost(state); !ok || active.PID != os.Getpid() || filepath.Clean(active.PlatformRoot) != filepath.Clean(platformRoot) {
+		t.Fatalf("fixture active host = %#v, %t", active, ok)
+	}
+	launcherState, err := StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(platformRoot, "http://127.0.0.1:4100"); err != nil {
+		t.Fatal(err)
+	}
+	if roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Read(); err != nil || len(roots) != 1 {
+		t.Fatalf("fixture Gateway roots = %#v, %v", roots, err)
+	}
+
+	failure := portConflictError("4100", "127.0.0.1:4100", "gateway", portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", nil)
+	if failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["platformRoot"] != expectedRoot || failure.Meta["pid"] != strconv.Itoa(os.Getpid()) {
+		t.Fatalf("known installation conflict = %#v", failure)
+	}
+	if !strings.Contains(failure.Hint, "kb-create stop --platform-root "+expectedRoot) {
+		t.Fatalf("known installation conflict omitted its stop command: %#v", failure)
 	}
 }
 

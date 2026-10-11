@@ -52,7 +52,7 @@ func TestVersionRootsDirectoryFollowsEmbeddedPlatformLayout(t *testing.T) {
 	for _, shared := range SharedRuntimePaths() {
 		sharedPaths[shared.PlatformPath] = shared.StatePath
 	}
-	for platformPath, statePath := range map[string]string{".kb/logs": "state/logs", ".kb/diagnostics": "state/diagnostics"} {
+	for platformPath, statePath := range map[string]string{".kb/logs": "state/logs", ".kb/diagnostics": "state/diagnostics", ".kb/database": "state/data/database"} {
 		if sharedPaths[platformPath] != statePath {
 			t.Fatalf("runtime history path %s maps to %q, want %q", platformPath, sharedPaths[platformPath], statePath)
 		}

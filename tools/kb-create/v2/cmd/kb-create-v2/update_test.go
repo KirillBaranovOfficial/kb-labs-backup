@@ -13,9 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	goruntime "runtime"
@@ -41,6 +43,168 @@ type recordingInstaller struct {
 	installed []contracts.Artifact
 	restores  int
 	failure   error
+}
+
+// case: PC-001.10, S-181.3
+func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
+	_, fakehost := binaries(t)
+	inst := newEmptyInstallation(t)
+	var primaryListener, secondaryListener net.Listener
+	for range 128 {
+		candidate, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := candidate.Addr().(*net.TCPAddr).Port
+		if port+100 > 65535 {
+			_ = candidate.Close()
+			continue
+		}
+		secondary, listenErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+100))
+		if listenErr != nil {
+			_ = candidate.Close()
+			continue
+		}
+		primaryListener, secondaryListener = candidate, secondary
+		inst.port = port
+		break
+	}
+	if primaryListener == nil || secondaryListener == nil {
+		t.Fatal("could not reserve a free Gateway port and its 100-port offset")
+	}
+	if err := primaryListener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := secondaryListener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	binary := []byte("built CLI fixture binary")
+	binaryDigest := sha256.Sum256(binary)
+	packages := map[string][]byte{
+		"/platform-1.0.0.tgz": testPackageTarball("@kb/platform", "1.0.0"),
+		"/sdk-1.0.0.tgz":      testPackageTarball("@kb/sdk", "1.0.0"),
+		"/cli-bin-1.0.0.tgz":  testPackageTarballWithFiles("@kb-labs/cli-bin", "1.0.0", map[string][]byte{"dist/bin.js": []byte("// fixture CLI entry\n")}),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if packageBytes, ok := packages[request.URL.Path]; ok {
+			_, _ = writer.Write(packageBytes)
+			return
+		}
+		_, _ = writer.Write(binary)
+	}))
+	t.Cleanup(server.Close)
+	indexA, _, requestA := writeSecretCommandInputs(t, inst, fakehost, server.URL, hex.EncodeToString(binaryDigest[:]), packages, true, false)
+	indexData, err := os.ReadFile(indexA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source catalog.Catalog
+	if err := json.Unmarshal(indexData, &source); err != nil {
+		t.Fatal(err)
+	}
+	source.Platforms[0].Profiles["default"] = contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Command: "gateway", Port: inst.port}}}
+	for index := range source.Platforms[0].Config {
+		if source.Platforms[0].Config[index].ID == "gateway.token" {
+			source.Platforms[0].Config[index].Services = []string{"gateway"}
+		}
+	}
+	source.Platforms[0].Config = append(source.Platforms[0].Config, catalog.ConfigRequirement{
+		ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+		Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, inst.port),
+	})
+	sealedPrimary, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedPrimary, err := json.Marshal(sealedPrimary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexA, encodedPrimary, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source.Platforms[0].Host.Args = []string{"-port", fmt.Sprint(inst.port + 100)}
+	sealed, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexB := filepath.Join(t.TempDir(), "secondary-release-index.json")
+	encodedIndex, err := json.Marshal(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexB, encodedIndex, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	applyRoot := func(index, requestPath string, extraEnv string) commandResult {
+		return inst.runArgv([]string{"kb-create", "apply", "--index", index, "--input", requestPath,
+			"--secret-env", "gateway.token=" + strings.SplitN(extraEnv, "=", 2)[0], "--json"}, extraEnv)
+	}
+	primary := applyRoot(indexA, requestA, "PRIMARY_SECRET=primary-secret")
+	if primary.code != 0 {
+		t.Fatalf("primary built CLI apply failed: %s", primary.output)
+	}
+	if _, code, output := inst.run("stop", "--json"); code != 0 {
+		t.Fatalf("stop primary host before secondary apply: %s", output)
+	}
+
+	requestBytes, err := os.ReadFile(requestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secondaryRequest contracts.InstallRequest
+	if err := json.Unmarshal(requestBytes, &secondaryRequest); err != nil {
+		t.Fatal(err)
+	}
+	secondaryRoot := filepath.Join(t.TempDir(), "secondary-platform")
+	secondaryRequest.PlatformRoot = secondaryRoot
+	t.Cleanup(func() {
+		command := exec.Command(inst.launcher, "stop", "--json", "--platform-root", secondaryRoot)
+		command.Env = append(os.Environ(), host.KBHomeEnv+"="+inst.kbHome)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Errorf("stop secondary test host: %v\n%s", err, output)
+		}
+	})
+	requestB := filepath.Join(t.TempDir(), "secondary-request.json")
+	encodedRequest, err := json.Marshal(secondaryRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestB, encodedRequest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondary := applyRoot(indexB, requestB, "SECONDARY_SECRET=secondary-secret")
+	if secondary.code != 0 {
+		state, _ := host.StateForRoot(secondaryRoot)
+		hostLog, _ := os.ReadFile(state.HostLog())
+		launcherLog, _ := os.ReadFile(state.LauncherLog())
+		activeRoot, _ := versionroot.ForPlatformPath(secondaryRoot)
+		installed, receiptErr := receipt.Read(activeRoot.PlatformRoot())
+		var hostArgs []string
+		if installed.Plan.Host != nil {
+			hostArgs = installed.Plan.Host.Args
+		}
+		t.Fatalf("secondary built CLI apply failed: %s\nhost args: %#v\nhost log: %s\nlauncher log: %s\nreceipt: %#v (%v)", secondary.output, hostArgs, hostLog, launcherLog, installed, receiptErr)
+	}
+	installed, err := receipt.Read(platformRootForTest(t, secondaryRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHealthURL := fmt.Sprintf("http://127.0.0.1:%d/health", inst.port+100)
+	if installed.Verification.HostHealthURL != wantHealthURL {
+		t.Fatalf("secondary receipt Gateway = %q, want %q", installed.Verification.HostHealthURL, wantHealthURL)
+	}
+	encodedReceipt, err := json.Marshal(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, privateValue := range []string{"secondary-secret", "SECONDARY_SECRET"} {
+		if strings.Contains(secondary.output, privateValue) || strings.Contains(string(encodedReceipt), privateValue) {
+			t.Fatalf("secondary apply serialized private value %q", privateValue)
+		}
+	}
 }
 
 // case: S-023.18
