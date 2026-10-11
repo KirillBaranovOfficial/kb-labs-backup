@@ -323,7 +323,12 @@ test('validates runtime imports against built workspace manifests and the config
     if (!relativePackagePath.startsWith('adapters/') && !relativePackagePath.startsWith('services/')) continue;
     const packageJSON = JSON.parse(readFileSync(join(workspacePackage.path, 'package.json'), 'utf8'));
     if (!packageJSON.kb?.manifest) continue;
-    const manifest = JSON.parse(readFileSync(join(workspacePackage.path, 'dist', 'manifest.json'), 'utf8'));
+    const builtManifestPath = join(workspacePackage.path, 'dist', 'manifest.json');
+    assert.ok(
+      existsSync(builtManifestPath),
+      `${packageJSON.name} built manifest is missing; run ./tools/kb-devkit/kb-devkit run build --packages ${packageJSON.name} before this test`,
+    );
+    const manifest = JSON.parse(readFileSync(builtManifestPath, 'utf8'));
     builtManifests.push({ packageJSON, manifest });
   }
   const sdkWorkspace = workspaceByName.get('@kb-labs/sdk');
