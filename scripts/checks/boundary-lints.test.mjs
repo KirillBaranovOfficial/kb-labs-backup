@@ -15,6 +15,7 @@ import { applyExceptions, findPluginEntryPackages, loadExceptions } from './lib/
 import { collect as collectImports, findCoreImports } from './check-plugin-imports.mjs';
 import { collect as collectSpawns, findPlatformBinarySpawns } from './check-platform-spawn.mjs';
 import { collect as collectPeer, findPlatformRuntimeDeps, isPlatformPackage } from './check-plugin-peer-deps.mjs';
+import { collect as collectBrowserNodeBuiltins } from './check-browser-node-builtins.mjs';
 import { collect as collectManifests, RULES, validateManifest } from './check-manifest-command-naming.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +39,150 @@ function pluginEntry(dir, name, pkgExtra = {}) {
     [`${dir}/src/manifest.ts`]: `export const manifest = { schema: 'kb.plugin/3', id: '${name}' };\n`,
   };
 }
+
+describe('browser-node-builtins', () => {
+  test('fails when browser source imports a workspace entry whose built graph imports a Node builtin', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/node-only';\nvoid value;\n`,
+      'packages/node-only/package.json': {
+        name: '@fixture/node-only',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+      'packages/node-only/dist/index.js': `import { readFile } from 'node:fs/promises';\nexport const value = readFile;\n`,
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app', json: { name: '@fixture/studio-app' } },
+      { dir: 'packages/node-only', relDir: 'packages/node-only', json: { name: '@fixture/node-only' } },
+    ]);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].package, 'studio/app');
+    assert.equal(findings[0].target, '@fixture/node-only');
+    assert.equal(findings[0].builtin, 'node:fs/promises');
+  });
+
+  test('accepts a browser-safe package subpath when the package root is Node-only', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/platform/browser';\nvoid value;\n`,
+      'packages/platform/package.json': {
+        name: '@fixture/platform',
+        exports: {
+          '.': { import: './dist/index.js' },
+          './browser': { import: './dist/browser.js' },
+        },
+      },
+      'packages/platform/dist/index.js': `import { readFile } from 'node:fs/promises';\nexport const nodeValue = readFile;\n`,
+      'packages/platform/dist/browser.js': `export const value = 'browser-safe';\n`,
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app' },
+      { dir: 'packages/platform', relDir: 'packages/platform' },
+    ]);
+    assert.deepEqual(findings, []);
+  });
+
+  test('reports a workspace package entry whose built output is missing', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/unbuilt';\nvoid value;\n`,
+      'packages/unbuilt/package.json': {
+        name: '@fixture/unbuilt',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app' },
+      { dir: 'packages/unbuilt', relDir: 'packages/unbuilt' },
+    ]);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].kind, 'unbuilt-package-entry');
+    assert.match(findings[0].fix, /kb-devkit run build --packages @fixture\/unbuilt/);
+  });
+
+  test('reports an unexported subpath separately from an unbuilt entry', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/package/private';\nvoid value;\n`,
+      'packages/package/package.json': {
+        name: '@fixture/package',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+      'packages/package/dist/index.js': `export const value = true;\n`,
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app' },
+      { dir: 'packages/package', relDir: 'packages/package' },
+    ]);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].kind, 'unexported-package-subpath');
+  });
+
+  test('reports unresolvable relative and workspace imports in a built graph', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': `import { value } from '@fixture/outer';\nvoid value;\n`,
+      'packages/outer/package.json': {
+        name: '@fixture/outer',
+        exports: { '.': { import: './dist/index.js' } },
+        dependencies: { '@fixture/missing': 'workspace:*' },
+      },
+      'packages/outer/dist/index.js': `import './missing.js';\nimport { x } from '@fixture/inner';\nimport { y } from '@fixture/missing';\nexport { x, y };\n`,
+      'packages/inner/package.json': {
+        name: '@fixture/inner',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app' },
+      { dir: 'packages/outer', relDir: 'packages/outer' },
+      { dir: 'packages/inner', relDir: 'packages/inner' },
+    ]);
+    assert.deepEqual(findings.map((finding) => finding.kind).sort(), [
+      'unbuilt-package-entry',
+      'unresolved-relative-import',
+      'unresolved-workspace-import',
+    ]);
+  });
+
+  test('reports direct Node builtin imports in browser source', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': [
+        `import { readFile } from 'node:fs/promises';`,
+        `import fs = require('node:fs');`,
+        `void readFile; void fs;`,
+      ].join('\n'),
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app' },
+    ]);
+    assert.equal(findings.length, 2);
+    assert.deepEqual(findings.map((finding) => finding.builtin).sort(), ['node:fs', 'node:fs/promises']);
+    assert.ok(findings.every((finding) => finding.kind === 'direct-node-builtin'));
+  });
+
+  test('deliberately excludes erased type-only import and export forms', () => {
+    const root = fixtureRepo({
+      'studio/app/package.json': { name: '@fixture/studio-app' },
+      'studio/app/src/main.ts': [
+        `import type { A } from '@fixture/node-only';`,
+        `import { type B } from '@fixture/node-only';`,
+        `export type { C } from '@fixture/node-only';`,
+      ].join('\n'),
+      'packages/node-only/package.json': {
+        name: '@fixture/node-only',
+        exports: { '.': { import: './dist/index.js' } },
+      },
+      'packages/node-only/dist/index.js': `import 'node:fs';\nexport const value = true;\n`,
+    });
+    const findings = collectBrowserNodeBuiltins(root, [
+      { dir: 'studio/app', relDir: 'studio/app' },
+      { dir: 'packages/node-only', relDir: 'packages/node-only' },
+    ]);
+    assert.deepEqual(findings, []);
+  });
+});
 
 after(() => {
   for (const r of tmpRoots) rmSync(r, { recursive: true, force: true });
