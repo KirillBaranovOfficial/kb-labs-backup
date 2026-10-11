@@ -99,6 +99,20 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
 
 class PtyInvocationTest(unittest.TestCase):
+    def test_pty_timeout_without_output_is_explicit_in_error_and_invocation(self):
+        with tempfile.TemporaryDirectory(prefix="journey-pty-empty-timeout-") as temp, \
+                invocations.invocation_context(report_root=temp):
+            with self.assertRaises(invocations.PtyCommandTimeout) as raised:
+                invocations.run_pty_command(
+                    [sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.2,
+                )
+
+            self.assertEqual(raised.exception.output, "")
+            self.assertIn("no output received before the timeout", str(raised.exception))
+            call = json.loads((Path(temp) / "invocations/calls.jsonl").read_text())
+            self.assertEqual(call["stdout"], "")
+            self.assertIn("no output received before the timeout", call["error"])
+
     def test_pty_timeout_retains_partial_transcript_and_candidate_state(self):
         with tempfile.TemporaryDirectory(prefix="journey-pty-timeout-") as temp, \
                 invocations.invocation_context(report_root=temp):
