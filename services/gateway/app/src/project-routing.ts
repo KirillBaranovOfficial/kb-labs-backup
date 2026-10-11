@@ -125,14 +125,23 @@ function buildRequestHeaders(
   return headers;
 }
 
+function projectRoutingEnvelope(error: unknown): ErrorEnvelope | undefined {
+  return error instanceof ProjectRoutingError
+    ? error.envelope
+    : error && typeof error === "object" && "envelope" in error && isErrorEnvelope(error.envelope)
+      ? error.envelope
+      : undefined;
+}
+
 function sendError(
   reply: FastifyReply,
   request: FastifyRequest,
   error: unknown,
 ): FastifyReply {
-  if (error instanceof ProjectRoutingError) {
-    const status = STATUS_BY_CODE[error.envelope.code] ?? 500;
-    return reply.code(status).send({ error: error.envelope });
+  const envelope = projectRoutingEnvelope(error);
+  if (envelope) {
+    const status = STATUS_BY_CODE[envelope.code] ?? 500;
+    return reply.code(status).send({ error: envelope });
   }
   request.kbLogger?.error("Project routing failed", error);
   return reply.code(500).send({ error: "Internal Server Error" });
@@ -255,7 +264,9 @@ export async function registerProjectRoutes(
         try {
           upstream = await projectTransport.resolveProjectService(projectId, serviceId);
         } catch (error) {
-          if (isHealthRequest) return sendHealthFailure("The project service runtime could not be acquired.");
+          if (isHealthRequest && !projectRoutingEnvelope(error)) {
+            return sendHealthFailure("The project service runtime could not be acquired.");
+          }
           return sendError(reply, request, error);
         }
         if (!upstream) {
