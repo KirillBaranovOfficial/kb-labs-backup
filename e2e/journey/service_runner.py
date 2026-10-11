@@ -47,7 +47,7 @@ from mcp_project_steps import (
     unknown_tool,
 )
 from platform_state_dump import archive_service_logs
-from journey_resources import journey_module
+from journey_resources import journey_module, active_platform_root
 
 
 BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -703,9 +703,9 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                cases=["S-054.1", "S-048.1"], record_empty_success=False)
     platform_root = Path(env.get("KB_JOURNEY_PLATFORM_ROOT", project_root))
     def adapter_defaults_probe() -> str | None:
-        config_path = platform_root / ".kb" / "kb.config.jsonc"
+        config_path = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
         if not config_path.is_file():
-            config_path = platform_root / ".kb" / "kb.config.json"
+            config_path = active_platform_root(platform_root) / ".kb" / "kb.config.json"
         try:
             value = json.loads(config_path.read_text())
         except (OSError, json.JSONDecodeError) as error:

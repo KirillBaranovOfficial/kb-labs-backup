@@ -13,6 +13,7 @@ import (
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/supervisor"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // installedVersion is the platform version of the active receipt, for messages.
@@ -26,8 +27,13 @@ func installedVersion(platformRoot string) string {
 // refuseRunningHost stops a fresh apply from starting a trial run next to a
 // supervised host: it would fail on the host's port with a misleading message.
 // An installed platform is changed with update, which stops and restarts the host.
-func refuseRunningHost(state host.State, platformRoot string) *diag.Diag {
-	rootState, err := host.StateForRoot(state, platformRoot)
+func refuseRunningHost(platformRoot string) *diag.Diag {
+	layout, err := versionroot.New(platformRoot)
+	if err != nil {
+		return contracts.NewDiag(contracts.CodeInputRequired, "The installation path is invalid.", "Pass the install root used by this installation, then rerun the command.", err)
+	}
+	platformRoot = layout.InstallRoot()
+	rootState, err := host.StateForRoot(platformRoot)
 	if err != nil {
 		return contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass the platform root used by this installation, then rerun the command.", err)
 	}
@@ -35,8 +41,7 @@ func refuseRunningHost(state host.State, platformRoot string) *diag.Diag {
 	if !alive {
 		return nil
 	}
-	requested, err := filepath.Abs(platformRoot)
-	if err != nil || record.PlatformRoot != filepath.Clean(requested) {
+	if record.PlatformRoot != filepath.Clean(platformRoot) {
 		return supervisor.Refusal(record, platformRoot)
 	}
 	failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create update\" to change an installed platform, or \"kb-create stop\" before a fresh apply.", nil)
@@ -44,15 +49,20 @@ func refuseRunningHost(state host.State, platformRoot string) *diag.Diag {
 	return failure
 }
 
-func refuseApplyBesideRunningHost(state host.State, plan contracts.ResolvedInstallPlan, platformRoot string) *diag.Diag {
+func refuseApplyBesideRunningHost(plan contracts.ResolvedInstallPlan, platformRoot string) *diag.Diag {
 	if plan.Host == nil {
 		return nil
 	}
-	return refuseRunningHost(state, platformRoot)
+	return refuseRunningHost(platformRoot)
 }
 
-func refuseForeignHost(state host.State, platformRoot string) *diag.Diag {
-	rootState, err := host.StateForRoot(state, platformRoot)
+func refuseForeignHost(platformRoot string) *diag.Diag {
+	layout, err := versionroot.New(platformRoot)
+	if err != nil {
+		return contracts.NewDiag(contracts.CodeInputRequired, "The installation path is invalid.", "Pass the install root used by this installation, then rerun the command.", err)
+	}
+	platformRoot = layout.InstallRoot()
+	rootState, err := host.StateForRoot(platformRoot)
 	if err != nil {
 		return contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass the platform root used by this installation, then rerun the command.", err)
 	}
@@ -60,8 +70,7 @@ func refuseForeignHost(state host.State, platformRoot string) *diag.Diag {
 	if !alive {
 		return nil
 	}
-	requested, err := filepath.Abs(platformRoot)
-	if err == nil && record.PlatformRoot == filepath.Clean(requested) {
+	if record.PlatformRoot == filepath.Clean(platformRoot) {
 		return nil
 	}
 	return supervisor.Refusal(record, platformRoot)
@@ -98,7 +107,11 @@ func operationDiagnostic(root, correlationID, logPath string, failure *diag.Diag
 	if plan != nil {
 		dossier.PlanHash, dossier.ReleaseDigest, dossier.ScenarioStateDigest = plan.PlanHash, plan.ReleaseDigest, plan.ScenarioStateDigest
 	}
-	path, err := diagnostics.Write(root, dossier, nil)
+	layout, layoutErr := versionroot.ForPlatformPath(root)
+	if layoutErr != nil {
+		return contracts.NewDiag("KB_INSTALL_DIAGNOSTIC_UNAVAILABLE", "The operation failed and the diagnostic dossier could not be written.", "inspect the local operation log", layoutErr)
+	}
+	path, err := diagnostics.Write(layout.FailureDossiersDir(), dossier, nil)
 	if err != nil {
 		return contracts.NewDiag("KB_INSTALL_DIAGNOSTIC_UNAVAILABLE", "The operation failed and the diagnostic dossier could not be written.", "inspect the local operation log", err)
 	}

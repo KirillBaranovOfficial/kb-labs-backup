@@ -27,7 +27,7 @@ func (doctorRecoveryResult) doctorOperationResult() {}
 
 func executeRecover(inv doctorCommandInput) (doctorRecoveryResult, *diag.Diag) {
 	command := hostCommand{PlatformRoot: inv.PlatformRoot, Foreground: inv.Foreground, Executable: inv.Executable, Version: buildVersion}
-	runner, state, failure := command.setup()
+	runner, state, failure := command.setup("recover")
 	if failure != nil {
 		failure.ProcessExitCode = diag.ExitInput
 		return doctorRecoveryResult{}, failure

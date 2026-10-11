@@ -20,6 +20,7 @@ import (
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/telemetry"
 	"github.com/kb-labs/create/v2/transport"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 type planInput struct {
@@ -76,9 +77,18 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 		}
 	}
 	var updateSummary *contracts.UpdateSummary
-	receiptPath := receipt.Path(plan.Request.PlatformRoot)
-	if _, err := os.Stat(receiptPath); err == nil {
-		active, readErr := receipt.Read(plan.Request.PlatformRoot)
+	activeRoot, layoutErr := activePlatformRoot(plan.Request.PlatformRoot)
+	installed := layoutErr == nil
+	if layoutErr != nil && !errors.Is(layoutErr, versionroot.ErrPlatformNotInstalled) {
+		return planResult{}, inputFailure(unsupportedPlatformLayout(plan.Request.PlatformRoot, layoutErr))
+	}
+	if installed {
+		receiptPath := receipt.Path(activeRoot)
+		if _, err := os.Stat(receiptPath); err != nil {
+			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be checked for update comparison", "check platform-root permissions, then rerun `kb-create plan`", err)
+			return planResult{}, inputFailure(failure)
+		}
+		active, readErr := receipt.Read(activeRoot)
 		if readErr != nil {
 			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be read for update comparison", "restore a named V2 snapshot, then rerun `kb-create plan`", readErr)
 			return planResult{}, inputFailure(failure)
@@ -89,9 +99,6 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 			return planResult{}, inputFailure(failure)
 		}
 		updateSummary = &summary
-	} else if !os.IsNotExist(err) {
-		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be checked for update comparison", "check platform-root permissions, then rerun `kb-create plan`", err)
-		return planResult{}, inputFailure(failure)
 	}
 	outcome, errorCode = "success", ""
 	return planResult{Plan: plan, UpdateSummary: updateSummary}, nil
@@ -132,6 +139,14 @@ func knownGatewayRoots(executable string) []gateway.Root {
 		result = append(result, root)
 	}
 	return result
+}
+
+func activePlatformRoot(installRoot string) (string, error) {
+	layout, err := versionroot.New(installRoot)
+	if err != nil {
+		return "", err
+	}
+	return layout.ExistingPlatformRoot()
 }
 
 // resolvePlan performs the shared, read-only request and release resolution
@@ -194,6 +209,11 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 	}
 	if response.Plan.Host != nil && planHasGateway(*response.Plan) {
 		root := response.Plan.Request.PlatformRoot
+		activeRoot, layoutErr := activePlatformRoot(root)
+		installed := layoutErr == nil
+		if layoutErr != nil && !errors.Is(layoutErr, versionroot.ErrPlatformNotInstalled) {
+			return resolvedPlan{}, unsupportedPlatformLayout(root, layoutErr)
+		}
 		registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
 		knownByRoot := make(map[string]gateway.Root, len(input.KnownGateways))
 		for _, candidate := range input.KnownGateways {
@@ -211,8 +231,10 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			known = append(known, item)
 		}
 		requestedURL := response.Plan.Request.GatewayURL
-		if active, activeErr := receipt.Read(root); requestedURL == "" && activeErr == nil {
-			requestedURL = recordedGatewayURL(active)
+		if installed && requestedURL == "" {
+			if active, activeErr := receipt.Read(activeRoot); activeErr == nil {
+				requestedURL = recordedGatewayURL(active)
+			}
 		}
 		defaultURL, originErr := gateway.OriginFromHealthURL(response.Plan.Host.HealthURL)
 		if originErr != nil {
@@ -259,7 +281,7 @@ func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
 	args := []string{"kb-create", operation}
 	appendFlag := func(name, value string) {
 		if value != "" {
-			args = append(args, "--"+name, shellQuote(value))
+			args = append(args, "--"+name, contracts.ShellQuote(value))
 		}
 	}
 	appendFlag("index", input.Index)
@@ -285,7 +307,7 @@ func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
 	args = append(args, "--json")
 	command := strings.Join(args, " ")
 	if input.RequestFile != "" {
-		diagnostic.Hint = fmt.Sprintf("Correct %s in request file %s, then retry: %s", field, shellQuote(input.RequestFile), command)
+		diagnostic.Hint = fmt.Sprintf("Correct %s in request file %s, then retry: %s", field, contracts.ShellQuote(input.RequestFile), command)
 	} else {
 		diagnostic.Hint = fmt.Sprintf("Correct %s using the corresponding request flag, then retry: %s", field, command)
 		if input.ScenarioID != "" {
@@ -297,10 +319,6 @@ func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
 		diagnostic.Meta = map[string]any{}
 	}
 	diagnostic.Meta["field"] = field
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func readRequest(path string) ([]byte, error) {

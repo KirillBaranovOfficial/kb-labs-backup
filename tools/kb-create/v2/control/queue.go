@@ -41,7 +41,7 @@ func validateUpdateInput(input UpdateRequestInput) error {
 	return nil
 }
 
-// Queue persists update requests in the launcher state home. The update flow
+// Queue persists update requests in the installation's host state. The update flow
 // that consumes them is later work; this only records and validates.
 type Queue struct {
 	Path string

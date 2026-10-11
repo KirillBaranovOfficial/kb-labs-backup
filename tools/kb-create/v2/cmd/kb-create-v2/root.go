@@ -195,13 +195,25 @@ func executeVersion(_ context.Context, _ versionCommandInput) (map[string]any, *
 	return map[string]any{"version": buildVersion, "commit": buildCommit}, nil
 }
 func renderUpdate(value any) string {
-	if result, ok := value.(updateCommandResult); ok && result.AlreadyUpToDate {
-		return "Platform is already up to date."
+	if result, ok := value.(updateCommandResult); ok {
+		if result.AlreadyUpToDate {
+			return "Platform is already up to date."
+		}
+		if result.PendingRestart != nil {
+			return "Platform update completed.\n" + renderPendingRestart(result.PendingRestart)
+		}
 	}
 	return "Platform update completed."
 }
-func renderRollback(any) string  { return "Platform rollback completed." }
-func renderUninstall(any) string { return "Platform uninstalled." }
+
+func renderRollback(any) string { return "Platform rollback completed." }
+func renderUninstall(value any) string {
+	result, ok := value.(recoveryCommandResult)
+	if !ok || len(result.PreservedEntries) == 0 {
+		return "Platform uninstalled."
+	}
+	return "Platform uninstalled. Preserved foreign entries:\n  " + strings.Join(result.PreservedEntries, "\n  ")
+}
 func renderStart(any) string     { return "KB Labs host started." }
 func renderStop(any) string      { return "KB Labs host stopped." }
 func renderRestart(any) string   { return "KB Labs host restarted." }
@@ -237,7 +249,17 @@ func renderStatus(value any) string {
 	installation, _ := payload["installation"].(map[string]any)
 	channel, _ := installation["platformChannel"].(string)
 	version, _ := installation["platformVersion"].(string)
-	return fmt.Sprintf("Installed: %t\nPlatform channel: %s\nPlatform version: %s\nRunning: %t\nReachable: %t", installed, channel, version, running, reachable)
+	lines := fmt.Sprintf("Installed: %t\nPlatform channel: %s\nPlatform version: %s\nRunning: %t\nReachable: %t", installed, channel, version, running, reachable)
+	if installedVersion, ok := payload["installedVersion"].(string); ok && installedVersion != "" {
+		lines += "\nInstalled version: " + installedVersion
+	}
+	if runningVersion, ok := payload["runningVersion"].(string); ok && runningVersion != "" {
+		lines += "\nRunning version: " + runningVersion
+	}
+	if pending := pendingRestartValue(payload["pendingRestart"]); pending != nil {
+		lines += "\n" + renderPendingRestart(pending)
+	}
+	return lines
 }
 
 func renderDoctor(value any) string {

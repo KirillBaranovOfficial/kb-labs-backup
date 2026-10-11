@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Mapping
 from typing import Any
 
+from journey_resources import active_platform_root, installer_record_path
+
 MAX_DUMP_BYTES = 5 * 1024 * 1024
 CONTENT_BUDGET = MAX_DUMP_BYTES - 64 * 1024
 MAX_FILE_BYTES = 1024 * 1024
@@ -117,13 +119,14 @@ def _write_secret_fingerprints(source: Path, target: Path) -> int:
 
 def _write_auth_state_probe(platform_root: Path, target: Path) -> int:
     """Write aggregate session health and database identity without credential material."""
-    config_path = platform_root / ".kb/kb.config.jsonc"
+    active = active_platform_root(platform_root)
+    config_path = active / ".kb/kb.config.jsonc"
     try:
         config = json.loads(config_path.read_text())
         filename = config["platform"]["adapterOptions"]["documentDatabase"]["filename"]
         database = Path(filename)
         if not database.is_absolute():
-            database = platform_root / database
+                database = active / database
         stat = database.stat()
         connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=1)
         try:
@@ -168,7 +171,7 @@ def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platfo
     destination = Path(reports_dir) / f"service-logs-{mode}-{run_id}"
     destination.mkdir(parents=True, exist_ok=True)
     used = 0
-    platform_database = Path(platform_root) / ".kb" / "database" / "kb.sqlite"
+    platform_database = active_platform_root(Path(platform_root)) / ".kb" / "database" / "kb.sqlite"
     databases = {*home.glob("state/*/database/kb.sqlite"), platform_database}
     for database in sorted(databases):
         try:
@@ -248,6 +251,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                         admin_password: str = "") -> Path:
     """Write a best-effort platform snapshot and index; never raise dump errors."""
     root = Path(platform_root)
+    active = active_platform_root(root)
     reports = Path(reports_dir)
     destination = reports / f"platform-state-{mode}-{front}-{scenario}-{variant}"
     try:
@@ -268,9 +272,9 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
 
         for relative in (Path(".kb/marketplace.lock"), Path(".kb/kb.config.jsonc"),
                          Path(".kb/v2/receipt.json")):
-            add(root / relative, relative)
+            add(active / relative, relative)
         fingerprint_bytes = _write_secret_fingerprints(
-            root / ".kb/v2/secrets.env", destination / "installation-secret-fingerprints.json"
+            active / ".kb/v2/secrets.env", destination / "installation-secret-fingerprints.json"
         )
         if fingerprint_bytes and used + fingerprint_bytes <= CONTENT_BUDGET:
             used += fingerprint_bytes
@@ -283,8 +287,9 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             entries.append(f"- `auth-state-probe.json` ({auth_probe_bytes} bytes)")
         elif auth_probe_bytes:
             (destination / "auth-state-probe.json").unlink(missing_ok=True)
-        for source in sorted((root / ".kb/v2/snapshots").glob("*.json")):
-            add(source, Path(".kb/v2/snapshots") / source.name)
+        snapshots = installer_record_path(root, "snapshots")
+        for source in sorted(snapshots.glob("*.json")):
+            add(source, Path("installer/snapshots") / source.name)
         home_value = (env or os.environ).get("HOME")
         launcher_root = Path(home_value) / ".kb" / "launcher" if home_value else None
         launcher_logs = []
@@ -298,7 +303,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                 break
             relative = Path("launcher-logs") / source.relative_to(launcher_root)
             add(source, relative, tail=True)
-        receipt_path = root / ".kb/v2/receipt.json"
+        receipt_path = active / ".kb/v2/receipt.json"
         try:
             receipt_value = json.loads(receipt_path.read_text())
             artifacts = receipt_value.get("plan", {}).get("artifacts", [])
@@ -307,7 +312,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                 package = artifact.get("package")
                 if not isinstance(package, str) or not package:
                     continue
-                manifest_path = root / "node_modules" / Path(*package.split("/")) / "kb-create.manifest.json"
+                manifest_path = active / "node_modules" / Path(*package.split("/")) / "kb-create.manifest.json"
                 artifact_manifests.append({
                     "id": artifact.get("id"),
                     "package": package,
@@ -324,7 +329,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         except (OSError, json.JSONDecodeError, AttributeError, TypeError):
             pass
         for directory in ("logs", "diagnostics"):
-            files = sorted((root / ".kb" / directory).glob("*"),
+            files = sorted((active / ".kb" / directory).glob("*"),
                            key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
             for source in files[:3]:
                 add(source, Path(".kb") / directory / source.name, tail=directory == "logs")
@@ -366,7 +371,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                     add(source, evidence_prefix / ".kb" / directory / source.name, tail=True)
 
         packages = []
-        scope = root / "node_modules" / "@kb-labs"
+        scope = active / "node_modules" / "@kb-labs"
         try:
             for package in sorted(scope.iterdir()):
                 manifest = package / "package.json"

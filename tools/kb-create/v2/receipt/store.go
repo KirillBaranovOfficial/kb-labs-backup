@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -17,11 +18,61 @@ func Path(platformRoot string) string {
 	return filepath.Join(platformRoot, ".kb", "v2", "receipt.json")
 }
 
-func snapshotsDir(platformRoot string) string {
-	return filepath.Join(platformRoot, ".kb", "v2", "snapshots")
+func SnapshotPath(directory, id string) string {
+	return filepath.Join(directory, id+".json")
 }
-func SnapshotPath(platformRoot, id string) string {
-	return filepath.Join(snapshotsDir(platformRoot), id+".json")
+
+type SnapshotUsage struct {
+	ID             string    `json:"id"`
+	CreatedAt      time.Time `json:"createdAt"`
+	DiskUsageBytes int64     `json:"diskUsageBytes"`
+}
+
+func ListSnapshots(directory string) ([]SnapshotUsage, error) {
+	entries, err := os.ReadDir(directory)
+	if os.IsNotExist(err) {
+		return []SnapshotUsage{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	items := make([]SnapshotUsage, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		snapshot, err := ReadSnapshot(directory, id)
+		if err != nil {
+			return nil, fmt.Errorf("read snapshot %s for retention: %w", id, err)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, SnapshotUsage{ID: id, CreatedAt: snapshot.CreatedAt, DiskUsageBytes: info.Size()})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+	return items, nil
+}
+
+func PruneSnapshots(directory string, keep int) error {
+	if keep < 0 {
+		return fmt.Errorf("snapshot retention count cannot be negative")
+	}
+	items, err := ListSnapshots(directory)
+	if err != nil {
+		return err
+	}
+	if keep > len(items) {
+		keep = len(items)
+	}
+	for _, item := range items[keep:] {
+		if err := os.Remove(SnapshotPath(directory, item.ID)); err != nil {
+			return fmt.Errorf("prune recovery snapshot %s: %w", item.ID, err)
+		}
+	}
+	return nil
 }
 func Write(platformRoot string, receipt contracts.InstallReceipt) error {
 	if receipt.Schema == "" {
@@ -34,7 +85,11 @@ func Write(platformRoot string, receipt contracts.InstallReceipt) error {
 	if err != nil {
 		return err
 	}
-	path := Path(platformRoot)
+	writeRoot, err := writableRoot(platformRoot)
+	if err != nil {
+		return err
+	}
+	path := Path(writeRoot)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
@@ -47,7 +102,7 @@ func Write(platformRoot string, receipt contracts.InstallReceipt) error {
 // CreateSnapshot captures only launcher-managed projections. It must run
 // before update/uninstall and is intentionally unable to copy arbitrary user
 // files from project roots.
-func CreateSnapshot(platformRoot string, now time.Time) (contracts.Snapshot, error) {
+func CreateSnapshot(platformRoot, directory string, now time.Time) (contracts.Snapshot, error) {
 	current, err := Read(platformRoot)
 	if err != nil {
 		return contracts.Snapshot{}, fmt.Errorf("read active receipt: %w", err)
@@ -65,14 +120,18 @@ func CreateSnapshot(platformRoot string, now time.Time) (contracts.Snapshot, err
 	}
 	id := snapshotID(current.ID, now, files)
 	snapshot := contracts.Snapshot{Schema: contracts.SnapshotSchema, ID: id, CreatedAt: now.UTC(), ParentID: current.SnapshotID, ReceiptID: current.ID, ArtifactState: current.Plan.PlanHash, ConfigState: current.Verification.ConfigSHA256, Files: files}
-	if err := writeSnapshot(platformRoot, snapshot); err != nil {
+	if err := writeSnapshot(directory, snapshot); err != nil {
 		return contracts.Snapshot{}, err
 	}
 	return snapshot, nil
 }
 
-func RestoreSnapshot(platformRoot, id string) (contracts.Snapshot, error) {
-	snapshot, err := ReadSnapshot(platformRoot, id)
+func RestoreSnapshot(platformRoot, directory, id string) (contracts.Snapshot, error) {
+	snapshot, err := ReadSnapshot(directory, id)
+	if err != nil {
+		return contracts.Snapshot{}, err
+	}
+	writeRoot, err := writableRoot(platformRoot)
 	if err != nil {
 		return contracts.Snapshot{}, err
 	}
@@ -82,7 +141,7 @@ func RestoreSnapshot(platformRoot, id string) (contracts.Snapshot, error) {
 	}
 	sort.Strings(keys)
 	for _, relative := range keys {
-		path := filepath.Join(platformRoot, relative)
+		path := filepath.Join(writeRoot, relative)
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return contracts.Snapshot{}, err
 		}
@@ -93,11 +152,22 @@ func RestoreSnapshot(platformRoot, id string) (contracts.Snapshot, error) {
 	return snapshot, nil
 }
 
+func writableRoot(platformRoot string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(platformRoot)
+	if err == nil {
+		return filepath.Clean(resolved), nil
+	}
+	if os.IsNotExist(err) {
+		return filepath.Clean(platformRoot), nil
+	}
+	return "", err
+}
+
 // ReadSnapshot validates a saved recovery boundary without applying any of
 // its files. Lifecycle rollback uses this to restore external artifacts before
 // the snapshot becomes the single writer of generated platform files.
-func ReadSnapshot(platformRoot, id string) (contracts.Snapshot, error) {
-	data, err := os.ReadFile(SnapshotPath(platformRoot, id))
+func ReadSnapshot(directory, id string) (contracts.Snapshot, error) {
+	data, err := os.ReadFile(SnapshotPath(directory, id))
 	if err != nil {
 		return contracts.Snapshot{}, err
 	}
@@ -121,12 +191,12 @@ func ReadSnapshot(platformRoot, id string) (contracts.Snapshot, error) {
 	return snapshot, nil
 }
 
-func writeSnapshot(platformRoot string, snapshot contracts.Snapshot) error {
+func writeSnapshot(directory string, snapshot contracts.Snapshot) error {
 	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return err
 	}
-	path := SnapshotPath(platformRoot, snapshot.ID)
+	path := SnapshotPath(directory, snapshot.ID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
@@ -162,8 +232,8 @@ func Read(platformRoot string) (contracts.InstallReceipt, error) {
 	return result, nil
 }
 
-// Delete removes only the active V2 receipt. Snapshots are intentionally kept
-// under .kb/v2/snapshots as explicit recovery evidence.
+// Delete removes only the active V2 receipt. Snapshots remain under the
+// install-root-owned installer/snapshots directory as explicit recovery evidence.
 func Delete(platformRoot string) error {
 	err := os.Remove(Path(platformRoot))
 	if os.IsNotExist(err) {

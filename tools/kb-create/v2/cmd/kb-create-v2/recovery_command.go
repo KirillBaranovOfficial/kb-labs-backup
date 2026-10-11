@@ -22,15 +22,17 @@ import (
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/swap"
+	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 )
 
 type recoveryCommandResult struct {
-	OK            bool           `json:"ok"`
-	Operation     string         `json:"operation"`
-	Snapshot      map[string]any `json:"snapshot"`
-	HostRestarted bool           `json:"hostRestarted"`
-	LogPath       string         `json:"logPath"`
+	OK               bool           `json:"ok"`
+	Operation        string         `json:"operation"`
+	Snapshot         map[string]any `json:"snapshot"`
+	HostRestarted    bool           `json:"hostRestarted"`
+	LogPath          string         `json:"logPath"`
+	PreservedEntries []string       `json:"preservedEntries,omitempty"`
 }
 
 type uninstallCommandInput struct {
@@ -62,12 +64,41 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 		hint, input.Command); failure != nil {
 		return recoveryCommandResult{}, failure
 	}
-	if _, err := receipt.Read(root); err != nil {
+	layout, layoutErr := versionroot.New(root)
+	if layoutErr == nil {
+		layoutErr = layout.ValidateStructure()
+	}
+	if layoutErr != nil {
+		if layout != (versionroot.Layout{}) && layout.HasOwnershipMarker() {
+			preserved, preserveErr := layout.PreservedEntries()
+			if preserveErr != nil {
+				return recoveryCommandResult{}, unsupportedPlatformLayout(root, preserveErr)
+			}
+			if removeErr := layout.RemoveOwned(); removeErr != nil {
+				return recoveryCommandResult{}, unsupportedPlatformLayout(root, removeErr)
+			}
+			return recoveryCommandResult{OK: true, Operation: "uninstall", HostRestarted: false, PreservedEntries: preserved}, nil
+		}
+		return recoveryCommandResult{}, unsupportedPlatformLayout(root, layoutErr)
+	}
+	platformRoot := layout.PlatformRoot()
+	active, err := receipt.Read(platformRoot)
+	if err != nil {
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
 		failure.ProcessExitCode = diag.ExitInput
 		return recoveryCommandResult{}, failure
 	}
-	state, err := host.StateHome()
+	if active.InstallationID == "" {
+		return recoveryCommandResult{}, unsupportedPlatformLayout(root, fmt.Errorf("active receipt has no installation identity"))
+	}
+	if layoutErr := layout.Validate(); layoutErr != nil {
+		return recoveryCommandResult{}, unsupportedPlatformLayout(root, layoutErr)
+	}
+	launcherState, err := host.StateHome()
+	if err != nil {
+		return recoveryCommandResult{}, asDiag(err)
+	}
+	state, err := host.StateForRoot(root)
 	if err != nil {
 		return recoveryCommandResult{}, asDiag(err)
 	}
@@ -76,6 +107,10 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 		return recoveryCommandResult{}, asDiag(err)
 	}
 	defer release()
+	preservedEntries, err := layout.PreservedEntries()
+	if err != nil {
+		return recoveryCommandResult{}, unsupportedPlatformLayout(root, err)
+	}
 	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable}, root, state, "uninstall", "", true, func(ctx context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
 		return runtime.Uninstall(root, deps)
 	})
@@ -83,14 +118,14 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 		return recoveryCommandResult{}, failure
 	}
 	if input.Executable != "" {
-		if err := shim.Remove(input.Executable, root); err != nil {
+		if err := shim.Remove(input.Executable, platformRoot); err != nil {
 			return recoveryCommandResult{}, contracts.NewDiag("KB_INSTALL_APPLY_FAILED", "installation was removed but the kb command shim could not be removed", "remove the stale kb link from the launcher directory after checking its target", err)
 		}
 	}
-	if err := (gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}).Remove(root); err != nil {
+	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Remove(platformRoot); err != nil {
 		return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installation was removed but its Gateway address could not be released", "check launcher state permissions, then rerun `kb-create apply` for remaining roots", err)
 	}
-	return recoveryCommandResult{OK: true, Operation: "uninstall", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: false, LogPath: result.LogPath}, nil
+	return recoveryCommandResult{OK: true, Operation: "uninstall", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: false, LogPath: result.LogPath, PreservedEntries: preservedEntries}, nil
 }
 
 func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryCommandResult, *diag.Diag) {
@@ -98,11 +133,23 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	if root == "" {
 		return recoveryCommandResult{}, inputFailure(contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil))
 	}
-	state, err := host.StateHome()
+	launcherState, err := host.StateHome()
 	if err != nil {
 		return recoveryCommandResult{}, asDiag(err)
 	}
-	if running := refuseForeignHost(state, root); running != nil {
+	layout, layoutErr := versionroot.New(root)
+	if layoutErr == nil {
+		layoutErr = layout.Validate()
+	}
+	if layoutErr != nil {
+		return recoveryCommandResult{}, unsupportedPlatformLayout(root, layoutErr)
+	}
+	state, err := host.StateForRoot(root)
+	if err != nil {
+		return recoveryCommandResult{}, asDiag(err)
+	}
+	platformRoot := layout.PlatformRoot()
+	if running := refuseForeignHost(root); running != nil {
 		return recoveryCommandResult{}, running
 	}
 	commandLine := fmt.Sprintf("rerun `kb-create rollback --platform-root %s", strconv.Quote(root))
@@ -116,7 +163,7 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	if failure := confirmDestructive(input.Yes, input.JSON, "This will replace platform root "+root+" and its active receipt with a saved snapshot. Continue? [y/N] ", commandLine, input.Command); failure != nil {
 		return recoveryCommandResult{}, failure
 	}
-	active, err := receipt.Read(root)
+	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
 		failure.ProcessExitCode = diag.ExitInput
@@ -136,20 +183,20 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	defer release()
 	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable}, root, state, "rollback", target, false, func(_ context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
 		installer := deps.Artifacts
-		return lifecycle.Mutate(root, time.Now().UTC(), func() error {
-			_, rollbackErr := runtime.Rollback(root, target, deps)
+		return lifecycle.Mutate(platformRoot, platformRoot, layout.SnapshotsDir(), time.Now().UTC(), func() error {
+			_, rollbackErr := runtime.Rollback(platformRoot, target, deps)
 			return rollbackErr
 		}, nil, restoreReceiptArtifacts(installer))
 	})
 	if failure != nil {
 		return recoveryCommandResult{}, failure
 	}
-	if restored, readErr := receipt.Read(root); readErr == nil && restored.Plan.Host != nil {
+	if restored, readErr := receipt.Read(platformRoot); readErr == nil && restored.Plan.Host != nil {
 		origin, originErr := gateway.OriginFromHealthURL(restored.Verification.HostHealthURL)
 		if originErr != nil {
 			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the restored Gateway address could not be recorded", fmt.Sprintf("rerun `kb-create rollback --platform-root %q --snapshot %q --yes`", root, target), originErr)
 		}
-		if err := (gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}).Register(root, origin); err != nil {
+		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(platformRoot, origin); err != nil {
 			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the rollback succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create rollback`", err)
 		}
 	}
@@ -170,13 +217,22 @@ func restoreReceiptArtifacts(installer interface {
 
 func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root string, state host.State, operation string, target string, keepStopped bool,
 	change func(context.Context, runtime.Dependencies) (contracts.Snapshot, error)) (recoveryMutationResult, *diag.Diag) {
+	layout, err := versionroot.New(root)
+	if err != nil {
+		return recoveryMutationResult{}, unsupportedPlatformLayout(root, err)
+	}
+	platformRoot := layout.PlatformRoot()
+	activeRoot, err := layout.Active()
+	if err != nil {
+		return recoveryMutationResult{}, unsupportedPlatformLayout(root, err)
+	}
 	correlationID := fmt.Sprintf("%s-%d", operation, time.Now().UTC().UnixNano())
-	transcript, err := logs.New(root, correlationID, nil)
+	transcript, err := logs.New(layout.OperationLogsDir(), correlationID, nil)
 	if err != nil {
 		return recoveryMutationResult{}, contracts.NewDiag("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the platform root is writable", err)
 	}
 	defer transcript.Close()
-	installer := artifacts.Composite{Packages: artifacts.Pnpm{Root: root, Registry: input.Registry, Log: transcript}, Binaries: artifacts.Binaries{Root: root}}
+	installer := artifacts.Composite{Packages: artifacts.Pnpm{Root: activeRoot, Registry: input.Registry, Log: transcript}, Binaries: artifacts.Binaries{Root: activeRoot}}
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: correlationID}
 	command := hostCommand{PlatformRoot: root, Executable: input.Executable, Version: buildVersion}
 	if ctx == nil {
@@ -185,14 +241,14 @@ func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root s
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	var snapshot contracts.Snapshot
-	operationSpec := swap.Operation{Name: operation, PreviousVersion: installedVersion(root), KeepStopped: keepStopped,
+	operationSpec := swap.Operation{Name: operation, PreviousVersion: installedVersion(platformRoot), KeepStopped: keepStopped,
 		Change: func(changeCtx context.Context, _ bool) (string, error) {
 			var changeErr error
 			snapshot, changeErr = change(changeCtx, deps)
 			return snapshot.ID, changeErr
 		},
 		Restore: func(_ context.Context, id string) error {
-			_, restoreErr := lifecycle.Rollback(root, id, restoreReceiptArtifacts(installer))
+			_, restoreErr := lifecycle.Rollback(platformRoot, layout.SnapshotsDir(), id, restoreReceiptArtifacts(installer))
 			return restoreErr
 		},
 	}
