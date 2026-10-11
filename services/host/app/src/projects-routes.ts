@@ -115,7 +115,7 @@ export function createProjectsRoutes(
           const outcome = await addProject(registry, { path, name });
           // `status === "planned"` cannot happen: this route never passes `dryRun`.
           const summary = await showProject(registry, outcome.project.id);
-          return sendData(reply, toEntry(manager, summary), 201);
+          return sendData(reply, { ...toEntry(manager, summary), alreadyExisted: outcome.alreadyExisted }, outcome.alreadyExisted ? 200 : 201);
         } catch (error) {
           return sendEnvelope(reply, projectErrorEnvelope(error));
         }

@@ -17,6 +17,7 @@ function reportPlanned(
 ) {
   const payload = {
     dryRun: true,
+    alreadyExisted: outcome.alreadyExisted,
     project: outcome.project,
   };
   if (!json) {
@@ -27,9 +28,11 @@ function reportPlanned(
 
 function reportAdded(ui: Ui | undefined, outcome: Extract<AddProjectOutcome, { status: 'added' }>, json: boolean) {
   const { project } = outcome;
-  const payload = { project };
+  const payload = { project, alreadyExisted: outcome.alreadyExisted };
   if (!json) {
-    ui?.success(`Registered ${project.name} (${project.id})`);
+    ui?.success(outcome.alreadyExisted
+      ? `Already registered ${project.name} (${project.id})`
+      : `Registered ${project.name} (${project.id})`);
     ui?.write(`  path: ${project.path}\n`);
   }
   return payload;
@@ -43,6 +46,7 @@ type AddFlags = {
 
 export type ProjectAddResult = CommandResult & {
   dryRun?: boolean;
+  alreadyExisted?: boolean;
   project?: ProjectRecord;
 };
 

@@ -97,6 +97,9 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	planned = resolved.Plan
 	state := resolved.State
 	root := planned.Request.PlatformRoot
+	if _, failure := existingProjectSelection(root, planned.Request.ProjectRoot); failure != nil {
+		return applyCommandResult{}, failure
+	}
 	release, err := state.AcquireOperation("apply")
 	if err != nil {
 		return applyCommandResult{}, asDiag(err)
