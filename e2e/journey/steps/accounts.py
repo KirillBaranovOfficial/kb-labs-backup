@@ -12,7 +12,7 @@ import os
 
 from .auth import _login, _request
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
-                         read_ux_cli_result, read_ux_http_result, run_command)
+                         read_ux_cli_result, read_ux_http_result, store_report_secret, run_command)
 
 
 def _browser_call(base_url: str, jar: http.cookiejar.CookieJar, path: str, *, method: str = "GET",
@@ -152,6 +152,7 @@ def run_api_token_lifecycle_steps(base_url: str, admin_email: str, admin_passwor
     token_id = token_result.get("tokenRecord", {}).get("tokenId")
     if not token or not token_id or not token_result["tokenRecord"].get("expiresAt"):
         raise AssertionError("personal token create response lacks a one-time secret or expiry metadata")
+    store_report_secret(os.environ, "KB_JOURNEY_PERSONAL_API_TOKEN", token, "personal API token")
     profile = _request(base_url, "/auth/me", token=token)
     if profile.get("email") != member_email or not profile.get("tenantId"):
         raise AssertionError("personal token did not identify its owner and tenant")
@@ -180,6 +181,8 @@ def run_api_token_lifecycle_steps(base_url: str, admin_email: str, admin_passwor
     no_expiry_id = no_expiry.get("tokenRecord", {}).get("tokenId")
     if not no_expiry_token or not no_expiry_id or "expiresAt" in no_expiry.get("tokenRecord", {}):
         raise AssertionError("token created without an expiry option unexpectedly has expiresAt")
+    store_report_secret(os.environ, "KB_JOURNEY_NON_EXPIRING_API_TOKEN", no_expiry_token,
+                        "non-expiring personal API token")
     if _request(base_url, "/auth/me", token=no_expiry_token).get("email") != member_email:
         raise AssertionError("non-expiring personal token could not authenticate as its owner")
     _request(base_url, f"/auth/tokens/{no_expiry_id}/revoke", method="POST", token=member_access)
@@ -195,6 +198,7 @@ def run_invite_lifecycle_steps(base_url: str, admin_email: str, admin_password: 
     if not invite_record or not 6.99 * 24 * 60 * 60 * 1000 <= invite_record.get("expiresAt", 0) - invite_record.get("createdAt", 0) <= 7.01 * 24 * 60 * 60 * 1000:
         raise AssertionError("invite did not have the seven-day default lifetime")
     token = invite["activationUrl"].rsplit("/activate/", 1)[1]
+    store_report_secret(os.environ, "KB_JOURNEY_INVITE_TOKEN", token, "invite activation token")
     _request(base_url, f"/auth/invites/{invite_id}/revoke", method="POST", token=admin_access)
     rejected = _request(base_url, "/auth/activate", method="POST",
                         body={"token": token, "password": "JourneyMember123!"}, expected=422)
@@ -208,10 +212,13 @@ def run_invite_lifecycle_steps(base_url: str, admin_email: str, admin_password: 
     expiring_record = next((record for record in records if record.get("inviteId") == expiring.get("inviteId")), None)
     if not expiring_record:
         raise AssertionError("short-lived invite did not appear in the admin invite list")
+    expiring_token = expiring["activationUrl"].rsplit("/activate/", 1)[1]
+    store_report_secret(os.environ, "KB_JOURNEY_EXPIRING_INVITE_TOKEN", expiring_token,
+                        "expiring invite activation token")
     while expiring_record["expiresAt"] > time.time() * 1000:
         time.sleep(min(0.05, (expiring_record["expiresAt"] - time.time() * 1000) / 1000))
     expired = _request(base_url, "/auth/activate", method="POST",
-                       body={"token": expiring["activationUrl"].rsplit("/activate/", 1)[1],
+                       body={"token": expiring_token,
                              "password": "JourneyMember123!"}, expected=422)
     if expired.get("code") != "KB_AUTH_INVALID_INVITE":
         raise AssertionError("expired invite did not return KB_AUTH_INVALID_INVITE")

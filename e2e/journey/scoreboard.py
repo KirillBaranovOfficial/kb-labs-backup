@@ -8,6 +8,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
+from invocations import print_report_text, write_report_json, write_report_text
 
 CASE_STEP = re.compile(r"^\|\s*((?:S|PC)-\d+\.\d+)\s*\|", re.MULTILINE)
 CLAIM_TAG = re.compile(r"@(S|PC)-(\d+\.\d+)")
@@ -245,8 +246,8 @@ def write_scoreboards(directory: Path, catalog: Path) -> None:
     outputs = {f"case-scoreboard-{mode}": build_scoreboard(directory, catalog, [mode]) for mode in MODES}
     outputs["case-scoreboard"] = build_scoreboard(directory, catalog, MODES)
     for stem, scoreboard in outputs.items():
-        (directory / f"{stem}.json").write_text(json.dumps(scoreboard, indent=2) + "\n", encoding="utf-8")
-        (directory / f"{stem}.md").write_text(render_markdown(scoreboard), encoding="utf-8")
+        write_report_json(directory / f"{stem}.json", scoreboard)
+        write_report_text(directory / f"{stem}.md", render_markdown(scoreboard))
 
 
 def _fully_green(data: dict, mode: str) -> set[str]:
@@ -307,14 +308,20 @@ def render_delta(previous_dir: Path, current_dir: Path) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if len(args) == 2:
-        print(render_delta(Path(args[0]), Path(args[1])))
+        print_report_text(render_delta(Path(args[0]), Path(args[1])), flush=True)
         return 0
     if len(args) == 3 and args[0] == "--write":
         write_scoreboards(Path(args[1]), Path(args[2]))
         return 0
-    print("usage: scoreboard.py <runA-dir> <runB-dir> | --write <reports-dir> <catalog-dir>", file=sys.stderr)
+    print_report_text("usage: scoreboard.py <runA-dir> <runB-dir> | --write <reports-dir> <catalog-dir>",
+                      stream=sys.stderr, flush=True)
     return 2
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        print_report_text(f"Journey scoreboard failed: {error.__class__.__name__}: {error}",
+                          stream=sys.stderr, flush=True)
+        raise SystemExit(1)

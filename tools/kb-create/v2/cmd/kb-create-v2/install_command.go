@@ -2,6 +2,7 @@ package v2cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,10 +79,18 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	generatedSecrets := map[string]string{}
 	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, wizard.IO{In: inputReader, Out: out, Generated: generatedSecrets})
 	if err != nil {
+		var validation *contracts.RequestValidationError
+		if errors.As(err, &validation) {
+			return applyCommandResult{}, validation.Diagnostic()
+		}
 		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the answers and rerun `kb-create install`.", err)
 	}
 	request, err = mergeDirectRequest(request, input.Direct)
 	if err != nil {
+		var validation *contracts.RequestValidationError
+		if errors.As(err, &validation) {
+			return applyCommandResult{}, validation.Diagnostic()
+		}
 		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the direct install fields and rerun `kb-create install`.", err)
 	}
 	started := time.Now()
@@ -145,18 +154,15 @@ func mergeDirectRequest(request contracts.InstallRequest, direct directRequest) 
 	if normalized.PlatformRoot == "" {
 		normalized.PlatformRoot = request.PlatformRoot
 	}
-	if normalized.ProjectRoot == "" {
-		normalized.ProjectRoot = request.ProjectRoot
-	}
+	// The wizard has already validated and canonicalized project selection.
+	// Keep that result instead of re-normalizing a raw flag value here.
+	normalized.ProjectRoot = request.ProjectRoot
 	fields, err := normalized.normalize()
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
 	if direct.PlatformRoot != "" {
 		request.PlatformRoot = fields.PlatformRoot
-	}
-	if direct.ProjectRoot != "" {
-		request.ProjectRoot = fields.ProjectRoot
 	}
 	if direct.PlatformVersion != "" || direct.PlatformChannel != "" {
 		request.Platform = fields.Platform

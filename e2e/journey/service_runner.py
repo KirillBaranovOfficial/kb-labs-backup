@@ -23,7 +23,9 @@ from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import FlowGraph, Journey
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
-                         read_ux_cli_result, read_ux_http_result, run_command, run_with_runner)
+                         print_report_text, read_ux_cli_result, read_ux_http_result, run_command,
+                         store_report_secret,
+                         run_with_runner, write_report_json, write_report_text)
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
 from marketplace_steps import _registry_version, _output
@@ -368,6 +370,8 @@ def _checks(mode: str):
         def admin_login():
             if not ADMIN_PASSWORD:
                 return "BLOCKED: secured profile needs KB_JOURNEY_ADMIN_PASSWORD; provide test credentials in the isolated journey container"
+            store_report_secret(os.environ, "KB_JOURNEY_ADMIN_PASSWORD", ADMIN_PASSWORD,
+                                "service runner admin password")
             status, body, _ = request("/auth/login/cli", method="POST",
                                       payload={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
             if status not in {200, 201}:
@@ -377,8 +381,9 @@ def _checks(mode: str):
             token = body.get("accessToken") or body.get("token")
             if not token:
                 return "secured admin CLI login returned no access token from /auth/login/cli"
-            os.environ["KB_JOURNEY_SERVICE_TOKEN"] = str(token)
-            me_status, _, _ = request("/auth/me", token=str(token))
+            token = store_report_secret(os.environ, "KB_JOURNEY_SERVICE_TOKEN", str(token),
+                                        "secured service admin access token")
+            me_status, _, _ = request("/auth/me", token=token)
             if me_status != 200:
                 return f"secured admin CLI token did not authenticate /auth/me (HTTP {me_status})"
             return None
@@ -1015,10 +1020,9 @@ def main() -> int:
                             cases=["S-014.1", "S-015.1"])
     except Exception as error:
         diagnostics = Path(args.output).resolve().with_name("journey-diagnostics.log")
-        diagnostics.parent.mkdir(parents=True, exist_ok=True)
-        with diagnostics.open("a", encoding="utf-8") as stream:
-            stream.write("\n== unexpected exception in service runner ==\n")
-            stream.write(traceback.format_exc())
+        write_report_text(diagnostics,
+                          "\n== unexpected exception in service runner ==\n" + traceback.format_exc(),
+                          append=True, env=os.environ)
         journey.step("service runner", "journey.runner", lambda: str(error) or error.__class__.__name__,
                       role="lifecycle")
     finally:
@@ -1036,12 +1040,17 @@ def main() -> int:
             archive_logs,
             role="lifecycle",
         )
-        result = journey.write_json(args.output)
+        result = journey.result()
         output_payload = {**result.__dict__, "states": graph.states}
-        Path(args.output).write_text(json.dumps(output_payload, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(output_payload, indent=2))
+        output_payload = write_report_json(args.output, output_payload, env=os.environ)
+    print_report_text(json.dumps(output_payload, indent=2), env=os.environ)
     return 0 if result.status == "PASS" else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        print_report_text(f"Service journey runner failed: {error.__class__.__name__}: {error}",
+                          stream=sys.stderr, flush=True)
+        raise SystemExit(1)

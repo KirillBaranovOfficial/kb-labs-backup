@@ -26,8 +26,9 @@ import (
 // Options describe the launcher doing the resolving. Zero values mean the
 // running process: its OS/arch, and no launcher-version constraint check.
 type Options struct {
-	LauncherVersion string
-	OS, Arch        string
+	LauncherVersion      string
+	OS, Arch             string
+	ProjectRootSelection bool
 }
 
 // Plan resolves for the running host without a launcher-version check.

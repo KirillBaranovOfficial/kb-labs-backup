@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 const RequestSchema = "kb.create/v2"
@@ -172,8 +174,8 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	if r.ProjectRoot != "" {
 		project, err := absolutePath(r.ProjectRoot)
 		if err != nil {
-			return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "projectRoot", "project root could not be resolved",
-				"Set `projectRoot` to a directory path that can be resolved in the request JSON.", err)
+			return InstallRequest{}, invalidRequestField(CodeInputRequired, "projectRoot", "project directory could not be resolved",
+				"Pass a project directory path that can be resolved, then retry.", err)
 		}
 		r.ProjectRoot = project
 	}
@@ -192,6 +194,49 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		delete(r.Values, key)
 	}
 	return r, nil
+}
+
+// ValidateProjectSelection resolves a project path selected for registration
+// and requires it to identify an existing directory. Request normalization
+// does not call this because replaying an installed request does not select or
+// write to its project.
+func ValidateProjectSelection(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	absolute, err := absolutePath(value)
+	if err != nil {
+		return "", invalidRequestField(CodeInputRequired, "projectRoot", "project directory could not be resolved",
+			"Pass an existing project directory, then retry.", err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if _, linkErr := os.Lstat(absolute); os.IsNotExist(linkErr) {
+				return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project directory must exist",
+					fmt.Sprintf("Create it with `mkdir -p %s` or pass an existing project directory, then retry.", ShellQuote(value)), err)
+			}
+			return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project path does not resolve to an existing directory",
+				"Pass an existing project directory, then retry.", err)
+		}
+		return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project directory could not be checked",
+			"Pass an existing project directory, then retry.", err)
+	}
+	if !info.IsDir() {
+		return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project path is not a directory",
+			"Pass an existing project directory, then retry.", nil)
+	}
+	canonical, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project directory could not be resolved",
+			"Pass an existing project directory, then retry.", err)
+	}
+	return canonical, nil
+}
+
+// ShellQuote returns a POSIX shell-safe single-quoted argument.
+func ShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func absolutePath(value string) (string, error) {

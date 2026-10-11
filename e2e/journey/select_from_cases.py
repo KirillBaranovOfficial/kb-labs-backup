@@ -10,7 +10,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from hermetic_cli import run_hermetic_cli
-from invocations import decode_ux_success_result, describe_cli_failure, invocation_context, read_ux_cli_result
+from invocations import (decode_ux_success_result, describe_cli_failure, invocation_context,
+                         print_report_text, read_ux_cli_result)
 from dispatch_registry import runners_for_source
 
 
@@ -260,9 +261,9 @@ def main() -> int:
         results.append(read_coverage_result(result.stdout, result.returncode))
     requested = os.environ.get("KB_JOURNEY_CASES", "")
     if requested:
-        print(json.dumps(selection_from_coverage(results, requested)))
+        print_report_text(json.dumps(selection_from_coverage(results, requested)), flush=True)
     else:
-        print(json.dumps(selectors_from_coverage(results)))
+        print_report_text(json.dumps(selectors_from_coverage(results)), flush=True)
     return 0
 
 
@@ -270,5 +271,9 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except ValueError as error:
-        print(str(error), file=sys.stderr)
+        print_report_text(str(error), stream=sys.stderr, flush=True)
         raise SystemExit(2)
+    except Exception as error:
+        print_report_text(f"Journey case selection failed: {error.__class__.__name__}: {error}",
+                          stream=sys.stderr, flush=True)
+        raise SystemExit(1)

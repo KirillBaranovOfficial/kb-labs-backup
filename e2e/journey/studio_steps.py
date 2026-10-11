@@ -12,7 +12,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_link,
-                         open_http, read_ux_http_result, record_invocation, run_streaming_command)
+                         open_http, print_report_text, read_ux_http_result, record_invocation,
+                         store_report_secret,
+                         run_streaming_command, write_report_json, write_report_text)
 
 PLAYWRIGHT_HEADLESS_SHELL = Path("chromium_headless_shell-1217/chrome-linux/headless_shell")
 PLAYWRIGHT_IMAGE_REBUILD_COMMAND = "e2e/journey/run.sh --no-build"
@@ -35,7 +37,8 @@ def create_studio_environment(service_env: dict[str, str], *, mode: str, project
         if admin_email := service_env.get("KB_JOURNEY_ADMIN_EMAIL"):
             studio_env["KB_STUDIO_ADMIN_EMAIL"] = admin_email
         if admin_password := service_env.get("KB_JOURNEY_ADMIN_PASSWORD"):
-            studio_env["KB_STUDIO_ADMIN_PASSWORD"] = admin_password
+            store_report_secret(studio_env, "KB_STUDIO_ADMIN_PASSWORD", admin_password,
+                                "Studio browser admin password")
     return studio_env
 
 
@@ -52,6 +55,8 @@ def _playwright_browser_preflight(env: dict[str, str]) -> str | None:
 
 
 def create_studio_member(base_url: str, admin_email: str, admin_password: str) -> tuple[str, str]:
+    store_report_secret(os.environ, "KB_JOURNEY_ADMIN_PASSWORD", admin_password,
+                        "Studio fixture admin password")
     def post(path: str, payload: dict, token: str = "") -> dict:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if token:
@@ -69,11 +74,15 @@ def create_studio_member(base_url: str, admin_email: str, admin_password: str) -
     token = str(login.get("accessToken") or login.get("token") or "")
     if not token:
         raise RuntimeError("secured admin login returned no access token")
+    store_report_secret(os.environ, "KB_JOURNEY_STUDIO_ACCESS_TOKEN", token,
+                        "Studio fixture admin access token")
     invite = post("/auth/invites", {"email": "journey-member@example.test", "role": "member"}, token)
     activation_path = urllib.parse.urlparse(str(invite.get("activationUrl") or "")).path
     if "/activate/" not in activation_path:
         raise RuntimeError("member invite returned no Studio activation link")
     activation_token = activation_path.rsplit("/activate/", 1)[1]
+    store_report_secret(os.environ, "KB_JOURNEY_STUDIO_INVITE_TOKEN", activation_token,
+                        "Studio fixture activation token")
     member_password = "JourneyMember123!"
     post("/auth/activate", {"token": activation_token, "password": member_password})
     return "journey-member@example.test", member_password
@@ -83,6 +92,10 @@ def create_studio_access_tokens(base_url: str, admin_email: str, admin_password:
                                 member_email: str, member_password: str,
                                 *, env: dict[str, str]) -> tuple[str, str]:
     """Mint real admin and member API tokens for the settings authorization claim."""
+    store_report_secret(env, "KB_JOURNEY_ADMIN_PASSWORD", admin_password,
+                        "Studio settings admin password")
+    store_report_secret(env, "KB_STUDIO_MEMBER_PASSWORD", member_password,
+                        "Studio settings member password")
     def login(email: str, password: str) -> str:
         request = urllib.request.Request(
             f"{base_url}/auth/login/cli",
@@ -99,7 +112,8 @@ def create_studio_access_tokens(base_url: str, admin_email: str, admin_password:
         token = payload.get("accessToken") or payload.get("token") if isinstance(payload, dict) else ""
         if not isinstance(token, str) or not token:
             raise RuntimeError("POST /auth/login/cli returned no access token while preparing Studio settings auth")
-        return token
+        return store_report_secret(env, "KB_JOURNEY_STUDIO_ACCESS_TOKEN", token,
+                                  "Studio settings access token")
 
     return login(admin_email, admin_password), login(member_email, member_password)
 
@@ -137,23 +151,22 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
     return_code: int | None = None
     invocation_error: str | None = None
     log_path = report.with_name(f"studio-playwright-{mode}.log")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with log_path.open("w", encoding="utf-8") as log:
-            def copy_output(rendered: str) -> None:
-                output_lines.append(rendered)
-                log.write(rendered + "\n")
-                log.flush()
-                print(f"[studio-playwright] {rendered}", flush=True)
+        write_report_text(log_path, "", env=env)
 
-            try:
-                result, _duration = run_streaming_command(
-                    command, env=env, timeout=timeout, on_output_line=copy_output,
-                    start_new_session=True)
-                return_code = result.returncode
-            except subprocess.TimeoutExpired as error:
-                return_code = -1
-                raise error
+        def copy_output(rendered: str) -> None:
+            safe_line = write_report_text(log_path, rendered + "\n", env=env, append=True)
+            output_lines.append(safe_line.rstrip("\r\n"))
+            print_report_text(f"[studio-playwright] {safe_line.rstrip()}", env=env, flush=True)
+
+        try:
+            result, _duration = run_streaming_command(
+                command, env=env, timeout=timeout, on_output_line=copy_output,
+                start_new_session=True)
+            return_code = result.returncode
+        except subprocess.TimeoutExpired as error:
+            return_code = -1
+            raise error
         elapsed = time.monotonic() - started
         passed = return_code == 0
         message = "Studio browser journey passed"
@@ -202,7 +215,7 @@ def _record_step(report: Path, mode: str, status: str, duration: float, message:
     except (OSError, json.JSONDecodeError):
         return
     _append_step(result, mode, status, duration, message)
-    report.write_text(json.dumps(result, indent=2) + "\n")
+    write_report_json(report, result)
 
 
 def _record_playwright_case_claims(report: Path, json_report: str) -> None:
@@ -236,7 +249,7 @@ def _record_playwright_case_claims(report: Path, json_report: str) -> None:
     existing.update({case_id: {"claimId": case_id, "kind": "journey", "status": status}
                      for case_id, status in claims.items()})
     case_run["claims"] = [existing[key] for key in sorted(existing)]
-    report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    write_report_json(report, result)
 
 
 def _append_step(result: dict, mode: str, status: str, duration: float, message: str) -> None:

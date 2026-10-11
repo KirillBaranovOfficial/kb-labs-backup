@@ -16,7 +16,8 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
-                         read_ux_cli_result, read_ux_http_result, run_command, run_pty_command)
+                         read_ux_cli_result, read_ux_http_result, store_report_secret,
+                         run_command, run_pty_command)
 
 
 def _request(base_url: str, path: str, *, method: str = "GET", token: str | None = None,
@@ -37,8 +38,13 @@ def _request(base_url: str, path: str, *, method: str = "GET", token: str | None
 
 
 def _login(base_url: str, email: str, password: str) -> tuple[str, str]:
+    store_report_secret(os.environ, "KB_JOURNEY_LOGIN_PASSWORD", password,
+                        "journey login password")
     result = _request(base_url, "/auth/login/cli", method="POST", body={"email": email, "password": password})
-    return result["accessToken"], result["refreshToken"]
+    return (store_report_secret(os.environ, "KB_JOURNEY_ACCESS_TOKEN", result["accessToken"],
+                                "login access token"),
+            store_report_secret(os.environ, "KB_JOURNEY_REFRESH_TOKEN", result["refreshToken"],
+                                "login refresh token"))
 
 
 def assert_machine_registration_requires_auth(base_url: str) -> None:
@@ -221,6 +227,8 @@ def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
                      body={"email": email, "password": old_password})
     if not login.get("accessToken"):
         raise AssertionError("bootstrap admin login did not return an access token")
+    store_report_secret(os.environ, "KB_JOURNEY_ACCESS_TOKEN", login["accessToken"],
+                        "bootstrap admin access token")
     initial_profile = _request("http://127.0.0.1:4000", "/auth/me", token=login["accessToken"])
     tenant = initial_profile.get("tenantId")
     if not tenant:
@@ -275,6 +283,8 @@ def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
 def run_secured_auth_steps(base_url: str, admin_email: str, admin_password: str,
                            member_email: str, restart_host: Callable[[], str]) -> None:
     """Prove install, role, invite, reset, persistence, and logout behavior."""
+    store_report_secret(os.environ, "KB_JOURNEY_ADMIN_PASSWORD", admin_password,
+                        "secured journey admin password")
     assert_machine_registration_requires_auth(base_url)
     _request(base_url, "/auth/me", expected=401)
     admin_access, admin_refresh = _login(base_url, admin_email, admin_password)
@@ -291,6 +301,8 @@ def run_secured_auth_steps(base_url: str, admin_email: str, admin_password: str,
     if "/activate/" not in activation_url:
         raise AssertionError(f"invite activation link does not match the SPA route: {activation_url!r}")
     activation_token = activation_url.rsplit("/activate/", 1)[1]
+    store_report_secret(os.environ, "KB_JOURNEY_INVITE_TOKEN", activation_token,
+                        "invite activation token")
     _request(base_url, "/auth/activate", method="POST",
              body={"token": activation_token, "password": "JourneyMember123!"})
     member_access, _ = _login(base_url, member_email, "JourneyMember123!")
@@ -305,6 +317,8 @@ def run_secured_auth_steps(base_url: str, admin_email: str, admin_password: str,
     reset_token = reset.get("resetUrl", "").rsplit("/reset-password/", 1)[-1]
     if not reset_token:
         raise AssertionError("admin reset response did not include a reset link")
+    store_report_secret(os.environ, "KB_JOURNEY_PASSWORD_RESET_TOKEN", reset_token,
+                        "password reset token")
     _request(base_url, "/auth/password/reset", method="POST",
              body={"token": reset_token, "newPassword": "JourneyReplacement123!"})
     _request(base_url, "/auth/me", token=member_access, expected=401)

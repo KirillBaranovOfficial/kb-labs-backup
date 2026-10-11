@@ -6,12 +6,13 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-
-from invocations import open_http
+from invocations import (open_http, print_report_text, store_report_secret,
+                         write_report_json, write_report_text)
 
 
 def fingerprint(step: dict) -> str:
@@ -154,9 +155,11 @@ class GitHubClient:
                                                   "Accept": "application/vnd.github+json",
                                                   "X-GitHub-Api-Version": "2022-11-28",
                                                   "Content-Type": "application/json"})
+        request_env = {}
+        store_report_secret(request_env, "GH_TOKEN", self.token, "nightly issue API token")
         try:
             status, raw, _ = open_http(urllib.request.urlopen, request, timeout=20,
-                                      env={"GH_TOKEN": self.token})
+                                      env=request_env)
         except urllib.error.URLError as error:
             raise RuntimeError(f"GitHub issue API request failed: {error}") from error
         if status < 200 or status >= 300:
@@ -274,16 +277,21 @@ def main() -> int:
                        profiles, exits, case_coverage)
     Path(args.json).parent.mkdir(parents=True, exist_ok=True)
     Path(args.summary).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.json).write_text(json.dumps(report, indent=2) + "\n")
-    Path(args.summary).write_text(render_summary(report, os.getenv("GITHUB_RUN_URL", "")) + "\n")
+    write_report_json(args.json, report)
+    write_report_text(args.summary, render_summary(report, os.getenv("GITHUB_RUN_URL", "")) + "\n")
     if args.sync_issues:
         repository = os.environ["GITHUB_REPOSITORY"]
         token = os.environ["GITHUB_TOKEN"]
         pinned = int(os.environ["NIGHTLY_STATUS_ISSUE"])
         changes = sync_issues(GitHubClient(repository, token), report, pinned, os.getenv("GITHUB_RUN_URL", ""))
-        print(json.dumps(changes, sort_keys=True))
+        print_report_text(json.dumps(changes, sort_keys=True), flush=True)
     return 0 if report["status"] == "PASS" else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        print_report_text(f"Nightly journey report failed: {error.__class__.__name__}: {error}",
+                          stream=sys.stderr, flush=True)
+        raise SystemExit(1)

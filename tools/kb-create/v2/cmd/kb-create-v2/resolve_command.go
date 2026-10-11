@@ -151,22 +151,35 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		if marshalErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeInputRequired, "install request could not be encoded", "correct direct CI flags or provide --input", marshalErr)
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
+		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"})
 	} else if input.RequestFile != "" {
 		data, readErr := readRequest(input.RequestFile)
 		if readErr != nil {
 			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", readErr)
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
+		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"})
 	} else {
 		request, requestErr := input.Direct.normalize()
 		if requestErr != nil {
-			diagnostic := failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr)
 			var validation *contracts.RequestValidationError
 			if errors.As(requestErr, &validation) {
+				diagnostic := validation.Diagnostic()
 				setRequestRetryHint(diagnostic, input, validation.Field)
+				return resolvedPlan{}, diagnostic
 			}
-			return resolvedPlan{}, diagnostic
+			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr)
+		}
+		if input.Operation != "update" && request.ProjectRoot != "" {
+			request.ProjectRoot, requestErr = contracts.ValidateProjectSelection(request.ProjectRoot)
+			if requestErr != nil {
+				var validation *contracts.RequestValidationError
+				if errors.As(requestErr, &validation) {
+					diagnostic := validation.Diagnostic()
+					setRequestRetryHint(diagnostic, input, validation.Field)
+					return resolvedPlan{}, diagnostic
+				}
+				return resolvedPlan{}, failure(contracts.CodeInputRequired, "project selection is invalid", "pass an existing project directory, then retry", requestErr)
+			}
 		}
 		if input.ScenarioID != "" {
 			request, requestErr = compileScenario(input.ScenarioID, input.Answers, input.Resume, request)
@@ -259,7 +272,7 @@ func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
 	args := []string{"kb-create", operation}
 	appendFlag := func(name, value string) {
 		if value != "" {
-			args = append(args, "--"+name, shellQuote(value))
+			args = append(args, "--"+name, contracts.ShellQuote(value))
 		}
 	}
 	appendFlag("index", input.Index)
@@ -284,23 +297,26 @@ func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
 	}
 	args = append(args, "--json")
 	command := strings.Join(args, " ")
+	var retry string
 	if input.RequestFile != "" {
-		diagnostic.Hint = fmt.Sprintf("Correct %s in request file %s, then retry: %s", field, shellQuote(input.RequestFile), command)
+		retry = fmt.Sprintf("Correct %s in request file %s, then retry: %s", field, contracts.ShellQuote(input.RequestFile), command)
 	} else {
-		diagnostic.Hint = fmt.Sprintf("Correct %s using the corresponding request flag, then retry: %s", field, command)
+		retry = fmt.Sprintf("Correct %s using the corresponding request flag, then retry: %s", field, command)
 		if input.ScenarioID != "" {
 			// Scenario answers can contain secret values, so keep them out of diagnostics.
-			diagnostic.Hint += " Reuse the scenario answers from your original command if needed."
+			retry += " Reuse the scenario answers from your original command if needed."
 		}
+	}
+	catalogEntry, catalogued := diag.LookupCatalog(diagnostic.Code)
+	if diagnostic.Hint == "" || (catalogued && diagnostic.Hint == catalogEntry.Hint) {
+		diagnostic.Hint = retry
+	} else {
+		diagnostic.Hint += " " + retry
 	}
 	if diagnostic.Meta == nil {
 		diagnostic.Meta = map[string]any{}
 	}
 	diagnostic.Meta["field"] = field
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func readRequest(path string) ([]byte, error) {
