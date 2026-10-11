@@ -20,7 +20,7 @@
 
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname } from 'node:path';
 
 interface Entry {
   handle: Database.Database;
@@ -29,16 +29,13 @@ interface Entry {
 
 const cache = new Map<string, Entry>();
 
-const resolveKey = (filename: string, cwd?: string): string => {
+const resolveKey = (filename: string): string => {
   if (filename === ':memory:') {return '';}
-  if (isAbsolute(filename)) {return filename;}
-  if (cwd) {return join(cwd, filename);}
   return filename;
 };
 
 export interface AcquireOpts {
   filename: string;
-  cwd?: string;
   readonly?: boolean;
   wal?: boolean;
 }
@@ -59,7 +56,7 @@ export function acquireHandle(opts: AcquireOpts): SharedHandle {
     };
   }
 
-  const key = resolveKey(opts.filename, opts.cwd);
+  const key = resolveKey(opts.filename);
   const existing = cache.get(key);
   if (existing) {
     existing.refcount++;

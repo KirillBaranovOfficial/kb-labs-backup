@@ -4,6 +4,7 @@
  */
 
 // Adapter Manifest
+export type { PlatformDataContext } from "./platform-data.js";
 export type {
   AdapterManifest,
   AdapterType,

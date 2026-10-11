@@ -1,7 +1,7 @@
 ---
 title: "Built-in Adapters"
 description: "Catalog of adapters shipped in the monorepo with their interface and use case."
-updatedAt: "2026-10-08"
+updatedAt: "2026-10-11"
 order: 2
 ---
 
@@ -46,7 +46,7 @@ To swap an adapter, change one line in `kb.config.jsonc` under `platform.adapter
 
 | Package | Implements | Use when |
 |---|---|---|
-| `@kb-labs/adapters-fs` | `IStorage` | Built-in platform default. Stores project workflow records and artifacts under `.kb/data/`; no external service is required. |
+| `@kb-labs/adapters-fs` | `IStorage` | Built-in platform default. Stores project workflow records and artifacts under `<KB_HOME>/state/<projectId>/storage/` by default; no external service is required. |
 
 ## Logger (`ILogger`)
 
@@ -64,7 +64,7 @@ persistence when that persistence adapter is installed. `kb adapter list
 
 | Package | Implements | Use when |
 |---|---|---|
-| `@kb-labs/adapters-analytics-file` | `IAnalytics` | JSONL file at `.kb/analytics/events.jsonl`. Zero deps, append-only, easy to grep. |
+| `@kb-labs/adapters-analytics-file` | `IAnalytics` | JSONL files under `<KB_HOME>/state/<projectId>/analytics/buffer` by default. Zero deps, append-only, easy to grep. |
 | `@kb-labs/adapters-analytics-sqlite` | `IAnalytics` | Built-in platform default. SQLite database; query events with SQL and build aggregations. |
 | `@kb-labs/adapters-analytics-duckdb` | `IAnalytics` | DuckDB embedded analytical database. Same single-file convenience as SQLite, much faster for analytical queries over millions of events. |
 
@@ -78,7 +78,7 @@ persistence when that persistence adapter is installed. `kb adapter list
 
 | Package | Implements | Use when |
 |---|---|---|
-| `@kb-labs/adapters-sqlite` | `IDocumentDatabase` | Built-in local document database default. Embedded SQLite database at `.kb/database/kb.sqlite`. |
+| `@kb-labs/adapters-sqlite` | `IDocumentDatabase` | Built-in local document database default. Embedded SQLite database under `<KB_HOME>/state/<projectId>/database/kb.sqlite` by default. |
 | `@kb-labs/adapters-mongodb` | `IDocumentDatabase` | MongoDB-backed document store. |
 
 ## Workspace (`IWorkspaceProvider`)

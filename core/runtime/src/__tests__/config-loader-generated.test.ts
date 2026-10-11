@@ -115,7 +115,7 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
           cache: '@kb-labs/adapters-state-broker@2.120.1',
         },
         adapterOptions: {
-          storage: { baseDir: '.kb/data' },
+          storage: { baseDir: 'storage' },
         },
       },
     })
@@ -123,7 +123,7 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
 
     expect(result.platformConfig.adapters?.storage).toBe('@kb-labs/adapters-fs@2.120.1')
     expect(result.platformConfig.adapters?.cache).toBe('@kb-labs/adapters-state-broker@2.120.1')
-    expect(result.platformConfig.adapterOptions?.storage).toEqual({ baseDir: '.kb/data' })
+    expect(result.platformConfig.adapterOptions?.storage).toEqual({ baseDir: 'storage' })
     expect(result.platformConfig.adapterOptions?.cache).toBeUndefined()
   })
 

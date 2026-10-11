@@ -70,6 +70,16 @@ function csrfCookie(response: Response): string {
   return decodeURIComponent(csrf.slice("kb_csrf=".length));
 }
 
+async function configureInstalledPlatformDataRoot(platformRoot: string, stateDataRoot: string, workspaceRoot: string): Promise<void> {
+  await mkdir(join(platformRoot, ".kb", "v2"), { recursive: true });
+  await mkdir(stateDataRoot, { recursive: true });
+  await writeFile(
+    join(platformRoot, ".kb", "v2", "platform-layout.json"),
+    await readFile(join(workspaceRoot, "tools/kb-create/v2/contracts/platform-layout.json")),
+  );
+  await symlink(relative(join(platformRoot, ".kb"), stateDataRoot), join(platformRoot, ".kb", "data"), "dir");
+}
+
 describe("kb-host project routing", () => {
   let kbHome: string;
   let registry: IProjectRegistry;
@@ -171,6 +181,11 @@ describe("kb-host project routing", () => {
     const installedPlatformRoot = join(kbHome, "installed-platform");
     await mkdir(join(installedPlatformRoot, ".kb"), { recursive: true });
     const workspaceRoot = join(process.cwd(), "../../..");
+    await configureInstalledPlatformDataRoot(
+      installedPlatformRoot,
+      join(kbHome, "installed-platform-state", "data"),
+      workspaceRoot,
+    );
     await mkdir(join(installedPlatformRoot, "node_modules", "@kb-labs"), { recursive: true });
     await symlink(join(workspaceRoot, "sdk/sdk"), join(installedPlatformRoot, "node_modules", "@kb-labs", "sdk"), "dir");
     const installedAdapters = {
@@ -189,10 +204,10 @@ describe("kb-host project routing", () => {
       platform: {
         adapters: installedAdapters,
         adapterOptions: {
-          storage: { baseDir: ".kb/data" },
-          documentDatabase: { filename: ".kb/database/kb.sqlite" },
-          kvStore: { filename: ".kb/database/kb.sqlite" },
-          analytics: { filename: ".kb/analytics/analytics.sqlite" },
+          storage: { baseDir: "storage" },
+          documentDatabase: { filename: "database/kb.sqlite" },
+          kvStore: { filename: "database/kb.sqlite" },
+          analytics: { dbPath: "analytics/analytics.sqlite" },
           serviceTransport: { services: {} },
         },
       },
@@ -369,6 +384,11 @@ describe("kb-host project routing", () => {
       const installedPlatformRoot = join(kbHome, "installed-platform");
       await mkdir(join(installedPlatformRoot, ".kb"), { recursive: true });
       const workspaceRoot = join(process.cwd(), "../../..");
+      await configureInstalledPlatformDataRoot(
+        installedPlatformRoot,
+        join(kbHome, "installed-platform-state", "data"),
+        workspaceRoot,
+      );
       const installedAdapters = {
         storage: "@kb-labs/adapters-fs",
         cache: "@kb-labs/adapters-state-broker",
@@ -385,10 +405,10 @@ describe("kb-host project routing", () => {
         platform: {
           adapters: installedAdapters,
           adapterOptions: {
-            storage: { baseDir: ".kb/data" },
-            documentDatabase: { filename: ".kb/database/kb.sqlite" },
-            kvStore: { filename: ".kb/database/kb.sqlite" },
-            analytics: { filename: ".kb/analytics/analytics.sqlite" },
+            storage: { baseDir: "storage" },
+            documentDatabase: { filename: "database/kb.sqlite" },
+            kvStore: { filename: "database/kb.sqlite" },
+            analytics: { dbPath: "analytics/analytics.sqlite" },
             serviceTransport: { services: {} },
           },
         },

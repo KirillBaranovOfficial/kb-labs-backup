@@ -891,7 +891,7 @@
             },
             {
               "name": "@kb-labs/adapters-analytics-file",
-              "description": "File-based analytics adapter for KB Labs platform (writes JSONL to .kb/analytics/buffer)",
+              "description": "File-based analytics adapter for KB Labs platform (writes JSONL to <KB_HOME>/state/<projectId>/analytics/buffer)",
               "version": "0.4.0",
               "path": "infra/kb-labs-adapters/packages/adapters-analytics-file",
               "private": false

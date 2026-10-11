@@ -447,6 +447,10 @@ export interface AdapterManifest {
       maximum?: number;
       /** Copy-ready correction for an invalid value. */
       hint?: string;
+      /** Resolve a relative filesystem option against a runtime-owned root. */
+      pathBase?: 'platformData';
+      /** Values such as `:memory:` that are path options but not files. */
+      specialValues?: string[];
       properties?: Record<string, unknown>;
     }
   >;

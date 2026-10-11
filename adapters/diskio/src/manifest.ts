@@ -12,6 +12,7 @@ export const manifest: AdapterManifest = {
   type: "core",
   implements: "IStorage",
   networkRequired: false,
+  contexts: ["platformData"],
   capabilities: {
     streaming: true,
     custom: {
@@ -21,8 +22,9 @@ export const manifest: AdapterManifest = {
   configSchema: {
     baseDir: {
       type: "string",
-      default: "process.cwd()",
+      default: "storage",
       description: "Directory used as the storage root",
+      pathBase: "platformData",
     },
   },
 };

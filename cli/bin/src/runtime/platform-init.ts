@@ -19,6 +19,7 @@ import {
   type PlatformLifecycleHooks,
   type PlatformLifecyclePhase,
   type LoadPlatformConfigResult,
+  isWorkspaceDevelopmentMode,
 } from "@kb-labs/core-runtime";
 import { findRepoRoot } from "@kb-labs/core-sys";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
@@ -30,13 +31,6 @@ import { createContextLogger } from "@kb-labs/core-platform";
 const CLI_LIFECYCLE_HOOK_ID = "cli-runtime";
 const LOG_SERVICE = "platform-init";
 let lifecycleHooksRegistered = false;
-
-export function hasExplicitDevelopmentMode(config: Record<string, unknown> | undefined): boolean {
-  if (!config) { return false; }
-  const platformConfig = config.platform;
-  return Boolean(platformConfig && typeof platformConfig === "object" &&
-    (platformConfig as Record<string, unknown>).mode === "development");
-}
 
 function lifecycleLogger() {
   return createContextLogger(platform.logger, {
@@ -162,9 +156,7 @@ export async function initializePlatform(
       assemblyHook: makeAssemblyHook(() =>
         process.env.KB_DEBUG === "true" ? platform.logger : undefined,
       ),
-      workspaceDevelopment: hasExplicitDevelopmentMode(
-        loadResult.sameLocation ? rawConfig : loadResult.rawPlatformConfig,
-      ),
+      workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
     },
   );
 

@@ -16,6 +16,7 @@ type platformLayout struct {
 	SharedStateDirectory    string              `json:"sharedStateDirectory"`
 	InstallerStateDirectory string              `json:"installerStateDirectory"`
 	HostStateDirectory      string              `json:"hostStateDirectory"`
+	PlatformDataRoot        PlatformDataRoot    `json:"platformDataRoot"`
 	OwnershipRecord         string              `json:"ownershipRecord"`
 	OwnedEntries            []string            `json:"ownedEntries"`
 	SharedRuntimePaths      []SharedRuntimePath `json:"sharedRuntimePaths"`
@@ -40,6 +41,11 @@ type SharedRuntimePath struct {
 	StatePath    string `json:"statePath"`
 	Kind         string `json:"kind"`
 	Preinstall   bool   `json:"preinstall,omitempty"`
+}
+
+type PlatformDataRoot struct {
+	PlatformPath string `json:"platformPath"`
+	StatePath    string `json:"statePath"`
 }
 
 // VersionRootsDirectory derives the version directory inside the user's
@@ -139,6 +145,27 @@ func SharedRuntimePaths() []SharedRuntimePath {
 		panic("invalid embedded platform layout contract: " + err.Error())
 	}
 	return append([]SharedRuntimePath(nil), layout.SharedRuntimePaths...)
+}
+
+func PlatformDataRootPath() PlatformDataRoot {
+	var layout platformLayout
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil ||
+		layout.PlatformDataRoot.PlatformPath == "" || layout.PlatformDataRoot.StatePath == "" {
+		panic("invalid embedded platform layout data root")
+	}
+	return layout.PlatformDataRoot
+}
+
+// SharedRuntimeProjections returns the layout-owned mutable paths linked into
+// each version root, including the single first-class platform data root.
+func SharedRuntimeProjections() []SharedRuntimePath {
+	dataRoot := PlatformDataRootPath()
+	projections := []SharedRuntimePath{{
+		PlatformPath: dataRoot.PlatformPath,
+		StatePath:    dataRoot.StatePath,
+		Kind:         "directory",
+	}}
+	return append(projections, SharedRuntimePaths()...)
 }
 
 func PlatformLayoutDocument() []byte {

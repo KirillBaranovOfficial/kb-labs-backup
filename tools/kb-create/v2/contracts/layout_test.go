@@ -18,6 +18,23 @@ func TestRuntimeStatePathsAreUniqueRootRelativePaths(t *testing.T) {
 	}
 }
 
+func TestPlatformDataRootProjectsToSharedInstallState(t *testing.T) {
+	dataRoot := PlatformDataRootPath()
+	if dataRoot.PlatformPath != ".kb/data" || dataRoot.StatePath != "state/data" {
+		t.Fatalf("PlatformDataRoot() = %#v, want platform .kb/data projected to state/data", dataRoot)
+	}
+	for _, runtimePath := range RuntimeStatePaths() {
+		if runtimePath == dataRoot.PlatformPath {
+			t.Fatalf("platform data root %q must be declared only by platformDataRoot", runtimePath)
+		}
+	}
+	for _, projection := range SharedRuntimePaths() {
+		if projection.PlatformPath == dataRoot.PlatformPath {
+			t.Fatal("platform data root must be a first-class layout field, not a shared-runtime path entry")
+		}
+	}
+}
+
 func TestVersionRootsDirectoryFollowsEmbeddedPlatformLayout(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "platform")
 	want := filepath.Join(root, "versions")
@@ -52,7 +69,7 @@ func TestVersionRootsDirectoryFollowsEmbeddedPlatformLayout(t *testing.T) {
 	for _, shared := range SharedRuntimePaths() {
 		sharedPaths[shared.PlatformPath] = shared.StatePath
 	}
-	for platformPath, statePath := range map[string]string{".kb/logs": "state/logs", ".kb/diagnostics": "state/diagnostics", ".kb/database": "state/data/database"} {
+	for platformPath, statePath := range map[string]string{".kb/logs": "state/logs", ".kb/diagnostics": "state/diagnostics"} {
 		if sharedPaths[platformPath] != statePath {
 			t.Fatalf("runtime history path %s maps to %q, want %q", platformPath, sharedPaths[platformPath], statePath)
 		}

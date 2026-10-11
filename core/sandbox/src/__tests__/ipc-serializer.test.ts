@@ -117,9 +117,13 @@ describe('serializeContext', () => {
   it('includes platformConfig when present', () => {
     const ctx = createMinimalContext({
       platformConfig: { mode: 'in-process' },
+      platformRoot: '/platform',
+      workspaceDevelopment: false,
     });
 
     const result = serializeContext(ctx);
     expect(result.platformConfig).toEqual({ mode: 'in-process' });
+    expect(result.platformRoot).toBe('/platform');
+    expect(result.workspaceDevelopment).toBe(false);
   });
 });

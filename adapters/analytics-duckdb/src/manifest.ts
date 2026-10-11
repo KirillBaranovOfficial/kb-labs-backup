@@ -17,7 +17,7 @@ export const manifest: AdapterManifest = {
   type: 'core',
   implements: 'IAnalytics',
   networkRequired: false,
-  contexts: ['workspace', 'analytics'],
+  contexts: ['workspace', 'analytics', 'platformData'],
   capabilities: {
     search: true,
     custom: {
@@ -32,6 +32,7 @@ export const manifest: AdapterManifest = {
     dbPath: {
       type: 'string',
       description: 'Path to the DuckDB database file (default: <KB_HOME>/state/<projectId>/analytics/analytics.duckdb)',
+      pathBase: 'platformData',
     },
   },
 };

@@ -13,6 +13,7 @@ import type {
   DailyStats,
   BufferStatus,
   DlqStatus,
+  PlatformDataContext,
   AnalyticsEvent as PlatformAnalyticsEvent,
 } from "@kb-labs/sdk/adapters";
 
@@ -36,6 +37,8 @@ export interface FileAnalyticsOptions {
    * Workspace context (injected when manifest requests 'workspace')
    */
   workspace?: { cwd: string };
+  /** Runtime context for platform-owned output paths. */
+  platformData?: PlatformDataContext;
   /**
    * Analytics context (injected when manifest requests 'analytics')
    */
@@ -68,13 +71,11 @@ class FileAnalytics implements IAnalytics {
     const cwd = options.workspace?.cwd ?? process.cwd();
 
     // No explicit baseDir: per-project runtime state lives outside the repository (ADR-0044).
-    // An explicit relative baseDir resolves from cwd; an absolute one is used as-is.
+    // Platform config paths are resolved by core-runtime from the layout-owned data root.
     const configuredBaseDir = options.baseDir;
     this.baseDir = configuredBaseDir === undefined
       ? resolveRuntimeStatePath(cwd, ["analytics", "buffer"])
-      : configuredBaseDir.startsWith("/")
-        ? configuredBaseDir
-        : join(cwd, configuredBaseDir);
+      : configuredBaseDir;
 
     this.filenamePattern = options.filenamePattern ?? "events-YYYYMMDD";
 

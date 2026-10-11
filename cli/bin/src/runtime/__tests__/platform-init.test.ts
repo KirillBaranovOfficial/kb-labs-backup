@@ -9,9 +9,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   initializePlatform as constructPlatform,
   loadPlatformConfiguration,
-  hasExplicitDevelopmentMode,
 } from '../platform-init';
-import { platform } from '@kb-labs/core-runtime';
+import { isWorkspaceDevelopmentMode, platform } from '@kb-labs/core-runtime';
 import { mkdir, mkdtemp, realpath, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -287,10 +286,11 @@ describe('Platform Initialization (Real)', () => {
 });
 
 describe('platform development mode marker', () => {
-  it('activates only for the explicit platform.mode development marker', () => {
-    expect(hasExplicitDevelopmentMode({ platform: { mode: 'development' } })).toBe(true);
-    expect(hasExplicitDevelopmentMode({ platform: { mode: 'production' } })).toBe(false);
-    expect(hasExplicitDevelopmentMode({ profile: { products: { release: { workspace: { type: 'pnpm', root: '.' } } } } })).toBe(false);
-    expect(hasExplicitDevelopmentMode(undefined)).toBe(false);
+  it('reads the explicit marker from the config that owns the platform root', () => {
+    expect(isWorkspaceDevelopmentMode({ sameLocation: true, rawConfig: { platform: { mode: 'development' } } })).toBe(true);
+    expect(isWorkspaceDevelopmentMode({ sameLocation: false, rawPlatformConfig: { platform: { mode: 'development' } } })).toBe(true);
+    expect(isWorkspaceDevelopmentMode({ sameLocation: false, rawConfig: { platform: { mode: 'development' } } })).toBe(false);
+    expect(isWorkspaceDevelopmentMode({ sameLocation: true, rawConfig: { platform: { mode: 'production' } } })).toBe(false);
+    expect(isWorkspaceDevelopmentMode({ sameLocation: true })).toBe(false);
   });
 });

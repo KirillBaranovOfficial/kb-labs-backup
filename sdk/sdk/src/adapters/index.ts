@@ -23,10 +23,11 @@ export {
 
 // Per-project runtime state location (ADR-0044): adapter default paths for
 // caches, databases and buffers resolve here, not into the project's `.kb/`.
-export { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
+export { resolvePlatformDataRoot, resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 
 // Adapter manifest metadata
 export type {
+  PlatformDataContext,
   AdapterManifest,
   AdapterType,
   AdapterDependency,

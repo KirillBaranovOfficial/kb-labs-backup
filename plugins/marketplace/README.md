@@ -28,7 +28,7 @@ Adapters and their options are configured at platform scope:
 ```bash
 kb marketplace install @kb-labs/adapters-fs@2.107.0 --scope platform
 kb adapter bind storage @kb-labs/adapters-fs
-kb config set --scope platform platform.adapterOptions.storage '{"baseDir":".kb/cache"}'
+kb config set --scope platform platform.adapterOptions.storage '{"baseDir":"cache"}'
 kb adapter unbind storage
 ```
 

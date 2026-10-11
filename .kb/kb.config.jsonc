@@ -38,16 +38,16 @@
         }
       },
       "storage": {
-        "baseDir": ".kb/data"
+        "baseDir": "storage"
       },
       "documentDatabase": {
-        "filename": ".kb/database/kb.sqlite"
+        "filename": "database/kb.sqlite"
       },
       "kvStore": {
-        "filename": ".kb/database/kb.sqlite"
+        "filename": "database/kb.sqlite"
       },
       "analytics": {
-        "filename": ".kb/analytics/analytics.sqlite"
+        "dbPath": "analytics/analytics.sqlite"
       },
       "logger": {
         "level": "info",

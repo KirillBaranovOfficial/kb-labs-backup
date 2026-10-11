@@ -2,12 +2,14 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { access, copyFile, mkdir, readFile, readdir, rename, stat as statFile, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
-import type { IStorage, StorageMetadata } from "@kb-labs/sdk/adapters";
+import { AdapterConfigError } from "@kb-labs/sdk";
+import type { IStorage, PlatformDataContext, StorageMetadata } from "@kb-labs/sdk/adapters";
 
 export { manifest } from "./manifest.js";
 
 export interface FilesystemStorageConfig {
   baseDir?: string;
+  platformData?: PlatformDataContext;
 }
 
 const MIME_BY_SUFFIX: Readonly<Record<string, string>> = {
@@ -40,7 +42,15 @@ export class DiskStorageAdapter implements IStorage {
   private readonly root: string;
 
   constructor(options: FilesystemStorageConfig = {}) {
-    this.root = resolve(options.baseDir ?? process.cwd());
+    const baseDir = options.baseDir ?? (options.platformData ? join(options.platformData.dataRoot, "storage") : undefined);
+    if (baseDir === undefined) {
+      throw new AdapterConfigError(
+        "platform.adapterOptions.storage.baseDir",
+        "platform data root context is required when baseDir is not configured",
+        "Run `kb adapter bind storage @kb-labs/adapters-diskio` through the KB platform runtime, which supplies the platform data root.",
+      );
+    }
+    this.root = resolve(baseDir);
   }
 
   private insideRoot(input: string): string {

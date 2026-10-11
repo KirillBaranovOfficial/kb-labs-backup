@@ -18,7 +18,7 @@ export const manifest: AdapterManifest = {
   implements: 'IAnalytics',
   networkRequired: false,
   defaultFor: ['analytics'],
-  contexts: ['workspace', 'analytics'],
+  contexts: ['workspace', 'analytics', 'platformData'],
   capabilities: {
     search: true,
     custom: {
@@ -33,11 +33,8 @@ export const manifest: AdapterManifest = {
   configSchema: {
     dbPath: {
       type: 'string',
-      description: 'Path to the SQLite database file (relative to workspace root) (default: <KB_HOME>/state/<projectId>/analytics/analytics.sqlite)',
-    },
-    filename: {
-      type: 'string',
-      description: 'Alias for dbPath — accepted for config compatibility',
+      description: 'Path to the SQLite database file (default: <KB_HOME>/state/<projectId>/analytics/analytics.sqlite)',
+      pathBase: 'platformData',
     },
     retentionDays: {
       type: 'number',

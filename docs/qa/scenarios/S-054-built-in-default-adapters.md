@@ -18,10 +18,13 @@ adapter service. Every selected default is replaceable with
 `kb adapter bind <slot> <package>`; changing providers does not migrate or
 delete data already stored by the previous provider.
 
-Adapter state uses `<KB_HOME>/state/<projectId>/`. When a project has not been
-registered yet, `projectId` is derived from its canonical absolute path per
-ADR-0044; adapter state still stays in platform state, and later registration
-of that path uses the same ID.
+Implicit default adapter state uses `<KB_HOME>/state/<projectId>/`. When a
+project has not been registered yet, `projectId` is derived from its canonical
+absolute path per ADR-0044; later registration of that path uses the same ID.
+Relative paths from platform adapter configuration resolve beneath the single
+platform data root: `<workspace>/.kb/data` in development and
+`<install-root>/state/data` when installed. Absolute configured paths remain
+absolute.
 
 ## Prerequisites
 
@@ -51,6 +54,8 @@ of that path uses the same ID.
 | S-054.17 | In a fresh, unregistered repository with no `.kb/` directory, run `kb --help` and `kb --version` | Both commands exit successfully and leave the repository tree unchanged; neither creates `.kb/`. Global help and version are platform-scoped global flags, so startup does not initialize project-scoped adapters or write adapter state into the repository. |
 | S-054.18 | On an installed platform whose built-in adapter manifests provide defaults and which has no user-written `.kb/kb.config.json[c]`, run `kb adapter list --json` from a registered project | The command succeeds and reports the same installed default providers as S-054.1. A missing optional user config is a valid default state on installed platforms as well as solo development checkouts; absent `platform.mode` does not make the config invalid. |
 | S-054.19 | Run a workflow that requires host gateway dispatch when its runtime has no `KB_GATEWAY_URL` | The command returns the typed `KB_HOST_SERVICE_ADDRESS_MISSING` error, names the missing `gateway` address, preserves its correlation ID, and tells the operator to start the host with `kb-create start`. |
+| S-054.21 | From a registered project's directory in an installed platform, run a system command that initializes platform-configured SQLite and analytics adapters, then run a plugin command | Both commands leave the repository tree byte-for-byte unchanged. The configured database and analytics files are under `<install-root>/state/data`. The project still uses `<KB_HOME>/state/<projectId>/` for implicit default adapters. |
+| S-054.22 | Set `platform.adapterOptions.documentDatabase.filename` to `.kb/database/kb.sqlite`, then to `../outside.sqlite`, and start a command that initializes that adapter | Each startup fails with catalogued `KB_CONFIG_INVALID`, identifies the offending `platform.adapterOptions.documentDatabase.filename` field, and explains that relative paths cannot begin with `.kb/` or escape the data root. The first hint gives `kb config set --scope platform platform.adapterOptions.documentDatabase.filename 'database/kb.sqlite'`; the second gives `kb config set --scope platform platform.adapterOptions.documentDatabase.filename 'outside.sqlite'`. No file is created at either invalid location. |
 
 Redis outage visibility previously recorded as S-054.20 is covered by
 [S-211.2](S-211-optional-adapter-failure-visibility.md#steps).

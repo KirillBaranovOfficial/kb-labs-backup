@@ -73,7 +73,7 @@ const CONFIG_SQLITE = `// kb.config.json
     },
     "adapterOptions": {
       "analytics": {
-        "filename": ".kb/analytics/analytics.sqlite"
+        "dbPath": "analytics/analytics.sqlite"
       }
     }
   }
@@ -88,7 +88,7 @@ const CONFIG_DUCKDB = `// kb.config.json
     },
     "adapterOptions": {
       "analytics": {
-        "dbPath": ".kb/analytics/analytics.duckdb"
+        "dbPath": "analytics/analytics.duckdb"
       }
     }
   }
@@ -103,7 +103,7 @@ const CONFIG_FILE = `// kb.config.json
     },
     "adapterOptions": {
       "analytics": {
-        "path": ".kb/analytics/events.jsonl"
+        "baseDir": "analytics/buffer"
       }
     }
   }

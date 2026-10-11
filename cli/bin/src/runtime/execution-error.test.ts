@@ -6,6 +6,7 @@ import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactiv
 import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { handleExecutionError } from './execution-error.js';
+import { platform } from '@kb-labs/core-runtime';
 
 describe('handleExecutionError', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -52,6 +53,30 @@ describe('handleExecutionError', () => {
     const rendered = String(errorOutput.mock.calls[0]?.[0]);
     expect(rendered).toContain('Authentication is required. [KB_AUTH_REQUIRED]');
     expect(rendered).toContain('Hint: Run "kb auth login --gateway-url https://gateway.test --email <email>"');
+  });
+
+  // case: S-203.1
+  it('logs unexpected causes with the same correlation id without rendering the cause', () => {
+    const cause = new Error('loopback request failed');
+    const loggerError = vi.spyOn(platform.logger, 'error').mockImplementation(() => undefined);
+    const json = vi.fn();
+    const presenter = {
+      isJSON: true,
+      json,
+      error: vi.fn(),
+    } as unknown as Presenter;
+
+    const exitCode = handleExecutionError(cause, presenter);
+    const rendered = json.mock.calls[0]?.[0] as { error: { code: string; correlationId: string } };
+
+    expect(exitCode).toBe(1);
+    expect(rendered.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(loggerError).toHaveBeenCalledWith('CLI command failed unexpectedly', cause, {
+      correlationId: rendered.error.correlationId,
+    });
+    expect(JSON.stringify(rendered)).not.toContain(cause.message);
+    expect(JSON.stringify(rendered)).not.toContain(cause.stack);
+    loggerError.mockRestore();
   });
 
   it('renders a catalogued usage failure for required non-TTY input', () => {

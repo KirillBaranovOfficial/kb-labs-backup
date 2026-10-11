@@ -7,6 +7,7 @@
   "sharedStateDirectory": "state",
   "installerStateDirectory": "installer",
   "hostStateDirectory": "installer/host",
+  "platformDataRoot": { "platformPath": ".kb/data", "statePath": "state/data" },
   "ownershipRecord": "ownership.json",
   "ownedEntries": [
     "current",
@@ -16,8 +17,6 @@
     "ownership.json"
   ],
   "sharedRuntimePaths": [
-    { "platformPath": ".kb/data", "statePath": "state/data", "kind": "directory" },
-    { "platformPath": ".kb/database", "statePath": "state/data/database", "kind": "directory" },
     { "platformPath": ".kb/v2/cache", "statePath": "state/cache", "kind": "directory", "preinstall": true },
     { "platformPath": ".kb/v2/scenarios", "statePath": "state/scenarios", "kind": "directory", "preinstall": true },
     { "platformPath": ".kb/kb.config.jsonc", "statePath": "state/kb.config.jsonc", "kind": "file" },
@@ -35,8 +34,6 @@
     "snapshotRetention": 2
   },
   "runtimeStatePaths": [
-    ".kb/data",
-    ".kb/database",
     ".kb/v2/cache",
     ".kb/v2/scenarios",
     ".kb/kb.config.jsonc",

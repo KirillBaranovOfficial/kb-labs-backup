@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "758c18121f6c18ce2cce8c65ad00f933980e07adc261feda5af85055bcc4b208",
+  "digest": "6d88227809aedac56ea8eb96e4007536e299c50fc47dd8f49f90ffc7d1ecc8b2",
   "channels": {
     "stable": "2.120.1"
   },
@@ -221,7 +221,7 @@
             {
               "id": "gateway.authStorage.filename",
               "path": "/platform/adapterOptions/documentDatabase/filename",
-              "default": "\".kb/database/kb.sqlite\"",
+              "default": "\"database/kb.sqlite\"",
               "hint": "Persistent database file for secured gateway identity, session, invite, and reset data"
             }
           ]

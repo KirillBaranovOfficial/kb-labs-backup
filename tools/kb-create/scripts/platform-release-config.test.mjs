@@ -19,6 +19,6 @@ test('the platform release config binds every persistent built-in used by a fres
   assert.equal(config.adapters.documentDatabase, '@kb-labs/adapters-sqlite');
   assert.equal(config.adapters.eventBus, '@kb-labs/adapters-eventbus-cache');
   assert.equal(config.adapters.kvStore, '@kb-labs/adapters-sqlite/kv');
-  assert.equal(config.adapterOptions.documentDatabase.filename, '.kb/database/kb.sqlite');
-  assert.equal(config.adapterOptions.kvStore.filename, '.kb/database/kb.sqlite');
+  assert.equal(config.adapterOptions.documentDatabase.filename, 'database/kb.sqlite');
+  assert.equal(config.adapterOptions.kvStore.filename, 'database/kb.sqlite');
 });

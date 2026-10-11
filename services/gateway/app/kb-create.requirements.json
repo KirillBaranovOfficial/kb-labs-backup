@@ -52,7 +52,7 @@
     {
       "id": "gateway.authStorage.filename",
       "path": "/platform/adapterOptions/documentDatabase/filename",
-      "default": ".kb/database/kb.sqlite",
+      "default": "database/kb.sqlite",
       "hint": "Persistent database file for secured gateway identity, session, invite, and reset data"
     }
   ]

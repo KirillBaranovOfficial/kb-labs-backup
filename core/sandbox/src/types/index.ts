@@ -99,6 +99,10 @@ export interface ExecutionContext {
 
   /** Platform configuration for worker initialization (NEW) */
   platformConfig?: Record<string, unknown>; // PlatformConfig from @kb-labs/core-runtime (avoiding type import to prevent circular dep)
+  /** Owning platform root for worker-side adapter initialization. */
+  platformRoot?: string;
+  /** Mode selected by the owning platform config. */
+  workspaceDevelopment?: boolean;
 }
 
 /**
