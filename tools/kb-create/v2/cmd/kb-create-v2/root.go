@@ -57,7 +57,7 @@ var operationDescriptors = []operationDescriptor{
 		return executeStatus(ctx, statusCommandInput{PlatformRoot: flags.String("platform-root"), Executable: deps.Executable})
 	}},
 	{Name: "doctor", Short: "Diagnose or repair an installation", Args: cobra.NoArgs, Flags: []string{"platform-root", "doctor-input", "fix", "recover", "email", "tenant", "password-stdin", "generate", "yes", "foreground"}, Human: renderDoctor, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
-		input := doctorCommandInput{PlatformRoot: flags.String("platform-root"), Executable: deps.Executable, InputFile: flags.String("doctor-input"), Fix: flags.Bool("fix"), Foreground: flags.Bool("foreground"), Recover: recoverRequest{Enabled: flags.Bool("recover"), Email: flags.String("email"), Tenant: flags.String("tenant"), PasswordStdin: flags.Bool("password-stdin"), Generate: flags.Bool("generate"), Yes: flags.Bool("yes"), JSON: jsonMode(cmd)}}
+		input := doctorCommandInput{Command: cmd, PlatformRoot: flags.String("platform-root"), Executable: deps.Executable, InputFile: flags.String("doctor-input"), Fix: flags.Bool("fix"), Foreground: flags.Bool("foreground"), Recover: recoverRequest{Enabled: flags.Bool("recover"), Email: flags.String("email"), Tenant: flags.String("tenant"), PasswordStdin: flags.Bool("password-stdin"), Generate: flags.Bool("generate"), Yes: flags.Bool("yes"), JSON: jsonMode(cmd)}}
 		return executeDoctor(ctx, input)
 	}},
 	{Name: "start", Short: "Start the local host", Args: cobra.NoArgs, Flags: []string{"platform-root", "foreground"}, Human: renderStart, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {

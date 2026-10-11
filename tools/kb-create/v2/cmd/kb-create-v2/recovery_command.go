@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/charmbracelet/x/term"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
@@ -58,7 +58,7 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 		hint += " --json"
 	}
 	hint += " --yes`"
-	if failure := confirmDestructive(input.Yes, input.JSON, "This will remove platform root "+root+", its installed services, active receipt, and saved snapshots. Project files are kept. Continue? [y/N] ",
+	if failure := confirmDestructive(input.Yes, "This will remove platform root "+root+", its installed services, active receipt, and saved snapshots. Project files are kept. Continue? [y/N] ",
 		hint, input.Command); failure != nil {
 		return recoveryCommandResult{}, failure
 	}
@@ -113,7 +113,7 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 		commandLine += " --json"
 	}
 	commandLine += " --yes`"
-	if failure := confirmDestructive(input.Yes, input.JSON, "This will replace platform root "+root+" and its active receipt with a saved snapshot. Continue? [y/N] ", commandLine, input.Command); failure != nil {
+	if failure := confirmDestructive(input.Yes, "This will replace platform root "+root+" and its active receipt with a saved snapshot. Continue? [y/N] ", commandLine, input.Command); failure != nil {
 		return recoveryCommandResult{}, failure
 	}
 	active, err := receipt.Read(root)
@@ -203,24 +203,13 @@ func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root s
 	return recoveryMutationResult{Snapshot: snapshot, WasRunning: result.WasRunning, LogPath: transcript.Path()}, nil
 }
 
-func confirmDestructive(yes, jsonMode bool, prompt, hint string, command *cobra.Command) *diag.Diag {
+func confirmDestructive(yes bool, prompt, hint string, command *cobra.Command) *diag.Diag {
 	if yes {
 		return nil
 	}
-	if jsonMode || !term.IsTerminal(os.Stdin.Fd()) {
-		failure := contracts.NewDiag("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.", hint, fmt.Errorf("confirmation unavailable without a terminal"))
-		failure.ProcessExitCode = diag.ExitInput
+	_, failure := clikitcommand.FromCommand(command).Confirm(prompt, hint)
+	if failure != nil {
 		return failure
-	}
-	if _, err := fmt.Fprint(command.OutOrStdout(), prompt); err != nil {
-		return progressWriteFailure(err, "uninstall")
-	}
-	confirmed, err := readConfirmation(os.Stdin)
-	if err != nil {
-		return contracts.NewDiag("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.", hint, err)
-	}
-	if !confirmed {
-		return contracts.NewDiag("KB_INSTALL_OPERATION_CANCELLED", "The operation was cancelled.", "rerun the command and confirm when prompted", nil)
 	}
 	return nil
 }

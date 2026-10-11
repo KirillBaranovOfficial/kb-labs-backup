@@ -4,9 +4,7 @@
 package toolchain
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -71,15 +69,6 @@ func Validate(status Status, requirePnpm bool) error {
 		return ValidatePnpm(status.PnpmVersion)
 	}
 	return nil
-}
-
-func ConfirmUpdate(in io.Reader, out io.Writer, issue *ValidationError) bool {
-	if issue == nil {
-		return false
-	}
-	fmt.Fprintf(out, "%s\nWould you like to update now? [y/N] ", issue.Error())
-	line, _ := bufio.NewReader(in).ReadString('\n')
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y")
 }
 
 func major(version string) (int, error) {
