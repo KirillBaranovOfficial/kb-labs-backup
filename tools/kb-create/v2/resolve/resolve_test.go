@@ -426,9 +426,7 @@ func TestPlanKeepsPlatformMembersThatShareACatalogID(t *testing.T) {
 	}
 }
 
-// case: PC-001.8
-// case: S-181.4
-// case: S-023.2
+// case: PC-001.8, S-181.4, S-023.2
 func TestStableFixturePlansHaveUniqueArtifactIdentitiesAcrossProfilesAndScenarios(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json"))
 	if err != nil {
