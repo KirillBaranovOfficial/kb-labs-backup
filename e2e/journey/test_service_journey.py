@@ -22,6 +22,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_i
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
                             request as request_result,
+                            project_plugin_settings_isolation, repository_git_status,
                             PROJECT_ID,
                             _prepare_and_export_mcp_projects,
                             main as service_main, mcp_probe, run_grouped_service_steps, run_service_steps)
@@ -51,6 +52,90 @@ class FakeGitHub:
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    # case: S-204.1, S-204.2
+    def test_repository_status_detects_files_created_by_settings_commands(self):
+        with tempfile.TemporaryDirectory(prefix="journey-project-settings-tree-") as temp:
+            project = Path(temp) / "project"
+            project.mkdir()
+            initialized = subprocess.run(["git", "init", "--quiet", str(project)], capture_output=True, text=True)
+            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            baseline = repository_git_status(project)
+            self.assertEqual(baseline, "")
+            (project / ".kb").mkdir()
+            (project / ".kb" / "config.json").write_text("{}\n", encoding="utf-8")
+            current = repository_git_status(project)
+            self.assertIsNotNone(current)
+            self.assertNotEqual(current, baseline)
+
+    # case: S-204.1, S-204.2, S-204.8, S-204.9, S-204.10, S-204.11
+    def test_project_settings_step_reports_repository_write_and_continues(self):
+        with tempfile.TemporaryDirectory(prefix="journey-project-settings-cli-") as temp:
+            root = Path(temp)
+            cli = root / "kb-fixture"
+            cli.write_text("""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+state_path = Path(os.environ["KB_JOURNEY_FIXTURE_STATE"])
+state = json.loads(state_path.read_text()) if state_path.exists() else {}
+cwd = Path.cwd()
+def succeed(data):
+    print(json.dumps({"ok": True, "data": data}))
+    raise SystemExit(0)
+if args[:2] == ["project", "add"]:
+    succeed({"project": {"id": cwd.name}})
+if args[:2] == ["project", "remove"]:
+    succeed({})
+if args[:2] == ["config", "set"]:
+    if ".kb" not in state:
+        (cwd / ".kb").mkdir()
+        state[".kb"] = True
+    scope = "platform" if "--scope" in args else cwd.name
+    key = args[args.index("--scope") + 2] if "--scope" in args else args[2]
+    value_index = args.index(key) + 1
+    state[f"{scope}:{key}"] = json.loads(args[value_index]) if key.endswith("scopes") else int(args[value_index])
+    state_path.write_text(json.dumps(state))
+    succeed({})
+if args[:2] == ["config", "get"]:
+    key = args[2]
+    if key.endswith("maxTokens"):
+        if cwd.name == "project-a" and f"project-a:{key}" in state:
+            value, layer = state[f"project-a:{key}"], "project"
+        elif f"platform:{key}" in state:
+            value, layer = state[f"platform:{key}"], "platform"
+        else:
+            value, layer = 2000, "manifest"
+    else:
+        if cwd.name == "project-a" and f"project-a:{key}" in state:
+            value, layer = state[f"project-a:{key}"], "project"
+        else:
+            value, layer = state.get(f"platform:{key}", []), "platform"
+    succeed({"value": value, "layer": layer})
+print(json.dumps({"ok": False, "error": {"code": "KB_PROJECT_UNKNOWN", "message": "unknown project", "hint": "run kb project add"}}))
+raise SystemExit(1)
+""", encoding="utf-8")
+            cli.chmod(0o755)
+            state = root / "fixture-state.json"
+            journey = Journey("local", "project-settings-tree-regression")
+            settings_cases = ["S-204.1", "S-204.2", "S-204.8", "S-204.9", "S-204.10", "S-204.11"]
+
+            with patch.dict(os.environ, {"KB_JOURNEY_CLI_PATH": str(cli),
+                                         "KB_JOURNEY_FIXTURE_STATE": str(state)}):
+                settings = journey.step(
+                    "project plugin settings isolation and clean repositories", "projects",
+                    project_plugin_settings_isolation, cases=settings_cases,
+                )
+                following = journey.step("workflow discovery", "workflow", lambda: None)
+                self.assertEqual(settings.status, "FAIL")
+                self.assertEqual(settings.cases, settings_cases)
+                self.assertEqual(settings.message, "project settings commands changed project-a's repository tree")
+                self.assertTrue(state.is_file(), "the CLI fixture must have run the settings commands")
+                self.assertEqual(following.status, "PASS")
+                self.assertEqual(following.name, "workflow discovery")
+
     def test_runner_exception_keeps_completed_steps_and_adds_crash_row_to_report(self):
         with tempfile.TemporaryDirectory(prefix="journey-runner-crash-") as temp:
             root = Path(temp)

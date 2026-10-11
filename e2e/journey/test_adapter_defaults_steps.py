@@ -11,11 +11,33 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from adapter_defaults_steps import _assert_required_upstreams_ready, run_adapter_default_steps
+from adapter_defaults_steps import (_assert_required_upstreams_ready, _restore_platform_adapter_fixture,
+                                    run_adapter_default_steps)
 from service_steps import Journey
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
+    def test_failed_adapter_flow_restores_the_original_platform_config(self):
+        with tempfile.TemporaryDirectory(prefix="kb-adapter-restore-") as directory:
+            root = Path(directory)
+            config_path = root / ".kb" / "kb.config.json"
+            config_path.parent.mkdir()
+            original = b'{"platform":{}}\n'
+            config_path.write_bytes(b'{"platform":{"adapters":{"storage":"@kb-labs/adapters-fs"}}}\n')
+            commands = []
+
+            def runner(command, **kwargs):
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {}}), "")
+
+            error = _restore_platform_adapter_fixture(
+                config_path, original, root / "project", root, {"HOME": directory}, runner,
+            )
+
+            self.assertIsNone(error)
+            self.assertEqual(config_path.read_bytes(), original)
+            self.assertEqual(commands, [["kb-create", "restart", "--platform-root", str(root), "--json"]])
+
     def test_workflow_readiness_claim_fails_when_required_upstream_is_down(self):
         with self.assertRaisesRegex(RuntimeError, "required upstreams not ready: marketplace"):
             _assert_required_upstreams_ready({
