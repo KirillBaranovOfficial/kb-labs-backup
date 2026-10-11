@@ -412,6 +412,7 @@ for (const packageName of platformMemberRoots) {
   }
 }
 const packagesToValidate = [...platformProvidedPackages];
+const runtimeImportViolations = [];
 for (let index = 0; index < packagesToValidate.length; index += 1) {
   const packageName = packagesToValidate[index];
   const item = byName.get(packageName);
@@ -439,20 +440,24 @@ for (let index = 0; index < packagesToValidate.length; index += 1) {
     if (!dependency.startsWith('@kb-labs/')) continue;
     if (optionalPeers.has(dependency)) {
       if (staticImport) {
-        throw new Error(`${packageName} runtime entrypoint ${specifier} statically imports optional peer ${dependency}`);
+        runtimeImportViolations.push(`${packageName} runtime entrypoint ${specifier} statically imports optional peer ${dependency}`);
       }
       continue;
     }
     const providedPeer = peers.has(dependency) && platformProvidedPackages.has(dependency);
     if (peers.has(dependency) && !providedPeer) {
-      throw new Error(`${packageName} runtime import ${specifier} is satisfied only by peer ${dependency}, which the platform package graph does not provide`);
+      runtimeImportViolations.push(`${packageName} runtime import ${specifier} is satisfied only by peer ${dependency}, which the platform package graph does not provide`);
+      continue;
     }
-    const declaredByPackage = dependencies.has(dependency) || dependencyClosure.has(dependency) || providedPeer;
+    const declaredByPackage = dependencies.has(dependency) || providedPeer;
     if (optional && !declaredByPackage) continue;
     if (!declaredByPackage) {
-      throw new Error(`${packageName} runtime import ${specifier} is neither a dependency nor a sealed peer`);
+      runtimeImportViolations.push(`${packageName} runtime import ${specifier} is neither a dependency nor a sealed peer`);
     }
   }
+}
+if (runtimeImportViolations.length > 0) {
+  throw new Error(`runtime package import validation failed:\n${runtimeImportViolations.map(violation => `- ${violation}`).join('\n')}`);
 }
 
 const hostItem = byName.get(hostPackage);
