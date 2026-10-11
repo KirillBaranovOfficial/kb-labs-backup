@@ -621,7 +621,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 if rows_for(project).get("storage", {}).get("baseDir") != str(project / ".kb" / "data"):
                     raise RuntimeError(f"project {project} did not use the platform storage options")
         journey.step("configure platform storage options", "adapter", set_platform_options,
-                     cases=["S-048.2"], requires=("bind the platform storage adapter",))
+                     cases=["S-048.2"], requires=("step:bind the platform storage adapter",))
 
         def reject_project_adapter_config() -> None:
             error_to_raise = None
@@ -651,7 +651,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             if error_to_raise is not None:
                 raise error_to_raise
         journey.step("reject project adapter configuration", "adapter", reject_project_adapter_config,
-                     cases=["S-048.3"], requires=("configure platform storage options",))
+                     cases=["S-048.3"], requires=("step:configure platform storage options",))
 
         def attach_project_plugin() -> None:
             command = ["marketplace", "install", "@kb-labs/commit-entry", "--scope", "project", "--json"]
@@ -666,7 +666,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 if rows_for(project).get("storage", {}).get("implementation") != "@kb-labs/adapters-fs":
                     raise RuntimeError(f"project {project} adapter binding changed after plugin attachment")
         journey.step("attach a plugin to project A only", "plugin", attach_project_plugin,
-                     cases=["S-048.4"], requires=("reject project adapter configuration",))
+                     cases=["S-048.4"], requires=("step:reject project adapter configuration",))
 
         def verify_project_configs() -> None:
             for project in (project_a, project_b):
@@ -677,7 +677,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                     raise RuntimeError(f"project {project} contains platform adapter settings")
         journey.step("verify adapter settings are absent from project configs", "adapter",
                      verify_project_configs, cases=["S-048.5"],
-                     requires=("reject project adapter configuration",))
+                     requires=("step:reject project adapter configuration",))
 
         def unbind_platform_storage_and_restore_default() -> None:
             command = ["adapter", "unbind", "storage", "--json"]

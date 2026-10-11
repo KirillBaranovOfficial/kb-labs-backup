@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 from invocations import invocation_context, invocation_link, write_report_json, write_report_text
+from journey_dependencies import Dependency
 
 
 @dataclass
@@ -38,17 +39,20 @@ class JourneyResult:
 
 
 class Journey:
-    def __init__(self, mode: str, run_id: str = "local"):
+    def __init__(self, mode: str, run_id: str = "local", *, parent: "Journey | None" = None):
         if mode not in {"local", "secured"}:
             raise ValueError(f"unsupported access mode: {mode}")
         self.mode = mode
         self.run_id = run_id
+        self.parent = parent
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.started = time.monotonic()
         self.steps: list[StepResult] = []
         self.selected_steps = set(filter(None, os.getenv("KB_JOURNEY_SELECTED_STEPS", "").split(",")))
         self.selected_claims = set(self.selected_steps)
         self.prerequisite_steps = set(filter(None, os.getenv("KB_JOURNEY_PREREQUISITE_STEPS", "").split(",")))
+        self.prerequisite_flows = set(filter(None, os.getenv("KB_JOURNEY_PREREQUISITE_FLOWS", "").split(",")))
+        self.flows: dict[str, tuple[str, str]] = {}
         self.selection = list(filter(None, os.getenv("KB_JOURNEY_CASES", "").split(",")))
         self.step_guard: Callable[[str, Callable[[], str | None]], str | None] | None = None
 
@@ -58,7 +62,7 @@ class Journey:
         if role not in {"step", "lifecycle"}:
             raise ValueError(f"unsupported journey step role: {role}")
         case_ids = list(cases)
-        required = set(requires)
+        required = {Dependency.parse(item) for item in requires}
         selected = bool(self.selected_steps.intersection(case_ids))
         prerequisite = name in self.prerequisite_steps
         lifecycle = role == "lifecycle"
@@ -66,19 +70,25 @@ class Journey:
             result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, "not selected", case_ids)
             self.steps.append(result)
             return result
-        if (selected or prerequisite) and required:
-            prior_steps = {step.name: step for step in self.steps}
+        if required:
             failures = []
-            for required_name in sorted(required):
-                prior = prior_steps.get(required_name)
+            for dependency in sorted(required):
+                prior = self.find_outcome(dependency)
                 if prior is None:
-                    failures.append(f"{required_name} did not run before {name}")
-                elif prior.status != "PASS":
-                    failures.append(f"{required_name} ended {prior.status}: {prior.message}")
+                    failures.append(f"{dependency} did not run before {name}")
+                elif prior[0] != "PASS":
+                    failures.append(f"{dependency} ended {prior[0]}: {prior[1]}")
             if failures:
-                message = "selected step prerequisites failed: " + "; ".join(failures)
+                message = "step prerequisites failed: " + "; ".join(failures)
+                step_details = {"prerequisiteFailures": failures}
+                if selected:
+                    step_details["selectionRole"] = "selected"
+                elif prerequisite:
+                    step_details["selectionRole"] = "prerequisite"
+                elif lifecycle:
+                    step_details["selectionRole"] = "lifecycle"
                 result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, message, case_ids,
-                                    {"selectionRole": "selected", "prerequisiteFailures": failures})
+                                    step_details)
                 self.steps.append(result)
                 return result
         started = time.monotonic()
@@ -114,6 +124,23 @@ class Journey:
         self.steps.append(result)
         return result
 
+    def record_flow(self, name: str, status: str, message: str = "") -> None:
+        self.flows[name] = status, message
+
+    def find_outcome(self, dependency: Dependency) -> tuple[str, str] | None:
+        journey: Journey | None = self
+        while journey is not None:
+            if dependency.kind == "step":
+                step = next((item for item in reversed(journey.steps) if item.name == dependency.name), None)
+                if step is not None:
+                    return step.status, step.message
+            else:
+                result = journey.flows.get(dependency.name)
+                if result is not None:
+                    return result
+            journey = journey.parent
+        return None
+
     def blocked(self, name: str, capability: str, reason: str, cases: Iterable[str] = ()) -> StepResult:
         case_ids = list(cases)
         if self.selected_claims and (not case_ids or not self.selected_claims.intersection(case_ids)):
@@ -144,13 +171,12 @@ class Journey:
             }
         status = "FAIL" if failed else "BLOCKED" if blocked else "PASS"
         claims = {}
-        priority = {"PASS": 0, "BLOCKED": 1, "FAIL": 2}
         for step in self.steps:
-            if step.status not in {"PASS", "FAIL", "BLOCKED"}:
+            if step.status not in {"PASS", "FAIL"}:
                 continue
             for case_id in step.cases:
                 previous = claims.get(case_id)
-                if previous is None or priority[step.status] > priority[previous]:
+                if step.status == "FAIL" or previous != "FAIL":
                     claims[case_id] = step.status
         case_run = {
             "schema": "kb.qa-case-run/v1",
@@ -274,11 +300,12 @@ class FlowGraph:
              record_empty_success: bool = True) -> str:
         """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
         case_ids = list(cases)
-        prerequisite = name in self.journey.prerequisite_steps
+        prerequisite = name in self.journey.prerequisite_flows
         lifecycle = role == "lifecycle"
         if (self.journey.selected_claims and case_ids
                 and not self.journey.selected_claims.intersection(case_ids) and not prerequisite and not lifecycle):
             self.journey.skipped(name, capability)
+            self.journey.record_flow(name, "SKIPPED", "not selected")
             return "SKIPPED"
         blocker = None if lifecycle else self._blocker(group)
         if blocker:
@@ -287,6 +314,7 @@ class FlowGraph:
                                  f"blocked by state {state}: {evidence['evidence']} (last mutated by "
                                  f"{evidence['group']}/{evidence['step']} ({evidence['claim']}))",
                                  cases=case_ids)
+            self.journey.record_flow(name, "BLOCKED", f"blocked by state {state}")
             return "BLOCKED"
 
         start = len(self.journey.steps)
@@ -315,9 +343,12 @@ class FlowGraph:
                         "step": name,
                         "claim": ", ".join(failed.cases) or "no case claim",
                     }
+            self.journey.record_flow(name, "FAIL", failed.message)
             return "FAIL"
         if blocked:
+            self.journey.record_flow(name, "BLOCKED", blocked.message)
             return "BLOCKED"
+        self.journey.record_flow(name, "PASS")
         return "PASS"
 
 

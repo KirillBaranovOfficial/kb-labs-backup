@@ -434,7 +434,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                  prepare_clean_scopes_for_s010, role="lifecycle")
     journey.step("install exact marketplace plugin into both scopes", "marketplace",
                  install_exact_commit, cases=["S-010.1"],
-                 requires=("prepare clean scopes for the S-010 install",))
+                 requires=("step:prepare clean scopes for the S-010 install",))
 
     project_id = base_env.get("KB_JOURNEY_PROJECT_ID", "")
     gateway = base_env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -486,7 +486,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
 
     journey.step("verify S-192 platform and project pins and route are absent before install", "marketplace",
                  verify_s192_project_only_precondition, cases=["S-192.7"],
-                 requires=("install exact marketplace plugin into both scopes",))
+                 requires=("step:install exact marketplace plugin into both scopes",))
 
     def install_commit_for_project_lifecycle() -> None:
         result = _json(cli(install_commit), install_commit)
@@ -498,7 +498,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
 
     journey.step("install Commit into the project for the route lifecycle", "marketplace",
                  install_commit_for_project_lifecycle, cases=["S-192.2"],
-                 requires=("verify S-192 platform and project pins and route are absent before install",))
+                 requires=("step:verify S-192 platform and project pins and route are absent before install",))
 
     try:
         if commit_case_hook is None:
@@ -524,7 +524,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
 
     journey.step("GET the installed project Commit status route", "marketplace",
                  assert_commit_status_route, cases=["S-192.3"],
-                 requires=("install Commit into the project for the route lifecycle",))
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     listed = ["marketplace", "plugins", "list", "--json"]
     def assert_marketplace_list() -> None:
@@ -533,14 +533,14 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if not entry or entry.get("version") != commit_version or entry.get("enabled") is not True:
             raise RuntimeError(f"plugin list omitted the enabled exact pin {commit_package}@{commit_version}")
     journey.step("list installed project plugins", "marketplace", assert_marketplace_list, cases=["S-010.2"],
-                 requires=("install Commit into the project for the route lifecycle",))
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def assert_commit_lock() -> None:
         lock = json.loads(lock_file.read_text())
         if _commit_project_fixture_entry(lock, commit_version) is None:
             raise RuntimeError("project lock entry does not preserve package, exact version, integrity, source and enabled state")
     journey.step("inspect exact v3 marketplace lock entry", "marketplace", assert_commit_lock, cases=["S-010.3"],
-                 requires=("install Commit into the project for the route lifecycle",))
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     commit_open = ["commit", "open", "--json"]
     def assert_commit_command() -> None:
@@ -548,14 +548,14 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if payload.get("hasPlan") is not False:
             raise RuntimeError(f"`kb commit open --json` did not return its documented empty-plan result: {payload!r}")
     journey.step("invoke documented installed commit command", "marketplace", assert_commit_command,
-                 cases=["S-010.4"], requires=("install Commit into the project for the route lifecycle",))
+                 cases=["S-010.4"], requires=("step:install Commit into the project for the route lifecycle",))
 
     gateway_doctor = ["marketplace", "plugins", "doctor", "--scope", "project", "--json"]
     def assert_cli_plugin_gateway() -> None:
         payload = _json(cli(gateway_doctor), gateway_doctor)
     journey.step("invoke gateway-backed plugin command through installed CLI", "marketplace",
                  assert_cli_plugin_gateway, cases=["S-010.7"],
-                 requires=("install Commit into the project for the route lifecycle",))
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def assert_stopped_host_error() -> None:
         stop_command = ["kb-create", "stop", "--platform-root", str(platform_root), "--json"]
@@ -625,7 +625,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if entry.get("version") != commit_version:
             raise RuntimeError("reinstall changed the requested exact plugin version")
     journey.step("repeat exact install without duplicate pin", "marketplace", assert_reinstall_idempotent,
-                 cases=["S-010.5"], requires=("install Commit into the project for the route lifecycle",))
+                 cases=["S-010.5"], requires=("step:install Commit into the project for the route lifecycle",))
 
     def set_plugin_enabled(enabled: bool) -> None:
         action = "enable" if enabled else "disable"
@@ -643,7 +643,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     def assert_disabled() -> None:
         set_plugin_enabled(False)
     journey.step("disable installed Commit plugin", "marketplace", assert_disabled, cases=["S-011.1"],
-                 requires=("install Commit into the project for the route lifecycle",))
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def assert_disabled_list() -> None:
         command = ["marketplace", "plugins", "list"]
@@ -653,7 +653,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if result.returncode != 0 or "disabled" not in output.lower() or "⏸" not in output:
             raise RuntimeError(f"marketplace list did not show the disabled count and row marker: {output!r}")
     journey.step("confirm disabled Commit appears in list", "marketplace", assert_disabled_list, cases=["S-011.2"],
-                 requires=("disable installed Commit plugin",))
+                 requires=("step:disable installed Commit plugin",))
 
     def assert_command_hidden() -> None:
         command = ["commit", "--help"]
@@ -662,12 +662,12 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if result.returncode == 0:
             raise RuntimeError("Commit commands remain discoverable while the plugin is disabled")
     journey.step("confirm disabled Commit commands are unavailable", "marketplace", assert_command_hidden,
-                 cases=["S-011.3"], requires=("disable installed Commit plugin",))
+                 cases=["S-011.3"], requires=("step:disable installed Commit plugin",))
 
     def assert_enabled() -> None:
         set_plugin_enabled(True)
     journey.step("enable installed Commit plugin", "marketplace", assert_enabled, cases=["S-011.4"],
-                 requires=("disable installed Commit plugin",))
+                 requires=("step:disable installed Commit plugin",))
 
     def assert_enabled_list_and_command() -> None:
         list_command = ["marketplace", "plugins", "list"]
@@ -684,7 +684,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("Commit commands remain unavailable after enabling the plugin")
     journey.step("confirm enabled Commit appears and commands are available", "marketplace",
                  assert_enabled_list_and_command, cases=["S-011.5"],
-                 requires=("enable installed Commit plugin",))
+                 requires=("step:enable installed Commit plugin",))
 
     def assert_missing_disable_preserves_lock() -> None:
         before_lock = lock_file.read_bytes()
@@ -698,7 +698,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("disabling an uninstalled package changed the marketplace lock")
     journey.step("reject disabling an uninstalled plugin without changing the lock", "marketplace",
                  assert_missing_disable_preserves_lock, cases=["S-011.6"],
-                 requires=("install Commit into the project for the route lifecycle",))
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def update_commit() -> None:
         command = ["marketplace", "update", "@kb-labs/commit", "--scope", "project", "--json"]
@@ -716,7 +716,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                 for item in installed):
             raise RuntimeError("marketplace update did not report the exact updated Commit version")
     journey.step("update installed Commit version", "marketplace", update_commit, cases=["S-012.1"],
-                 requires=("install Commit into the project for the route lifecycle",))
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def assert_updated_pin() -> None:
         command = ["marketplace", "plugins", "list", "--scope", "project", "--json"]
@@ -728,7 +728,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                 or entry.get("version") != lock_entry.get("version") or not lock_entry.get("integrity")):
             raise RuntimeError("plugin list and marketplace lock do not show the same exact version and integrity")
     journey.step("verify updated Commit pin in list and lock", "marketplace", assert_updated_pin,
-                 cases=["S-012.2"], requires=("update installed Commit version",))
+                 cases=["S-012.2"], requires=("step:update installed Commit version",))
 
     def assert_updated_command() -> None:
         command = ["commit", "--help"]
@@ -738,7 +738,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("Commit command group is unavailable after update")
     journey.step("confirm Commit commands remain available after update", "marketplace",
                  assert_updated_command, cases=["S-012.3"],
-                 requires=("update installed Commit version",))
+                 requires=("step:update installed Commit version",))
 
     def assert_unknown_update_preserves_pin() -> None:
         before = json.loads(lock_file.read_text()).get("plugins", {}).get(commit_package)
@@ -754,7 +754,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("unknown package update did not warn while preserving the Commit pin")
     journey.step("reject unknown package update and preserve Commit pin", "marketplace",
                  assert_unknown_update_preserves_pin, cases=["S-012.4"],
-                 requires=("install Commit into the project for the route lifecycle",))
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     uninstall_commit = ["marketplace", "uninstall", commit_package, "--json"]
     def uninstall_target() -> None:
@@ -776,7 +776,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     journey.step("uninstall target project plugin", "marketplace",
                  uninstall_target,
                  cases=["S-047.1", "S-192.4"],
-                 requires=("GET the installed project Commit status route",))
+                 requires=("step:GET the installed project Commit status route",))
 
     def assert_unrelated_remains() -> None:
         payload = _json(cli(listed), listed)
@@ -787,7 +787,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if not unrelated or unrelated.get("version") != unrelated_version or unrelated.get("enabled") is not True:
             raise RuntimeError(f"unrelated project plugin did not remain installed and enabled: {unrelated!r}")
     journey.step("list confirms target absent and unrelated plugin remains", "marketplace", assert_unrelated_remains,
-                 cases=["S-047.2"], requires=("uninstall target project plugin",))
+                 cases=["S-047.2"], requires=("step:uninstall target project plugin",))
 
     def assert_lock_and_unrelated_plugin() -> None:
         lock = json.loads(lock_file.read_text())
@@ -807,7 +807,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                 or not isinstance(payload.get("diagnostics"), list)):
             raise RuntimeError(f"unrelated `kb qa cases list --json` command returned an invalid case-list result: {payload!r}")
     journey.step("verify lock removal and invoke unrelated project plugin", "marketplace", assert_lock_and_unrelated_plugin,
-             cases=["S-047.3"], requires=("uninstall target project plugin",))
+             cases=["S-047.3"], requires=("step:uninstall target project plugin",))
 
     def reinstall_commit_and_assert_route() -> None:
         reinstall = ["marketplace", "install", f"{commit_install_package}@{commit_version}", "--json"]
@@ -830,7 +830,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         validate_commit_status_response(status, payload)
     journey.step("reinstall Commit and call its project REST route", "marketplace",
                  reinstall_commit_and_assert_route, cases=["S-192.5"],
-                 requires=("uninstall target project plugin",))
+                 requires=("step:uninstall target project plugin",))
 
     def reject_rest_internal_mount_prefix() -> None:
         legacy_url = f"{gateway}{project_service_path(project_id, 'rest', 'api/v1/plugins/commit/status')}"
@@ -843,7 +843,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
 
     journey.step("reject REST's internal API mount in public URLs", "marketplace",
                  reject_rest_internal_mount_prefix, cases=["S-192.6"],
-                 requires=("reinstall Commit and call its project REST route",))
+                 requires=("step:reinstall Commit and call its project REST route",))
 
 
 def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: str,
