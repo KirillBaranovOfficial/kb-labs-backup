@@ -130,6 +130,20 @@ class DispatchRegistryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, r"fixture_steps.py:1: 'step:typo'.*does not resolve"):
                     validate_dependency_declarations({"fixture_steps.py"}, root)
 
+    def test_static_dependency_rail_rejects_untyped_dependency_names(self):
+        with tempfile.TemporaryDirectory(prefix="journey-untyped-dependency-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'journey.step("consumer", "test", check, requires=("candidate provenance",))\n',
+                encoding="utf-8",
+            )
+            with patch("select_from_cases.RUNNERS", {
+                    "fixture": SimpleNamespace(journey_sources=("fixture_steps.py",))}):
+                with self.assertRaisesRegex(
+                        ValueError,
+                        r"fixture_steps.py:1: invalid journey dependency.*use 'step:<name>' or 'flow:<name>'"):
+                    validate_dependency_declarations({"fixture_steps.py"}, root)
+
     def test_static_dependency_rail_checks_edges_when_step_name_is_dynamic(self):
         with tempfile.TemporaryDirectory(prefix="journey-dynamic-name-rail-") as directory:
             root = Path(directory)

@@ -453,7 +453,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     })
                 elif args[:3] == ["marketplace", "plugins", "list"]:
                     platform_scope = "--scope" in args and args[args.index("--scope") + 1] == "platform"
-                    value = lock(platform_root if platform_scope else cwd_path, platform=platform_scope)
+                    value = lock(active_platform if platform_scope else cwd_path, platform=platform_scope)
                     entries = [{"id": package_id, **entry} for package_id, entry in value["plugins"].items()]
                     if "--json" in args:
                         stdout = json.dumps({"entries": entries})
@@ -589,7 +589,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     return FakeResponse(200, {"ok": True, "data": {"projectRuntimes": {"runtimes": []}}})
                 if service_path in rest_route_table:
                     route_observations.append((
-                        "@kb-labs/commit" in lock(platform_root, platform=True)["plugins"],
+                        "@kb-labs/commit" in lock(active_platform, platform=True)["plugins"],
                         "@kb-labs/commit" in lock(project)["plugins"],
                     ))
                 if service_path in rest_route_table and "@kb-labs/commit" in lock(project)["plugins"]:
@@ -714,7 +714,7 @@ class MarketplaceStepTests(unittest.TestCase):
                         save_lock(project, {"schema": "kb.marketplace/3", "plugins": {
                             "@kb-labs/commit": dict(original_commit_entry),
                         }})
-                        save_lock(platform_root, {"schema": "kb.marketplace/3", "plugins": {}, "adapters": {}})
+                        save_lock(active_platform, {"schema": "kb.marketplace/3", "plugins": {}, "adapters": {}})
                         trial = Journey("local", f"marketplace-failure-{mode_name}-{index}")
                         trial.selected_steps = set(selected_steps)
                         trial.selected_claims = set(selected_steps)
