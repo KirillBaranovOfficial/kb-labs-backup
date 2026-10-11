@@ -88,10 +88,12 @@ and are not part of this ADR.
 
 Implemented in the launcher (`tools/kb-create`, see its README):
 
-- `update`, `rollback`, `doctor --fix` and `uninstall` stop the host through its
-  supervisor, swap the installation and start the host from the new receipt; a host
-  that does not come back is rolled back and the previous version restarted
-  (`KB_UPDATE_HOST_NOT_HEALTHY`, `KB_UPDATE_APPLY_FAILED`, `KB_INSTALL_ROLLBACK_FAILED`).
+- Install creates the versioned container declared by the platform layout
+  contract. Update stages and verifies a new version inside that container,
+  switches its relative `current` link atomically, and leaves the running host
+  on its prior tree. Status and doctor report the pending restart. An unhealthy
+  explicit restart restores the last healthy version
+  (`KB_UPDATE_HOST_NOT_HEALTHY`).
 - The user path no longer uses `kb-dev`, `--net-offset` or `devservices.yaml`: every platform
   bundle in the release index declares its `host` (and optionally a `recover` tool), the
   resolver copies it into the plan, and the launcher runs it. `kb-dev` stays an author tool.
@@ -99,7 +101,10 @@ Implemented in the launcher (`tools/kb-create`, see its README):
   separate sections; `reset-admin` left the TS system commands and is reached as
   `kb-create doctor --recover`, which runs the platform's `kb-recover` (`@kb-labs/host-app`) with
   the host stopped.
-- The launcher state is per user (`<KB_HOME>/launcher`), not per platform root.
+- Host process, supervisor, control, update-queue, and lifecycle-lock state is
+  per installation at `<install-root>/state/installer/host`, so it survives a
+  version switch. The Gateway root allocation registry remains per user under
+  `<KB_HOME>/launcher` because it coordinates independent installations.
 
 Not done: autostart, executing Studio's queued update requests, and the project runtimes
 (rest, workflow) that a host-only install still lacks (stage 3).

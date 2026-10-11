@@ -21,19 +21,46 @@ import (
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // pidRecord is the host.pid file. It is the only cross-process handle on the
 // host: stop and status from another launcher invocation rely on it.
 type pidRecord struct {
-	PID          int       `json:"pid"`
-	PlatformRoot string    `json:"platformRoot"`
-	StartedAt    time.Time `json:"startedAt"`
-	HealthURL    string    `json:"healthUrl"`
-	Command      string    `json:"command"`
+	PID             int       `json:"pid"`
+	PlatformRoot    string    `json:"platformRoot"`
+	TreeRoot        string    `json:"treeRoot,omitempty"`
+	StartedAt       time.Time `json:"startedAt"`
+	HealthURL       string    `json:"healthUrl"`
+	Command         string    `json:"command"`
+	PlatformVersion string    `json:"platformVersion,omitempty"`
+	ReceiptID       string    `json:"receiptId,omitempty"`
+	ServiceIDs      []string  `json:"serviceIds,omitempty"`
 }
 
-// ActiveHostRecord identifies a live host process in the per-user launcher state.
+type ProcessIdentity struct {
+	InstallationID  string
+	PlatformVersion string
+	ReceiptID       string
+	ServiceIDs      []string
+	TreeRoot        string
+}
+
+func NewProcessIdentity(active contracts.InstallReceipt, platformRoot, treeRoot string) (ProcessIdentity, error) {
+	serviceIDs := make([]string, 0, len(active.Plan.ServiceGraph.Services))
+	for _, service := range active.Plan.ServiceGraph.Services {
+		serviceIDs = append(serviceIDs, service.ID)
+	}
+	identity := ProcessIdentity{InstallationID: active.InstallationID, PlatformVersion: active.Plan.ServiceGraph.PlatformVersion,
+		ReceiptID: active.ID, ServiceIDs: serviceIDs, TreeRoot: filepath.Clean(treeRoot)}
+	if identity.InstallationID == "" || identity.PlatformVersion == "" || identity.ReceiptID == "" || len(identity.ServiceIDs) == 0 || identity.TreeRoot == "." || platformRoot == "" {
+		return ProcessIdentity{}, hostError(contracts.CodeReceiptUnavailable, "The active receipt cannot identify a complete running host.",
+			"Run `kb-create doctor --platform-root \"$PLATFORM_ROOT\"` and reinstall the platform if the receipt is incomplete.", nil, map[string]string{"platformRoot": platformRoot})
+	}
+	return identity, nil
+}
+
+// ActiveHostRecord identifies a live host process in the installation container.
 type ActiveHostRecord struct {
 	PID          int
 	PlatformRoot string
@@ -58,14 +85,16 @@ func ActiveHost(state State) (ActiveHostRecord, bool) {
 }
 
 // ProcessRunner spawns the host command directly in its own process group,
-// records a pid file and log under the state home, polls the health URL, and
+// records a pid file and log under the installation state directory, polls the health URL, and
 // stops it with a graceful terminate followed by a kill after the grace period.
 type ProcessRunner struct {
-	Spec           Spec
-	State          State
-	PlatformRoot   string
-	InstallationID string
-	Operation      string
+	Spec         Spec
+	State        State
+	InstallRoot  string
+	PlatformRoot string
+	TreeRoot     string
+	Identity     ProcessIdentity
+	Operation    string
 	// HTTP and PollInterval exist for tests; zero values use sane defaults.
 	HTTP         *http.Client
 	PollInterval time.Duration
@@ -128,6 +157,10 @@ func (r *ProcessRunner) client() *http.Client {
 
 // Start launches the host and returns once its health URL answers 2xx.
 func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
+	if r.Identity.InstallationID == "" || r.Identity.PlatformVersion == "" || r.Identity.ReceiptID == "" || len(r.Identity.ServiceIDs) == 0 || r.Identity.TreeRoot == "" || filepath.Clean(r.Identity.TreeRoot) != filepath.Clean(r.TreeRoot) {
+		return Info{}, hostError(contracts.CodeReceiptUnavailable, "The running host identity is incomplete.",
+			"Run `kb-create doctor --platform-root \"$PLATFORM_ROOT\"` and repair or reinstall the platform receipt.", nil, map[string]string{"platformRoot": r.PlatformRoot})
+	}
 	if err := r.State.Ensure(); err != nil {
 		return Info{}, hostError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+r.State.Dir+".", "Fix the directory permissions or free disk space.", err, map[string]string{"path": r.State.Dir})
 	}
@@ -178,13 +211,25 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		r.mu.Unlock()
 		close(exited)
 	}()
-	record := pidRecord{PID: cmd.Process.Pid, PlatformRoot: r.PlatformRoot, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command}
+	record := pidRecord{PID: cmd.Process.Pid, PlatformRoot: r.PlatformRoot, TreeRoot: r.Identity.TreeRoot, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command,
+		PlatformVersion: r.Identity.PlatformVersion, ReceiptID: r.Identity.ReceiptID, ServiceIDs: append([]string(nil), r.Identity.ServiceIDs...)}
 	if err := writeJSONFile(r.State.HostPID(), record); err != nil {
 		r.kill(cmd.Process.Pid)
 		return Info{}, hostError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+r.State.Dir+".", "Fix the directory permissions or free disk space.", err, map[string]string{"path": r.State.Dir})
 	}
 	if err := r.waitReady(ctx, record.PID, exited); err != nil {
 		return Info{}, err
+	}
+	layout, layoutErr := versionroot.New(r.InstallRoot)
+	if layoutErr == nil && layout.Validate() == nil {
+		if err := layout.RecordHealthy(); err != nil {
+			r.kill(record.PID)
+			return Info{}, err
+		}
+		if err := layout.Retain(record.TreeRoot); err != nil {
+			r.kill(record.PID)
+			return Info{}, err
+		}
 	}
 	return Info{Runner: r.Name(), PID: record.PID, HealthURL: r.Spec.HealthURL}, nil
 }
@@ -226,8 +271,8 @@ func (r *ProcessRunner) environment() ([]string, error) {
 	for key, value := range r.Spec.Env {
 		values[key] = value
 	}
-	if r.InstallationID != "" {
-		values["KB_INSTALLATION_ID"] = r.InstallationID
+	if r.Identity.InstallationID != "" {
+		values["KB_INSTALLATION_ID"] = r.Identity.InstallationID
 	}
 	env := os.Environ()
 	for key, value := range values {
@@ -372,8 +417,12 @@ type readinessProbe struct {
 }
 
 func (r *ProcessRunner) probe(ctx context.Context) readinessProbe {
-	result := readinessProbe{URL: r.Spec.HealthURL}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.Spec.HealthURL, nil)
+	return r.probeURL(ctx, r.Spec.HealthURL)
+}
+
+func (r *ProcessRunner) probeURL(ctx context.Context, healthURL string) readinessProbe {
+	result := readinessProbe{URL: healthURL}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 	if err != nil {
 		result.Error = err.Error()
 		return result
@@ -502,7 +551,7 @@ func portInUseError(port, address, purpose string, owner portOwner, operation st
 	return hostError(contracts.CodePortInUse, message, hint, cause, meta)
 }
 
-// RootConflict reports that the per-user launcher's live host serves another
+// RootConflict reports that the installation's live host serves another
 // platform root. A host recorded without a root predates root ownership, so the
 // hint names its pid instead of a stop command that could not match it.
 func RootConflict(platformRoot string, pid int) *diag.Diag {
@@ -550,12 +599,9 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 			ports[strconv.Itoa(service.Port)] = service.ID
 		}
 	}
-	state, stateErr := StateHome()
 	var active ActiveHostRecord
-	if stateErr == nil {
-		if rootState, rootErr := StateForRoot(state, plan.Request.PlatformRoot); rootErr == nil {
-			active, _ = ActiveHost(rootState)
-		}
+	if rootState, rootErr := StateForRoot(plan.Request.PlatformRoot); rootErr == nil {
+		active, _ = ActiveHost(rootState)
 	}
 	for port, purpose := range ports {
 		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))
@@ -696,6 +742,10 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 	if record.PlatformRoot != r.PlatformRoot {
 		return status, nil
 	}
+	status.PlatformVersion = record.PlatformVersion
+	status.TreeRoot = record.TreeRoot
+	status.ReceiptID = record.ReceiptID
+	status.ServiceIDs = append([]string(nil), record.ServiceIDs...)
 	if !processAlive(record.PID) {
 		_ = os.Remove(r.State.HostPID())
 		status.StalePID = true
@@ -703,7 +753,12 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 	}
 	started := record.StartedAt
 	status.PID, status.StartedAt = record.PID, &started
-	status.Healthy = r.healthy(ctx)
+	if record.HealthURL != "" {
+		status.HealthURL = record.HealthURL
+		status.Healthy = r.probeURL(ctx, record.HealthURL).Healthy
+	} else {
+		status.Healthy = r.healthy(ctx)
+	}
 	status.State = StateUnhealthy
 	if status.Healthy {
 		status.State = StateRunning

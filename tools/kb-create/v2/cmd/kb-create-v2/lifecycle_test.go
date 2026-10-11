@@ -4,9 +4,7 @@ package v2cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -26,7 +24,7 @@ import (
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/lifecycle"
 	"github.com/kb-labs/create/v2/receipt"
-	"github.com/kb-labs/create/v2/swap"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 type snapshotRestoreRecorder struct {
@@ -52,7 +50,7 @@ func TestRollbackRestoresSnapshotFilesAfterCommandPackageRestore(t *testing.T) {
 	if err := os.WriteFile(config, []byte("original config bytes\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := receipt.CreateSnapshot(root, time.Unix(4, 0))
+	snapshot, err := receipt.CreateSnapshot(root, filepath.Join(root, "snapshots"), time.Unix(4, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +61,7 @@ func TestRollbackRestoresSnapshotFilesAfterCommandPackageRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	installer := &snapshotRestoreRecorder{}
-	if _, err := lifecycle.Rollback(root, snapshot.ID, restoreReceiptArtifacts(installer)); err != nil {
+	if _, err := lifecycle.Rollback(root, filepath.Join(root, "snapshots"), snapshot.ID, restoreReceiptArtifacts(installer)); err != nil {
 		t.Fatal(err)
 	}
 	if installer.calls != 1 || !reflect.DeepEqual(installer.artifacts, []contracts.Artifact{previousArtifact}) {
@@ -113,8 +111,11 @@ func TestDestructiveOperationsRequireExplicitNonTTYConfirmation(t *testing.T) {
 	}{{"uninstall", false}, {"rollback", false}} {
 		operation := test.operation
 		t.Run(operation, func(t *testing.T) {
+			root := t.TempDir()
+			writeVersionedReceipt(t, root, contracts.InstallReceipt{ID: "receipt", InstallationID: "installation-test",
+				Plan: contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"}}})
 			for _, jsonMode := range []bool{false, true} {
-				input := operationTestSetup{Operation: operation, PlatformRoot: "/platform", Recover: recoverRequest{Enabled: test.recover, JSON: jsonMode}, JSON: jsonMode}
+				input := operationTestSetup{Operation: operation, PlatformRoot: root, Recover: recoverRequest{Enabled: test.recover, JSON: jsonMode}, JSON: jsonMode}
 				payload, code, _ := invoke(t, input)
 				if code != 2 {
 					t.Fatalf("non-TTY confirmation exit = %d, want 2", code)
@@ -129,7 +130,13 @@ func TestDestructiveOperationsRequireExplicitNonTTYConfirmation(t *testing.T) {
 }
 
 func TestRecoveryWithYesPassesConfirmationGate(t *testing.T) {
-	payload, code, raw := invoke(t, operationTestSetup{Operation: "uninstall", PlatformRoot: t.TempDir(), Yes: true})
+	root := t.TempDir()
+	writeVersionedReceipt(t, root, contracts.InstallReceipt{ID: "receipt", InstallationID: "installation-test",
+		Plan: contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"}}})
+	if err := os.Remove(receipt.Path(platformRootForTest(t, root))); err != nil {
+		t.Fatal(err)
+	}
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "uninstall", PlatformRoot: root, Yes: true})
 	if code != 2 || errorCode(payload) != contracts.CodeReceiptUnavailable {
 		t.Fatalf("--yes did not proceed to receipt validation: %d %s", code, raw)
 	}
@@ -149,40 +156,6 @@ func freeLoopbackPort(t *testing.T) int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
-// versionedReceipt is the receipt of one platform version whose host is the
-// fake host on the given port.
-func versionedReceipt(t *testing.T, version string, port int, hostArgs ...string) contracts.InstallReceipt {
-	t.Helper()
-	_, fakehost := binaries(t)
-	spec := &contracts.HostSpec{
-		Command: fakehost, Args: append([]string{"-port", fmt.Sprint(port)}, hostArgs...),
-		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5,
-	}
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, ServiceGraph: contracts.ServiceGraph{PlatformVersion: version}, Host: spec}
-	return contracts.InstallReceipt{ID: "receipt-" + version, InstallationID: "installation-stable", Plan: plan}
-}
-
-func (i installation) lifecycleHost() lifecycleHost {
-	return lifecycleHost{command: hostCommand{PlatformRoot: i.root, Executable: i.launcher, Version: "test"}, state: host.State{Dir: i.state}}
-}
-
-// swapTo replaces the installation with next around the host, the way
-// runUpdate does, and returns swap's outcome.
-func (i installation) swapTo(t *testing.T, next contracts.InstallReceipt) (swap.Outcome, error) {
-	t.Helper()
-	return swap.Run(context.Background(), i.lifecycleHost(), swap.Operation{
-		Name: "update", PreviousVersion: "1.0.0",
-		Change: func(context.Context, bool) (string, error) {
-			snapshot, err := lifecycle.Mutate(i.root, time.Now().UTC(), func() error { return receipt.Write(i.root, next) }, nil, nil)
-			return snapshot.ID, err
-		},
-		Restore: func(_ context.Context, id string) error {
-			_, err := lifecycle.Rollback(i.root, id, nil)
-			return err
-		},
-	})
-}
-
 func (i installation) hostState(t *testing.T) (state string, healthURL string) {
 	t.Helper()
 	status, _, raw := i.run("status", "--json")
@@ -194,79 +167,64 @@ func (i installation) hostState(t *testing.T) (state string, healthURL string) {
 	return hostStatus["state"].(string), url
 }
 
-func launcherCode(err error) string {
-	var typed *diag.Diag
-	if errors.As(err, &typed) {
-		return typed.Code
-	}
-	return ""
-}
-
-func TestUpdateStopsSwapsAndRestartsTheHostWithoutManualSteps(t *testing.T) {
+func TestUpdateKeepsTheOldHostServingUntilExplicitRestart(t *testing.T) {
 	inst := newInstallation(t)
 	started, code, raw := inst.run("start", "--json")
 	if code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
 	before := started["host"].(map[string]any)["pid"].(float64)
-	newPort := freeLoopbackPort(t)
-
-	outcome, err := inst.swapTo(t, versionedReceipt(t, "2.0.0", newPort))
-	if err != nil || !outcome.WasRunning || outcome.RecoveryPoint == "" {
-		t.Fatalf("swap: %#v, %v", outcome, err)
+	if _, code, raw := inst.update(t, updatePlan(t, inst.root, inst.port), &recordingInstaller{}); code != 0 {
+		t.Fatalf("update: %d %s", code, raw)
 	}
 	state, healthURL := inst.hostState(t)
-	if state != "running" || healthURL != fmt.Sprintf("http://127.0.0.1:%d/health", newPort) {
-		t.Fatalf("the host must run the new version: %s %s", state, healthURL)
+	if state != "running" || healthURL != fmt.Sprintf("http://127.0.0.1:%d/health", inst.port) {
+		t.Fatalf("the old host must keep serving until restart: %s %s", state, healthURL)
 	}
-	if conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", inst.port), 200*time.Millisecond); dialErr == nil {
+	if conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", inst.port), 200*time.Millisecond); dialErr != nil {
+		t.Fatalf("old host stopped serving after update: %v", dialErr)
+	} else {
 		_ = conn.Close()
-		t.Fatal("the previous host must be gone")
 	}
 	status, _, _ := inst.run("status", "--json")
-	if pid := status["host"].(map[string]any)["pid"].(float64); pid == before {
-		t.Fatal("the host process must have been replaced")
+	if pid := status["host"].(map[string]any)["pid"].(float64); pid != before {
+		t.Fatal("update replaced the host without an explicit restart")
 	}
 	if installation, _ := status["installation"].(map[string]any); installation["platformVersion"] != "2.0.0" {
 		t.Fatalf("status must report the installed version: %v", status["installation"])
 	}
+	if status["pendingRestart"] == nil {
+		t.Fatal("status did not report the pending restart")
+	}
 }
 
-func TestUpdateThatBreaksTheHostRestoresAndRestartsThePreviousVersion(t *testing.T) {
+func TestUnhealthyUpdatedHostRestoresPreviousVersionAtExplicitRestart(t *testing.T) {
 	inst := newInstallation(t)
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
-	broken := versionedReceipt(t, "2.0.0", freeLoopbackPort(t), "-exit", "5")
-
-	outcome, err := inst.swapTo(t, broken)
-	if launcherCode(err) != contracts.CodeUpdateHostNotHealthy {
-		t.Fatalf("err = %v", err)
+	broken := updatePlan(t, inst.root, inst.port, "-exit", "5")
+	broken.ServiceGraph.PlatformVersion, broken.PlanHash = "2.0.0", "explicit-restart-unhealthy"
+	if _, code, raw := inst.update(t, broken, &recordingInstaller{}); code != 0 {
+		t.Fatalf("update must finish before host health is checked: %d %s", code, raw)
 	}
-	var typed *diag.Diag
-	errors.As(err, &typed)
-	if !strings.Contains(typed.Message, "previous version 1.0.0 was restored") || outcome.RecoveryPoint == "" {
-		t.Fatalf("error = %#v, outcome = %#v", typed, outcome)
+	if _, code, raw := inst.run("restart", "--json"); code != 1 || errorCodeFromOutput(raw) != contracts.CodeUpdateHostNotHealthy {
+		t.Fatalf("unhealthy target restart did not return its catalogued recovery result: %d %s", code, raw)
 	}
-	if typed.Hint == "" {
-		t.Fatalf("the diagnostic must have a hint: %#v", typed)
-	}
-	// The previous version is what runs again, and what the receipt says.
 	state, healthURL := inst.hostState(t)
 	if state != "running" || healthURL != fmt.Sprintf("http://127.0.0.1:%d/health", inst.port) {
 		t.Fatalf("the previous host must be running again: %s %s", state, healthURL)
 	}
-	active, readErr := receipt.Read(inst.root)
-	if readErr != nil || active.ID != "r1" {
+	active, readErr := receipt.Read(platformRootForTest(t, inst.root))
+	if readErr != nil || active.Plan.ServiceGraph.PlatformVersion != "1.0.0" {
 		t.Fatalf("the previous receipt must be active again: %#v, %v", active, readErr)
 	}
 }
 
 func TestUpdateLeavesAStoppedHostStopped(t *testing.T) {
 	inst := newInstallation(t)
-	outcome, err := inst.swapTo(t, versionedReceipt(t, "2.0.0", freeLoopbackPort(t)))
-	if err != nil || outcome.WasRunning {
-		t.Fatalf("swap: %#v, %v", outcome, err)
+	if _, code, raw := inst.update(t, updatePlan(t, inst.root, freeLoopbackPort(t)), &recordingInstaller{}); code != 0 {
+		t.Fatalf("update: %d %s", code, raw)
 	}
 	if state, _ := inst.hostState(t); state != "stopped" {
 		t.Fatalf("an update must not start a host that was stopped, state = %s", state)
@@ -348,12 +306,13 @@ func TestRollbackFailureIncludesOperationLogAndDiagnosticDossier(t *testing.T) {
 	}
 }
 
+// case: S-223.3
 func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 	t.Setenv(host.KBHomeEnv, t.TempDir())
-	for _, operation := range []string{"rollback", "uninstall"} {
-		payload, code, raw := invoke(t, operationTestSetup{Operation: operation, PlatformRoot: t.TempDir(), Yes: true})
-		if code != 2 || errorCode(payload) != contracts.CodeReceiptUnavailable {
-			t.Fatalf("%s: %d %s", operation, code, raw)
+	for _, test := range []struct{ operation, code string }{{"rollback", contracts.CodePlatformLayoutUnsupported}, {"uninstall", contracts.CodePlatformLayoutUnsupported}} {
+		payload, code, raw := invoke(t, operationTestSetup{Operation: test.operation, PlatformRoot: t.TempDir(), Yes: true})
+		if code != 2 || errorCode(payload) != test.code {
+			t.Fatalf("%s: %d %s", test.operation, code, raw)
 		}
 	}
 }
@@ -368,10 +327,10 @@ func TestStatusReportsTheHostAndTheInstalledVersion(t *testing.T) {
 
 func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	inst := newInstallation(t)
-	if err := os.MkdirAll(filepath.Join(inst.root, ".kb"), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Join(platformRootForTest(t, inst.root), ".kb"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(inst.root, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(platformRootForTest(t, inst.root), ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -414,7 +373,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	}
 
 	// A broken installation is reported as installation, whatever the platform does.
-	if err := os.Remove(filepath.Join(inst.root, ".kb", "kb.config.jsonc")); err != nil {
+	if err := os.Remove(filepath.Join(platformRootForTest(t, inst.root), ".kb", "kb.config.jsonc")); err != nil {
 		t.Fatal(err)
 	}
 	payload, code, raw = invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
@@ -426,13 +385,13 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 // case: S-025.4, S-025.5
 func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 	inst := newInstallation(t)
-	if err := os.MkdirAll(filepath.Join(inst.root, ".kb"), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Join(platformRootForTest(t, inst.root), ".kb"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(inst.root, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(platformRootForTest(t, inst.root), ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	active, err := receipt.Read(inst.root)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,21 +400,29 @@ func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 		ID: "gateway.bootstrap.password", Path: "/gateway/bootstrap/password", Required: true, Secret: true,
 	}}}
 	active.Plan.Artifacts = []contracts.Artifact{artifact, required}
-	active.Plan.Request.PlatformRoot = inst.root
-	if err := receipt.Write(inst.root, active); err != nil {
+	active.Plan.Request.PlatformRoot = filepath.Join(inst.root, "current")
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
 		t.Fatal(err)
 	}
-	requiredRoot := filepath.Join(inst.root, "node_modules", "@kb", "gateway")
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requiredRoot := filepath.Join(physical, "node_modules", "@kb", "gateway")
 	if err := os.MkdirAll(requiredRoot, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(requiredRoot, "package.json"), []byte(`{"name":"@kb/gateway","version":"1.2.3"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := installed.Write(inst.root, required); err != nil {
+	if err := installed.Write(platformRootForTest(t, inst.root), required); err != nil {
 		t.Fatal(err)
 	}
-	packageRoot := filepath.Join(inst.root, "node_modules", "@kb", "plugin")
+	packageRoot := filepath.Join(physical, "node_modules", "@kb", "plugin")
 	if err := os.MkdirAll(packageRoot, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -509,13 +476,13 @@ func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 func TestDoctorOptionalCredentialWarningKeepsFreshInstallHealthy(t *testing.T) {
 	inst := newInstallation(t)
 	t.Setenv("OPENAI_API_KEY", "")
-	if err := os.MkdirAll(filepath.Join(inst.root, ".kb"), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Join(platformRootForTest(t, inst.root), ".kb"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(inst.root, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(platformRootForTest(t, inst.root), ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	active, err := receipt.Read(inst.root)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,17 +492,17 @@ func TestDoctorOptionalCredentialWarningKeepsFreshInstallHealthy(t *testing.T) {
 		Action: "set OPENAI_API_KEY to enable LLM features", Hint: "set OPENAI_API_KEY",
 	}}}
 	active.Plan.Artifacts = []contracts.Artifact{artifact}
-	if err := receipt.Write(inst.root, active); err != nil {
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
 		t.Fatal(err)
 	}
-	packageRoot := filepath.Join(inst.root, "node_modules", filepath.FromSlash(artifact.Package))
+	packageRoot := filepath.Join(platformRootForTest(t, inst.root), "node_modules", filepath.FromSlash(artifact.Package))
 	if err := os.MkdirAll(packageRoot, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), []byte(`{"name":"@kb-labs/adapters-openai","version":"1.0.0"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := installed.Write(inst.root, artifact); err != nil {
+	if err := installed.Write(platformRootForTest(t, inst.root), artifact); err != nil {
 		t.Fatal(err)
 	}
 	if _, code, output := inst.run("start", "--json"); code != 0 {
@@ -564,10 +531,10 @@ func TestDoctorOptionalCredentialWarningKeepsFreshInstallHealthy(t *testing.T) {
 
 	artifact.Config = append(artifact.Config, contracts.ConfigRequirement{ID: "gateway.mode", Path: "/platform/mode", Required: true, Hint: "configure platform mode"})
 	active.Plan.Artifacts = []contracts.Artifact{artifact}
-	if err := receipt.Write(inst.root, active); err != nil {
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
 		t.Fatal(err)
 	}
-	if err := installed.Write(inst.root, artifact); err != nil {
+	if err := installed.Write(platformRootForTest(t, inst.root), artifact); err != nil {
 		t.Fatal(err)
 	}
 	payload, code, output = invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
@@ -586,19 +553,19 @@ func recoverInstallation(t *testing.T, withTool bool) (installation, string) {
 	t.Helper()
 	inst := newInstallation(t)
 	record := filepath.Join(t.TempDir(), "args.txt")
-	script := filepath.Join(inst.root, "recover.sh")
+	script := filepath.Join(platformRootForTest(t, inst.root), "recover.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$RECOVER_RECORD\"\nprintf 'recovered\\n'\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("RECOVER_RECORD", record)
-	active, err := receipt.Read(inst.root)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if withTool {
 		active.Plan.Host.Recover = &contracts.ToolSpec{Command: "./recover.sh", Args: []string{"--base"}}
 	}
-	if err := receipt.Write(inst.root, active); err != nil {
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
 		t.Fatal(err)
 	}
 	return inst, record
@@ -672,7 +639,7 @@ func TestDoctorRecoverNeedsAPlatformThatShipsARecoveryTool(t *testing.T) {
 
 func TestDoctorRecoverPropagatesTheToolsExitStatus(t *testing.T) {
 	inst, _ := recoverInstallation(t, true)
-	script := filepath.Join(inst.root, "recover.sh")
+	script := filepath.Join(platformRootForTest(t, inst.root), "recover.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 4\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -684,14 +651,13 @@ func TestDoctorRecoverPropagatesTheToolsExitStatus(t *testing.T) {
 // case: PC-001.10, PC-001.12, PC-001.16
 func TestApplyRefusesOnlyTheRunningInstallationRoot(t *testing.T) {
 	inst := newInstallation(t)
-	state := host.State{Dir: inst.state}
-	if failure := refuseRunningHost(state, inst.root); failure != nil {
+	if failure := refuseRunningHost(inst.root); failure != nil {
 		t.Fatalf("nothing runs yet: %v", failure)
 	}
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
-	failure := refuseRunningHost(state, inst.root)
+	failure := refuseRunningHost(inst.root)
 	if failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["pid"] == "" {
 		t.Fatalf("failure = %#v", failure)
 	}
@@ -699,7 +665,7 @@ func TestApplyRefusesOnlyTheRunningInstallationRoot(t *testing.T) {
 		t.Fatalf("the refusal must have a hint: %#v", failure)
 	}
 	secondary := filepath.Join(t.TempDir(), "secondary")
-	if failure := refuseRunningHost(state, secondary); failure != nil {
+	if failure := refuseRunningHost(secondary); failure != nil {
 		t.Fatalf("a different installation root was refused: %v", failure)
 	}
 }
@@ -707,16 +673,15 @@ func TestApplyRefusesOnlyTheRunningInstallationRoot(t *testing.T) {
 // case: S-005.7
 func TestClientApplyIsAllowedBesideASupervisedHost(t *testing.T) {
 	inst := newInstallation(t)
-	state := host.State{Dir: inst.state}
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
 	clientPlan := contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{Profile: "client"}}
-	if failure := refuseApplyBesideRunningHost(state, clientPlan, filepath.Join(t.TempDir(), "client")); failure != nil {
+	if failure := refuseApplyBesideRunningHost(clientPlan, filepath.Join(t.TempDir(), "client")); failure != nil {
 		t.Fatalf("client apply refused beside host: %v", failure)
 	}
 	hostPlan := contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{}}
-	if failure := refuseApplyBesideRunningHost(state, hostPlan, filepath.Join(t.TempDir(), "other")); failure != nil {
+	if failure := refuseApplyBesideRunningHost(hostPlan, filepath.Join(t.TempDir(), "other")); failure != nil {
 		t.Fatalf("independent host apply refused beside another root: %#v", failure)
 	}
 }

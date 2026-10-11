@@ -990,8 +990,17 @@
       "stage": "update",
       "severity": "error",
       "retryable": false,
-      "message": "The host did not become healthy after the update; the previous version {version} was restored.",
-      "hint": "Read the host log in the launcher state directory and report the correlationId."
+      "message": "The updated host did not become healthy; automatic recovery restored the last healthy version or needs attention.",
+      "hint": "Run `kb-create doctor --platform-root ROOT` using the platform root from the failed command."
+    },
+    {
+      "code": "KB_PLATFORM_LAYOUT_UNSUPPORTED",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "The platform root is not in the supported versioned layout.",
+      "hint": "Reinstall the platform into a fresh writable path with `kb-create install --platform-root NEW_ROOT`."
     },
     {
       "code": "KB_UPDATE_APPLY_FAILED",
@@ -1010,6 +1019,15 @@
       "retryable": false,
       "message": "There is no snapshot to roll back to.",
       "hint": "Reinstall the previous version with \"kb-create apply\"."
+    },
+    {
+      "code": "KB_UPDATE_SECRET_REFUSED",
+      "area": "update",
+      "stage": "update",
+      "severity": "error",
+      "retryable": false,
+      "message": "Update cannot change or create installation secret {secret}.",
+      "hint": "Stop the host and run `kb-create apply` with the required `--secret-env` mapping."
     },
     {
       "code": "KB_RUNTIME_TIMEOUT",

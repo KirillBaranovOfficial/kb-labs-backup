@@ -2,6 +2,7 @@ package receipt
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,7 @@ func TestReadRefusesReceiptWithDuplicateArtifactIdentity(t *testing.T) {
 	if !ok || failure.Code != contracts.CodeArtifactIdentityInvalid {
 		t.Fatalf("receipt error = %#v, want catalogued artifact identity diagnostic", err)
 	}
-	if !strings.Contains(failure.Hint, "kb-create apply --index <sealed-index> --platform-root") {
+	if !strings.Contains(failure.Hint, "current sealed release index") || !strings.Contains(failure.Hint, "kb-create launcher") {
 		t.Fatalf("receipt recovery hint = %q", failure.Hint)
 	}
 }
@@ -71,7 +72,7 @@ func TestSnapshotRestoresManagedFilesWithoutTouchingProjectFiles(t *testing.T) {
 	if err := os.WriteFile(userFile, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := CreateSnapshot(root, time.Unix(1, 0))
+	snapshot, err := CreateSnapshot(root, filepath.Join(root, "snapshots"), time.Unix(1, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestSnapshotRestoresManagedFilesWithoutTouchingProjectFiles(t *testing.T) {
 	if err := Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "receipt-2"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RestoreSnapshot(root, snapshot.ID); err != nil {
+	if _, err := RestoreSnapshot(root, filepath.Join(root, "snapshots"), snapshot.ID); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(config); string(data) != "before" {
@@ -116,17 +117,39 @@ func TestRollbackLeavesInstallerManagedSecretsAvailable(t *testing.T) {
 	if err := os.WriteFile(secretPath, []byte(secret), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := CreateSnapshot(root, time.Unix(2, 0))
+	snapshot, err := CreateSnapshot(root, filepath.Join(root, "snapshots"), time.Unix(2, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(secretPath, []byte("GATEWAY_INTERNAL_SECRET=updated-value\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RestoreSnapshot(root, snapshot.ID); err != nil {
+	if _, err := RestoreSnapshot(root, filepath.Join(root, "snapshots"), snapshot.ID); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(secretPath); err != nil || string(data) != secret {
 		t.Fatalf("rollback secret store = %q, err=%v", data, err)
+	}
+}
+
+func TestSnapshotRetentionKeepsNewestRecoveryBoundaries(t *testing.T) {
+	root := t.TempDir()
+	for _, created := range []int64{1, 2, 3} {
+		if err := Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: fmt.Sprintf("receipt-%d", created), Plan: contracts.ResolvedInstallPlan{PlanHash: fmt.Sprintf("plan-%d", created)}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := CreateSnapshot(root, filepath.Join(root, "snapshots"), time.Unix(created, 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := PruneSnapshots(filepath.Join(root, "snapshots"), 2); err != nil {
+		t.Fatal(err)
+	}
+	items, err := ListSnapshots(filepath.Join(root, "snapshots"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || !items[0].CreatedAt.After(items[1].CreatedAt) || items[0].CreatedAt.Unix() != 3 || items[1].CreatedAt.Unix() != 2 {
+		t.Fatalf("retained snapshots = %#v", items)
 	}
 }

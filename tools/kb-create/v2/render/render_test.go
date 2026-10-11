@@ -191,6 +191,41 @@ func TestWriteProducesTheRuntimeConfigAndNoServiceManagerFile(t *testing.T) {
 	}
 }
 
+func TestWritePreservesSharedConfigLinkAndUpdatesItsInstallRootTarget(t *testing.T) {
+	installRoot := t.TempDir()
+	versionRoot := filepath.Join(installRoot, "versions", "v1")
+	if err := os.MkdirAll(filepath.Join(versionRoot, ".kb"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stateRoot := filepath.Join(installRoot, "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configLink := filepath.Join(versionRoot, ".kb", ConfigFilename)
+	configTarget := filepath.Join(stateRoot, ConfigFilename)
+	relativeTarget, err := filepath.Rel(filepath.Dir(configLink), configTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(relativeTarget, configLink); err != nil {
+		t.Fatal(err)
+	}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
+		Request:      contracts.InstallRequest{PlatformRoot: versionRoot},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"},
+		Host:         &contracts.HostSpec{Command: "host", HealthURL: "http://127.0.0.1:4000/health"}}
+	if _, err := Write(plan); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(configLink)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("shared config link was replaced: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(configTarget); err != nil {
+		t.Fatalf("shared install-root config was not created: %v", err)
+	}
+}
+
 func TestWriteNeverCreatesFilesInSelectedProject(t *testing.T) {
 	platformRoot, projectRoot := t.TempDir(), t.TempDir()
 	plan := testPlan(platformRoot)

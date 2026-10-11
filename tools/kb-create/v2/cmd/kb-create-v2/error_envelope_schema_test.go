@@ -240,7 +240,7 @@ func TestEmittedKbCreateDiagnosticsMatchPlatformErrorSchema(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertPlatformEnvelope(t, schema, unauthorizedBody.Error)
-		if got, want := unauthorizedBody.Error["hint"], "Read the current token from control.json in the launcher state directory."; got != want {
+		if got, want := unauthorizedBody.Error["hint"], "Read the current token from control.json in the install-root host-state directory reported by `kb-create doctor`."; got != want {
 			t.Errorf("unauthorized hint = %v, want %q", got, want)
 		}
 	})

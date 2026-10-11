@@ -60,7 +60,7 @@ func TestScenarioResumePersistsOnlyNonSecretAnswers(t *testing.T) {
 	if err := SaveState(root, definition, state); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "scenarios", "resume.json"))
+	data, err := os.ReadFile(filepath.Join(root, "state", "scenarios", "resume.json"))
 	if err != nil || strings.Contains(string(data), "super-secret") {
 		t.Fatalf("state/error = %s / %v", data, err)
 	}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 var fakeHostBinary string
@@ -35,6 +36,19 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
+	if output, err := exec.Command("lsof", "-nP", "-t", fakeHostBinary).CombinedOutput(); err != nil {
+		if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 || len(output) != 0 {
+			fmt.Fprintf(os.Stderr, "could not audit test process path %s: %v\n%s", fakeHostBinary, err, output)
+			code = 1
+		} else {
+			fmt.Fprintf(os.Stdout, "process audit %s: none\n", fakeHostBinary)
+		}
+	} else if len(strings.Fields(string(output))) > 0 {
+		fmt.Fprintf(os.Stderr, "test fakehost process remains alive for %s:\n%s", fakeHostBinary, output)
+		code = 1
+	} else {
+		fmt.Fprintf(os.Stdout, "process audit %s: none\n", fakeHostBinary)
+	}
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -59,7 +73,11 @@ func startProcessForTest(t *testing.T, runner *ProcessRunner, ctx context.Contex
 	t.Helper()
 	info, err := runner.Start(ctx)
 	if err == nil {
-		t.Cleanup(func() { _, _ = runner.Stop(context.Background()) })
+		t.Cleanup(func() {
+			if _, stopErr := runner.Stop(context.Background()); stopErr != nil {
+				t.Errorf("test host cleanup could not stop process: %v", stopErr)
+			}
+		})
 	}
 	return info, err
 }
@@ -74,8 +92,18 @@ func newRunner(t *testing.T, ready, grace int, hostArgs ...string) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(t.TempDir(), "state")}, PollInterval: 20 * time.Millisecond}
-	t.Cleanup(func() { _, _ = runner.Stop(context.Background()) })
+	root := t.TempDir()
+	identity, err := NewProcessIdentity(contracts.InstallReceipt{ID: "test-receipt", InstallationID: "test-installation",
+		Plan: contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "host"}}}}}, root, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(t.TempDir(), "state")}, PlatformRoot: root, TreeRoot: root, Identity: identity, PollInterval: 20 * time.Millisecond}
+	t.Cleanup(func() {
+		if _, stopErr := runner.Stop(context.Background()); stopErr != nil {
+			t.Errorf("test runner cleanup could not stop process: %v", stopErr)
+		}
+	})
 	return fixture{runner: runner, port: port}
 }
 
@@ -153,7 +181,7 @@ func TestRunnerDoesNotObserveOrStopAHostForAnotherRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := &ProcessRunner{Spec: f.runner.Spec, State: f.runner.State, PlatformRoot: rootB}
+	other := &ProcessRunner{Spec: f.runner.Spec, State: f.runner.State, PlatformRoot: rootB, TreeRoot: f.runner.TreeRoot, Identity: f.runner.Identity}
 	status, err := other.Status(context.Background())
 	if err != nil || status.State != StateStopped || status.PID != 0 {
 		t.Fatalf("other-root status = %#v, %v; want stopped", status, err)
@@ -230,7 +258,7 @@ func TestStalePidFileIsRecovered(t *testing.T) {
 	if err := f.runner.State.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, StartedAt: time.Now()}); err != nil {
+	if err := writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, PlatformRoot: f.runner.PlatformRoot, StartedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	status, err := f.runner.Status(context.Background())
@@ -238,7 +266,7 @@ func TestStalePidFileIsRecovered(t *testing.T) {
 		t.Fatalf("status with stale pid: %+v %v", status, err)
 	}
 	// Recreate the stale file: Start must clean it and succeed.
-	_ = writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, StartedAt: time.Now()})
+	_ = writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, PlatformRoot: f.runner.PlatformRoot, StartedAt: time.Now()})
 	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatalf("start over stale pid: %v", err)
 	}
@@ -364,7 +392,14 @@ func TestStatusReportsUnhealthy(t *testing.T) {
 	}
 	// Point the health probe at a dead path on the same server by stopping
 	// the answer: use a spec whose URL returns 404.
-	f.runner.Spec.HealthURL = fmt.Sprintf("http://127.0.0.1:%d/missing", f.port)
+	record, ok := f.runner.readPID()
+	if !ok {
+		t.Fatal("running host record is missing")
+	}
+	record.HealthURL = fmt.Sprintf("http://127.0.0.1:%d/missing", f.port)
+	if err := writeJSONFile(f.runner.State.HostPID(), record); err != nil {
+		t.Fatal(err)
+	}
 	status, _ := f.runner.Status(context.Background())
 	if status.State != StateUnhealthy || status.Healthy {
 		t.Fatalf("status: %+v", status)
@@ -425,39 +460,55 @@ func TestSpecValidationAndResolution(t *testing.T) {
 
 func writeReceipt(t *testing.T, root string, host *contracts.HostSpec) {
 	t.Helper()
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: host}
-	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", InstallationID: "stable-installation", Plan: plan}); err != nil {
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: host, ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "host"}}}}
+	if err := receipt.Write(stage, contracts.InstallReceipt{ID: "r1", InstallationID: installationID, Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateInitial(stage, "1.0.0", "host-test"); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestNewRunnerRunsTheHostTheReceiptDeclares(t *testing.T) {
-	root, state := t.TempDir(), State{Dir: filepath.Join(t.TempDir(), "launcher")}
+	root := t.TempDir()
 	writeReceipt(t, root, &contracts.HostSpec{Command: "bin/host", HealthURL: "http://127.0.0.1:9/health"})
-	runner, err := NewRunner(root, state)
+	runner, err := NewRunner(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rootState, stateErr := StateForRoot(state, root)
-	if runner.Spec.Command != filepath.Join(root, "bin/host") || stateErr != nil || runner.State != rootState || runner.SecretEnv == nil || runner.InstallationID != "stable-installation" {
+	layout, _ := versionroot.New(root)
+	rootState, stateErr := StateForRoot(layout.InstallRoot())
+	installationID, identityErr := versionroot.InstallationIDForPath(root)
+	if runner.Spec.Command != filepath.Join(layout.PlatformRoot(), "bin/host") || stateErr != nil || identityErr != nil || runner.State != rootState || runner.SecretEnv == nil || runner.Identity.InstallationID != installationID {
 		t.Fatalf("runner: %#v", runner)
 	}
 }
 
 func TestNewRunnerRejectsReceiptWithoutInstallationIdentity(t *testing.T) {
-	root, state := t.TempDir(), State{Dir: t.TempDir()}
+	root := t.TempDir()
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: &contracts.HostSpec{Command: "host", HealthURL: "http://127.0.0.1:9/health"}}
 	if err := receipt.Write(root, contracts.InstallReceipt{ID: "transaction-id", Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := NewRunner(root, state)
+	_, err := NewRunner(root)
 	if launcherCode(t, err) != contracts.CodeReceiptUnavailable {
 		t.Fatalf("missing installation identity error = %v", err)
 	}
 }
 
 func TestNewRunnerRejectsAnInstallationWithoutAValidHost(t *testing.T) {
-	state := State{Dir: t.TempDir()}
 	cases := map[string]*contracts.HostSpec{
 		"no host (a receipt from before the host-only launcher)": nil,
 		"non-loopback health URL":                                {Command: "host", HealthURL: "http://10.0.0.1:1/health"},
@@ -466,13 +517,13 @@ func TestNewRunnerRejectsAnInstallationWithoutAValidHost(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			writeReceipt(t, root, spec)
-			_, err := NewRunner(root, state)
+			_, err := NewRunner(root)
 			if code := launcherCode(t, err); code != "KB_HOST_SPEC_INVALID" {
 				t.Fatalf("code %s", code)
 			}
 		})
 	}
-	if _, err := NewRunner(t.TempDir(), state); launcherCode(t, err) != "KB_INSTALL_RECEIPT_UNAVAILABLE" {
+	if _, err := NewRunner(t.TempDir()); launcherCode(t, err) != "KB_INSTALL_RECEIPT_UNAVAILABLE" {
 		t.Fatalf("a missing receipt must be reported as such: %v", err)
 	}
 }

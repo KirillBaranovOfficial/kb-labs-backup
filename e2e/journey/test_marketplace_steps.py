@@ -17,6 +17,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
 from service_steps import Journey
+from test_install_layout import create_test_install_container
 from invocations import invocation_context, open_http, run_command
 
 
@@ -208,10 +209,11 @@ class MarketplaceStepTests(unittest.TestCase):
     def test_platform_snapshot_detects_receipt_and_package_version_changes(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-platform-snapshot-") as directory:
             root = Path(directory)
-            receipt = root / ".kb" / "v2" / "receipt.json"
+            active = create_test_install_container(root)
+            receipt = active / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text('{"version":"1"}\n')
-            package = root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
+            package = active / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
             package.parent.mkdir(parents=True)
             package.write_text('{"name":"@kb-labs/workflow-daemon","version":"2.120.1"}\n')
 
@@ -321,13 +323,14 @@ class MarketplaceStepTests(unittest.TestCase):
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             platform_root = home / "kb-platform"
-            platform_config = platform_root / ".kb" / "kb.config.jsonc"
+            active_platform = create_test_install_container(platform_root)
+            platform_config = active_platform / ".kb" / "kb.config.jsonc"
             platform_config.parent.mkdir(parents=True)
             platform_config.write_text(json.dumps({"gateway": {"access": {"mode": "local"}}}))
-            receipt = platform_root / ".kb" / "v2" / "receipt.json"
+            receipt = active_platform / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text('{"version":"2.120.1"}\n')
-            package = platform_root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
+            package = active_platform / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
             package.parent.mkdir(parents=True)
             package.write_text('{"name":"@kb-labs/workflow-daemon","version":"2.120.1"}\n')
             env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
@@ -428,7 +431,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:2] == ["marketplace", "install"]:
                     package_id, version = args[2].rsplit("@", 1)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
-                    lock_root = platform_root if platform else cwd_path
+                    lock_root = active_platform if platform else cwd_path
                     value = lock(lock_root, platform=platform)
                     value.setdefault("adapters", {})
                     collection = value["plugins"]
@@ -493,7 +496,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     stdout = json.dumps({"hasPlan": False})
                 elif args[:2] == ["marketplace", "uninstall"]:
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
-                    lock_root = platform_root if platform else cwd_path
+                    lock_root = active_platform if platform else cwd_path
                     value = lock(lock_root, platform=platform)
                     value["plugins"].pop("@kb-labs/commit" if args[2] == "@kb-labs/commit-entry" else args[2], None)
                     save_lock(lock_root, value)

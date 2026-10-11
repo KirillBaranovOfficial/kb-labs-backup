@@ -43,23 +43,54 @@ func TestStateHomeDefaultsToTheUserHome(t *testing.T) {
 
 // case: PC-001.10, PC-001.12, PC-001.16
 func TestStateForRootSeparatesConcurrentInstallations(t *testing.T) {
-	base := State{Dir: filepath.Join(t.TempDir(), "launcher")}
 	rootA := filepath.Join(t.TempDir(), "platform-a")
 	rootB := filepath.Join(t.TempDir(), "platform-b")
-	stateA, err := StateForRoot(base, rootA)
+	stateA, err := StateForRoot(rootA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateB, err := StateForRoot(base, rootB)
+	stateB, err := StateForRoot(rootB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stateA.Dir == stateB.Dir || stateA.HostPID() == stateB.HostPID() {
 		t.Fatalf("installation lifecycle state collides: A=%q B=%q", stateA.Dir, stateB.Dir)
 	}
-	stateAAgain, err := StateForRoot(base, rootA)
+	canonicalRoot, err := filepath.EvalSymlinks(filepath.Dir(rootA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateA.Dir != filepath.Join(canonicalRoot, filepath.Base(rootA), "installer", "host") {
+		t.Fatalf("host lifecycle state = %q; it must survive version switches inside the installation root", stateA.Dir)
+	}
+	stateAAgain, err := StateForRoot(rootA)
 	if err != nil || stateAAgain.Dir != stateA.Dir {
 		t.Fatalf("root state is not stable: %q / %q / %v", stateA.Dir, stateAAgain.Dir, err)
+	}
+}
+
+func TestStateForRootDerivesTheSameInstallContainerFromEveryPlatformPath(t *testing.T) {
+	installRoot := filepath.Join(t.TempDir(), "install")
+	versionRoot := filepath.Join(installRoot, "versions", "v1")
+	if err := os.MkdirAll(versionRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("versions", "v1"), filepath.Join(installRoot, "current")); err != nil {
+		t.Fatal(err)
+	}
+	inputs := []string{installRoot, filepath.Join(installRoot, "current"), versionRoot}
+	var expected string
+	for _, input := range inputs {
+		state, err := StateForRoot(input)
+		if err != nil {
+			t.Fatalf("StateForRoot(%q): %v", input, err)
+		}
+		if expected == "" {
+			expected = state.Dir
+		}
+		if state.Dir != expected {
+			t.Fatalf("StateForRoot(%q) = %q, want shared install state %q", input, state.Dir, expected)
+		}
 	}
 }
 
