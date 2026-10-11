@@ -11,10 +11,13 @@ import { createProjectRegistry } from '@kb-labs/core-project-registry';
 describe('installed platform adapter defaults', () => {
   let tempRoot: string | undefined;
   let gatewayServer: Server | undefined;
+  let primaryGatewayServer: Server | undefined;
 
   afterEach(async () => {
     if (gatewayServer?.listening) await new Promise<void>((resolve, reject) => gatewayServer!.close((error) => error ? reject(error) : resolve()));
     gatewayServer = undefined;
+    if (primaryGatewayServer?.listening) await new Promise<void>((resolve, reject) => primaryGatewayServer!.close((error) => error ? reject(error) : resolve()));
+    primaryGatewayServer = undefined;
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
     tempRoot = undefined;
   });
@@ -72,19 +75,42 @@ describe('installed platform adapter defaults', () => {
     expect(await readdir(projectRoot)).toEqual([]);
   });
 
-  // case: S-054.12, S-054.17
+  // case: S-054.12, S-054.17, PC-001.12
   // case: S-203.1
   it('runs adapter list with the sealed release config and installed adapter lock', async () => {
     const workspaceRoot = path.resolve(process.cwd(), '../..');
     tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-installed-defaults-'));
     const platformRoot = path.join(tempRoot, 'platform');
+    const primaryPlatformRoot = path.join(tempRoot, 'primary-platform');
     const projectRoot = path.join(tempRoot, 'project');
     const home = path.join(tempRoot, 'home');
     await Promise.all([
       mkdir(path.join(platformRoot, '.kb'), { recursive: true }),
+      mkdir(path.join(primaryPlatformRoot, '.kb', 'v2'), { recursive: true }),
       mkdir(projectRoot, { recursive: true }),
       mkdir(home, { recursive: true }),
     ]);
+
+    primaryGatewayServer = createServer((request, response) => {
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/health/identity') {
+        response.end(JSON.stringify({ ok: true, data: { installationId: 'installed-root-a' } }));
+        return;
+      }
+      if (request.url === '/health/adapters') {
+        response.end(JSON.stringify({ ok: true, data: [
+          { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-primary' },
+        ] }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('{}');
+    });
+    await new Promise<void>((resolve) => primaryGatewayServer!.listen(0, '127.0.0.1', resolve));
+    const primaryGatewayPort = (primaryGatewayServer.address() as AddressInfo).port;
+    await writeFile(path.join(primaryPlatformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+      installationId: 'installed-root-a', verification: { hostHealthUrl: `http://127.0.0.1:${primaryGatewayPort}/health` },
+    }));
 
     gatewayServer = createServer((request, response) => {
       response.setHeader('content-type', 'application/json');
@@ -183,12 +209,28 @@ describe('installed platform adapter defaults', () => {
     });
     const storage = payload.data?.adapters?.find(row => row.slot === 'storage');
     expect(storage).toMatchObject({ mode: 'real', implementation: '@kb-labs/adapters-fs' });
+    expect(storage?.implementation).not.toBe('@kb-labs/adapters-primary');
     const stateRoot = path.join(env.KB_HOME!, 'state');
     expect(path.relative(stateRoot, storage?.baseDir ?? '')).toMatch(/^prj_[0-9a-f]{16}\/storage$/);
     expect(path.relative(projectRoot, storage?.baseDir ?? '').startsWith('..')).toBe(true);
     expect(payload.data?.adapters?.find(row => row.slot === 'llm')).toMatchObject({
       mode: 'real', implementation: '@kb-labs/adapters-openai',
       credentialsStatus: 'missing', missingCredentials: ['OPENAI_API_KEY'],
+    });
+
+    await new Promise<void>((resolve, reject) => gatewayServer!.close((error) => error ? reject(error) : resolve()));
+    gatewayServer = undefined;
+    const stopped = await spawnCli(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
+      cwd: projectRoot,
+      env,
+    });
+    expect(stopped.status, stopped.stderr || stopped.stdout).toBe(0);
+    const stoppedPayload = JSON.parse(stopped.stdout) as {
+      data?: { adapters?: Array<{ slot: string; runtimeStatus?: string; action?: { command: string } }> };
+    };
+    expect(stoppedPayload.data?.adapters?.find(row => row.slot === 'storage')).toMatchObject({
+      runtimeStatus: 'unknown',
+      action: { command: `kb-create start --platform-root ${JSON.stringify(platformRoot)}` },
     });
   });
 

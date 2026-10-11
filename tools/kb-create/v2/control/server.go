@@ -59,7 +59,12 @@ func (s *Server) Start() error {
 	s.startedAt = time.Now().UTC()
 	s.queue = &Queue{Path: s.State.UpdateRequests()}
 	s.http = &http.Server{Handler: s.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second}
-	file := File{Protocol: ProtocolVersion, Address: s.address, Token: s.token, PID: os.Getpid(), Version: s.Version}
+	processIdentity, err := host.ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	file := File{Protocol: ProtocolVersion, Address: s.address, Token: s.token, PID: os.Getpid(), ProcessIdentity: processIdentity, Version: s.Version}
 	if err := writeControlFile(s.State.Control(), file); err != nil {
 		_ = listener.Close()
 		return err
@@ -93,14 +98,7 @@ func writeControlFile(path string, file File) error {
 	if err != nil {
 		return err
 	}
-	temp := path + ".tmp"
-	// WriteFile only applies the mode to a newly created file, so make sure a
-	// stale temp file cannot leave wider permissions behind.
-	_ = os.Remove(temp)
-	if err := os.WriteFile(temp, append(data, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, path)
+	return host.WriteRecordFile(path, append(data, '\n'))
 }
 
 func (s *Server) handler() http.Handler {

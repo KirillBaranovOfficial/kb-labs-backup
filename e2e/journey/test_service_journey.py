@@ -467,12 +467,14 @@ raise SystemExit(1)
         root = Path(__file__).resolve().parents[2]
         node = shutil.which("node")
         self.assertIsNotNone(node)
-        build = subprocess.run(
-            [str(root / "tools/kb-devkit/kb-devkit"), "run", "build", "--packages",
-             "@kb-labs/cli-bin,@kb-labs/qa-entry"],
-            cwd=root, text=True, capture_output=True, check=False, timeout=900,
-        )
-        self.assertEqual(build.returncode, 0, f"case coverage CLI build failed: {build.stderr or build.stdout}")
+        for package in ("cli/bin", "plugins/qa/entry"):
+            package_root = root / package
+            build = subprocess.run(
+                [str(package_root / "node_modules/.bin/tsup"), "--config", "tsup.config.ts"],
+                cwd=package_root, text=True, capture_output=True, check=False, timeout=900,
+            )
+            self.assertEqual(build.returncode, 0, f"case coverage CLI build failed: {build.stderr or build.stdout}")
+        shutil.copy2(root / "core/plugin-runtime/dist/sandbox/bootstrap.js", root / "cli/bin/dist/bootstrap.js")
         cli_bin = root / "cli/bin/dist/bin.js"
         self.assertTrue(cli_bin.is_file(), f"CLI binary not found at {cli_bin}")
 

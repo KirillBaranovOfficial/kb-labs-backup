@@ -5,7 +5,7 @@ port) so that the host, and Studio through it, can ask for lifecycle operations
 (ADR-0045). Go and TS share no code: this directory is the shared contract.
 
 - Discovery: `control.json` in the launcher state directory (mode `0600`):
-  `{protocol, address, token, pid, version}`. The launcher removes it on exit.
+  `{protocol, address, token, pid, processIdentity, version}`. The process identity prevents clients from trusting a foreign executable that reused the PID. The launcher removes the file on exit.
 - Auth: `Authorization: Bearer <token>` on every request. Requests with an
   `Origin` header or a `Host` other than `address` are rejected. There is no CORS.
 - Endpoints: `GET /v1/status`, `POST /v1/host/restart`, `POST /v1/update-request`.

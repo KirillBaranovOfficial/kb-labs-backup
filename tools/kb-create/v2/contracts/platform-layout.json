@@ -17,6 +17,7 @@
   ],
   "sharedRuntimePaths": [
     { "platformPath": ".kb/data", "statePath": "state/data", "kind": "directory" },
+    { "platformPath": ".kb/database", "statePath": "state/data/database", "kind": "directory" },
     { "platformPath": ".kb/v2/cache", "statePath": "state/cache", "kind": "directory", "preinstall": true },
     { "platformPath": ".kb/v2/scenarios", "statePath": "state/scenarios", "kind": "directory", "preinstall": true },
     { "platformPath": ".kb/kb.config.jsonc", "statePath": "state/kb.config.jsonc", "kind": "file" },
@@ -35,6 +36,7 @@
   },
   "runtimeStatePaths": [
     ".kb/data",
+    ".kb/database",
     ".kb/v2/cache",
     ".kb/v2/scenarios",
     ".kb/kb.config.jsonc",

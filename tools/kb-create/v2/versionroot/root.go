@@ -98,7 +98,7 @@ func supportedOS(goos string) error {
 	}
 	failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 		"Atomic platform switching is supported only on Linux and macOS.",
-		"Run `kb-create install --platform-root NEW_ROOT` on Linux or macOS.", nil)
+		"Run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"` on Linux or macOS.", nil)
 	failure.Meta = map[string]any{"goos": goos}
 	return failure
 }
@@ -178,15 +178,27 @@ func AtomicWriteFile(path string, data []byte, mode fs.FileMode) error {
 	if err != nil {
 		return err
 	}
-	temporary := destination + ".tmp"
-	if err := os.WriteFile(temporary, data, mode); err != nil {
+	temporaryFile, err := os.CreateTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	temporary := temporaryFile.Name()
+	defer os.Remove(temporary)
+	if err := temporaryFile.Chmod(mode); err != nil {
+		_ = temporaryFile.Close()
+		return err
+	}
+	if _, err := temporaryFile.Write(data); err != nil {
+		_ = temporaryFile.Close()
+		return err
+	}
+	if err := errors.Join(temporaryFile.Sync(), temporaryFile.Close()); err != nil {
 		return err
 	}
 	if err := os.Rename(temporary, destination); err != nil {
-		_ = os.Remove(temporary)
 		return err
 	}
-	return nil
+	return syncDirectory(filepath.Dir(destination))
 }
 
 func atomicWriteDestination(path string) (string, error) {

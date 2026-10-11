@@ -176,7 +176,7 @@ func (i doctorCommandInput) inspectPlatform() doctor.Section {
 	}
 	platform := doctor.InspectPlatform(ctx, status, nil, active.Plan.ProviderBindings)
 	if status.State == host.StateStopped {
-		startHint := fmt.Sprintf("Run `kb-create start --platform-root %q`.", i.PlatformRoot)
+		startHint := "Run `" + contracts.ShellCommand("kb-create", "start", "--platform-root", i.PlatformRoot) + "`."
 		for index := range platform.Checks {
 			if platform.Checks[index].ID == "host-process" || platform.Checks[index].ID == "adapters" {
 				platform.Checks[index].Hint = startHint

@@ -5,6 +5,17 @@ import (
 	"strings"
 )
 
+// ShellCommand renders argv as a POSIX shell command line. Every argument is
+// quoted, including the executable, so hints remain runnable for paths and
+// values containing whitespace or shell metacharacters.
+func ShellCommand(arguments ...string) string {
+	quoted := make([]string, len(arguments))
+	for index, argument := range arguments {
+		quoted[index] = ShellQuote(argument)
+	}
+	return strings.Join(quoted, " ")
+}
+
 // ParseShellCommands parses the POSIX words emitted by ShellQuote and the
 // command separator used in actionable diagnostic hints. It does not evaluate
 // shell expansions, substitutions, redirections, or other shell syntax.

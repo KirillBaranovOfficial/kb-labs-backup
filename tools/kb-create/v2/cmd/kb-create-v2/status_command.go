@@ -38,6 +38,14 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	if err != nil {
 		return nil, asDiag(err)
 	}
+	if status.State == host.StateStopped {
+		if failure := host.RegisteredPortConflict(platformRoot, "status"); failure != nil {
+			return nil, failure
+		}
+	}
+	if record, stale := supervisor.StaleRecord(state); stale {
+		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
+	}
 	installed := receiptErr == nil
 	payload := map[string]any{"ok": true, "operation": "status", "host": status, "installed": installed,
 		"running": status.State == host.StateRunning, "reachable": status.Healthy}

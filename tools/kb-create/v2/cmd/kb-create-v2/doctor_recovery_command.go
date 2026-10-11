@@ -34,7 +34,7 @@ func executeRecover(inv doctorCommandInput) (doctorRecoveryResult, *diag.Diag) {
 	}
 	interaction := clikitcommand.FromCommand(inv.Command)
 	if !inv.Recover.Yes {
-		_, confirmFailure := interaction.Confirm(fmt.Sprintf("This will run the platform's administrator recovery tool for %s. Continue? [y/N] ", inv.PlatformRoot), fmt.Sprintf("rerun `kb-create doctor --platform-root %q --recover --yes`", inv.PlatformRoot))
+		_, confirmFailure := interaction.Confirm(fmt.Sprintf("This will run the platform's administrator recovery tool for %s. Continue? [y/N] ", inv.PlatformRoot), "rerun `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", inv.PlatformRoot, "--recover", "--yes")+"`")
 		if confirmFailure != nil {
 			return doctorRecoveryResult{}, confirmFailure
 		}

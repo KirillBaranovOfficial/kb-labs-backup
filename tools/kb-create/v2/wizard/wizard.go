@@ -53,7 +53,7 @@ func Request(source catalog.Catalog, platformRoot string, terminal IO) (contract
 	if err := layout.ValidateInitialTarget(); err != nil {
 		return contracts.InstallRequest{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 			"The chosen install root is not an empty directory or an owned installation container.",
-			"Choose a fresh writable path, then run `kb-create install --platform-root NEW_ROOT`.", err)
+			"Choose a fresh writable path, then run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"`.", err)
 	}
 	if terminal.In == nil || terminal.Out == nil {
 		return contracts.InstallRequest{}, fmt.Errorf("wizard input and output are required")

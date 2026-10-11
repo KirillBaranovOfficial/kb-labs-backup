@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	"github.com/kb-labs/create/v2/host"
 )
 
 const (
@@ -122,11 +124,7 @@ func (q *Queue) save(items []UpdateRequest) error {
 	if err != nil {
 		return err
 	}
-	temp := q.Path + ".tmp"
-	if err := os.WriteFile(temp, append(data, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, q.Path)
+	return host.WriteRecordFile(q.Path, append(data, '\n'))
 }
 
 func newID() (string, error) {

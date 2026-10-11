@@ -399,6 +399,15 @@
       "hint": "Use \"kb-create status\" or \"kb-create restart\"."
     },
     {
+      "code": "KB_HOST_PROCESS_IDENTITY_STALE",
+      "area": "host",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The recorded host process identity is stale and the process cannot be safely signalled.",
+      "hint": "Check the recorded Gateway health URL to identify the live listener. Do not signal an unverified process. After confirming it is unrelated or stopping it through its owner, remove only the named stale record and retry; a still-held Gateway port is reported as KB_INSTALL_PORT_IN_USE."
+    },
+    {
       "code": "KB_INSTALL_PORT_IN_USE",
       "area": "install",
       "stage": "preflight",

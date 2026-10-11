@@ -33,8 +33,8 @@ func Connect(state host.State) (*Client, error) {
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, unavailable(err)
 	}
-	if !host.ProcessAlive(file.PID) {
-		return nil, unavailable(fmt.Errorf("launcher process %d is not running", file.PID))
+	if !host.ProcessIdentityMatches(file.PID, file.ProcessIdentity) {
+		return nil, unavailable(fmt.Errorf("launcher process identity for PID %d is missing or stale", file.PID))
 	}
 	return &Client{File: file, HTTP: &http.Client{Timeout: 60 * time.Second}}, nil
 }

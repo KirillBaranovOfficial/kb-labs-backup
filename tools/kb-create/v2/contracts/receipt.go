@@ -59,8 +59,19 @@ func DuplicateArtifactIdentity(artifacts []Artifact) (string, bool) {
 }
 
 // ValidateArtifactIdentities rejects plan artifacts that represent one
-// installed unit more than once with the catalogued plan diagnostic.
+// installed unit more than once with the catalogued plan diagnostic, and
+// requires every artifact to declare an identity.
 func ValidateArtifactIdentities(artifacts []Artifact) error {
+	for _, artifact := range artifacts {
+		compatibilityChecked := artifact.Kind == "plugin" || artifact.Kind == "adapter" ||
+			artifact.Registry == "plugin" || artifact.Registry == "adapter"
+		if compatibilityChecked && artifact.ID == "" {
+			return ArtifactMissingIdentityDiagnostic("the plan contains", artifact)
+		}
+		if artifact.Package == "" && artifact.ID == "" {
+			return ArtifactMissingIdentityDiagnostic("the plan contains", artifact)
+		}
+	}
 	if identity, duplicated := DuplicateArtifactIdentity(artifacts); duplicated {
 		return PlanArtifactIdentityFailure(identity)
 	}
@@ -132,6 +143,16 @@ func ArtifactIdentityDiagnostic(subject string, identity string, hint string) *d
 		subject+" more than one record for artifact "+identity,
 		diag.WithMeta(map[string]any{"artifact": identity}))
 	failure.Hint = hint
+	return failure
+}
+
+// ArtifactMissingIdentityDiagnostic renders a plan/receipt identity violation
+// when an artifact lacks kind or id.
+func ArtifactMissingIdentityDiagnostic(subject string, artifact Artifact) *diag.Diag {
+	failure := diag.New(CodeArtifactIdentityInvalid,
+		subject+" an artifact with missing identity (kind: "+artifact.Kind+", id: "+artifact.ID+")",
+		diag.WithMeta(map[string]any{"kind": artifact.Kind, "id": artifact.ID}))
+	failure.Hint = "Use a current sealed release index and kb-create launcher; if the error persists, report the correlationId."
 	return failure
 }
 

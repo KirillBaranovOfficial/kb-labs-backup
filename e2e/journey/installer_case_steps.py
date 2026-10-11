@@ -7,6 +7,7 @@ import os
 import platform
 import re
 import shutil
+import shlex
 import socket
 import subprocess
 import sys
@@ -27,6 +28,16 @@ from service_port_assertions import (assert_root_offset, service_ports,
 from service_steps import Journey
 
 CommandRunner = Callable[..., subprocess.CompletedProcess]
+
+
+def _hint_has_argv(text: str, expected: list[str]) -> bool:
+    for command in re.findall(r"`([^`]*)`", text):
+        try:
+            if shlex.split(command)[:len(expected)] == expected:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 class InstallerHostLifecycle:
@@ -111,6 +122,44 @@ def _diagnostic(result: subprocess.CompletedProcess, label: str) -> tuple[dict, 
     if result.returncode == 0 or not isinstance(error, dict):
         raise RuntimeError(f"{label}: expected a structured error")
     return envelope, error
+
+
+def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
+                           platform_root: Path, run_command: CommandRunner) -> Journey:
+    """Prove apply reports a foreign owner for the Gateway port it resolved."""
+    journey = Journey(mode, f"port-conflict-{mode}")
+    conflict_root = platform_root.parent / "pc001-port-conflict-root"
+
+    def port_conflict_ux() -> None:
+        plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
+                                           "--platform-root", str(conflict_root),
+                                           "--service-profile", "default", "--scenario", "commit"],
+                             "PC-001 port-conflict plan").get("plan", {})
+        health_url = plan.get("host", {}).get("healthUrl")
+        port = urlsplit(health_url).port if isinstance(health_url, str) else None
+        if port is None:
+            raise RuntimeError("PC-001 port-conflict plan omitted its Gateway port")
+        with socket.socket() as owner:
+            owner.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            owner.bind(("127.0.0.1", port))
+            owner.listen(1)
+            result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                  "--platform-root", str(conflict_root),
+                                  "--service-profile", "default", "--scenario", "commit"])
+        envelope, error = _diagnostic(result, "PC-001 port conflict")
+        details = error.get("details", error.get("meta", {}))
+        if (result.returncode == 0 or envelope.get("ok") is not False
+                or error.get("code") != "KB_INSTALL_PORT_IN_USE"
+                or not isinstance(details, dict)
+                or details.get("port") != str(port) or not details.get("pid") or not details.get("command")
+                or "kb-create apply" not in error.get("hint", "")
+                or str(details["pid"]) not in error.get("hint", "")
+                or str(details["command"]) not in error.get("hint", "")):
+            raise RuntimeError(f"port conflict omitted its catalogued code, owner, or apply hint: {error}")
+
+    journey.step("report the owning process when apply cannot claim a required port", "platform.install",
+                 port_conflict_ux, cases=["PC-001.9"])
+    return journey
 
 
 def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandRunner) -> subprocess.CompletedProcess:
@@ -454,31 +503,45 @@ def run_analytics_invalid_retention_step(*, mode: str, launcher: str, platform_r
                                          run_command: CommandRunner) -> Journey:
     """Prove invalid SQLite retention config fails a real installed host start."""
     journey = Journey(mode, f"analytics-invalid-retention-{mode}")
-    config_path = platform_root / "current/.kb/kb.config.jsonc"
 
     def invalid_retention() -> None:
-        config = json.loads(_without_jsonc_comments(config_path.read_text()))
-        platform_config = config.setdefault("platform", {})
-        options = platform_config.setdefault("adapterOptions", {})
-        options.setdefault("analytics", {})["retentionDays"] = 0
-        config_path.write_text(json.dumps(config, indent=2) + "\n")
-
+        config_path = active_platform_root(platform_root) / ".kb/kb.config.jsonc"
+        original_config = config_path.read_bytes()
         lifecycle = InstallerHostLifecycle(launcher, run_command)
-        with lifecycle.preserve([platform_root]):
-            result = run_command([launcher, "start", "--platform-root", str(platform_root), "--json"])
-            envelope, error = _diagnostic(result, "invalid analytics retention")
-            detail = json.dumps(error, sort_keys=True)
-            expected_hint = (
-                "kb config set --scope platform "
-                "platform.adapterOptions.analytics.retentionDays 90"
-            )
-            if (result.returncode != 1 or envelope.get("ok") is not False
-                    or error.get("code") != "KB_CONFIG_INVALID"
-                    or "platform.adapterOptions.analytics.retentionDays" not in detail
-                    or "positive integer" not in detail
-                    or expected_hint not in str(error.get("hint", ""))
-                    or error.get("code") == "KB_RUNTIME_UNEXPECTED"):
-                raise RuntimeError(f"invalid analytics retention did not return its catalogued config error: {error}")
+        with lifecycle.preserve([platform_root]) as initial:
+            action_error: Exception | None = None
+            try:
+                config = json.loads(_without_jsonc_comments(original_config.decode()))
+                platform_config = config.setdefault("platform", {})
+                options = platform_config.setdefault("adapterOptions", {})
+                options.setdefault("analytics", {})["retentionDays"] = 0
+                config_path.write_text(json.dumps(config, indent=2) + "\n")
+                if initial[platform_root]:
+                    lifecycle.set_running(platform_root, False)
+                result = run_command([launcher, "start", "--platform-root", str(platform_root), "--json"])
+                envelope, error = _diagnostic(result, "invalid analytics retention")
+                detail = json.dumps(error, sort_keys=True)
+                expected_hint = (
+                    "kb config set --scope platform "
+                    "platform.adapterOptions.analytics.retentionDays 90"
+                )
+                if (result.returncode != 1 or envelope.get("ok") is not False
+                        or error.get("code") != "KB_CONFIG_INVALID"
+                        or "platform.adapterOptions.analytics.retentionDays" not in detail
+                        or "positive integer" not in detail
+                        or expected_hint not in str(error.get("hint", ""))
+                        or error.get("code") == "KB_RUNTIME_UNEXPECTED"):
+                    raise RuntimeError(f"invalid analytics retention did not return its catalogued config error: {error}")
+            except Exception as error:
+                action_error = error
+            try:
+                config_path.write_bytes(original_config)
+            except Exception as restore_error:
+                if action_error is not None:
+                    raise RuntimeError(f"{action_error}; could not restore the platform config: {restore_error}") from action_error
+                raise
+            if action_error is not None:
+                raise action_error
 
     journey.step("reject invalid SQLite retention during installed host startup", "platform.install",
                  invalid_retention, cases=["S-191.7"])
@@ -682,16 +745,16 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                               "--platform-root", str(platform_root), "--project-root", str(selected)])
         _, failure = _diagnostic(result, "install with a changed project selection")
         if (failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
-                or "kb project add" not in failure.get("hint", "")
-                or "kb project show" not in failure.get("hint", "")
+                or not _hint_has_argv(failure.get("hint", ""), ["kb", "project", "add"])
+                or not _hint_has_argv(failure.get("hint", ""), ["kb", "project", "show"])
                 or receipt_path.read_bytes() != before):
             raise RuntimeError("changed project selection was not refused before the active receipt changed")
         apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                     "--platform-root", str(platform_root), "--project-root", str(selected)])
         _, apply_failure = _diagnostic(apply_result, "apply with a changed project selection")
         if (apply_failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
-                or "kb project add" not in apply_failure.get("hint", "")
-                or "kb project show" not in apply_failure.get("hint", "")
+                or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "project", "add"])
+                or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "project", "show"])
                 or receipt_path.read_bytes() != before):
             raise RuntimeError("apply changed the active receipt instead of refusing the selection")
 
@@ -742,8 +805,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                                   "--project-root", str(project)])
             if result.returncode != 0 or "First administrator credentials (shown once)" not in result.stdout:
                 raise RuntimeError("secured install did not complete or disclose the first administrator once")
-            show_match = re.search(r"kb project show ([^\s`]+)", result.stdout)
-            if not show_match:
+            if not _hint_has_argv(result.stdout, ["kb", "project", "show", str(project.resolve())]):
                 raise RuntimeError("secured install omitted its project verification command")
             registry_path = Path.home() / ".kb/projects.json"
             registry = json.loads(registry_path.read_text())
@@ -763,7 +825,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                                           "--password-stdin"], input=admin_password + "\n")
             if login.returncode != 0 or not (Path.home() / ".kb/session.json").is_file():
                 raise RuntimeError("explicit administrator login did not create a CLI session")
-            shown = _data(run_platform_cli(root, ["project", "show", show_match.group(1), "--json"], run_command),
+            shown = _data(run_platform_cli(root, ["project", "show", str(project), "--json"], run_command),
                           "printed project verification command after explicit login").get("project", {})
             if shown.get("path") != str(project.resolve()) or shown.get("id") != registered[0].get("id"):
                 raise RuntimeError("the printed project verification command did not show the registered project")
@@ -789,18 +851,18 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                                   "--platform-root", str(root), "--project-root", str(changed)])
             _, failure = _diagnostic(refusal, "secured install with changed project selection")
             if (failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
-                    or "kb auth login --gateway-url" not in failure.get("hint", "")
-                    or "kb project add" not in failure.get("hint", "")
-                    or "kb project show" not in failure.get("hint", "")
+                    or not _hint_has_argv(failure.get("hint", ""), ["kb", "auth", "login", "--gateway-url"])
+                    or not _hint_has_argv(failure.get("hint", ""), ["kb", "project", "add"])
+                    or not _hint_has_argv(failure.get("hint", ""), ["kb", "project", "show"])
                     or receipt_path.read_bytes() != before):
                 raise RuntimeError("secured changed project selection was not refused before apply")
             apply_refusal = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                          "--platform-root", str(root), "--project-root", str(changed)])
             _, apply_failure = _diagnostic(apply_refusal, "secured apply with changed project selection")
             if (apply_failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
-                    or "kb auth login --gateway-url" not in apply_failure.get("hint", "")
-                    or "kb project add" not in apply_failure.get("hint", "")
-                    or "kb project show" not in apply_failure.get("hint", "")
+                    or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "auth", "login", "--gateway-url"])
+                    or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "project", "add"])
+                    or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "project", "show"])
                     or receipt_path.read_bytes() != before):
                 raise RuntimeError("secured apply changed the active receipt instead of refusing the selection")
         finally:
@@ -1023,29 +1085,9 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     fixture_dir = installer_case_fixture_root()
     root = str(platform_root)
-    port_conflict_root = platform_root.parent / "pc001-port-conflict-root"
-
-    def port_conflict_ux() -> None:
-        with socket.socket() as owner:
-            owner.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            owner.bind(("127.0.0.1", 4000))
-            owner.listen(1)
-            result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                                  "--platform-root", str(port_conflict_root),
-                                  "--service-profile", "default", "--scenario", "commit"])
-        envelope, error = _diagnostic(result, "PC-001 port conflict")
-        details = error.get("details", error.get("meta", {}))
-        if (result.returncode == 0 or envelope.get("ok") is not False
-                or error.get("code") != "KB_INSTALL_PORT_IN_USE"
-                or not isinstance(details, dict)
-                or details.get("port") != "4000" or not details.get("pid") or not details.get("command")
-                or "kb-create apply" not in error.get("hint", "")
-                or str(details["pid"]) not in error.get("hint", "")
-                or str(details["command"]) not in error.get("hint", "")):
-            raise RuntimeError(f"port conflict omitted its catalogued code, owner, or apply hint: {error}")
-
-    journey.step("report the owning process when apply cannot claim a required port", "platform.install",
-                 port_conflict_ux, cases=["PC-001.9"])
+    run_fixture_group(journey, "PC-001 port ownership", lambda: run_port_conflict_step(
+        mode=mode, launcher=launcher, stable_index=stable_index,
+        platform_root=platform_root, run_command=run_command))
 
     # PC-001.4 applies an explicit fresh fixture so the end-to-end installer
     # remains the single main journey install and can continue serving later cases.
@@ -1096,7 +1138,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 resolved = current.resolve(strict=True)
                 if resolved.parent != versions.resolve(strict=True) or not (resolved / ".kb/v2/receipt.json").is_file():
                     raise RuntimeError("current did not resolve to a complete version root inside the container")
-                receipt = json.loads((current / ".kb/v2/receipt.json").read_text())
+                receipt = json.loads((active_platform_root(install_root) / ".kb/v2/receipt.json").read_text())
                 original_version = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
                 for label, index in (("first", update_index), ("second", jump_index)):
                     index_payload = json.loads(index.read_text())
@@ -1118,7 +1160,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                             or not isinstance(pending, dict) or pending.get("installedVersion") != target
                             or sorted(path.name for path in parent.iterdir()) != ["install"]):
                         raise RuntimeError(f"{label} update changed outside the install root or restarted the host")
-                    receipt = json.loads((current / ".kb/v2/receipt.json").read_text())
+                    receipt = json.loads((active_platform_root(install_root) / ".kb/v2/receipt.json").read_text())
                     status = _data(run_command([launcher, "status", "--platform-root", str(install_root), "--json"]),
                                    f"S-023.17 {label} status")
                     if (status.get("runningVersion") != original_version
@@ -1207,13 +1249,13 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                  isolated_container_install, cases=["PC-001.17", "PC-001.18", "S-023.17", "S-050.8", "S-223.4"])
 
     def inspect_generated_config() -> None:
-        config_path = apply_root / "current/.kb/kb.config.jsonc"
+        config_path = active_platform_root(apply_root) / ".kb/kb.config.jsonc"
         if not config_path.is_file():
             raise RuntimeError("apply did not generate the runtime config")
         config = json.loads(_without_jsonc_comments(config_path.read_text()))
         if not isinstance(config, dict):
             raise RuntimeError("generated runtime config is not a JSON object")
-        receipt = json.loads((apply_root / "current/.kb/v2/receipt.json").read_text())
+        receipt = json.loads((active_platform_root(apply_root) / ".kb/v2/receipt.json").read_text())
         graph = receipt.get("plan", {}).get("serviceGraph", {})
         if (selected_plan["serviceGraph"].get("profile") != "default"
                 or graph.get("profile") != "default"
@@ -1364,7 +1406,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
         if not shim_path.is_symlink() or shim_path.readlink() != platform_root / "current/.kb/v2/bin/kb":
             raise RuntimeError("uninstall changed the live owner's kb shim")
-        if not (platform_root / "current/.kb/v2/bin/kb").is_file():
+        if not (active_platform_root(platform_root) / ".kb/v2/bin/kb").is_file():
             raise RuntimeError("uninstall removed the owning platform CLI")
 
     journey.step("uninstall a platform that does not own the kb command", "platform.install",
@@ -1400,10 +1442,6 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
     scratch = platform_root.parent / "installer-case-fixtures"
     scratch.mkdir(parents=True, exist_ok=True)
 
-    def exact_step(name: str, action: Callable[[], None], *, capability: str = "platform.install",
-                   cases: list[str], requires: tuple[str, ...] = ()) -> None:
-        journey.step(name, capability, action, cases=cases, requires=requires)
-
     def strict_matrix_and_range() -> None:
         strict = run_command([launcher, "plan", "--json", "--index", str(matrix),
                               "--platform-version", "3.2.0", "--sdk-version", "3.2.0",
@@ -1426,7 +1464,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         if compatible.get("plan", {}).get("serviceGraph", {}).get("platformVersion") != "3.2.0":
             raise RuntimeError("compatible policy did not resolve the indexed SDK in the declared range")
 
-    exact_step("compare strict and compatible SDK matrix selection", strict_matrix_and_range, capability="platform.install", cases=["S-053.2"])
+    journey.step("compare strict and compatible SDK matrix selection", "platform.install", strict_matrix_and_range, cases=["S-053.2"])
 
     def incompatible_adapter() -> None:
         result = run_command([launcher, "plan", "--json", "--index", str(matrix),
@@ -1442,8 +1480,10 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError(f"adapter range refusal omitted its component details: {meta}")
         if error.get("hint") != "Choose compatible versions or pass an explicit supported provider.":
             raise RuntimeError("adapter range refusal omitted its correction hint")
+        if (scratch / "adapter-range").exists():
+            raise RuntimeError("adapter range refusal changed the isolated install root")
 
-    exact_step("refuse an adapter outside its platform range", incompatible_adapter, capability="platform.install", cases=["S-053.4"])
+    journey.step("refuse an adapter outside its platform range", "platform.install", incompatible_adapter, cases=["S-053.4"])
 
     def installed_component_update(kind: str, component: str, claim: str) -> None:
         root = scratch / f"{claim.replace('.', '-')}-root"
@@ -1469,7 +1509,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 or before_directories != after_directories):
             raise RuntimeError(f"incompatible {kind} update mutated the active receipt or install root")
 
-    exact_step("refuse update beyond an installed plugin range", lambda: installed_component_update("plugin", "fixture-compat", "S-053.3"), capability="platform.update", cases=["S-053.3"])
+    journey.step("refuse update beyond an installed plugin range", "platform.update", lambda: installed_component_update("plugin", "fixture-compat", "S-053.3"), cases=["S-053.3"])
 
     def sdk_and_binary_ranges() -> None:
         sdk_result = run_command([launcher, "plan", "--json", "--index", str(matrix),
@@ -1483,6 +1523,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 or sdk_meta.get("selectedVersion") != "4.0.0"
                 or sdk_meta.get("requiredRange") != ">=3.0.0 <4.0.0"):
             raise RuntimeError(f"out-of-range SDK refusal omitted component, version, or range: {sdk_meta}")
+        if not sdk_error.get("hint"):
+            raise RuntimeError("out-of-range SDK refusal omitted its correction hint")
         binary_result = run_command([launcher, "plan", "--json", "--index", str(missing_binary),
                                      "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
                                      "--policy", "compatible", "--platform-root", str(scratch / "missing-binary")])
@@ -1490,30 +1532,62 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         binary_meta = binary_error.get("details", {})
         if binary_result.returncode == 0 or binary_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(binary_meta, dict):
             raise RuntimeError("missing host binary plan did not fail with the typed incompatibility")
-        if binary_meta.get("kind") != "binary" or binary_meta.get("id") != "kb-create" or not binary_error.get("hint"):
-            raise RuntimeError(f"missing binary error omitted its binary identity or hint: {binary_error}")
+        if (binary_meta.get("kind") != "binary"
+                or binary_meta.get("id") != "kb-create"
+                or binary_meta.get("target") != f"{host_os}/{host_arch}"
+                or not binary_error.get("hint")):
+            raise RuntimeError(f"missing binary error omitted its binary identity, target, or hint: {binary_error}")
 
-    exact_step("refuse an SDK outside range and a release missing the host binary", sdk_and_binary_ranges, capability="platform.install", cases=["S-053.5"])
+    journey.step("refuse an SDK outside range and a release missing the host binary", "platform.install", sdk_and_binary_ranges, cases=["S-053.5"])
 
-    exact_step("refuse update beyond an installed adapter range", lambda: installed_component_update("adapter", "fixture-adapter", "S-053.6"), capability="platform.update", cases=["S-053.6"])
+    journey.step("refuse update beyond an installed adapter range", "platform.update", lambda: installed_component_update("adapter", "fixture-adapter", "S-053.6"), cases=["S-053.6"])
 
     def missing_host_binary_before_mutation() -> None:
         target = scratch / "missing-host-root"
         before_exists = target.exists()
         before = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()} if target.exists() else {}
+        before_directories = {str(path.relative_to(target)) for path in target.rglob("*") if path.is_dir()} if target.exists() else set()
         result = run_command([launcher, "plan", "--json", "--index", str(missing_binary),
                               "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
                               "--policy", "compatible", "--platform-root", str(target)])
         _, error = _diagnostic(result, "missing host binary plan")
         meta = error.get("details", {})
         after = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()} if target.exists() else {}
+        after_directories = {str(path.relative_to(target)) for path in target.rglob("*") if path.is_dir()} if target.exists() else set()
         after_exists = target.exists()
         if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
             raise RuntimeError("missing host binary did not refuse planning with the typed incompatibility")
-        if meta.get("kind") != "binary" or meta.get("id") != "kb-create" or before != after or before_exists != after_exists:
-            raise RuntimeError("missing binary refusal omitted its kind/id or changed the isolated install root")
+        if (meta.get("kind") != "binary"
+                or meta.get("id") != "kb-create"
+                or meta.get("target") != f"{host_os}/{host_arch}"
+                or not error.get("hint")):
+            raise RuntimeError("missing binary refusal omitted its kind/id, target, or correction hint")
+        if before != after or before_directories != after_directories or before_exists != after_exists:
+            raise RuntimeError("missing binary refusal changed the isolated install root")
 
-    exact_step("refuse planning without the runner binary", missing_host_binary_before_mutation, capability="platform.install", cases=["S-053.7"])
+    journey.step("refuse planning without the runner binary", "platform.install", missing_host_binary_before_mutation, cases=["S-053.7"])
+
+    def incompatible_plugin_sdk_range() -> None:
+        for label, platform_selection in (("explicit-version", ["--platform-version", "3.2.0"]),
+                                          ("channel", ["--platform-channel", "stable"])):
+            target = scratch / f"plugin-sdk-range-{label}"
+            result = run_command([launcher, "plan", "--json", "--index", str(matrix),
+                                  *platform_selection,
+                                  "--plugins", "fixture-sdk-incompat@1.0.0", "--policy", "compatible",
+                                  "--platform-root", str(target)])
+            _, error = _diagnostic(result, f"plugin sdk-range plan selected by {label}")
+            meta = error.get("details", {})
+            if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
+                raise RuntimeError(f"incompatible plugin SDK range did not refuse planning with the typed incompatibility: {error}")
+            if (meta.get("kind") != "plugin" or meta.get("id") != "fixture-sdk-incompat"
+                    or meta.get("selectedVersion") != "3.0.0" or meta.get("requiredRange") != "<3.0.0"):
+                raise RuntimeError(f"plugin SDK range refusal omitted its component details: {meta}")
+            if error.get("hint") != "Choose compatible versions or pass an explicit supported provider.":
+                raise RuntimeError("plugin SDK range refusal omitted its correction hint")
+            if target.exists():
+                raise RuntimeError("plugin SDK range refusal changed the isolated install root")
+
+    journey.step("refuse a plugin outside its channel-selected SDK range", "platform.install", incompatible_plugin_sdk_range, cases=["S-053.8"])
 
     def incompatible_plugin_request() -> None:
         result = run_command([launcher, "plan", "--json", "--index", str(matrix),
@@ -1526,7 +1600,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         if not error.get("hint"):
             raise RuntimeError("strict incompatible plugin request omitted its correction hint")
 
-    exact_step("refuse a strict incompatible plugin request before mutation", incompatible_plugin_request, capability="platform.install", cases=["S-181.5"])
+    journey.step("refuse a strict incompatible plugin request before mutation", "platform.install", incompatible_plugin_request, cases=["S-181.5"])
 
     def doctor_finding(*, secret: bool = False) -> None:
         root = scratch / ("s025-secret" if secret else "s025-required")
@@ -1551,8 +1625,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 raise RuntimeError("doctor output or isolated files serialized secret material or its value assignment")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("diagnose a missing required non-secret config value", lambda: doctor_finding(), capability="platform.install", cases=["S-025.1"])
-    exact_step("diagnose missing secret input without exposing a value", lambda: doctor_finding(secret=True), capability="platform.install", cases=["S-025.2"])
+    journey.step("diagnose a missing required non-secret config value", "platform.install", lambda: doctor_finding(), cases=["S-025.1"])
+    journey.step("diagnose missing secret input without exposing a value", "platform.install", lambda: doctor_finding(secret=True), cases=["S-025.2"])
 
     def doctor_hostspec_invalid() -> None:
         root = scratch / "s025-hostspec-invalid"
@@ -1574,7 +1648,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("doctor did not report the invalid receipt host specification as an unhealthy diagnosis")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("diagnose an invalid host specification from the active receipt", doctor_hostspec_invalid, capability="platform.install", cases=["S-025.3"])
+    journey.step("diagnose an invalid host specification from the active receipt", "platform.install", doctor_hostspec_invalid, cases=["S-025.3"])
 
     def doctor_safe_default() -> None:
         root = scratch / "s025-safe-default"
@@ -1590,7 +1664,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("doctor --fix did not write the manifest-declared safe default")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("apply only a manifest-declared safe default", doctor_safe_default, capability="platform.install", cases=["S-025.4"])
+    journey.step("apply only a manifest-declared safe default", "platform.install", doctor_safe_default, cases=["S-025.4"])
 
     def doctor_required_input_after_projection_repair() -> None:
         root = scratch / "s025-required-after-fix"
@@ -1609,7 +1683,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("doctor --fix serialized a secret value")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("preserve unresolved user input in doctor-fix JSON", doctor_required_input_after_projection_repair, capability="platform.install", cases=["S-025.5"])
+    journey.step("preserve unresolved user input in doctor-fix JSON", "platform.install", doctor_required_input_after_projection_repair, cases=["S-025.5"])
 
     def doctor_failure_dossier() -> None:
         root = scratch / "s025-failure"
@@ -1629,7 +1703,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("diagnostic dossier serialized a secret value")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("inspect structured recovery failure diagnostics", doctor_failure_dossier, capability="platform.recovery", cases=["S-025.6"])
+    journey.step("inspect structured recovery failure diagnostics", "platform.recovery", doctor_failure_dossier, cases=["S-025.6"])
 
     def install_with_project() -> None:
         root, project = scratch / "s187-with-project", scratch / "s187-project"
@@ -1647,13 +1721,13 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         finally:
             cleanup_installer_fixture_root(root, launcher, run_command)
 
-    exact_step("install non-interactively and register a project", install_with_project, capability="platform.install", cases=["S-187.4"])
+    journey.step("install non-interactively and register a project", "platform.install", install_with_project, cases=["S-187.4"])
 
     def install_without_project() -> None:
         root = scratch / "s187-no-project"
         try:
             result = run_command([launcher, "install", "--index", str(stable_index), "--platform-root", str(root)])
-            if result.returncode != 0 or "kb project add <path>" not in result.stdout:
+            if result.returncode != 0 or not _hint_has_argv(result.stdout, ["kb", "project", "add", "<path>"]):
                 raise RuntimeError("install without a project omitted the exact `kb project add <path>` next step")
             receipt = json.loads((active_platform_root(root) / ".kb/v2/receipt.json").read_text())
             if receipt.get("project") or receipt.get("projects"):
@@ -1661,7 +1735,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         finally:
             cleanup_installer_fixture_root(root, launcher, run_command)
 
-    exact_step("install without a project and print its registration command", install_without_project, capability="platform.install", cases=["S-187.5"])
+    journey.step("install without a project and print its registration command", "platform.install", install_without_project, cases=["S-187.5"])
 
     json_install_journey = run_json_install_project_step(
         mode=mode, launcher=launcher, stable_index=stable_index,
@@ -1700,19 +1774,27 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, platform_root: P
                  repair_fixture_without_stopping_main, cases=["S-025.7"])
 
     def refuse_start_for_other_root() -> None:
-        result = run_command([launcher, "start", "--platform-root", str(root), "--json"])
-        envelope, error = _diagnostic(result, "cross-root host start")
-        details = error.get("meta", error.get("details", {}))
-        if (result.returncode == 0 or envelope.get("ok") is not False
-                or error.get("code") != "KB_HOST_ALREADY_RUNNING"
-                or str(platform_root.resolve()) not in error.get("message", "")
-                or not isinstance(details, dict) or not details.get("pid")
-                or f"kb-create stop --platform-root {platform_root}" not in error.get("hint", "")):
-            raise RuntimeError(f"cross-root start did not identify the active platform and stop command: {error}")
-        main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
-                            "main status after refused cross-root start")
-        if main_status.get("host", {}).get("state") != "running":
-            raise RuntimeError("refused start for platform B affected platform A")
+        lifecycle = InstallerHostLifecycle(launcher, run_command)
+        with lifecycle.preserve([platform_root]) as initial:
+            result = run_command([launcher, "start", "--platform-root", str(root), "--json"])
+            envelope, error = _diagnostic(result, "cross-root host start")
+            details = error.get("meta", error.get("details", {}))
+            hint = error.get("hint", "")
+            commands = re.findall(r"`([^`]+)`", hint)
+            stop_argv = shlex.split(commands[0]) if commands else []
+            expected_stop = ["kb-create", "stop", "--platform-root", str(platform_root.resolve())]
+            if (result.returncode == 0 or envelope.get("ok") is not False
+                    or error.get("code") != "KB_HOST_ALREADY_RUNNING"
+                    or str(platform_root.resolve()) not in error.get("message", "")
+                    or not isinstance(details, dict) or not details.get("pid")
+                    or stop_argv != expected_stop):
+                raise RuntimeError(f"cross-root start did not identify the active platform and runnable stop command: {error}")
+            stopped = run_command(stop_argv + ["--json"])
+            _data(stopped, "execute printed cross-root stop command")
+            main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
+                                "main status after suggested stop command")
+            if main_status.get("host", {}).get("state") != "stopped":
+                raise RuntimeError("executing the printed stop command did not stop platform A")
         shutil.rmtree(root, ignore_errors=True)
 
     journey.step("refuse to start a second platform while the user's host is running", "platform.install",
