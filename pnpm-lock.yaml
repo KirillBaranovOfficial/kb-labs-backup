@@ -7598,6 +7598,9 @@ importers:
 
   studio/federation:
     dependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts

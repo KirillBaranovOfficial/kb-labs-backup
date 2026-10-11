@@ -4,7 +4,7 @@
  */
 
 import type { ResponseInterceptor } from './types';
-import { toErrorEnvelope } from '@kb-labs/core-platform';
+import { toErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { createUxFailureResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 
 /**

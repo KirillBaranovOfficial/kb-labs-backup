@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
-import { toErrorEnvelope } from '@kb-labs/core-platform';
+import { toErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import type { JobEventType } from './types';
 
 // Type for job response data

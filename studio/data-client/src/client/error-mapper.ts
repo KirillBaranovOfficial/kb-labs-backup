@@ -1,7 +1,7 @@
 import { KBError, errorCodes } from '../errors/kb-error';
 import type { ResponseError } from './types';
 import { isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
-import { toErrorEnvelope } from '@kb-labs/core-platform';
+import { toErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import type { ErrorEnvelope as RestApiErrorEnvelope } from '@kb-labs/rest-api-contracts';
 import { ulid } from 'ulid';
 

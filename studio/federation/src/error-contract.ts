@@ -1,4 +1,4 @@
-import { toErrorEnvelope } from '@kb-labs/plugin-contracts';
+import { toErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 
 export interface StudioFailure {
   code: string;
