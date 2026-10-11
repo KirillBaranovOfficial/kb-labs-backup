@@ -317,6 +317,8 @@ class PtyCommandTimeout(subprocess.TimeoutExpired):
         details = [f"PTY command timed out after {self.timeout}s"]
         if self.output:
             details.append(f"transcript received:\n{self.output}")
+        else:
+            details.append("no output received before the timeout")
         if self.candidate_state:
             details.append(f"candidate state:\n{self.candidate_state}")
         return "\n".join(details)
@@ -527,7 +529,8 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
     rendered = transcript.decode(errors="replace")
     duration = time.monotonic() - started
     candidate_state = (env if env is not None else os.environ).get("KB_JOURNEY_STATES") if timed_out else None
-    error = f"timed out after {timeout}s" if timed_out else None
+    error = (f"timed out after {timeout}s" if rendered else
+             f"no output received before the timeout ({timeout}s)") if timed_out else None
     if timed_out and candidate_state:
         error += f"; candidate state: {candidate_state}"
     record_invocation(kind="command", argv=argv, cwd=cwd, env=env,
