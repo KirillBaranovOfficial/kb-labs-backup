@@ -235,7 +235,7 @@ func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopR
 		platformRoot = process.InstallRoot
 	}
 	if record, stale := supervisor.StaleRecord(state); stale {
-		return host.StopResult{Runner: runner.Name()}, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot)
+		return host.StopResult{Runner: runner.Name()}, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
 	}
 	if record, alive := supervisor.ReadRecord(state); alive && record.PlatformRoot == platformRoot {
 		if host.TerminateProcessIfIdentity(record.PID, record.ProcessIdentity) && !waitExit(record.PID, record.ProcessIdentity, stopBudget(runner)) {
@@ -274,7 +274,7 @@ func waitExit(pid int, processStart string, timeout time.Duration) bool {
 
 func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {
 	if record, stale := supervisor.StaleRecord(state); stale {
-		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot)
+		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot, host.GatewayURLForState(state))
 	}
 	// A live supervisor owns the host: restart through its channel so its view
 	// of the child stays consistent.

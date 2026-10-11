@@ -144,7 +144,8 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		return result, nil
 	}
 	if existingSelection && plan.Request.ProjectRoot != "" {
-		if _, err := fmt.Fprintf(out, "\nThe installation already records project %s.\nNext: run `kb project show %s`.\n", plan.Request.ProjectRoot, plan.Request.ProjectRoot); err != nil {
+		if _, err := fmt.Fprintf(out, "\nThe installation already records project %s.\nNext: run `%s`.\n", plan.Request.ProjectRoot,
+			contracts.ShellCommand("kb", "project", "show", plan.Request.ProjectRoot)); err != nil {
 			return applyCommandResult{}, progressWriteFailure(err, "install")
 		}
 		return result, nil

@@ -34,7 +34,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	if record, exists := readRecordFile(s.State); exists && host.ProcessAlive(record.PID) {
 		if !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
-			return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot)
+			return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
 		}
 		return Refusal(record, s.PlatformRoot)
 	}
@@ -55,7 +55,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.State.SupervisorPID(), append(data, '\n'), 0o600); err != nil {
+	if err := host.WriteRecordFile(s.State.SupervisorPID(), append(data, '\n')); err != nil {
 		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	defer os.Remove(s.State.SupervisorPID())

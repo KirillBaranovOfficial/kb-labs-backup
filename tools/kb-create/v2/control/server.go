@@ -98,14 +98,7 @@ func writeControlFile(path string, file File) error {
 	if err != nil {
 		return err
 	}
-	temp := path + ".tmp"
-	// WriteFile only applies the mode to a newly created file, so make sure a
-	// stale temp file cannot leave wider permissions behind.
-	_ = os.Remove(temp)
-	if err := os.WriteFile(temp, append(data, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, path)
+	return host.WriteRecordFile(path, append(data, '\n'))
 }
 
 func (s *Server) handler() http.Handler {

@@ -87,11 +87,16 @@ func existingProjectSelection(platformRoot, selected string) (bool, *diag.Diag) 
 }
 
 func projectRegistrationHint(active contracts.InstallReceipt, projectRoot string) string {
+	commands := make([]string, 0, 3)
 	if email, secured := configuredFirstAdmin(active.Plan.Request); secured {
 		origin, _ := gateway.OriginFromHealthURL(active.Verification.HostHealthURL)
-		return fmt.Sprintf("Run `kb auth login --gateway-url %q --email %q`, then `kb project add %q`, then `kb project show %q`.", origin, email, projectRoot, projectRoot)
+		commands = append(commands, contracts.ShellCommand("kb", "auth", "login", "--gateway-url", origin, "--email", email))
 	}
-	return fmt.Sprintf("Run `kb project add %q`, then `kb project show %q`.", projectRoot, projectRoot)
+	commands = append(commands, contracts.ShellCommand("kb", "project", "add", projectRoot), contracts.ShellCommand("kb", "project", "show", projectRoot))
+	if len(commands) == 3 {
+		return "Run `" + commands[0] + "`, then `" + commands[1] + "`, then `" + commands[2] + "`."
+	}
+	return "Run `" + commands[0] + "`, then `" + commands[1] + "`."
 }
 
 func unquoteRequestValue(value string) string {

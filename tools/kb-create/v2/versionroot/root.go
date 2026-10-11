@@ -178,12 +178,24 @@ func AtomicWriteFile(path string, data []byte, mode fs.FileMode) error {
 	if err != nil {
 		return err
 	}
-	temporary := destination + ".tmp"
-	if err := os.WriteFile(temporary, data, mode); err != nil {
+	temporaryFile, err := os.CreateTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	temporary := temporaryFile.Name()
+	defer os.Remove(temporary)
+	if err := temporaryFile.Chmod(mode); err != nil {
+		_ = temporaryFile.Close()
+		return err
+	}
+	if _, err := temporaryFile.Write(data); err != nil {
+		_ = temporaryFile.Close()
+		return err
+	}
+	if err := temporaryFile.Close(); err != nil {
 		return err
 	}
 	if err := os.Rename(temporary, destination); err != nil {
-		_ = os.Remove(temporary)
 		return err
 	}
 	return nil

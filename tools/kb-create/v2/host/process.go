@@ -63,16 +63,52 @@ func NewProcessIdentity(active contracts.InstallReceipt, platformRoot, treeRoot 
 	return identity, nil
 }
 
-func StaleProcessIdentityFailure(recordPath, kind string, pid int, platformRoot string) *diag.Diag {
-	message := fmt.Sprintf("The recorded %s process identity for PID %d is missing or does not match the current process; no process was signalled.", kind, pid)
-	recoverRecord := contracts.ShellCommand("rm", recordPath)
+func StaleProcessIdentityFailure(recordPath, kind string, pid int, platformRoot, gatewayURL string) *diag.Diag {
+	message := fmt.Sprintf("PID %d is running, but its recorded %s process identity is missing or does not match, so it cannot be verified as this installation's recorded %s and may still be serving its Gateway. kb-create did not and will not signal it.", pid, kind, kind)
+	if gatewayURL == "" {
+		gatewayURL = recordedGatewayURL(recordPath)
+	}
+	if gatewayURL == "" {
+		if active, err := receipt.Read(platformRoot); err == nil {
+			gatewayURL = active.Verification.HostHealthURL
+		}
+	}
+	checkCommand := contracts.ShellCommand("curl", "--fail", "--show-error", "--max-time", "2", gatewayURL)
+	portCheck := ""
+	if origin, err := url.Parse(gatewayURL); err == nil && origin.Port() != "" {
+		portCheck = contracts.ShellCommand("lsof", "-nP", "-iTCP:"+origin.Port(), "-sTCP:LISTEN")
+	}
+	removeCommand := contracts.ShellCommand("rm", recordPath)
 	statusCommand := contracts.ShellCommand("kb-create", "status", "--platform-root", platformRoot)
-	hint := fmt.Sprintf("Remove only the stale record with `%s`, then verify the installation with `%s`.", recoverRecord, statusCommand)
+	hint := fmt.Sprintf("Check the recorded Gateway health URL with `%s`. Inspect the process listening on that Gateway port with `%s` and compare its PID and command with PID %d. If it is your platform, stop it through its service owner; kb-create will not signal an unverified process. Only after confirming the process is unrelated or stopping it yourself, remove this record with `%s`, then run `%s`; a still-held Gateway port will be reported as a port conflict.", checkCommand, portCheck, pid, removeCommand, statusCommand)
 	failure := diag.New(contracts.CodeHostProcessIdentityStale, message, diag.WithMeta(map[string]any{
-		"pid": strconv.Itoa(pid), "record": recordPath, "platformRoot": platformRoot,
+		"pid": strconv.Itoa(pid), "record": recordPath, "platformRoot": platformRoot, "gatewayUrl": gatewayURL,
 	}))
 	failure.Hint = hint
 	return failure
+}
+
+func recordedGatewayURL(recordPath string) string {
+	if filepath.Base(recordPath) != "host.pid" {
+		return ""
+	}
+	data, err := os.ReadFile(recordPath)
+	if err != nil {
+		return ""
+	}
+	var record pidRecord
+	if json.Unmarshal(data, &record) != nil {
+		return ""
+	}
+	return record.HealthURL
+}
+
+func GatewayURLForState(state State) string { return recordedGatewayURL(state.HostPID()) }
+
+// WriteRecordFile atomically publishes a complete lifecycle record for all
+// readers, including records reached through the install container's links.
+func WriteRecordFile(path string, data []byte) error {
+	return versionroot.AtomicWriteFile(path, data, 0o600)
 }
 
 // ActiveHostRecord identifies a live host process in the installation container.
@@ -186,7 +222,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}
 	if record, ok := r.readPID(); ok {
 		if processAlive(record.PID) && !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
-			return Info{}, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot)
+			return Info{}, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
 		}
 		if ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
 			if record.PlatformRoot != r.PlatformRoot {
@@ -584,7 +620,7 @@ func portInUseError(port, address, purpose string, owner portOwner, operation st
 func portConflictError(port, address, purpose string, owner portOwner, operation string, cause error) *diag.Diag {
 	if pid, err := strconv.Atoi(owner.PID); err == nil {
 		if root, staleRecord := registeredGatewayRoot(port, pid); staleRecord != "" {
-			return StaleProcessIdentityFailure(staleRecord, "host", pid, root)
+			return StaleProcessIdentityFailure(staleRecord, "host", pid, root, recordedGatewayURL(staleRecord))
 		} else if root != "" {
 			if layout, layoutErr := versionroot.ForPlatformPath(root); layoutErr == nil {
 				return RootConflict(layout.InstallRoot(), pid)
@@ -631,6 +667,48 @@ func registeredGatewayRoot(port string, pid int) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+// RegisteredPortConflict prevents status from reporting a stopped host while
+// the installation's previously registered Gateway is still listening.
+func RegisteredPortConflict(platformRoot, operation string) *diag.Diag {
+	state, err := StateHome()
+	if err != nil {
+		return nil
+	}
+	requested, err := filepath.Abs(platformRoot)
+	if err != nil {
+		return nil
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(requested); resolveErr == nil {
+		requested = resolved
+	}
+	roots, err := (gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}).Read()
+	if err != nil {
+		return nil
+	}
+	for _, candidate := range roots {
+		candidateRoot, absErr := filepath.Abs(candidate.PlatformRoot)
+		if absErr != nil {
+			continue
+		}
+		if resolved, resolveErr := filepath.EvalSymlinks(candidateRoot); resolveErr == nil {
+			candidateRoot = resolved
+		}
+		if filepath.Clean(candidateRoot) != filepath.Clean(requested) {
+			continue
+		}
+		origin, parseErr := url.Parse(candidate.URL)
+		if parseErr != nil || origin.Port() == "" {
+			continue
+		}
+		owner := listenerOwner(origin.Port())
+		if owner.PID != "" || owner.Command != "" {
+			return portConflictError(origin.Port(), origin.Host, "gateway", owner, operation,
+				fmt.Errorf("the registered Gateway port %s is still occupied", origin.Port()))
+		}
+	}
+	return nil
 }
 
 // RootConflict reports that the installation's live host serves another
@@ -761,7 +839,7 @@ func (r *ProcessRunner) Stop(ctx context.Context) (StopResult, error) {
 	result := StopResult{Runner: r.Name()}
 	record, ok := r.readPID()
 	if ok && processAlive(record.PID) && !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
-		return result, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot)
+		return result, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
 	}
 	if ok && ProcessIdentityMatches(record.PID, record.ProcessIdentity) && record.PlatformRoot != r.PlatformRoot {
 		return result, nil
@@ -837,7 +915,7 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 		return status, nil
 	}
 	if processAlive(record.PID) && !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
-		return status, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot)
+		return status, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
 	}
 	if record.PlatformRoot != r.PlatformRoot {
 		return status, nil
@@ -917,9 +995,5 @@ func writeJSONFile(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	temp := path + ".tmp"
-	if err := os.WriteFile(temp, append(data, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, path)
+	return WriteRecordFile(path, append(data, '\n'))
 }
