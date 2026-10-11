@@ -11,7 +11,7 @@ import {
   type ObservabilityCollectorLike,
 } from '@kb-labs/shared-http';
 import type { IContextLogger } from '@kb-labs/core-platform';
-import { createErrorEnvelope, getCatalogEntry } from '@kb-labs/core-platform';
+import { createErrorEnvelope, getCatalogEntry, type ErrorCode } from '@kb-labs/core-platform';
 import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/core-contracts';
 import { registerRoutes } from './routes/index.js';
 import { MarketplaceVersionError, type MarketplaceService } from '@kb-labs/marketplace-core';
@@ -106,7 +106,7 @@ function asError(value: unknown): Error {
 }
 
 function mapMarketplaceError(err: Error, correlationId: string, scope: string): { statusCode: number; envelope: ReturnType<typeof createErrorEnvelope> } {
-  let code = 'KB_RUNTIME_UNEXPECTED';
+  let code: ErrorCode = 'KB_RUNTIME_UNEXPECTED';
   let message: string | undefined;
   let hint: string | undefined;
   let details: Record<string, string> | undefined;

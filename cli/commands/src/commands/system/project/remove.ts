@@ -7,7 +7,7 @@
  */
 
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 import { confirmDestructive, getContextCwd } from '@kb-labs/shared-cli-ui';
 import type { ProjectRecord } from '@kb-labs/core-contracts';
 import { projectErrorEnvelope } from '@kb-labs/core-project-registry';
@@ -76,11 +76,7 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
         },
       });
       if (blocked) {
-        throwSystemCataloguedError(createErrorEnvelope(blocked.error.code, {
-          message: blocked.error.message,
-          hint: blocked.error.hint,
-          ...(blocked.error.details ? { details: blocked.error.details } : {}),
-        }));
+        throwSystemCataloguedError(toErrorEnvelope(blocked.error));
       }
 
       const removed = await registry.remove(project.id);

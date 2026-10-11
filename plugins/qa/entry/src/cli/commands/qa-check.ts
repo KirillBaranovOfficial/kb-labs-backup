@@ -42,15 +42,30 @@ export default defineCommand<unknown, CLIInput<QaCheckFlags>, unknown>({
         kind: 'check', id: '', timestamp: new Date().toISOString(), durationMs, raw,
       };
 
+      const result = raw.ok ? raw : {
+        ok: false as const,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: 'QA check failed',
+          hint: 'Review the reported QA check issues, then rerun `kb qa check`.',
+          diagnostics: Object.entries(raw.packages).flatMap(([name, pkg]) => (pkg.issues ?? []).map((issue) => ({
+            code: `KB_QA_${issue.check.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
+            severity: issue.severity,
+            path: issue.file ?? name,
+            message: issue.message,
+          }))),
+        },
+      };
+
       if (flags.json) {
-        return buildCheckJsonReport(effective);
+        return raw.ok ? buildCheckJsonReport(effective) : result;
       } else {
         for (const section of buildCheckReport(effective)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return raw.ok ? raw : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'QA check failed', hint: 'Review the reported QA check issues, then rerun `kb qa check`.', diagnostics: Object.entries(raw.packages).flatMap(([name, pkg]) => (pkg.issues ?? []).map((issue) => ({ code: `KB_QA_${issue.check.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`, severity: issue.severity, path: issue.file ?? name, message: issue.message }))) } };
+      return result;
     },
   },
 });

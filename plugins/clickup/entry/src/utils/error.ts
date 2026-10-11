@@ -19,7 +19,7 @@ function apiHint(err: ClickUpApiError): string {
 export function handleError(err: unknown): CommandFailure {
   if (err instanceof ClickUpApiError) {
     const hint = apiHint(err);
-    const code = err.status === 401 ? 'KB_AUTH_REQUIRED' : err.status === 403 ? 'KB_PERMISSION_DENIED' : 'KB_RUNTIME_COMMAND_FAILED';
+    const code = err.status === 401 ? 'KB_AUTH_REQUIRED' : err.status === 403 ? 'KB_AUTH_FORBIDDEN' : 'KB_RUNTIME_COMMAND_FAILED';
     return { ok: false, error: { code, message: err.message, hint, details: { clickUpStatus: String(err.status), clickUpCode: err.code } } };
   }
 

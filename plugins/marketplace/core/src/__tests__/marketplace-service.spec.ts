@@ -11,6 +11,7 @@ import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import type { PackageSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
 import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
+import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
 import { MarketplaceService, mergeScopedEntries, type MarketplaceServiceOptions } from '../marketplace-service.js';
@@ -679,6 +680,91 @@ describe('MarketplaceService', () => {
   // ── doctor ───────────────────────────────────────────────────────────
 
   describe('doctor', () => {
+    // case: S-203.25
+    it('does not compare marketplace pins to a local directory hash', async () => {
+      const { dir } = await createPluginDir(tmpDir, 'marketplace-pinned', '@kb-labs/marketplace-pinned');
+      const pin = `sha512-${Buffer.from('expected tarball').toString('base64')}`;
+      const entry = {
+        schema: 'kb.store-entry/1' as const,
+        name: '@kb-labs/marketplace-pinned',
+        version: '1.0.0',
+        kind: 'plugin' as const,
+        integrity: pin,
+        installedAt: new Date().toISOString(),
+      };
+      const stored: ResolvedStoreEntry = { entry, packageRoot: dir, entryDir: path.join(tmpDir, 'store') };
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return stored; },
+        async resolve() { return stored; },
+        async listEntries() { return [entry]; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()), extensionStore: store });
+      const lockRoot = path.join(tmpDir, '.kb');
+      await fs.mkdir(lockRoot, { recursive: true });
+      await fs.writeFile(path.join(lockRoot, 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3',
+        plugins: {
+          '@kb-labs/marketplace-pinned': {
+            source: 'marketplace', package: '@kb-labs/marketplace-pinned', version: '1.0.0', integrity: pin,
+            enabled: true,
+          },
+        },
+      }));
+
+      const report = await service.doctor({ scope: 'platform' });
+
+      expect(report.issues.some(issue => issue.message.startsWith('Integrity mismatch:'))).toBe(false);
+    });
+
+    // case: S-225.1
+    it('reports a store pin mismatch with the reinstall remediation', async () => {
+      const { dir } = await createPluginDir(tmpDir, 'marketplace-tampered', '@kb-labs/marketplace-tampered');
+      const expected = `sha512-${Buffer.from('expected tarball').toString('base64')}`;
+      const actual = `sha512-${Buffer.from('actual tarball').toString('base64')}`;
+      const stored: ResolvedStoreEntry = {
+        entry: {
+          schema: 'kb.store-entry/1', name: '@kb-labs/marketplace-tampered', version: '1.0.0',
+          kind: 'plugin', integrity: actual, installedAt: new Date().toISOString(),
+        },
+        packageRoot: dir,
+        entryDir: path.join(tmpDir, 'store'),
+      };
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { throw new IntegrityMismatchError({ plugin: stored.entry.name, expected, actual }); },
+        async resolve() { return stored; },
+        async listEntries() { return [stored.entry]; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()), extensionStore: store });
+      const lockRoot = path.join(tmpDir, '.kb');
+      await fs.mkdir(lockRoot, { recursive: true });
+      await fs.writeFile(path.join(lockRoot, 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3',
+        plugins: {
+          '@kb-labs/marketplace-tampered': {
+            source: 'marketplace', package: '@kb-labs/marketplace-tampered', version: '1.0.0', integrity: expected,
+            enabled: true,
+          },
+        },
+      }));
+
+      const report = await service.doctor({ scope: 'platform' });
+
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        severity: 'error',
+        packageId: '@kb-labs/marketplace-tampered',
+        diagnosticCode: 'INTEGRITY_MISMATCH',
+        message: expect.stringContaining(actual),
+        remediation: 'Run "kb marketplace install @kb-labs/marketplace-tampered@1.0.0" to restore the pinned version',
+      }));
+    });
+
     it('returns ok: true when all packages are healthy', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'healthy', '@kb-labs/healthy');
       const source = createMockSource(
@@ -814,26 +900,6 @@ describe('MarketplaceService', () => {
         severity: 'error',
         diagnosticCode: 'COMMAND_SCHEMA_INVALID',
       }));
-    });
-
-    it('warns about integrity mismatch', async () => {
-      const { dir, integrity } = await createPluginDir(tmpDir, 'tampered', '@kb-labs/tampered');
-      const source = createMockSource(
-        new Map([['@kb-labs/tampered', { dir, version: '1.0.0', integrity }]]),
-      );
-
-      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
-      await service.install({ scope: "platform" }, ['@kb-labs/tampered']);
-
-      // Tamper with package.json
-      await fs.writeFile(
-        path.join(dir, 'package.json'),
-        JSON.stringify({ name: '@kb-labs/tampered', version: '1.0.0', tampered: true }),
-      );
-
-      const report = await service.doctor({ scope: "platform" });
-      const warning = report.issues.find(i => i.severity === 'warning' && i.message.includes('Integrity'));
-      expect(warning).toBeDefined();
     });
 
     it('reports info about unsigned packages', async () => {

@@ -37,13 +37,7 @@ export default defineCommand<unknown, HealthInput, unknown>({
 
         return undefined;
       } catch (error) {
-        if (outputJson) {
-          return handleError(error);
-        } else {
-          const message = error instanceof Error ? error.message : String(error);
-
-        }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb workflow health --help` to review its inputs and recovery steps, then retry." } };
+        return handleError(error);
       }
     },
   },

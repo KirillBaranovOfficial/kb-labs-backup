@@ -179,11 +179,6 @@ export default defineCommand({
 
       if (result.failed.length > 0) {
         stageLoader.fail(`${result.failed.length}/${packagesToPublish.length} package(s) failed to stage`);
-        if (flags.json) {
-          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'The command operation failed.', hint: "Run `kb release stage plan --help` to review the failure and next steps." } };
-        } else {
-
-        }
         return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release stage plan --help` to review its inputs and recovery steps, then retry." } };
       }
 

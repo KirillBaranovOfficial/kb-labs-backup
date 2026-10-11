@@ -26,18 +26,17 @@ export default defineCommand<unknown, CLIInput<QaRegressionsFlags>, unknown>({
       const store = new SnapshotStore(cwd, config?.historyMaxEntries);
       const history = store.loadRunHistory();
       const detection = detectRegressions(history);
+      const result = detection.hasRegressions
+        ? { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Regressions found', hint: 'Review the regression report, then rerun `kb qa regressions`.' } }
+        : detection;
 
-      if (flags.json) {
-        return detection;
-      } else {
+      if (!flags.json) {
         for (const section of buildRegressionsReport(detection)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return detection.hasRegressions
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Regressions found', hint: 'Review the regression report, then rerun `kb qa regressions`.' } }
-        : detection;
+      return result;
     },
   },
 });

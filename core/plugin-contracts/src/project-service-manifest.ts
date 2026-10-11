@@ -1,7 +1,7 @@
 import type { ProjectServiceApiDeclaration, ProjectServiceDeclaration, ServiceManifest } from "./manifest.js";
 
 export class ProjectServiceManifestError extends Error {
-  readonly code = "CONFIG_ERROR";
+  readonly code = "KB_CONFIG_INVALID";
   readonly details: { path: string };
   readonly hint: string;
 

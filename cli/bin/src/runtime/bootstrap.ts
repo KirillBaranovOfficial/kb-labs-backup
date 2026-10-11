@@ -28,7 +28,7 @@ import {
 import { handleLimitFlag } from "./limits";
 import { getDefaultMiddlewares } from "./middlewares";
 import { executePlugin, createSystemCommandContext } from "./plugin-executor";
-import { tryResolveGateway, executeViaGateway } from "./gateway-executor";
+import { tryResolveGateway, executeViaGateway, pluginCommandUnavailable } from "./gateway-executor";
 import { loadEnvFile } from "./env-loader";
 import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } from "./platform-init";
 import { resolveVersion } from "./helpers/version";
@@ -603,9 +603,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
       return pluginExitCode;
     }
 
-    throw new Error(
-      `Plugin command "${commandPath}" is not available for execution. Ensure the command has a handler in its manifest.`,
-    );
+    throw pluginCommandUnavailable(commandPath);
   });
 }
 

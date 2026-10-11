@@ -169,6 +169,19 @@ describe('marketplace:publish', () => {
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
+  // case: S-203.1
+  it('keeps publish failures identical in human and JSON modes', async () => {
+    mockedPackPlugin.mockRejectedValue(new Error('package archive failed'));
+    const { ui } = createCapturedUI();
+    const ctx = createCtxWithHandle(ui);
+    const humanResult = await publishCommand.execute(ctx, mockCLIInput({ flags: {} }));
+    mockedPackPlugin.mockRejectedValue(new Error('package archive failed'));
+    const jsonResult = await publishCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+
+    expect(humanResult).toHaveProperty('ok', false);
+    expect(jsonResult).toEqual(humanResult);
+  });
+
   it('PB-09: registry HTTP error — exitCode 1, error shown in chain', async () => {
     mockedPostMultipart.mockRejectedValue(new Error('Registry publish failed (422): version exists'));
     const { ui, captured } = createCapturedUI();

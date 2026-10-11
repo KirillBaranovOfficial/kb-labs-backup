@@ -60,4 +60,18 @@ describe('workflow:health', () => {
     expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
+
+  // case: S-203.1
+  it('keeps daemon failures identical in human and JSON modes', async () => {
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ health: async () => { throw new Error('ECONNREFUSED'); } });
+    });
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui });
+    const humanResult = await healthCommand.execute(ctx, mockCLIInput({ flags: {} }));
+    const jsonResult = await healthCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+
+    expect(humanResult).toHaveProperty('ok', false);
+    expect(jsonResult).toEqual(humanResult);
+  });
 });

@@ -2,6 +2,7 @@ import type { FastifyReply } from 'fastify';
 import {
   createErrorEnvelope,
   getCatalogEntry,
+  type PlatformErrorCode,
 } from '@kb-labs/core-platform';
 import {
   createUxFailureResult,
@@ -20,7 +21,7 @@ export function ok<T>(data: T): ApiSuccessResponse<T> {
 
 export function fail(
   reply: FastifyReply,
-  code: string,
+  code: PlatformErrorCode,
   message: string,
   hint?: string,
   details?: Record<string, string>,

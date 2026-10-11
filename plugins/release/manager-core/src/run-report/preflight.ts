@@ -9,10 +9,10 @@
  */
 
 import type { ReleaseShell } from '../types';
+import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import {
   createReleaseError,
   type ReleaseErrorCode,
-  type ReleaseErrorEnvelope,
 } from './error-codes';
 
 export type PreflightCheckId =
@@ -33,7 +33,7 @@ export interface PreflightCheckResult {
   /** Non-blocking observations on a passed check. */
   warnings?: string[];
   /** Present when status is `failed`. */
-  error?: ReleaseErrorEnvelope;
+  error?: ErrorEnvelope;
 }
 
 export interface PreflightResult {

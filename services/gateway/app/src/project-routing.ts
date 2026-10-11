@@ -22,10 +22,10 @@ import {
   type IncomingMessage,
 } from "node:http";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { createErrorEnvelope, getCatalogEntry, isErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform";
+import { createErrorEnvelope, getCatalogEntry, isErrorCode, isErrorEnvelope, normalizeHttpFailure, type ErrorEnvelope } from "@kb-labs/core-platform";
 import type { IServiceTransport, ProjectServiceConnectionInfo } from "@kb-labs/core-platform";
 import { validateProjectServiceDeclarations, type ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
-import { createUxFailureResult, createUxSuccessResult, isUxResult } from "@kb-labs/core-platform/ux-result";
+import { createUxFailureResult, createUxSuccessResult } from "@kb-labs/core-platform/ux-result";
 
 /** Path prefix under which project-scoped APIs are served. */
 export const PROJECT_ROUTE_PREFIX = "/api/v1/projects";
@@ -313,7 +313,7 @@ export async function registerProjectRoutes(
               details: { timeoutMs: String(timeoutMs), serviceId },
               correlationId: String(request.id),
             });
-            const status = getCatalogEntry(envelope.code)?.httpStatus;
+            const status = isErrorCode(envelope.code) ? getCatalogEntry(envelope.code)?.httpStatus : undefined;
             if (status === undefined) {
               return sendError(reply, request, new Error(`${envelope.code} has no catalogued HTTP status`));
             }
@@ -355,19 +355,15 @@ export async function registerProjectRoutes(
           } catch {
             parsed = undefined;
           }
-          const upstreamErrorCandidate = isUxResult(parsed) && !parsed.ok && isErrorEnvelope(parsed.error)
-            ? parsed.error
-            : parsed && typeof parsed === "object" && "error" in parsed && isErrorEnvelope(parsed.error)
-              ? parsed.error
-              : undefined;
-          const upstreamError = upstreamErrorCandidate && getCatalogEntry(upstreamErrorCandidate.code)
-            ? upstreamErrorCandidate
-            : undefined;
-          if (upstreamError) {
-            return reply.code(response.statusCode ?? 502).send(createUxFailureResult({
-              ...upstreamError,
-              correlationId: upstreamError.correlationId || String(request.id),
-            }));
+          const hasErrorPayload = parsed !== null && typeof parsed === "object" && "error" in parsed
+            && parsed.error !== null && typeof parsed.error === "object" && "code" in parsed.error;
+          if (hasErrorPayload) {
+            const upstreamStatus = response.statusCode ?? 502;
+            const failure = normalizeHttpFailure(parsed, {
+              correlationId: String(request.id),
+              statusCode: upstreamStatus,
+            });
+            return reply.code(upstreamStatus).send(failure);
           }
           const upstreamStatus = response.statusCode ?? 502;
           const code = upstreamStatus === 404 ? "KB_RUNTIME_RESOURCE_NOT_FOUND"

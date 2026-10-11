@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { ErrorCode, ProductErrorCode } from './index.js';
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
 import {
@@ -10,6 +11,7 @@ import {
   createErrorEnvelope,
   errorCatalog,
   getCatalogEntry,
+  isErrorCode,
   mapErrorEnvelopeToExitCode,
   renderTemplate,
   toErrorEnvelope,
@@ -35,6 +37,18 @@ function loadFixtures(kind: 'valid' | 'invalid'): Array<{ name: string; value: u
 }
 
 describe('errors.catalog.json lint', () => {
+  it('keeps the generated code type in sync with the sole catalog', () => {
+    const generatedPath = new URL('./error-codes.generated.ts', import.meta.url);
+    const generated = readFileSync(generatedPath, 'utf8');
+    const codes = [...generated.matchAll(/^  \| "([^"]+)"$/gm)].map((match) => match[1]);
+    expect(codes).toEqual(errorCatalog.codes.map((entry) => entry.code).sort());
+    expectTypeOf<ErrorCode>().not.toEqualTypeOf<string>();
+    expectTypeOf<'KB_RUNTIME_COMMAND_FAILED'>().toMatchTypeOf<ErrorCode>();
+    expectTypeOf<'NOT_CATALOGUED_CODE'>().not.toMatchTypeOf<ErrorCode>();
+    expectTypeOf<ProductErrorCode>().toMatchTypeOf<ErrorCode>();
+    expectTypeOf<'KB_TYPO'>().not.toMatchTypeOf<ErrorCode>();
+  });
+
   it('has unique codes', () => {
     const codes = errorCatalog.codes.map((entry) => entry.code);
     expect(codes.filter((code, index) => codes.indexOf(code) !== index)).toEqual([]);
@@ -55,6 +69,11 @@ describe('errors.catalog.json lint', () => {
     });
   });
 
+  it('narrows untrusted codes through the catalog guard', () => {
+    expect(isErrorCode('KB_RUNTIME_COMMAND_FAILED')).toBe(true);
+    expect(isErrorCode('KB_PERMISSION_DENIED')).toBe(false);
+  });
+
   it('defines the HTTP status for a project runtime timeout', () => {
     expect(getCatalogEntry('KB_RUNTIME_TIMEOUT')).toMatchObject({ httpStatus: 504 });
   });
@@ -72,7 +91,7 @@ describe('errors.catalog.json lint', () => {
     });
   });
 
-  it('only uses KB_ codes whose prefix matches the area (adapter codes belong to plugin)', () => {
+  it('keeps KB_ prefixes aligned with their area and admits catalogued plugin namespaces', () => {
     const prefixArea: Record<string, string> = {
       INSTALL: 'install',
       HOST: 'host',
@@ -90,9 +109,13 @@ describe('errors.catalog.json lint', () => {
       RELEASE: 'release',
     };
     for (const entry of errorCatalog.codes) {
-      const prefix = entry.code.split('_')[1] ?? '';
-      expect(entry.code.startsWith('KB_'), entry.code).toBe(true);
-      expect(prefixArea[prefix], `${entry.code} prefix`).toBe(entry.area);
+      if (entry.code.startsWith('KB_')) {
+        const prefix = entry.code.split('_')[1] ?? '';
+        expect(prefixArea[prefix], `${entry.code} prefix`).toBe(entry.area);
+      } else {
+        expect(entry.code).toMatch(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/);
+        expect(['plugin', 'product'], `${entry.code} namespace area`).toContain(entry.area);
+      }
     }
   });
 
@@ -125,7 +148,8 @@ describe('errors.catalog.json lint', () => {
       'KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH',
       'KB_INSTALL_SERVICE_GRAPH_MISMATCH',
     ]) {
-      expect(getCatalogEntry(code), code).toBeDefined();
+      expect(isErrorCode(code), code).toBe(true);
+      if (isErrorCode(code)) expect(getCatalogEntry(code), code).toBeDefined();
     }
     expect(errorCatalog.codes.some((entry) => entry.code.startsWith('KB_CREATE_'))).toBe(false);
   });
@@ -381,6 +405,33 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(envelope.correlationId).toEqual(expect.any(String));
   });
 
+  it('does not manufacture an envelope code from an uncatalogued plugin error', () => {
+    const error = Object.assign(new Error('ClickUp refused access.'), { code: 'KB_PERMISSION_DENIED' });
+
+    expect(toErrorEnvelope(error)).toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+    });
+  });
+
+  it('preserves contract-valid product codes and rejects a missing hint', () => {
+    const productError = Object.assign(new Error('Nothing is staged.'), {
+      code: 'COMMIT_NOTHING_STAGED',
+      hint: 'Stage the intended changes, then retry.',
+      details: { repository: 'workspace' },
+    });
+
+    expect(toErrorEnvelope(productError)).toMatchObject({
+      code: 'COMMIT_NOTHING_STAGED',
+      area: 'product',
+      message: 'Nothing is staged.',
+      hint: 'Stage the intended changes, then retry.',
+      details: { repository: 'workspace' },
+    });
+    expect(toErrorEnvelope(Object.assign(new Error('No hint.'), {
+      code: 'COMMIT_NOTHING_STAGED',
+    })).code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
+  });
+
   it('keeps catalogued thrown error fields and converts malformed details to a contract violation', () => {
     const catalogued = Object.assign(new Error('Invalid input.'), {
       code: 'KB_RUNTIME_INPUT_INVALID',
@@ -421,6 +472,18 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(validateErrorEnvelope(envelope)).toEqual([]);
   });
 
+  it('rejects invalid details on validation-shaped errors instead of silently dropping them', () => {
+    const malformed = Object.assign(new Error('Invalid input.'), {
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      issues: [{ path: 'field', message: 'Required' }],
+      details: { field: { nested: true } },
+    });
+    expect(toErrorEnvelope(malformed)).toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      hint: expect.stringContaining('error.diagnostics'),
+    });
+  });
+
   it('catalogues an installed adapter that does not declare the requested slot', () => {
     const envelope = createErrorEnvelope('KB_ADAPTER_SLOT_MISMATCH', {
       details: { package: '@kb-labs/adapters-storage-fixture', slot: 'llm' },
@@ -434,6 +497,6 @@ describe('toErrorEnvelope (platform errors)', () => {
   });
 
   it('rejects codes that are not in the catalog', () => {
-    expect(() => createErrorEnvelope('KB_NOPE_NOPE')).toThrow(/errors\.catalog\.json/);
+    expect(isErrorCode('KB_NOPE_NOPE')).toBe(false);
   });
 });

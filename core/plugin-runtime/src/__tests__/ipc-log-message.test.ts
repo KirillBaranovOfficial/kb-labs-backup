@@ -85,7 +85,7 @@ describe('IPC Protocol — LogMessage', () => {
     const messages: ChildMessage[] = [
       { type: 'ready' },
       { type: 'result', data: {} },
-      { type: 'error', error: { name: 'Error', message: 'test', code: 'UNKNOWN' } },
+      { type: 'error', error: { name: 'Error', message: 'test', code: 'KB_RUNTIME_UNEXPECTED' } },
       {
         type: 'log',
         entry: {

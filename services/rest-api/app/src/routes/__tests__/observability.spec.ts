@@ -154,7 +154,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
+      expect(payload.error).toMatchObject({ code: 'KB_SERVICE_UNAVAILABLE', hint: expect.any(String) });
     });
 
     it('returns 503 when State Broker times out', async () => {
@@ -172,7 +172,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
+      expect(payload.error).toMatchObject({ code: 'KB_SERVICE_UNAVAILABLE', hint: expect.any(String) });
     });
 
     it('returns 503 when State Broker connection fails', async () => {
@@ -187,7 +187,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
+      expect(payload.error).toMatchObject({ code: 'KB_SERVICE_UNAVAILABLE', hint: expect.any(String) });
     });
 
     it('handles non-Error exceptions', async () => {
@@ -202,7 +202,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
+      expect(payload.error).toMatchObject({ code: 'KB_SERVICE_UNAVAILABLE', hint: expect.any(String) });
     });
   });
 });

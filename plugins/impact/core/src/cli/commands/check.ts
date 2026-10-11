@@ -45,8 +45,7 @@ export default defineCommand<unknown, CheckInput, ImpactAnalysisResult>({
       try {
         root = findWorkspaceRoot();
       } catch {
-        if (flags.json) {return EMPTY_RESULT;}
-        else {ctx.ui?.warn?.('Could not find workspace root');}
+        if (!flags.json) {ctx.ui?.warn?.('Could not find workspace root');}
         return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Could not find workspace root', hint: "Run `kb impact check --help` to review its inputs and recovery steps, then retry." } };
       }
 

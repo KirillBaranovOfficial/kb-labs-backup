@@ -4828,6 +4828,9 @@ importers:
 
   plugins/release/manager-core:
     dependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
@@ -7595,6 +7598,9 @@ importers:
 
   studio/federation:
     dependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts

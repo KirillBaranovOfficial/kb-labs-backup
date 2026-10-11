@@ -66,9 +66,10 @@ export class HttpClient {
         const body = error.response?.data;
         const status = error.response?.status ?? 500;
         const requireUxResult = (error.response?.config as AxiosRequestConfig & { requireUxResult?: boolean } | undefined)?.requireUxResult === true;
+        const malformedResult = isUxResultCandidate(body) && !isUxResult(body);
         const kbError = requireUxResult && !isUxResultCandidate(body)
           ? mapInvalidResultEnvelope(status)
-          : isUxResultCandidate(body) && !isUxResult(body)
+          : malformedResult
             ? mapInvalidResultEnvelope(status)
             : mapFetchError(body, {
           status,

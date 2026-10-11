@@ -119,7 +119,8 @@ describe('review:run', () => {
     });
   });
 
-  it('RR-04: --json flag — returns ReviewResult to the shared serializer', async () => {
+  // case: S-203.1
+  it('returns the same agent report in JSON mode as the human command result', async () => {
     mockedGetReposWithChanges.mockResolvedValue(['packages/core']);
     mockedResolveGitScope.mockResolvedValue({
       files: [{ path: 'src/a.ts', content: '' }],
@@ -132,7 +133,32 @@ describe('review:run', () => {
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(captured.json).toHaveLength(0);
-    expect(result).toEqual(reviewResult);
+    expect(result).toEqual({ passed: true, issues: [], summary: 'Review passed. No issues found.' });
+  });
+
+  // case: S-203.1
+  it('keeps blocker failures in JSON mode instead of returning the success report', async () => {
+    mockedGetReposWithChanges.mockResolvedValue(['packages/core']);
+    mockedResolveGitScope.mockResolvedValue({
+      files: [{ path: 'src/a.ts', content: 'eval("x")' }],
+    } as unknown as ScopedFiles);
+    mockedRunReview.mockResolvedValue(makeReviewResult([
+      { severity: 'blocker', file: 'src/a.ts', line: 1, message: 'eval is dangerous' },
+    ]) as unknown as ReviewResult);
+
+    const { ui } = createCapturedUI();
+    const result = await reviewRunCommand.execute(
+      createMockContext({ ui }),
+      mockCLIInput({ flags: { json: true } }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        diagnostics: [{ code: 'KB_REVIEW_FINDING', path: 'src/a.ts', message: 'eval is dangerous' }],
+      },
+    });
   });
 
   it('RR-05: --scope=staged uses includeStaged filter', async () => {

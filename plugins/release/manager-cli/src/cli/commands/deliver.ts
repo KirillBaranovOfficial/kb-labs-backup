@@ -186,7 +186,7 @@ export default defineCommand({
 
         writeGithubStepSummary(buildFailureSummaryMarkdown(target, publishedList.length, failedList));
 
-        const response = { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery failed', hint: 'Inspect failed package details, resolve registry errors, then retry delivery.' } };
+        const response = { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: 'Delivery failed', hint: 'Inspect failed package details, resolve registry errors, then retry delivery.' } };
         if (!flags.json) {
           ctx.ui?.sideBox?.({
             title: 'Deliver — npm',
@@ -246,7 +246,7 @@ export default defineCommand({
       if (flags.json) {
         const response = verifyIssues.length === 0
           ? result
-          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery verification failed after publish completed', hint: 'Packages were published; inspect verification issues and rerun `kb release deliver` to confirm.' } };
+          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: 'Delivery verification failed after publish completed', hint: 'Packages were published; inspect verification issues and rerun `kb release deliver` to confirm.' } };
         return response;
       }
 

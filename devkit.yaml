@@ -721,6 +721,16 @@ tasks:
 #   { ok: boolean, items: [{ target, message, fix? }] }
 
 custom_checks:
+  - name: browser-node-builtins
+    run: node scripts/checks/check-browser-node-builtins.mjs
+    on: [check]
+    scope: workspace
+
+  - name: error-code-catalog
+    run: node scripts/checks/check-error-code-catalog.mjs
+    on: [check]
+    scope: workspace
+
   - name: adapter-manifest
     run: node scripts/checks/check-adapter-manifest.mjs
     on: [check]

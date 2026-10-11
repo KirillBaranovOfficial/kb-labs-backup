@@ -440,6 +440,12 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
             for command in commands:
                 result = run_cli(command, env=anonymous_env, cwd=project)
                 assert_platform_auth_required(result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
+            human_result = run_cli(["workflow", "defs", "list"], env=anonymous_env, cwd=project)
+            human_output = (human_result.stdout or "") + (human_result.stderr or "")
+            login_hint = f'Run "kb auth login --gateway-url {env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")} --email <email>"'
+            if (human_result.returncode == 0 or "KB_AUTH_REQUIRED" not in human_output
+                    or "Authentication is required." not in human_output or login_hint not in human_output):
+                raise AssertionError("unauthenticated `kb workflow defs list` did not show the catalogued login error and hint")
 
         email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
         password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")

@@ -846,6 +846,36 @@ describe('POST /auth/activate', () => {
     expect(reused.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_INVITE', hint: expect.any(String) } });
   });
 
+  // case: S-107.4
+  it('returns a catalogued password-policy failure without consuming the invite', async () => {
+    const invite = await ctx.invites.createInvite({
+      email: 'weak-password@test.com', tenantId: TENANT_ID, groupId: 'tenant-member', createdBy: 'admin-1', ttlMs: HOUR,
+    });
+    const weak = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/activate',
+      headers: { host: HOST },
+      payload: { token: invite.activationToken, password: 'weak' },
+    });
+    expect(weak.statusCode).toBe(400);
+    expect(weak.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        message: 'too_short',
+        hint: expect.stringContaining('password policy'),
+      },
+    });
+
+    const corrected = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/activate',
+      headers: { host: HOST },
+      payload: { token: invite.activationToken, password: 'NewPassword123!' },
+    });
+    expect(corrected.statusCode).toBe(200);
+  });
+
   it('returns 400 when token is missing', async () => {
     const r = await ctx.app.inject({
       method: 'POST',

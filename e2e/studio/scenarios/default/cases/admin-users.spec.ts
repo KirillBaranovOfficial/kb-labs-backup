@@ -15,7 +15,7 @@ async function signIn(page: Page, email: string, password: string) {
   await expect(page).toHaveURL(`${GATEWAY}/`)
 }
 
-test('tenant admin manages users, roles, and invites @S-106.1 @S-106.2 @S-106.3 @S-106.4 @S-106.5 @S-106.6 @S-107.1 @S-107.2 @S-107.3', async ({ page, browser }) => {
+test('tenant admin manages users, roles, and invites @S-106.1 @S-106.2 @S-106.3 @S-106.4 @S-106.5 @S-106.6 @S-107.1 @S-107.2 @S-107.3 @S-107.4', async ({ page, browser }) => {
   const adminEmail = process.env.KB_STUDIO_ADMIN_EMAIL
   const adminPassword = process.env.KB_STUDIO_ADMIN_PASSWORD
   const memberEmail = process.env.KB_STUDIO_MEMBER_EMAIL
@@ -97,6 +97,27 @@ test('tenant admin manages users, roles, and invites @S-106.1 @S-106.2 @S-106.3 
     await page.goto(activationUrl)
     await expect(page.getByLabel('Password')).toBeVisible()
     await expect(page.getByLabel('Confirm password')).toBeVisible()
+  })
+
+  await test.step('[S-107.4] reject a weak password without consuming the invite', async () => {
+    const policyFailure = page.waitForResponse((response) =>
+      response.url().includes('/api/auth/activate') && response.status() === 400,
+    )
+    await page.getByLabel('Password').fill('weak')
+    await page.getByLabel('Confirm password').fill('weak')
+    await page.getByRole('button', { name: 'Activate account' }).click()
+    const response = await policyFailure
+    const payload = await response.json()
+    expect(payload).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        message: 'too_short',
+        hint: expect.stringContaining('password policy'),
+      },
+    })
+    await expect(page.getByRole('alert')).toContainText('too_short')
+    await expect(page).toHaveURL(/\/activate\//)
   })
 
   await test.step('[S-107.2] activate the invited account and enter Studio', async () => {

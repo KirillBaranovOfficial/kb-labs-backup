@@ -32,6 +32,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "@npmcli/arborist": "^10.0.2",
     "execa": "^9.5.3",

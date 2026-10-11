@@ -8,6 +8,8 @@
 import { describe, it, expect } from 'vitest';
 import { wrapCliResult, wrapRestResult, unwrapRestData } from '../host/index.js';
 import type { RunResult, ExecutionMeta, PluginContextDescriptor } from '@kb-labs/plugin-contracts';
+import { createUxSuccessResult, isUxResult } from '@kb-labs/core-platform/ux-result';
+import { createProductErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 
 describe('Host Wrappers', () => {
   const mockExecutionMeta: ExecutionMeta = {
@@ -59,10 +61,27 @@ describe('Host Wrappers', () => {
       expect(result.meta?.executedAt).toBeDefined();
     });
 
-    it('rejects a handler-built success envelope instead of unwrapping it', () => {
+    // case: S-203.1
+    it('preserves a nested domain failure value inside success data', () => {
       const runResult: RunResult<unknown> = {
         ok: true,
-        data: { ok: true, data: { report: 'healthy' }, meta: { source: 'handler' } },
+        data: { status: 'degraded', report: { ok: false, issues: ['policy'] } },
+        executionMeta: mockExecutionMeta,
+      };
+
+      const result = wrapCliResult(runResult, mockDescriptor);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.ok).toBe(true);
+      expect(result.result).toEqual({ status: 'degraded', report: { ok: false, issues: ['policy'] } });
+    });
+
+    it('rejects a handler-built success envelope instead of unwrapping it', () => {
+      const envelope = createUxSuccessResult({ report: 'healthy' });
+      expect(isUxResult(envelope)).toBe(true);
+      const runResult: RunResult<unknown> = {
+        ok: true,
+        data: envelope,
         executionMeta: mockExecutionMeta,
       };
 
@@ -72,9 +91,24 @@ describe('Host Wrappers', () => {
       expect(result.ok).toBe(false);
       expect(result.error).toMatchObject({
         code: 'KB_PLUGIN_CONTRACT_VIOLATION',
-        message: expect.stringContaining('plain command data'),
+        message: expect.stringContaining('violated the command result contract'),
         hint: expect.stringContaining('Return'),
       });
+    });
+
+    it('uses the shared UX-result contract to distinguish domain data from an envelope', () => {
+      const domainValue = { ok: true, data: 'domain data', report: { status: 'healthy' } };
+      expect(isUxResult(domainValue)).toBe(false);
+
+      const result = wrapCliResult({
+        ok: true,
+        data: domainValue,
+        executionMeta: mockExecutionMeta,
+      }, mockDescriptor);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.ok).toBe(true);
+      expect(result.result).toEqual(domainValue);
     });
 
     it('normalizes the shared typed CommandFailure', () => {
@@ -91,7 +125,121 @@ describe('Host Wrappers', () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.ok).toBe(false);
-      expect(result.error).toEqual({ code: 'KB_RUNTIME_COMMAND_FAILED', message: 'failed', hint: 'Resolve the failure, then retry.' });
+      expect(result.error).toMatchObject({ code: 'KB_RUNTIME_COMMAND_FAILED', message: 'failed', hint: 'Resolve the failure, then retry.' });
+    });
+
+    // case: S-203.1
+    it('rejects a top-level failure claim without the typed error contract', () => {
+      const runResult: RunResult<unknown> = {
+        ok: true,
+        data: { ok: false, status: 'unhealthy', issues: ['invalid policy'] },
+        executionMeta: mockExecutionMeta,
+      };
+
+      const result = wrapCliResult(runResult, mockDescriptor);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatchObject({
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        message: expect.stringContaining('violated the command result contract'),
+      });
+    });
+
+    it('rejects an uncatalogued KB code as a plugin contract violation', () => {
+      const runResult: RunResult<unknown> = {
+        ok: true,
+        data: {
+          ok: false,
+          error: {
+            code: 'KB_TYPO',
+            message: 'A plugin reported an unknown failure.',
+            hint: 'Use a code from the platform catalog.',
+          },
+        },
+        executionMeta: mockExecutionMeta,
+      };
+
+      const result = wrapCliResult(runResult, mockDescriptor);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
+    });
+
+    it('rejects a product code without a hint as a plugin contract violation', () => {
+      const result = wrapCliResult({
+        ok: true,
+        data: {
+          ok: false,
+          error: { code: 'COMMIT_NOTHING_STAGED', message: 'Nothing is staged.' },
+        },
+        executionMeta: mockExecutionMeta,
+      }, mockDescriptor);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.error?.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
+    });
+
+    it('preserves diagnostics for a catalogued command failure', () => {
+      const diagnostics = [{
+        code: 'PLUGIN_POLICY_TYPE_INVALID',
+        message: 'plugins.block must be an array.',
+        severity: 'error' as const,
+        path: '.kb/kb.config.json',
+        hint: 'Set plugins.block to an array.',
+      }];
+      const runResult: RunResult<unknown> = {
+        ok: true,
+        data: {
+          ok: false,
+          error: {
+            code: 'KB_PLUGIN_SETTINGS_INVALID',
+            message: 'Plugin configuration is invalid.',
+            hint: 'Fix the plugin configuration and retry.',
+            diagnostics,
+          },
+        },
+        executionMeta: mockExecutionMeta,
+      };
+
+      const result = wrapCliResult(runResult, mockDescriptor);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.error?.code).toBe('KB_PLUGIN_SETTINGS_INVALID');
+      expect(result.error?.diagnostics).toEqual(diagnostics);
+    });
+
+    it('preserves a valid product code, message, and hint for a returned command failure', () => {
+      const productError = createProductErrorEnvelope({
+        code: 'COMMIT_NOTHING_STAGED',
+        message: 'Nothing is staged.',
+        hint: 'Stage the intended changes, then retry.',
+        retryable: false,
+      });
+      const result = wrapCliResult({
+        ok: true,
+        data: { ok: false, error: {
+          code: productError.code,
+          message: productError.message,
+          hint: productError.hint,
+        } },
+        executionMeta: mockExecutionMeta,
+      }, mockDescriptor);
+
+      expect(result).toMatchObject({
+        exitCode: 1,
+        ok: false,
+        error: {
+          code: 'COMMIT_NOTHING_STAGED',
+          message: 'Nothing is staged.',
+          hint: 'Stage the intended changes, then retry.',
+        },
+      });
+      expect(JSON.parse(JSON.stringify(result))).toMatchObject({
+        ok: false,
+        error: { code: 'COMMIT_NOTHING_STAGED', message: 'Nothing is staged.', hint: 'Stage the intended changes, then retry.' },
+      });
     });
 
     it('should wrap raw data as exitCode 0', () => {

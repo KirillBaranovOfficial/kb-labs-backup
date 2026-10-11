@@ -35,13 +35,8 @@ function buildReportSections(report: ReleaseReport): Array<{ header?: string; it
   return sections;
 }
 
-function handleReportNotFound(flags: ReportFlags, ctx: PluginCommandContextV3): ReleaseReportResult {
+function handleReportNotFound(ctx: PluginCommandContextV3): ReleaseReportResult {
   ctx.platform?.logger?.warn?.('No release report found');
-  if (flags.json) {
-    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No release report found', hint: "Run `kb release report --help` to review the failure and next steps." } };
-  } else {
-
-  }
   return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No release report found', hint: "Run `kb release report --help` to review its inputs and recovery steps, then retry." } };
 }
 
@@ -67,6 +62,10 @@ export default defineCommand({
           ok: report.result.ok,
         });
 
+        if (!report.result.ok) {
+          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release report --help` to review its inputs and recovery steps, then retry." } };
+        }
+
         if (flags.json) {
           return report;
         } else {
@@ -78,10 +77,10 @@ export default defineCommand({
           });
         }
 
-        return report.result.ok ? { report } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release report --help` to review its inputs and recovery steps, then retry." } };
+        return { report };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-          return handleReportNotFound(flags, ctx);
+          return handleReportNotFound(ctx);
         }
         throw error;
       }

@@ -23,23 +23,22 @@ import {
   PlatformError,
   wrapError,
   isPluginError,
-  ErrorCode,
 } from '@kb-labs/plugin-contracts';
 
 describe('Error Handling', () => {
   describe('PluginError base class', () => {
     it('should create error with message and code', () => {
-      const error = new PluginError('Test error', 'TEST_CODE');
+      const error = new PluginError('Test error', 'KB_RUNTIME_COMMAND_FAILED');
 
       expect(error.message).toBe('Test error');
-      expect(error.code).toBe('TEST_CODE');
+      expect(error.code).toBe('KB_RUNTIME_COMMAND_FAILED');
       expect(error.name).toBe('PluginError');
       expect(error).toBeInstanceOf(Error);
       expect(error).toBeInstanceOf(PluginError);
     });
 
     it('should store error details', () => {
-      const error = new PluginError('Error with details', 'TEST', {
+      const error = new PluginError('Error with details', 'KB_RUNTIME_COMMAND_FAILED', {
         field: 'username',
         value: 'invalid',
       });
@@ -51,7 +50,7 @@ describe('Error Handling', () => {
     });
 
     it('should have stack trace', () => {
-      const error = new PluginError('Error message', 'TEST');
+      const error = new PluginError('Error message', 'KB_RUNTIME_COMMAND_FAILED');
 
       expect(error.stack).toBeDefined();
       expect(error.stack).toContain('Error message');
@@ -60,7 +59,7 @@ describe('Error Handling', () => {
 
   describe('JSON serialization', () => {
     it('should serialize to JSON', () => {
-      const error = new PluginError('Serialization test', 'SERIALIZE', {
+      const error = new PluginError('Serialization test', 'KB_RUNTIME_COMMAND_FAILED', {
         foo: 'bar',
       });
 
@@ -69,14 +68,14 @@ describe('Error Handling', () => {
       expect(json).toEqual({
         name: 'PluginError',
         message: 'Serialization test',
-        code: 'SERIALIZE',
+        code: 'KB_RUNTIME_COMMAND_FAILED',
         details: { foo: 'bar' },
         stack: expect.stringContaining('Error'),
       });
     });
 
     it('should deserialize from JSON', () => {
-      const original = new PluginError('Original error', 'ORIGINAL', {
+      const original = new PluginError('Original error', 'KB_RUNTIME_UNEXPECTED', {
         data: 'test',
       });
 
@@ -90,7 +89,7 @@ describe('Error Handling', () => {
     });
 
     it('should preserve stack trace through serialization', () => {
-      const error = new PluginError('Stack test', 'STACK');
+      const error = new PluginError('Stack test', 'KB_RUNTIME_UNEXPECTED');
       const originalStack = error.stack;
 
       const json = error.toJSON();
@@ -108,7 +107,7 @@ describe('Error Handling', () => {
       expect(error).toBeInstanceOf(PermissionError);
       expect(error).toBeInstanceOf(PluginError);
       expect(error.name).toBe('PermissionError');
-      expect(error.code).toBe(ErrorCode.PERMISSION_DENIED);
+      expect(error.code).toBe('KB_PLUGIN_PERMISSION_DENIED');
       expect(error.message).toBe('Access denied');
       expect(error.details?.path).toBe('/etc/passwd');
     });
@@ -118,7 +117,7 @@ describe('Error Handling', () => {
 
       expect(error).toBeInstanceOf(TimeoutError);
       expect(error.name).toBe('TimeoutError');
-      expect(error.code).toBe(ErrorCode.TIMEOUT);
+      expect(error.code).toBe('KB_RUNTIME_TIMEOUT');
     });
 
     it('should create AbortError with default message', () => {
@@ -126,28 +125,28 @@ describe('Error Handling', () => {
 
       expect(error).toBeInstanceOf(AbortError);
       expect(error.name).toBe('AbortError');
-      expect(error.code).toBe(ErrorCode.ABORTED);
+      expect(error.code).toBe('KB_PLUGIN_ABORTED');
       expect(error.message).toBe('Operation aborted');
     });
 
     it('should create ConfigError with details', () => {
       const error = new ConfigError('Invalid configuration', {
         field: 'port',
-        value: -1,
+        value: '-1',
       });
 
       expect(error).toBeInstanceOf(ConfigError);
-      expect(error.code).toBe(ErrorCode.CONFIG_ERROR);
+      expect(error.code).toBe('KB_CONFIG_INVALID');
       expect(error.details?.field).toBe('port');
     });
 
     it('should create ValidationError', () => {
       const error = new ValidationError('Validation failed', {
-        errors: ['Field required', 'Invalid format'],
+        errors: 'Field required, Invalid format',
       });
 
       expect(error).toBeInstanceOf(ValidationError);
-      expect(error.code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect(error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     });
 
     it('should create NotFoundError', () => {
@@ -157,34 +156,34 @@ describe('Error Handling', () => {
       });
 
       expect(error).toBeInstanceOf(NotFoundError);
-      expect(error.code).toBe(ErrorCode.NOT_FOUND);
+      expect(error.code).toBe('KB_RUNTIME_RESOURCE_NOT_FOUND');
     });
 
     it('should create RateLimitError with retry info', () => {
       const error = new RateLimitError('Too many requests', 5000);
 
       expect(error).toBeInstanceOf(RateLimitError);
-      expect(error.code).toBe(ErrorCode.RATE_LIMIT);
+      expect(error.code).toBe('KB_RUNTIME_RATE_LIMITED');
       expect(error.retryAfterMs).toBe(5000);
-      expect(error.details?.retryAfterMs).toBe(5000);
+      expect(error.details?.retryAfter).toBe('5s');
     });
 
     it('should create PlatformError with service name', () => {
       const error = new PlatformError('llm', 'LLM service unavailable', {
-        statusCode: 503,
+        statusCode: '503',
       });
 
       expect(error).toBeInstanceOf(PlatformError);
-      expect(error.code).toBe(ErrorCode.PLATFORM_ERROR);
+      expect(error.code).toBe('KB_HOST_ADAPTER_UNAVAILABLE');
       expect(error.service).toBe('llm');
       expect(error.details?.service).toBe('llm');
-      expect(error.details?.statusCode).toBe(503);
+      expect(error.details?.statusCode).toBe('503');
     });
   });
 
   describe('Error wrapping utilities', () => {
     it('should identify PluginError instances', () => {
-      const pluginError = new PluginError('Test', 'TEST');
+      const pluginError = new PluginError('Test', 'KB_RUNTIME_COMMAND_FAILED');
       const permissionError = new PermissionError('Access denied');
       const regularError = new Error('Regular error');
 
@@ -203,7 +202,7 @@ describe('Error Handling', () => {
 
       expect(wrapped).toBeInstanceOf(PluginError);
       expect(wrapped.message).toBe('Original error');
-      expect(wrapped.code).toBe('INTERNAL_ERROR');
+      expect(wrapped.code).toBe('KB_RUNTIME_UNEXPECTED');
       expect(wrapped.details?.originalName).toBe('Error');
       expect(wrapped.details?.stack).toContain('Original stack');
     });
@@ -211,47 +210,32 @@ describe('Error Handling', () => {
     it('should wrap TypeError with custom code', () => {
       const original = new TypeError('Type mismatch');
 
-      const wrapped = wrapError(original, 'TYPE_ERROR');
+      const wrapped = wrapError(original, 'KB_RUNTIME_INPUT_INVALID');
 
       expect(wrapped).toBeInstanceOf(PluginError);
-      expect(wrapped.code).toBe('TYPE_ERROR');
+      expect(wrapped.code).toBe('KB_RUNTIME_INPUT_INVALID');
       expect(wrapped.details?.originalName).toBe('TypeError');
     });
 
     it('should not re-wrap PluginError', () => {
-      const original = new PluginError('Already wrapped', 'CUSTOM');
+      const original = new PluginError('Already wrapped', 'KB_RUNTIME_COMMAND_FAILED');
 
       const wrapped = wrapError(original);
 
       expect(wrapped).toBe(original); // Same instance
-      expect(wrapped.code).toBe('CUSTOM');
+      expect(wrapped.code).toBe('KB_RUNTIME_COMMAND_FAILED');
     });
 
     it('should wrap non-Error objects as string', () => {
       const wrapped1 = wrapError('string error');
       expect(wrapped1.message).toBe('string error');
-      expect(wrapped1.code).toBe('INTERNAL_ERROR');
+      expect(wrapped1.code).toBe('KB_RUNTIME_UNEXPECTED');
 
       const wrapped2 = wrapError(42);
       expect(wrapped2.message).toBe('42');
 
       const wrapped3 = wrapError({ foo: 'bar' });
       expect(wrapped3.message).toBe('[object Object]');
-    });
-  });
-
-  describe('Error code constants', () => {
-    it('should have all error codes defined', () => {
-      expect(ErrorCode.PERMISSION_DENIED).toBe('PERMISSION_DENIED');
-      expect(ErrorCode.TIMEOUT).toBe('TIMEOUT');
-      expect(ErrorCode.ABORTED).toBe('ABORTED');
-      expect(ErrorCode.CONFIG_ERROR).toBe('CONFIG_ERROR');
-      expect(ErrorCode.VALIDATION_ERROR).toBe('VALIDATION_ERROR');
-      expect(ErrorCode.NOT_FOUND).toBe('NOT_FOUND');
-      expect(ErrorCode.RATE_LIMIT).toBe('RATE_LIMIT');
-      expect(ErrorCode.PLATFORM_ERROR).toBe('PLATFORM_ERROR');
-      expect(ErrorCode.INTERNAL_ERROR).toBe('INTERNAL_ERROR');
-      expect(ErrorCode.IPC_ERROR).toBe('IPC_ERROR');
     });
   });
 
@@ -275,26 +259,20 @@ describe('Error Handling', () => {
       expect(restored.stack).toBe(original.stack);
 
       // Use code to identify error type after deserialization
-      expect(restored.code).toBe(ErrorCode.PERMISSION_DENIED);
+      expect(restored.code).toBe('KB_PLUGIN_PERMISSION_DENIED');
     });
 
-    it('should handle nested error details', () => {
+    it('should preserve flat error identifier details over IPC', () => {
       const error = new ValidationError('Validation failed', {
-        errors: [
-          { field: 'email', message: 'Invalid format' },
-          { field: 'age', message: 'Must be positive' },
-        ],
-        metadata: {
-          timestamp: Date.now(),
-          validator: 'zod',
-        },
+        errors: 'email:Invalid format, age:Must be positive',
+        metadata: 'validator=zod',
       });
 
       const json = error.toJSON();
       const restored = PluginError.fromJSON(json);
 
-      expect(restored.details?.errors).toHaveLength(2);
-      expect(restored.details?.metadata).toBeDefined();
+      expect(restored.details?.errors).toBe('email:Invalid format, age:Must be positive');
+      expect(restored.details?.metadata).toBe('validator=zod');
     });
   });
 
@@ -311,7 +289,7 @@ describe('Error Handling', () => {
       expect(restored).not.toBeInstanceOf(TimeoutError);
 
       // Use code instead
-      expect(restored.code).toBe(ErrorCode.TIMEOUT);
+      expect(restored.code).toBe('KB_RUNTIME_TIMEOUT');
     });
 
     it('should recommend checking error.code for deserialized errors', () => {
@@ -326,11 +304,11 @@ describe('Error Handling', () => {
         const restored = PluginError.fromJSON(json);
 
         // After deserialization, use code not instanceof
-        if (restored.code === ErrorCode.PERMISSION_DENIED) {
+        if (restored.code === 'KB_PLUGIN_PERMISSION_DENIED') {
           expect(error).toBeInstanceOf(PermissionError);
-        } else if (restored.code === ErrorCode.TIMEOUT) {
+        } else if (restored.code === 'KB_RUNTIME_TIMEOUT') {
           expect(error).toBeInstanceOf(TimeoutError);
-        } else if (restored.code === ErrorCode.ABORTED) {
+        } else if (restored.code === 'KB_PLUGIN_ABORTED') {
           expect(error).toBeInstanceOf(AbortError);
         }
       }

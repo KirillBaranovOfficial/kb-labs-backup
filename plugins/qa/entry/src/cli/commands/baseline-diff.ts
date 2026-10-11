@@ -40,18 +40,17 @@ export default defineCommand<unknown, CLIInput<BaselineDiffFlags>, unknown>({
       }
 
       const diff = compareWithBaseline(latestCheck.raw, latestStats.raw, baseline);
+      const result = diff.newIssueCount > 0
+        ? { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'New issues found', hint: 'Review the baseline diff, then rerun `kb qa baseline diff`.' } }
+        : diff;
 
-      if (flags.json) {
-        return diff;
-      } else {
+      if (!flags.json) {
         for (const section of buildBaselineDiffReport(diff)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return diff.newIssueCount > 0
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'New issues found', hint: 'Review the baseline diff, then rerun `kb qa baseline diff`.' } }
-        : diff;
+      return result;
     },
   },
 });
