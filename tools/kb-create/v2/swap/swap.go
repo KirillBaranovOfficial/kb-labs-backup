@@ -94,7 +94,7 @@ func Run(ctx context.Context, host Host, op Operation) (Outcome, error) {
 	}
 	failure := contracts.NewDiag(contracts.CodeUpdateHostNotHealthy,
 		fmt.Sprintf("The host did not become healthy after the %s; the previous version %s was restored.", op.Name, op.PreviousVersion),
-		"Read the host log in the launcher state directory and report the correlationId.", resumeErr)
+		"Read the host log in the install-root host-state directory reported by `kb-create doctor` and report the correlationId.", resumeErr)
 	failure.Meta = map[string]any{"snapshot": recoveryPoint}
 	return outcome, failure
 }

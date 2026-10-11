@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 const ConfigFilename = "kb.config.jsonc"
@@ -219,9 +220,5 @@ func Write(plan contracts.ResolvedInstallPlan) (Output, error) {
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, data, mode); err != nil {
-		return err
-	}
-	return os.Rename(temporary, path)
+	return versionroot.AtomicWriteFile(path, data, mode)
 }

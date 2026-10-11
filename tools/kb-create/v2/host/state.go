@@ -1,8 +1,6 @@
 package host
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
@@ -12,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // KBHomeEnv overrides the machine-level KB Labs home (default ~/.kb). It is the
@@ -19,24 +18,20 @@ import (
 // isolates every per-user file in tests and sandboxes.
 const KBHomeEnv = "KB_HOME"
 
-// State names the per-user launcher files. The platform root served by a live
-// host is recorded in its pid and supervisor records.
+// State names the per-installation host lifecycle files.
 type State struct{ Dir string }
 
-// StateForRoot returns the lifecycle files owned by one installation. Shared
-// launcher registries remain under the base state; process and operation state
-// lives below the installation's stable identity directory.
-func StateForRoot(base State, platformRoot string) (State, error) {
-	root, err := filepath.Abs(platformRoot)
+// StateForRoot returns lifecycle files inside the installation container so
+// the running host record survives a switch between immutable version roots.
+func StateForRoot(platformRoot string) (State, error) {
+	if strings.TrimSpace(platformRoot) == "" {
+		return State{}, fmt.Errorf("platform root is empty")
+	}
+	layout, err := versionroot.ForPlatformPath(platformRoot)
 	if err != nil {
 		return State{}, fmt.Errorf("resolve platform root for lifecycle state: %w", err)
 	}
-	root = filepath.Clean(root)
-	if resolved, resolveErr := filepath.EvalSymlinks(root); resolveErr == nil {
-		root = resolved
-	}
-	identity := sha256.Sum256([]byte(root))
-	return State{Dir: filepath.Join(base.Dir, "roots", hex.EncodeToString(identity[:]))}, nil
+	return State{Dir: layout.HostStateDir()}, nil
 }
 
 // KBHome resolves the machine-level KB Labs home: $KB_HOME when set, else ~/.kb.
@@ -76,7 +71,7 @@ func (s State) unwritable(cause error) *diag.Diag {
 	return contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "Cannot write to the state directory "+s.Dir+".", "Fix the directory permissions or free disk space.", cause)
 }
 
-// AcquireOperation takes the per-user lifecycle lock so two launchers never
+// AcquireOperation takes the per-installation lifecycle lock so two launchers never
 // swap the same installation at once. The lock records the holder's pid; a lock
 // whose holder is gone is stale and is replaced. The returned function releases
 // it and is safe to call more than once.

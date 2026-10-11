@@ -198,13 +198,10 @@ func defaultPlatformRoot() string {
 }
 
 func populateSecrets(store secrets.Store, mappings string) error {
-	if strings.TrimSpace(mappings) == "" {
-		return nil
-	}
-	for _, pair := range strings.Split(mappings, ",") {
-		name, environment, ok := strings.Cut(strings.TrimSpace(pair), "=")
-		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(environment) == "" {
-			return fmt.Errorf("secret mapping %q must be requirement=ENV_VAR", pair)
+	for _, mapping := range splitSecretMappings(mappings) {
+		name, environment := mapping[0], mapping[1]
+		if environment == "" {
+			return fmt.Errorf("secret mapping %q must be requirement=ENV_VAR", name)
 		}
 		value, exists := os.LookupEnv(environment)
 		if !exists || value == "" {
@@ -215,6 +212,22 @@ func populateSecrets(store secrets.Store, mappings string) error {
 		}
 	}
 	return nil
+}
+
+func splitSecretMappings(mappings string) [][2]string {
+	if strings.TrimSpace(mappings) == "" {
+		return nil
+	}
+	values := make([][2]string, 0)
+	for _, pair := range strings.Split(mappings, ",") {
+		name, environment, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(environment) == "" {
+			values = append(values, [2]string{strings.TrimSpace(pair), ""})
+			continue
+		}
+		values = append(values, [2]string{strings.TrimSpace(name), strings.TrimSpace(environment)})
+	}
+	return values
 }
 
 func compileScenario(id, answers string, resume bool, base contracts.InstallRequest) (contracts.InstallRequest, error) {

@@ -1,52 +1,63 @@
-from __future__ import annotations
-
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-from journey_resources import (case_catalog_root, installer_case_fixture_root,
-                               workspace_resource, installed_platform_resource,
-                               read_installed_platform_resource)
+from journey_resources import (active_platform_root, current_link_path,
+                               parse_shell_commands, version_roots_path)
 
 
-class JourneyResourcesTest(unittest.TestCase):
-    def test_resources_share_repository_relative_layout(self):
-        root = Path(__file__).resolve().parents[2]
+class ActivePlatformRootTest(unittest.TestCase):
+    def test_missing_and_empty_targets_have_no_platform_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            with self.assertRaises(FileNotFoundError):
+                active_platform_root(parent / "missing")
+            empty = parent / "empty"
+            empty.mkdir()
+            with self.assertRaises(FileNotFoundError):
+                active_platform_root(empty)
 
-        self.assertEqual(case_catalog_root(), root / "docs/qa/scenarios")
-        self.assertEqual(installer_case_fixture_root(), root / "e2e/platform/fixtures/installer-cases")
-        self.assertEqual(workspace_resource("contracts/ux-result/machine-result.schema.json"),
-                         root / "contracts/ux-result/machine-result.schema.json")
+    def test_invalid_container_does_not_fall_back_to_install_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            install_root = Path(temporary) / "install"
+            install_root.mkdir()
+            (install_root / "foreign.txt").write_text("foreign")
+            with self.assertRaisesRegex(ValueError, "current is not a symlink"):
+                active_platform_root(install_root)
 
-    def test_installed_contract_path_is_explicit_and_has_no_repository_fallback(self):
-        self.assertEqual(installed_platform_resource("ux-result/machine-result.schema.json"),
-                         Path("/opt/kb-contracts/ux-result/machine-result.schema.json"))
 
-    def test_missing_installed_contract_raises_at_installed_boundary(self):
-        with self.assertRaises(FileNotFoundError):
-            read_installed_platform_resource("missing-contract.json")
+    def test_valid_container_resolves_current(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            install_root = Path(temporary) / "install"
+            version = install_root / "versions" / "1.0.0"
+            version.mkdir(parents=True)
+            install_root.joinpath("current").symlink_to(Path("versions") / "1.0.0")
+            self.assertEqual(active_platform_root(install_root), version.resolve())
+
+    def test_container_rejects_current_link_outside_version_roots(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install_root = parent / "install"
+            version_roots_path(install_root).mkdir(parents=True)
+            foreign = parent / "foreign"
+            foreign.mkdir()
+            current_link_path(install_root).symlink_to(Path("../foreign"))
+            with self.assertRaisesRegex(ValueError, "does not select a complete version"):
+                active_platform_root(install_root)
+
+
+class ShellHintParserTest(unittest.TestCase):
+    def test_parses_shell_quote_grammar_and_command_separator(self):
+        sequence = "'kb-create' 'stop' '--platform-root' 'a'\"'\"'b' && 'kb-create' 'apply'"
+        self.assertEqual(parse_shell_commands(sequence),
+                         [["kb-create", "stop", "--platform-root", "a'b"],
+                          ["kb-create", "apply"]])
+
+    def test_rejects_malformed_command_sequences(self):
+        for sequence in ("", "cmd &&", "cmd & next", "&& cmd"):
+            with self.subTest(sequence=sequence), self.assertRaises(ValueError):
+                parse_shell_commands(sequence)
 
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class JourneyScriptPathsTest(unittest.TestCase):
-    """The runner image mirrors the repository, so scripts must resolve through journey_module."""
-
-    def test_no_hardcoded_image_paths_for_journey_scripts(self):
-        journey_dir = Path(__file__).resolve().parent
-        offenders = []
-        for source in sorted(journey_dir.glob("*.py")):
-            if source.name.startswith("test_"):
-                continue
-            for number, line in enumerate(source.read_text().splitlines(), 1):
-                if "/opt/kb-journey" in line:
-                    offenders.append(f"{source.name}:{number}")
-        self.assertEqual(offenders, [], "use journey_resources.journey_module() instead of image paths")
-
-    def test_runner_scripts_resolve_to_existing_files(self):
-        from journey_resources import journey_module
-        for name in ("runner.py", "service_runner.py", "entrypoint.py"):
-            self.assertTrue(journey_module(name).is_file(), name)

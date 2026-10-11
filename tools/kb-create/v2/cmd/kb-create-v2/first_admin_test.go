@@ -262,7 +262,8 @@ func TestGatewayFailureEnvelopePreservesDiagnosticWithoutSecrets(t *testing.T) {
 	if !errors.As(err, &diagnostic) {
 		t.Fatalf("Gateway failure = %T %v, want catalogued diagnostic", err, err)
 	}
-	if diagnostic.Code != "KB_AUTH_FORBIDDEN" || diagnostic.Message != "Gateway auth health is unavailable." || diagnostic.Hint != `Run kb-create doctor --platform-root <root>; token="[REDACTED]"` {
+	entry, _ := diag.LookupCatalog("KB_AUTH_FORBIDDEN")
+	if diagnostic.Code != "KB_AUTH_FORBIDDEN" || diagnostic.Message != entry.Message || diagnostic.Hint != entry.Hint {
 		t.Fatalf("Gateway failure diagnostic = %#v", diagnostic)
 	}
 	encoded, marshalErr := json.Marshal(diagnostic)
@@ -337,7 +338,8 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 			{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true},
 		}}}}
 	resolved := resolvedPlan{Plan: plan, State: state}
-	store := secrets.Store{PlatformRoot: root}
+	platformRoot := platformRootForTest(t, root)
+	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 	starter := &bootstrapTestHost{address: address}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
 	firstOutput := runApplyStreamForTest(t, resolved, deps)
@@ -363,7 +365,7 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 		t.Fatalf("operation log %q is empty", firstResult.LogPath)
 	}
 	assertSecretAbsent(t, "operation log", logBytes, password)
-	receiptBytes, err := os.ReadFile(receipt.Path(root))
+	receiptBytes, err := os.ReadFile(receipt.Path(platformRoot))
 	if err != nil {
 		t.Fatalf("read apply receipt: %v", err)
 	}

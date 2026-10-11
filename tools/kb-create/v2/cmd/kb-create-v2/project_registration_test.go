@@ -1,9 +1,12 @@
 package v2cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,9 +15,11 @@ import (
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // case: S-187.10
@@ -70,6 +75,18 @@ func TestSecuredProjectRegistrationUsesTransientGatewayLogin(t *testing.T) {
 	if err := (secrets.Store{PlatformRoot: root}).Put("gateway.bootstrap.password", password); err != nil {
 		t.Fatal(err)
 	}
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretStorePath, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretStoreBefore, err := os.ReadFile(secretStorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	id, err := registerProject(root, project)
 	if err != nil || id != "prj_test" || loginCalls != 1 || projectCalls != 1 {
 		t.Fatalf("registration id/error/calls = %q / %v / %d / %d", id, err, loginCalls, projectCalls)
@@ -85,47 +102,172 @@ func TestSecuredProjectRegistrationUsesTransientGatewayLogin(t *testing.T) {
 	if stored, present, err := (secrets.Store{PlatformRoot: root}).Get("gateway.bootstrap.password"); err != nil || !present || stored != password {
 		t.Fatalf("bootstrap password state changed: present=%v err=%v", present, err)
 	}
-}
-
-// case: S-223.1
-func TestRegistrationFailureKeepsCauseAndActionableSecuredSequence(t *testing.T) {
-	root := t.TempDir()
-	project := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		envelope, err := diag.ToEnvelope(diag.New("KB_AUTH_INVALID_CREDENTIALS", "The credentials are invalid."))
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		envelope.CorrelationID = "registration-test"
-		_, _ = w.Write(append(append([]byte(`{"ok":false,"error":`), mustJSON(t, envelope)...), '}'))
-	}))
-	defer server.Close()
-	active := contracts.InstallReceipt{ID: "failed-receipt", Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{Values: map[string]string{
-		"gateway.access.mode":          `"secured"`,
-		"gateway.bootstrap.adminEmail": `"admin@example.test"`,
-	}}}, Verification: contracts.Verification{HostHealthURL: server.URL + "/health"}}
-	if err := receipt.Write(root, active); err != nil {
-		t.Fatal(err)
-	}
-	if err := (secrets.Store{PlatformRoot: root}).Put("gateway.bootstrap.password", "bootstrap-password-for-test"); err != nil {
-		t.Fatal(err)
-	}
-	_, cause := registerProject(root, project)
-	if cause == nil {
-		t.Fatal("login refusal unexpectedly registered project")
-	}
-	failure := projectRegistrationFailure(root, project, cause)
-	if failure.Code != "KB_INSTALL_PROJECT_REGISTRATION_FAILED" || failure.Meta["causeCode"] != "KB_AUTH_INVALID_CREDENTIALS" ||
-		!strings.Contains(failure.Hint, "kb auth login --gateway-url") || !strings.Contains(failure.Hint, "kb project add") ||
-		!strings.Contains(failure.Hint, "kb project show") || failure.Cause == "bootstrap-password-for-test" {
-		t.Fatalf("registration diagnostic is incomplete or exposes a secret: %#v", failure)
+	secretStoreAfter, err := os.ReadFile(secretStorePath)
+	if err != nil || !bytes.Equal(secretStoreBefore, secretStoreAfter) {
+		t.Fatalf("project registration changed the existing bootstrap secret store: %v", err)
 	}
 }
 
-// case: S-223.1
+// case: S-224.1
+func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
+	const password = "x18-bootstrap-password-marker"
+	const token = "x18-access-token-marker"
+	tests := []struct {
+		name      string
+		causeCode string
+		stage     string
+		status    int
+	}{
+		{"login refused", "KB_AUTH_INVALID_CREDENTIALS", "login", http.StatusUnauthorized},
+		{"login malformed", "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", "login", http.StatusUnauthorized},
+		{"register refused", "KB_AUTH_FORBIDDEN", "register", http.StatusForbidden},
+		{"register malformed", "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", "register", http.StatusBadGateway},
+		{"register transport error", "KB_HOST_UNREACHABLE", "register", 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root, home, project := t.TempDir(), t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			responseWithSecrets := func(w http.ResponseWriter, status int, code string) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Remote-Credential", password+" "+token)
+				w.WriteHeader(status)
+				if code == "" {
+					_, _ = io.WriteString(w, `{"error":"`+password+" "+token+`"`)
+					return
+				}
+				catalog, ok := diag.LookupCatalog(code)
+				if !ok {
+					t.Fatalf("test code %q is absent from the platform catalog", code)
+				}
+				body, err := json.Marshal(map[string]any{"ok": false, "error": map[string]any{
+					"code": code, "area": catalog.Area, "stage": catalog.Stage, "severity": catalog.Severity, "retryable": catalog.Retryable,
+					"message": password + " " + token, "hint": token + " " + password,
+					"cause": password + " " + token, "correlationId": token,
+					"details": map[string]string{"remote": password + " " + token},
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var payload struct{}
+				decoded, decodeErr := result.DecodeResultWithContext(body, &payload, result.RemoteFailureContext{RequestStage: test.stage, HTTPStatus: status})
+				if decodeErr != nil || decoded == nil || decoded.Code != code {
+					t.Fatalf("shared decoder did not preserve catalogued code: code=%q failure=%#v err=%v", code, decoded, decodeErr)
+				}
+				_, _ = w.Write(body)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/auth/login/cli" {
+					if test.stage == "login" {
+						if test.name == "login malformed" {
+							responseWithSecrets(w, test.status, "")
+						} else {
+							responseWithSecrets(w, test.status, "KB_AUTH_INVALID_CREDENTIALS")
+						}
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(w, `{"accessToken":%q,"refreshToken":%q,"expiresIn":3600,"tenantId":"workspace"}`, token, token)
+					return
+				}
+				if test.name == "register transport error" {
+					connection, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					_, _ = fmt.Fprintf(connection, "invalid-response %s %s\r\n\r\n", password, token)
+					_ = connection.Close()
+					return
+				}
+				if test.name == "register malformed" {
+					responseWithSecrets(w, test.status, "")
+					return
+				}
+				responseWithSecrets(w, test.status, "KB_AUTH_FORBIDDEN")
+			}))
+			defer server.Close()
+
+			active := contracts.InstallReceipt{ID: "failed-receipt", Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{Values: map[string]string{
+				"gateway.access.mode":          `"secured"`,
+				"gateway.bootstrap.adminEmail": `"admin@example.test"`,
+				"gateway.bootstrap.tenantId":   `"workspace"`,
+			}}}, Verification: contracts.Verification{HostHealthURL: server.URL + "/health"}}
+			if err := receipt.Write(root, active); err != nil {
+				t.Fatal(err)
+			}
+			if err := (secrets.Store{PlatformRoot: root}).Put("gateway.bootstrap.password", password); err != nil {
+				t.Fatal(err)
+			}
+			layout, err := versionroot.New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secretStorePath, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
+			if err != nil {
+				t.Fatal(err)
+			}
+			secretStoreBefore, err := os.ReadFile(secretStorePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonicalSecretStorePath, err := filepath.EvalSymlinks(secretStorePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, cause := registerProject(root, project)
+			if cause == nil {
+				t.Fatal("registration failure unexpectedly succeeded")
+			}
+			failure := projectRegistrationFailure(root, project, cause)
+			statusMatches := test.status == 0 && failure.Meta["httpStatus"] == nil ||
+				test.status != 0 && failure.Meta["httpStatus"] == test.status
+			if failure.Code != "KB_INSTALL_PROJECT_REGISTRATION_FAILED" || failure.Meta["causeCode"] != test.causeCode ||
+				failure.Meta["requestStage"] != test.stage || !statusMatches {
+				t.Fatalf("registration diagnostic metadata = %#v", failure.Meta)
+			}
+			var jsonOutput, humanOutput bytes.Buffer
+			result.RenderDiag(&jsonOutput, &humanOutput, failure, result.ModeJSON)
+			result.RenderDiag(&bytes.Buffer{}, &humanOutput, failure, result.ModeHuman)
+			for _, secret := range []string{password, token} {
+				if strings.Contains(failure.Message+failure.Hint+failure.Reason+failure.Cause, secret) ||
+					strings.Contains(jsonOutput.String(), secret) || strings.Contains(humanOutput.String(), secret) {
+					t.Fatalf("remote secret %q reached a diagnostic or renderer", secret)
+				}
+			}
+			for _, path := range []string{root, home} {
+				err := filepath.WalkDir(path, func(file string, entry os.DirEntry, walkErr error) error {
+					if walkErr != nil || entry.IsDir() {
+						return walkErr
+					}
+					data, err := os.ReadFile(file)
+					if err != nil {
+						return err
+					}
+					if bytes.Contains(data, []byte(token)) {
+						return fmt.Errorf("file %s contains a remote token", file)
+					}
+					if bytes.Contains(data, []byte(password)) {
+						canonicalFile, err := filepath.EvalSymlinks(file)
+						if err != nil || filepath.Clean(canonicalFile) != filepath.Clean(canonicalSecretStorePath) {
+							return fmt.Errorf("file %s contains the bootstrap password outside its unchanged secret store", file)
+						}
+					}
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			secretStoreAfter, err := os.ReadFile(secretStorePath)
+			if err != nil || !bytes.Equal(secretStoreBefore, secretStoreAfter) {
+				t.Fatalf("registration failure changed the existing bootstrap secret store: %v", err)
+			}
+		})
+	}
+}
+
+// case: S-224.1
 func TestProjectPathRemovedAfterApplyRetainsCataloguedCause(t *testing.T) {
 	root := t.TempDir()
 	missing := filepath.Join(t.TempDir(), "removed-after-apply")
@@ -148,14 +290,12 @@ func TestExistingInstallationRejectsDifferentProjectBeforeApply(t *testing.T) {
 	active := contracts.InstallReceipt{ID: "receipt-existing", Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{
 		PlatformRoot: root, ProjectRoot: activeProject,
 	}}}
-	if err := receipt.Write(root, active); err != nil {
-		t.Fatal(err)
-	}
-	existing, failure := existingProjectSelection(root, selectedProject)
+	writeVersionedReceipt(t, root, active)
+	existing, failure := existingProjectSelection(platformRootForTest(t, root), selectedProject)
 	if !existing || failure == nil || failure.Code != "KB_INSTALL_PROJECT_SELECTION_CHANGED" || !strings.Contains(failure.Hint, "kb project add") || !strings.Contains(failure.Hint, "kb project show") {
 		t.Fatalf("existing/failure = %v / %#v", existing, failure)
 	}
-	if _, failure := existingProjectSelection(root, ""); failure != nil {
+	if _, failure := existingProjectSelection(platformRootForTest(t, root), ""); failure != nil {
 		t.Fatalf("empty project selection refused: %v", failure)
 	}
 }
@@ -168,9 +308,7 @@ func TestExistingApplyRejectsDifferentProjectBeforeOperation(t *testing.T) {
 	active := contracts.InstallReceipt{ID: "receipt-existing", Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{
 		PlatformRoot: root, ProjectRoot: activeProject,
 	}}}
-	if err := receipt.Write(root, active); err != nil {
-		t.Fatal(err)
-	}
+	writeVersionedReceipt(t, root, active)
 	resolved := resolvedPlan{Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{
 		PlatformRoot: root, ProjectRoot: selectedProject,
 	}}}

@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from invocations import (decode_ux_error_result, decode_ux_success_result,
                          read_ux_cli_result, start_background_command)
 from service_steps import Journey
+from journey_resources import active_platform_root, snapshot_state_tree
 
 
 Run = Callable[[list[str], Path], subprocess.CompletedProcess]
@@ -51,7 +52,7 @@ def _component_version(payload: dict) -> str | None:
 
 
 def _file_fingerprints(root: Path, projects: tuple[Path, ...]) -> dict[str, str]:
-    names = {".kb/kb.config.jsonc", ".kb/v2/secrets.env"}
+    names = {"current/.kb/kb.config.jsonc", "current/.kb/v2/secrets.env"}
     result = {}
     paths = [root / name for name in names]
     paths.extend(project / ".kb" / name for project in projects
@@ -59,7 +60,7 @@ def _file_fingerprints(root: Path, projects: tuple[Path, ...]) -> dict[str, str]
     for path in paths:
         if path.is_file():
             result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
-    for path in root.parent.rglob("*.sqlite"):
+    for path in (root / "state" / "data").rglob("*.sqlite"):
         if path.is_file():
             result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result
@@ -100,7 +101,7 @@ def run_platform_update_variant_steps(
     project_a: Path, project_b: Path, request_file: Path,
     base_index: Path, update_index: Path, patch_index: Path, minor_index: Path, jump_index: Path,
     next_index: Path, bad_checksum_index: Path, config_failure_index: Path,
-    doctor_failure_index: Path, failed_host_index: Path,
+    doctor_failure_index: Path, failed_host_index: Path, healthy_host_index: Path,
     run: Run, run_interactive: InteractiveRun, mcp_token: str | None = None,
     case_journey: Journey | None = None,
 ) -> Journey:
@@ -110,8 +111,21 @@ def run_platform_update_variant_steps(
         return journey.step(name, capability, check, cases=cases, requires=requires)
 
     root = str(platform_root)
-    request = platform_root / ".kb" / "update-variant-request.json"
-    receipt_path = platform_root / ".kb/v2/receipt.json"
+    def capture_shared_update_state():
+        running_tree = active_platform_root(platform_root)
+        return (snapshot_state_tree(platform_root / "state"), running_tree,
+                (running_tree / ".kb/marketplace.lock").read_bytes(),
+                (running_tree / ".kb/kb.config.jsonc").read_bytes())
+
+    def assert_shared_update_state_unchanged(label: str, before) -> None:
+        state_before, running_tree, lock_before, config_before = before
+        if snapshot_state_tree(platform_root / "state") != state_before:
+            raise RuntimeError(f"{label} changed the shared state tree")
+        if ((running_tree / ".kb/marketplace.lock").read_bytes() != lock_before
+                or (running_tree / ".kb/kb.config.jsonc").read_bytes() != config_before):
+            raise RuntimeError(f"{label} changed the still-running version's lock or config view")
+    request = platform_root / "state" / "update-variant-request.json"
+    receipt_path = platform_root / "current/.kb/v2/receipt.json"
     initial_receipt = json.loads(receipt_path.read_text())
     baseline_version = initial_receipt["plan"]["serviceGraph"]["platformVersion"]
     before_files: dict[str, str] = {}
@@ -187,18 +201,20 @@ def run_platform_update_variant_steps(
         target = _target(bad_checksum_index)
         _request_for(request_file, target, request)
         before_receipt = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
-        before_config = hashlib.sha256((platform_root / ".kb/kb.config.jsonc").read_bytes()).hexdigest()
-        before_secrets = hashlib.sha256((platform_root / ".kb/v2/secrets.env").read_bytes()).hexdigest()
+        before_config = hashlib.sha256((platform_root / "current/.kb/kb.config.jsonc").read_bytes()).hexdigest()
+        before_secrets = hashlib.sha256((platform_root / "current/.kb/v2/secrets.env").read_bytes()).hexdigest()
+        shared_before = capture_shared_update_state()
         error = _error(cli([launcher, "update", "--platform-root", root, "--json", "--index",
                             str(bad_checksum_index), "--input", str(request)]), "bad-checksum update")
         if not error.get("code") or not error.get("hint"):
             raise RuntimeError("bad-checksum update did not return a typed error with a hint")
         if hashlib.sha256(receipt_path.read_bytes()).hexdigest() != before_receipt:
             raise RuntimeError("checksum failure changed the active receipt")
-        if hashlib.sha256((platform_root / ".kb/kb.config.jsonc").read_bytes()).hexdigest() != before_config:
+        if hashlib.sha256((platform_root / "current/.kb/kb.config.jsonc").read_bytes()).hexdigest() != before_config:
             raise RuntimeError("checksum failure changed generated config")
-        if hashlib.sha256((platform_root / ".kb/v2/secrets.env").read_bytes()).hexdigest() != before_secrets:
+        if hashlib.sha256((platform_root / "current/.kb/v2/secrets.env").read_bytes()).hexdigest() != before_secrets:
             raise RuntimeError("checksum failure changed installation secrets")
+        assert_shared_update_state_unchanged("checksum failure", shared_before)
         status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]), "status after checksum failure")
         if status.get("runningVersion") != baseline_version or status.get("installedVersion") != baseline_version:
             raise RuntimeError("checksum failure did not leave the old host and receipt on N")
@@ -213,10 +229,11 @@ def run_platform_update_variant_steps(
             target = _target(index)
             _request_for(request_file, target, request)
             receipt_hash = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
-            config_path = platform_root / ".kb/kb.config.jsonc"
-            secret_path = platform_root / ".kb/v2/secrets.env"
+            config_path = platform_root / "current/.kb/kb.config.jsonc"
+            secret_path = platform_root / "current/.kb/v2/secrets.env"
             config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
             secret_hash = hashlib.sha256(secret_path.read_bytes()).hexdigest()
+            shared_before = capture_shared_update_state()
             error = _error(cli([launcher, "update", "--platform-root", root, "--index", str(index),
                                 "--input", str(request), "--json"]), f"staged {label} verification")
             if not error.get("code") or not error.get("hint"):
@@ -227,6 +244,7 @@ def run_platform_update_variant_steps(
                 raise RuntimeError(f"staged {label} failure changed generated config")
             if hashlib.sha256(secret_path.read_bytes()).hexdigest() != secret_hash:
                 raise RuntimeError(f"staged {label} failure changed installation secrets")
+            assert_shared_update_state_unchanged(f"staged {label} failure", shared_before)
             status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]),
                               f"status after staged {label} failure")
             if status.get("runningVersion") != baseline_version or status.get("installedVersion") != baseline_version:
@@ -366,7 +384,7 @@ def run_platform_update_variant_steps(
             status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]), f"status after {label} start")
             if status.get("runningVersion") != target or status.get("installedVersion") != target:
                 raise RuntimeError(f"start did not bring up unified {label} target")
-            for executable in (kb_binary, str(platform_root / ".kb/v2/bin/kb-create")):
+            for executable in (kb_binary, str(platform_root / "current/.kb/v2/bin/kb-create")):
                 version = cli([executable, "--version"])
                 if version.returncode or target not in version.stdout:
                     raise RuntimeError(f"{executable} --version did not report unified target {target}")
@@ -472,12 +490,31 @@ def run_platform_update_variant_steps(
                            "verify installed project registration"))
 
     def recover_failed_host() -> None:
+        v1 = _target(jump_index)
+        v2 = _target(minor_index)
         target = _target(failed_host_index)
+        _request_for(request_file, v2, request)
+        second = _payload(cli([launcher, "update", "--platform-root", root, "--json", "--index",
+                              str(minor_index), "--input", str(request)]), "install pending v2")
+        first_snapshot = second.get("snapshot", {}).get("id")
+        if not first_snapshot:
+            raise RuntimeError("first update omitted its rollback snapshot ID")
+        if second.get("pendingRestart", {}).get("installedVersion") != v2:
+            raise RuntimeError("second update did not leave v1 running with v2 pending")
+        status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]), "status after v2")
+        if status.get("runningVersion") != v1 or status.get("installedVersion") != v2:
+            raise RuntimeError("v2 update changed the running v1 host")
         _request_for(request_file, target, request)
         updated = _payload(cli([launcher, "update", "--platform-root", root, "--json", "--index",
                                 str(failed_host_index), "--input", str(request)]), "install failed-host candidate")
         if not isinstance(updated.get("pendingRestart"), dict):
             raise RuntimeError("failed-host update omitted the pending restart before health verification")
+        before_restart = _payload(cli([launcher, "doctor", "--platform-root", root, "--json"]),
+                                  "doctor after v3 update")
+        retained = before_restart.get("retention", {}).get("versions", [])
+        retained_versions = {item.get("version") for item in retained if isinstance(item, dict)}
+        if retained_versions != {v1, target}:
+            raise RuntimeError(f"repeated update did not retain running v1 and active v3 while pruning v2: {retained}")
         error = _error(cli([launcher, "restart", "--platform-root", root, "--json"]),
                        "restart failed-host candidate")
         if error.get("code") != "KB_UPDATE_HOST_NOT_HEALTHY":
@@ -487,13 +524,37 @@ def run_platform_update_variant_steps(
             raise RuntimeError("health failure omitted its recovery snapshot or operation log")
         status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]), "status after auto rollback")
         doctor = _payload(cli([launcher, "doctor", "--platform-root", root, "--json"]), "doctor after auto rollback")
-        if status.get("runningVersion") != _target(jump_index) or doctor.get("platform", {}).get("ok") is not True:
-            raise RuntimeError("automatic recovery did not restore a healthy prior version")
+        if status.get("runningVersion") != v1 or doctor.get("platform", {}).get("ok") is not True:
+            raise RuntimeError("automatic recovery did not restore the last-healthy v1 root")
+        healthy_target = _target(healthy_host_index)
+        _request_for(request_file, healthy_target, request)
+        healthy = _payload(cli([launcher, "update", "--platform-root", root, "--json", "--index",
+                                str(healthy_host_index), "--input", str(request)]), "install healthy next release")
+        if healthy.get("pendingRestart", {}).get("installedVersion") != healthy_target:
+            raise RuntimeError("healthy next release update omitted pending restart")
+        _payload(cli([launcher, "restart", "--platform-root", root, "--json"]), "restart healthy next release")
+        status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]),
+                          "status after healthy next release")
+        if status.get("runningVersion") != healthy_target or status.get("installedVersion") != healthy_target:
+            raise RuntimeError("healthy next release did not become the running version")
+        after_healthy = _payload(cli([launcher, "doctor", "--platform-root", root, "--json"]),
+                                  "doctor after healthy next release restart")
+        healthy_versions = after_healthy.get("retention", {}).get("versions", [])
+        if {item.get("version") for item in healthy_versions if isinstance(item, dict)} != {v2}:
+            raise RuntimeError("successful newer health check did not prune last-healthy v1")
+        rolled_back = _payload(cli([launcher, "rollback", "--platform-root", root, "--snapshot", first_snapshot,
+                                    "--yes", "--json"]), "rollback snapshot after its source root was pruned")
+        if rolled_back.get("hostRestarted") is not True:
+            raise RuntimeError("rollback from the installer-owned snapshot did not restart the restored host")
+        restored = _payload(cli([launcher, "status", "--platform-root", root, "--json"]),
+                            "status after rollback from a pruned root snapshot")
+        if restored.get("runningVersion") != v1 or restored.get("installedVersion") != v1:
+            raise RuntimeError("rollback did not restore the snapshot version after its version root was pruned")
         if not _retains_rows(before_rows, _database_rows(platform_root.parent)):
             raise RuntimeError("automatic recovery lost persisted platform data")
 
-    claim_step("restore prior snapshot after failed restarted host health", "platform.rollback",
-                 recover_failed_host, cases=["S-024.6"],
+    claim_step("retain last healthy root through repeated updates and restart recovery", "platform.rollback",
+                 recover_failed_host, cases=["S-023.15", "S-024.6", "S-024.7"],
                  requires=("candidate provenance", "launcher version", "start platform host", "start host",
                            "verify installed project registration"))
 
@@ -505,8 +566,8 @@ def run_platform_update_variant_steps(
             raise RuntimeError("doctor omitted retained version and snapshot disk-use report")
         snapshots = retention.get("snapshots")
         versions = retention.get("versions")
-        if not isinstance(snapshots, list) or len(snapshots) > 2 or not isinstance(versions, list) or len(versions) < 2:
-            raise RuntimeError("doctor retention report does not retain active/previous versions and at most two snapshots")
+        if not isinstance(snapshots, list) or len(snapshots) > 2 or not isinstance(versions, list) or len(versions) != 1:
+            raise RuntimeError("doctor retention report does not prune the former last-healthy root after successful restart")
         if any(not isinstance(item, dict) or not isinstance(item.get("diskUsageBytes"), int) for item in snapshots + versions):
             raise RuntimeError("doctor retention report omitted diskUsageBytes for a retained item")
 

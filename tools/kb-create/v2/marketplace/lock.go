@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Schema must match core-discovery's MarketplaceLock schema
@@ -114,11 +115,7 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 	}
 	data = append(data, '\n')
 	target := filepath.Join(kbDir, "marketplace.lock")
-	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, target)
+	return versionroot.AtomicWriteFile(target, data, 0o600)
 }
 
 func packageIntegrity(platformRoot, packageName string) (string, error) {

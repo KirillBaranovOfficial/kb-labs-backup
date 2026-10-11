@@ -8,6 +8,7 @@ from typing import Callable
 
 from platform_update_steps import _json_command
 from invocations import decode_ux_error_result, decode_ux_success_result, read_ux_cli_result
+from journey_resources import active_platform_root
 from service_steps import Journey
 
 
@@ -22,7 +23,7 @@ def run_platform_channel_steps(
 ) -> Journey:
     journey = Journey(mode, f"platform-channels-{mode}")
     root = str(platform_root)
-    receipt_path = platform_root / ".kb/v2/receipt.json"
+    receipt_path = active_platform_root(platform_root) / ".kb/v2/receipt.json"
     request = json.loads(request_file.read_text())
     resource_block_reason: str | None = None
 
@@ -111,7 +112,7 @@ def run_platform_channel_steps(
             return blocked
         fresh = str(fresh_root)
         try:
-            fresh_receipt = json.loads((fresh_root / ".kb/v2/receipt.json").read_text())
+            fresh_receipt = json.loads((active_platform_root(fresh_root) / ".kb/v2/receipt.json").read_text())
             plan = fresh_receipt.get("plan", {})
             if plan.get("platformChannel") != "canary" or plan.get("serviceGraph", {}).get("platformVersion") != canary_version:
                 raise RuntimeError("fresh canary receipt does not record channel and exact version")

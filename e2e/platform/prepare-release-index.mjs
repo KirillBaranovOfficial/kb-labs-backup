@@ -217,6 +217,31 @@ const failedHost = spawnSync(process.execPath, [
 ], { stdio: 'inherit' });
 if (failedHost.status !== 0) process.exit(failedHost.status ?? 1);
 
+// After proving automatic restore, the journey installs a later healthy
+// release and proves the last-healthy root is pruned only after health passes.
+const healthyHostVersion = `${match[1]}.${Number(match[2]) + 2}.1`;
+const healthyHostPackagesDir = join(resolve(output, '..'), 'healthy-host-packages');
+prepareJourneyUpdatePackages(stage, healthyHostPackagesDir, healthyHostVersion, { publishDir: packagesDir });
+const healthyHostOutput = join(resolve(output, '..'), 'release-index-update-healthy-host.json');
+const healthyHost = spawnSync(process.execPath, [
+  prepareScript,
+  '--flow', 'platform',
+  '--channel', 'stable',
+  '--artifacts-dir', healthyHostPackagesDir,
+  '--binary-manifest', binaryManifest,
+  '--platform-version', healthyHostVersion,
+  '--platform-requires', platformRequires,
+  '--platform-adapter-config', adapterConfig,
+  '--platform-adapter-options', adapterOptions,
+  '--platform-member-packages', platformMembers,
+  '--adapter-overrides', adapterOverrides,
+  '--registry', 'http://verdaccio:4873',
+  '--output', healthyHostOutput,
+  ...releaseNotesArgs,
+  '--sealer-bin', sealer,
+], { stdio: 'inherit' });
+if (healthyHost.status !== 0) process.exit(healthyHost.status ?? 1);
+
 // Keep the checksum valid inside the sealed index, then the candidate
 // publisher corrupts the served copy at this isolated URL so download-time
 // verification sees a real artifact mismatch.

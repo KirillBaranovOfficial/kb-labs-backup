@@ -8,6 +8,17 @@ type UpdateSummary struct {
 	ReleaseNotes    []UpdateReleaseNotes `json:"releaseNotes"`
 }
 
+type PendingRestart struct {
+	Services         []PendingRestartService `json:"services"`
+	InstalledVersion string                  `json:"installedVersion"`
+	Command          string                  `json:"command"`
+}
+
+type PendingRestartService struct {
+	ID             string `json:"id"`
+	RunningVersion string `json:"runningVersion"`
+}
+
 type UpdateComponent struct {
 	ID          string `json:"id"`
 	Package     string `json:"package"`

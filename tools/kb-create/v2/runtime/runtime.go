@@ -21,6 +21,7 @@ import (
 	"github.com/kb-labs/create/v2/render"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/verify"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 type ArtifactInstaller interface {
@@ -62,15 +63,25 @@ type systemClock struct{}
 func (systemClock) Now() time.Time { return time.Now().UTC() }
 
 type Dependencies struct {
-	Artifacts ArtifactInstaller
-	Host      HostStarter
-	Probe     HostProbe
-	Clock     Clock
+	Artifacts               ArtifactInstaller
+	Host                    HostStarter
+	Probe                   HostProbe
+	PreserveGeneratedConfig bool
+	VerificationConfigRoot  string
+	Clock                   Clock
 	// CorrelationID is supplied by a frontend; it is persisted verbatim in the
 	// receipt and must be safe to disclose in a diagnostic bundle.
 	CorrelationID string
 	Secrets       *secrets.Store
 	Progress      ProgressSink
+}
+
+func installerSnapshots(platformRoot string) (string, error) {
+	layout, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return "", err
+	}
+	return layout.SnapshotsDir(), nil
 }
 
 // Apply is the one V2 fresh-install operation. It deliberately has no
@@ -135,7 +146,7 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		_ = previousProjections.Restore()
 		return contracts.InstallReceipt{}, fmt.Errorf("write marketplace lock: %w", err)
 	}
-	if plan.Host != nil {
+	if plan.Host != nil && !deps.PreserveGeneratedConfig {
 		if err := emit("Render config", true); err != nil {
 			return contracts.InstallReceipt{}, errors.Join(fmt.Errorf("report apply progress: %w", err), previousProjections.Restore())
 		}
@@ -173,7 +184,7 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	if err := emit("Verify installation", true); err != nil {
 		return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("report apply progress: %w", err), previousProjections.Restore()))
 	}
-	check, err := verify.Run(plan, now)
+	check, err := verify.RunWithConfigRoot(plan, now, verificationConfigRoot(plan, deps))
 	if err != nil {
 		progressErr := emit("Verify installation", false)
 		return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("verify installation: %w", errors.Join(err, progressErr)), previousProjections.Restore()))
@@ -186,6 +197,13 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("commit verified receipt: %w", err), previousProjections.Restore()))
 	}
 	return result, nil
+}
+
+func verificationConfigRoot(plan contracts.ResolvedInstallPlan, deps Dependencies) string {
+	if deps.VerificationConfigRoot != "" {
+		return deps.VerificationConfigRoot
+	}
+	return plan.Request.PlatformRoot
 }
 
 func installationID(platformRoot string, store *secrets.Store) (string, error) {
@@ -207,6 +225,13 @@ func installationID(platformRoot string, store *secrets.Store) (string, error) {
 					fmt.Sprintf("Run `kb-create update --platform-root %q` or reinstall the platform, then retry.", platformRoot), nil)
 			}
 			if !present {
+				if store.ReadOnly {
+					ownerID, ownerErr := versionroot.InstallationIDForPath(platformRoot)
+					if ownerErr == nil && ownerID == active.InstallationID {
+						return active.InstallationID, nil
+					}
+					return "", fmt.Errorf("staged receipt identity is not backed by the read-only install-root identity")
+				}
 				if err := store.Put("installation.id", active.InstallationID); err != nil {
 					return "", fmt.Errorf("persist active installation identity: %w", err)
 				}
@@ -216,6 +241,26 @@ func installationID(platformRoot string, store *secrets.Store) (string, error) {
 	}
 	if !os.IsNotExist(err) {
 		return "", fmt.Errorf("read active installation identity: %w", err)
+	}
+	ownerID, ownerErr := versionroot.InstallationIDForPath(platformRoot)
+	if ownerErr == nil {
+		if store != nil {
+			stored, present, readErr := store.Get("installation.id")
+			if readErr != nil {
+				return "", fmt.Errorf("read persistent installation identity: %w", readErr)
+			}
+			if present && stored != ownerID {
+				return "", contracts.NewDiag(contracts.CodeReceiptUnavailable,
+					"The install-root ownership record and persistent installation ID do not match.",
+					fmt.Sprintf("Run `kb-create doctor --platform-root %q` before continuing.", platformRoot), nil)
+			}
+			if !present {
+				if err := store.Put("installation.id", ownerID); err != nil {
+					return "", fmt.Errorf("persist install-root identity: %w", err)
+				}
+			}
+		}
+		return ownerID, nil
 	}
 	if store != nil {
 		stored, present, err := store.Get("installation.id")
@@ -269,7 +314,15 @@ func Update(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depend
 		return contracts.InstallReceipt{}, contracts.Snapshot{}, fmt.Errorf("update resolved plan: artifact installer is required")
 	}
 	var result contracts.InstallReceipt
-	snapshot, err := lifecycle.Mutate(plan.Request.PlatformRoot, now(deps.Clock), func() error {
+	snapshotsDirectory, err := installerSnapshots(plan.Request.PlatformRoot)
+	if err != nil {
+		return contracts.InstallReceipt{}, contracts.Snapshot{}, err
+	}
+	snapshotSourceRoot := plan.Request.PlatformRoot
+	if deps.VerificationConfigRoot != "" {
+		snapshotSourceRoot = deps.VerificationConfigRoot
+	}
+	snapshot, err := lifecycle.Mutate(plan.Request.PlatformRoot, snapshotSourceRoot, snapshotsDirectory, now(deps.Clock), func() error {
 		var applyErr error
 		result, applyErr = Apply(ctx, plan, deps)
 		return applyErr
@@ -296,17 +349,21 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 	if !ok {
 		return contracts.Snapshot{}, fmt.Errorf("uninstall: artifact installer does not support removal")
 	}
+	layout, err := versionroot.New(platformRoot)
+	if err != nil {
+		return contracts.Snapshot{}, err
+	}
+	platformRoot = layout.PlatformRoot()
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		return contracts.Snapshot{}, fmt.Errorf("uninstall: read active receipt: %w", err)
 	}
-	snapshot, err := lifecycle.Mutate(platformRoot, now(deps.Clock), func() error {
+	snapshotsDirectory, err := installerSnapshots(platformRoot)
+	if err != nil {
+		return contracts.Snapshot{}, err
+	}
+	snapshot, err := lifecycle.Mutate(platformRoot, platformRoot, snapshotsDirectory, now(deps.Clock), func() error {
 		if err := uninstaller.Uninstall(active.Plan.Artifacts); err != nil {
-			return err
-		}
-		// Only V2-owned projections are removed. Project roots and any user
-		// authored files remain outside this operation's authority.
-		if err := removeProjections(platformRoot); err != nil {
 			return err
 		}
 		return receipt.Delete(platformRoot)
@@ -314,8 +371,8 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 	if err != nil {
 		return snapshot, err
 	}
-	if err := os.RemoveAll(platformRoot); err != nil {
-		return snapshot, fmt.Errorf("uninstall: remove platform root: %w", err)
+	if err := layout.RemoveOwned(); err != nil {
+		return snapshot, fmt.Errorf("uninstall: remove owned installation entries: %w", err)
 	}
 	return snapshot, nil
 }
@@ -330,7 +387,11 @@ func Rollback(platformRoot, snapshotID string, deps Dependencies) (contracts.Sna
 	if deps.Artifacts == nil {
 		return contracts.Snapshot{}, fmt.Errorf("rollback: artifact installer is required")
 	}
-	snapshot, err := lifecycle.Rollback(platformRoot, snapshotID, restorePlanArtifacts(deps.Artifacts))
+	snapshotsDirectory, err := installerSnapshots(platformRoot)
+	if err != nil {
+		return contracts.Snapshot{}, err
+	}
+	snapshot, err := lifecycle.Rollback(platformRoot, snapshotsDirectory, snapshotID, restorePlanArtifacts(deps.Artifacts))
 	if err != nil {
 		return snapshot, err
 	}
@@ -356,7 +417,11 @@ func DoctorFix(platformRoot string, repair doctor.RepairPlan, deps Dependencies)
 	if err != nil {
 		return contracts.Snapshot{}, fmt.Errorf("doctor fix: read active receipt: %w", err)
 	}
-	return lifecycle.Mutate(platformRoot, now(deps.Clock), func() error {
+	snapshotsDirectory, err := installerSnapshots(platformRoot)
+	if err != nil {
+		return contracts.Snapshot{}, err
+	}
+	return lifecycle.Mutate(platformRoot, platformRoot, snapshotsDirectory, now(deps.Clock), func() error {
 		return doctor.ApplyDefaults(platformRoot, repair)
 	}, func() error {
 		_, err := verify.Run(active.Plan, now(deps.Clock))
@@ -366,15 +431,6 @@ func DoctorFix(platformRoot string, repair doctor.RepairPlan, deps Dependencies)
 
 func restorePlanArtifacts(installer ArtifactInstaller) lifecycle.PackageRestore {
 	return installer.Restore
-}
-
-func removeProjections(platformRoot string) error {
-	for _, relative := range []string{".kb/kb.config.jsonc", ".kb/marketplace.lock"} {
-		if err := os.Remove(filepath.Join(platformRoot, relative)); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove managed projection %s: %w", relative, err)
-		}
-	}
-	return nil
 }
 
 type projectionFile struct {

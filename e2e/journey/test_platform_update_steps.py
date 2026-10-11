@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import subprocess
 import tempfile
 import unittest
@@ -13,15 +14,20 @@ from platform_update_steps import run_platform_update_steps
 class PlatformUpdateStepsTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="journey-update-test-")
-        self.root = Path(self.temp.name)
-        (self.root / ".kb/v2").mkdir(parents=True)
-        (self.root / ".kb/v2/secrets.env").write_text(
+        self.root = Path(self.temp.name) / "install"
+        self.version_root = self.root / "versions" / "3.0.0"
+        (self.version_root / ".kb/v2").mkdir(parents=True)
+        (self.version_root / ".kb/v2/secrets.env").write_text(
             "gateway.jwtSecret=install-secret\nGATEWAY_JWT_SECRET=install-secret\n"
         )
-        (self.root / ".kb/kb.config.jsonc").write_text('{"stable":true}\n')
-        self.config = self.root / ".kb/kb.config.jsonc"
-        self.secrets = self.root / ".kb/v2/secrets.env"
-        self.receipt = self.root / ".kb/v2/receipt.json"
+        (self.version_root / ".kb/kb.config.jsonc").write_text('{"stable":true}\n')
+        (self.root / "versions").mkdir(parents=True, exist_ok=True)
+        (self.root / "state").mkdir(parents=True, exist_ok=True)
+        (self.version_root / ".kb/marketplace.lock").write_text('{"plugins":[]}\n')
+        self.root.joinpath("current").symlink_to(Path("versions") / "3.0.0")
+        self.config = self.root / "current/.kb/kb.config.jsonc"
+        self.secrets = self.root / "current/.kb/v2/secrets.env"
+        self.receipt = self.root / "current/.kb/v2/receipt.json"
         self.update_index = self.root / "update-index.json"
         self.update_index.write_text(json.dumps({"platforms": [{"version": "3.0.1", "releaseNotes": "Patch notes."}]}))
         self._write_receipt("3.0.0")
@@ -67,6 +73,17 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                 "releaseNotes": [{"version": "3.0.1", "notes": "Patch notes."}],
             }})
         elif args[1] == "update":
+            if "--secret-env" in args:
+                mapping = args[args.index("--secret-env") + 1]
+                secret, _, env_name = mapping.partition("=")
+                stored = dict(line.split("=", 1) for line in self.secrets.read_text().splitlines() if "=" in line)
+                if os.environ.get(env_name, "") != stored.get(secret):
+                    stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_SECRET_REFUSED",
+                                                                      "message": "update secret refused",
+                                                                      "hint": (f'Set the environment variable to the intended secret, then run `kb-create stop --platform-root "{self.root}" && '
+                                                                              f'kb-create apply --platform-root "{self.root}" --index "{args[args.index("--index") + 1]}" '
+                                                                              f'--input "{args[args.index("--input") + 1]}" --secret-env "{secret}={env_name}"`.')}})
+                    return subprocess.CompletedProcess(args, 1, stdout, "")
             update_count = sum(command[1] == "update" for command in self.commands)
             if json.loads(self.receipt.read_text())["plan"]["serviceGraph"]["platformVersion"] == "3.0.1":
                 if "--json" not in args:
@@ -92,6 +109,19 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                                                          "fromVersion": "3.0.0", "toVersion": "3.0.1"}],
                                          "releaseNotes": [{"version": "3.0.1", "notes": "Patch notes."}],
                                      }})
+        elif args[1] == "stop":
+            self.running_version = "stopped"
+            stdout = json.dumps({"ok": True, "running": False})
+        elif args[1] == "apply":
+            secret_mapping = args[args.index("--secret-env") + 1]
+            secret, _, env_name = secret_mapping.partition("=")
+            values = dict(line.split("=", 1) for line in self.secrets.read_text().splitlines() if "=" in line)
+            values[secret] = os.environ[env_name]
+            self.secrets.write_text("".join(f"{key}={value}\n" for key, value in sorted(values.items())))
+            self._write_receipt("3.0.1")
+            self.running_version = "3.0.1"
+            self.pending_restart = None
+            stdout = json.dumps({"ok": True, "operation": "apply"})
         elif args[1] == "rollback":
             if "missing-journey-snapshot" in args:
                 stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_NO_SNAPSHOT", "message": "Snapshot is unknown.", "hint": "restore a named snapshot", "correlationId": "c-missing"}})
@@ -106,6 +136,16 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                                      "hostRestarted": True, "logPath": "/logs/rollback.log"})
         elif args[1] == "status":
             installed = json.loads(self.receipt.read_text())["plan"]["serviceGraph"]["platformVersion"]
+            if "--json" not in args:
+                pending = self.pending_restart
+                if pending is None:
+                    stdout = "Installed: true\nRunning: true\n"
+                else:
+                    service = pending["services"][0]
+                    stdout = (f"Installed: true\nRunning: true\nPending restart: {service['id']} "
+                              f"(running {service['runningVersion']}); installed {pending['installedVersion']}. "
+                              f"Run {pending['command']}\n")
+                return subprocess.CompletedProcess(args, 0, stdout, "")
             stdout = json.dumps({"ok": True, "running": True, "reachable": True,
                                  "runningVersion": self.running_version, "installedVersion": installed,
                                  "pendingRestart": self.pending_restart if self.running_version != installed else None})
@@ -116,6 +156,15 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                                  "runningVersion": self.running_version})
         elif args[1] == "doctor":
             pending = self.pending_restart if self.running_version != json.loads(self.receipt.read_text())["plan"]["serviceGraph"]["platformVersion"] else None
+            if "--json" not in args:
+                if pending is None:
+                    stdout = "Platform diagnosis completed.\nStatus: healthy\n"
+                else:
+                    service = pending["services"][0]
+                    stdout = (f"Platform diagnosis completed.\nStatus: healthy\nPending restart: {service['id']} "
+                              f"(running {service['runningVersion']}); installed {pending['installedVersion']}. "
+                              f"Run {pending['command']}\n")
+                return subprocess.CompletedProcess(args, 0, stdout, "")
             stdout = json.dumps({"ok": True, "platform": {"ok": True}, "pendingRestart": pending})
         elif args[1] == "adapter":
             stdout = json.dumps({"ok": True, "adapters": []})
@@ -170,6 +219,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertIn("changed the installed receipt bytes", step["message"])
 
     def test_update_rollback_preserves_the_saved_user_session(self):
+        original_secret_fingerprint = hashlib.sha256(self.secrets.read_bytes()).hexdigest()
         def verify_user():
             self.user_checks += 1
             return subprocess.CompletedProcess(["kb", "auth", "login"], 0, "logged in", "")
@@ -191,8 +241,9 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         )
         self.assertEqual(
             steps["save installed receipt, config, and host status"]["details"]["installationSecretsSha256"]["beforeUpdate"],
-            hashlib.sha256(self.secrets.read_bytes()).hexdigest(),
+            original_secret_fingerprint,
         )
+        self.assertNotEqual(hashlib.sha256(self.secrets.read_bytes()).hexdigest(), original_secret_fingerprint)
         self.assertEqual(
             set(steps["verify restored receipt, config, host, and project command"]["details"]["configSha256"]),
             {"beforeUpdate", "afterUpdateBeforeRestart", "afterUpdateRestart", "afterRollbackHostRestart", "afterMissingSnapshotRecovery"},
@@ -209,13 +260,14 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(secret_checkpoints["beforeUpdate"], secret_checkpoints["afterRollbackHostRestart"])
         self.assertEqual(secret_checkpoints["afterRollbackHostRestart"], secret_checkpoints["afterMissingSnapshotRecovery"])
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
-        self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 9)} |
+        self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 9)} | {"S-023.10", "S-023.18"} |
                          {"S-214.10"} |
                          {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.10", "S-203.11",
                          "PC-001.13", "PC-001.14", "PC-001.15"})
         self.assertEqual([command[1] for command in self.commands], [
-            "status", "project", "plan", "update", "update", "status", "doctor", "adapter", "project", "plan", "update", "restart", "status",
-            "rollback", "rollback", "rollback", "status", "project", "adapter", "doctor", "restart", "adapter",
+            "status", "project", "plan", "update", "status", "update", "status", "doctor", "status", "doctor", "adapter", "project", "plan", "update", "restart", "status",
+            "rollback", "rollback", "rollback", "status", "project", "adapter", "doctor", "restart", "adapter", "update", "update",
+            "stop", "apply", "status", "doctor", "update",
         ])
         for command in (command for command in self.commands if command[1] in ("update", "rollback", "restart")):
             self.assertIn("--platform-root", command)
@@ -388,7 +440,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(failure["cases"], ["S-023.6"])
         self.assertIn("plan.planHash", failure["message"])
         self.assertIn("plan.scenarioStateDigest", failure["message"])
-        self.assertEqual(sum(command[1] == "update" for command in self.commands), 2)
+        self.assertEqual(sum(command[1] == "update" for command in self.commands), 5)
 
 
 if __name__ == "__main__":

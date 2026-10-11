@@ -36,17 +36,17 @@ type projectRegistrationResponse struct {
 func registerProject(platformRoot, projectRoot string) (string, error) {
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
-		return "", registrationBoundaryFailure("KB_INSTALL_RECEIPT_UNAVAILABLE", err)
+		return "", registrationBoundaryFailure("KB_INSTALL_RECEIPT_UNAVAILABLE", "The installed receipt could not be read.", "", 0)
 	}
 	origin, err := gateway.OriginFromHealthURL(active.Verification.HostHealthURL)
 	if err != nil {
-		return "", registrationBoundaryFailure("KB_HOST_SPEC_INVALID", err)
+		return "", registrationBoundaryFailure("KB_HOST_SPEC_INVALID", "The Gateway address in the receipt is invalid.", "", 0)
 	}
 	accessToken := ""
 	if adminEmail, secured := configuredFirstAdmin(active.Plan.Request); secured {
 		password, present, readErr := (secrets.Store{PlatformRoot: platformRoot}).Get("gateway.bootstrap.password")
 		if readErr != nil || !present {
-			return "", registrationBoundaryFailure("KB_INSTALL_SECRET_INPUT_INVALID", fmt.Errorf("the first administrator password is unavailable"))
+			return "", registrationBoundaryFailure("KB_INSTALL_SECRET_INPUT_INVALID", "The first administrator password is unavailable.", "login", 0)
 		}
 		tenantID := unquoteRequestValue(active.Plan.Request.Values["gateway.bootstrap.tenantId"])
 		tokens, loginErr := loginForProjectRegistration(origin, adminEmail, password, tenantID)
@@ -109,27 +109,23 @@ func loginForProjectRegistration(origin, email, password, tenantID string) (logi
 	}
 	body, err := json.Marshal(credentials)
 	if err != nil {
-		return loginTokens{}, registrationBoundaryFailure("KB_RUNTIME_UNEXPECTED", err)
+		return loginTokens{}, registrationBoundaryFailure("KB_RUNTIME_UNEXPECTED", "The Gateway login request could not be encoded.", "login", 0)
 	}
 	responseBody, status, err := postRegistrationRequest(origin+"/auth/login/cli", body, "")
 	if err != nil {
-		return loginTokens{}, registrationBoundaryFailure("KB_AUTH_GATEWAY_UNREACHABLE", err)
+		return loginTokens{}, registrationBoundaryFailure("KB_AUTH_GATEWAY_UNREACHABLE", "The Gateway login request could not be completed.", "login", status)
 	}
 	if status < 200 || status >= 300 {
 		var raw json.RawMessage
-		if failure, decodeErr := result.DecodeResult(responseBody, &raw); failure != nil {
-			if _, catalogued := diag.LookupCatalog(failure.Code); !catalogued {
-				return loginTokens{}, registrationBoundaryFailure("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", fmt.Errorf("Gateway returned an unknown login diagnostic"))
-			}
-			return loginTokens{}, failure
-		} else if decodeErr != nil {
-			return loginTokens{}, registrationBoundaryFailure("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", decodeErr)
+		failure, decodeErr := result.DecodeResultWithContext(responseBody, &raw, result.RemoteFailureContext{RequestStage: "login", HTTPStatus: status})
+		if decodeErr != nil || failure == nil {
+			return loginTokens{}, registrationProtocolFailure("login", status)
 		}
-		return loginTokens{}, registrationBoundaryFailure("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", fmt.Errorf("Gateway returned HTTP %d without a diagnostic", status))
+		return loginTokens{}, failure
 	}
 	var tokens loginTokens
-	if err := json.Unmarshal(responseBody, &tokens); err != nil || tokens.AccessToken == "" || tokens.RefreshToken == "" || tokens.ExpiresIn <= 0 {
-		return loginTokens{}, registrationBoundaryFailure("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", fmt.Errorf("Gateway returned an invalid CLI login response"))
+	if json.Unmarshal(responseBody, &tokens) != nil || tokens.AccessToken == "" || tokens.RefreshToken == "" || tokens.ExpiresIn <= 0 {
+		return loginTokens{}, registrationProtocolFailure("login", status)
 	}
 	return tokens, nil
 }
@@ -137,25 +133,19 @@ func loginForProjectRegistration(origin, email, password, tenantID string) (logi
 func addProjectThroughGateway(origin, projectRoot, accessToken string) (string, error) {
 	body, err := json.Marshal(map[string]string{"path": projectRoot})
 	if err != nil {
-		return "", registrationBoundaryFailure("KB_RUNTIME_UNEXPECTED", err)
+		return "", registrationBoundaryFailure("KB_RUNTIME_UNEXPECTED", "The project registration request could not be encoded.", "register", 0)
 	}
 	responseBody, status, err := postRegistrationRequest(origin+"/api/v1/projects", body, accessToken)
 	if err != nil {
-		return "", registrationBoundaryFailure("KB_HOST_UNREACHABLE", err)
+		return "", registrationBoundaryFailure("KB_HOST_UNREACHABLE", "The Gateway project registration request could not be completed.", "register", status)
 	}
 	var payload projectRegistrationResponse
-	failure, decodeErr := result.DecodeResult(responseBody, &payload)
+	failure, decodeErr := result.DecodeResultWithContext(responseBody, &payload, result.RemoteFailureContext{RequestStage: "register", HTTPStatus: status})
 	if failure != nil {
-		if _, catalogued := diag.LookupCatalog(failure.Code); !catalogued {
-			return "", registrationBoundaryFailure("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", fmt.Errorf("Gateway returned an unknown project diagnostic"))
-		}
 		return "", failure
 	}
 	if decodeErr != nil || status < 200 || status >= 300 || payload.ID == "" || filepath.Clean(payload.Path) != filepath.Clean(projectRoot) {
-		if decodeErr == nil {
-			decodeErr = fmt.Errorf("Gateway returned an invalid project registration response")
-		}
-		return "", registrationBoundaryFailure("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", decodeErr)
+		return "", registrationProtocolFailure("register", status)
 	}
 	return payload.ID, nil
 }
@@ -187,20 +177,43 @@ func postRegistrationRequest(target string, body []byte, accessToken string) ([]
 	return responseBody, response.StatusCode, nil
 }
 
-func registrationBoundaryFailure(code string, cause error) *diag.Diag {
-	return diag.New(code, cause.Error())
+func registrationBoundaryFailure(code, message, stage string, status int) *diag.Diag {
+	failure := diag.New(code, message)
+	if stage != "" || status != 0 {
+		failure.Meta = map[string]any{}
+		if stage != "" {
+			failure.Meta["requestStage"] = stage
+		}
+		if status != 0 {
+			failure.Meta["httpStatus"] = status
+		}
+	}
+	return failure
+}
+
+func registrationProtocolFailure(stage string, status int) *diag.Diag {
+	return registrationBoundaryFailure("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", "The Gateway returned an invalid registration response.", stage, status)
 }
 
 func projectRegistrationFailure(platformRoot, projectRoot string, cause error) *diag.Diag {
 	active, _ := receipt.Read(platformRoot)
 	hint := projectRegistrationHint(active, projectRoot)
 	causeCode := contracts.CodeProjectRegistrationFailed
+	meta := map[string]any{"platformRoot": platformRoot, "projectRoot": projectRoot}
 	var typed *diag.Diag
 	if errors.As(cause, &typed) {
 		causeCode = typed.Code
+		if typed.Meta != nil {
+			for _, key := range []string{"requestStage", "httpStatus"} {
+				if value, exists := typed.Meta[key]; exists {
+					meta[key] = value
+				}
+			}
+		}
 	}
 	failure := contracts.NewDiag(contracts.CodeProjectRegistrationFailed,
-		"The platform is installed, but the selected project is not registered.", hint, cause)
-	failure.Meta = map[string]any{"platformRoot": platformRoot, "projectRoot": projectRoot, "causeCode": causeCode}
+		"The platform is installed, but the selected project is not registered.", hint, nil)
+	meta["causeCode"] = causeCode
+	failure.Meta = meta
 	return failure
 }

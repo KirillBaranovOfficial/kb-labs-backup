@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
+from journey_resources import (active_platform_root, current_link_path,
+                               parse_shell_commands, snapshot_state_tree)
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
                          run_command as invoke_command, run_with_runner)
 from service_port_assertions import assert_service_ports_preserved
@@ -50,6 +53,34 @@ def _hash(path: Path) -> str | None:
         return None
 
 
+def _outside_install_snapshot(install_root: Path, allowed_roots: tuple[Path, ...] = ()) -> dict[str, str]:
+    snapshot: dict[str, str] = {}
+
+    def allowed(path: Path) -> bool:
+        return any(path == root or (root.is_dir() and path.is_relative_to(root)) for root in allowed_roots)
+
+    for path in install_root.parent.iterdir():
+        if path == install_root or allowed(path):
+            continue
+        if path.is_symlink():
+            snapshot[str(path)] = "symlink:" + str(path.readlink())
+        elif path.is_file():
+            snapshot[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        elif path.is_dir():
+            snapshot[str(path)] = "directory"
+            for child in sorted(path.rglob("*")):
+                if allowed(child):
+                    continue
+                if child.is_symlink():
+                    value = "symlink:" + str(child.readlink())
+                elif child.is_file():
+                    value = hashlib.sha256(child.read_bytes()).hexdigest()
+                else:
+                    continue
+                snapshot[str(child)] = value
+    return snapshot
+
+
 def _changed_paths(previous: object, current: object, prefix: str = "plan") -> list[str]:
     if isinstance(previous, dict) and isinstance(current, dict):
         return [path for key in sorted(set(previous) | set(current))
@@ -76,6 +107,7 @@ def run_platform_update_steps(
     run_command: CommandRunner = invoke_command,
     verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
     expire_user_session: Callable[[], None] | None = None,
+    allowed_outside_roots: tuple[Path, ...] = (),
 ) -> Journey:
     command_runner = run_command
     def run_command(args: list[str]) -> subprocess.CompletedProcess:
@@ -86,10 +118,11 @@ def run_platform_update_steps(
     """Update the running installation, exercise a project command, and roll back."""
     journey = Journey(mode, f"platform-update-{mode}")
     root = str(platform_root)
-    receipt_path = platform_root / ".kb/v2/receipt.json"
-    config_paths = [platform_root / ".kb/kb.config.jsonc"]
-    secrets_path = platform_root / ".kb/v2/secrets.env"
+    receipt_path = platform_root / "current/.kb/v2/receipt.json"
+    config_paths = [platform_root / "current/.kb/kb.config.jsonc"]
+    secrets_path = platform_root / "current/.kb/v2/secrets.env"
     snapshot_id = ""
+    runtime_log_path = platform_root / "current/.kb/logs/post-update-before-restart.log"
     updated_plan_hash = ""
     updated_plan: dict = {}
     pending_restart_services: list[dict] = []
@@ -101,6 +134,11 @@ def run_platform_update_steps(
     installation_id = ""
     gateway_url = ""
     initial_plan: dict = {}
+    outside_install_state: dict[str, str] = {}
+    shared_state_before: dict[str, tuple[str, int, int, bytes | str | None]] = {}
+    running_tree_before: Path | None = None
+    running_lock_before: bytes | None = None
+    running_config_before: bytes | None = None
 
     def checkpoint_details() -> dict[str, dict[str, str | None]]:
         return {"configSha256": dict(config_checkpoints),
@@ -114,7 +152,13 @@ def run_platform_update_steps(
         secret_checkpoints[name] = _hash(secrets_path)
 
     def save_known_good_state() -> None:
-        nonlocal saved_user_session_established, installation_id, gateway_url, initial_plan
+        nonlocal saved_user_session_established, installation_id, gateway_url, initial_plan, outside_install_state
+        nonlocal shared_state_before, running_tree_before, running_lock_before, running_config_before
+        outside_install_state = _outside_install_snapshot(platform_root, allowed_outside_roots)
+        shared_state_before = snapshot_state_tree(platform_root / "state")
+        running_tree_before = active_platform_root(platform_root)
+        running_lock_before = (running_tree_before / ".kb/marketplace.lock").read_bytes()
+        running_config_before = (running_tree_before / ".kb/kb.config.jsonc").read_bytes()
         receipt = json.loads(receipt_path.read_text())
         installation_id = str(receipt.get("installationId") or "")
         gateway_url = str(receipt.get("verification", {}).get("hostHealthUrl") or "")
@@ -210,6 +254,7 @@ def run_platform_update_steps(
         if not updated_plan_hash:
             raise RuntimeError("update receipt did not include its resolved plan hash")
         updated_plan = receipt["plan"]
+        assert_service_ports_preserved(initial_plan, updated_plan, "same-port update")
         if result.get("hostRestarted") is not False:
             raise RuntimeError("update stopped or restarted a running host")
         pending = result.get("pendingRestart")
@@ -228,15 +273,30 @@ def run_platform_update_steps(
             raise RuntimeError("update pendingRestart did not identify each old running service version")
         if not result.get("logPath"):
             raise RuntimeError("update result did not include its operation log path")
+        if snapshot_state_tree(platform_root / "state") != shared_state_before:
+            raise RuntimeError("successful update changed the install-root shared state tree before restart")
+        if running_tree_before is None or (running_tree_before / ".kb/marketplace.lock").read_bytes() != running_lock_before:
+            raise RuntimeError("successful update changed the still-running version's marketplace lock")
+        if running_tree_before is None or (running_tree_before / ".kb/kb.config.jsonc").read_bytes() != running_config_before:
+            raise RuntimeError("successful update changed the still-running version's config view")
+        post_update_status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
+                                           "status after update before restart")
+        if post_update_status.get("runningVersion") != base_version or post_update_status.get("installedVersion") != updated_version:
+            raise RuntimeError("old host stopped serving after update activation")
         snapshot_id = str(snapshot["id"])
+        runtime_log_path.parent.mkdir(parents=True, exist_ok=True)
+        runtime_log_path.write_text("runtime history written after update and before restart\n", encoding="utf-8")
         record_config_checkpoint("afterUpdateBeforeRestart")
         record_secret_checkpoint("afterUpdateBeforeRestart")
         human = run_command([launcher, "update", "--platform-root", root, "--index", str(update_index), "--input", str(request_file)])
         if human.returncode != 0 or "already up to date" not in human.stdout.lower():
             raise RuntimeError("human repeated update did not show its already-current summary")
+        if _outside_install_snapshot(platform_root, allowed_outside_roots) != outside_install_state:
+            raise RuntimeError("update changed a path outside the installation container")
 
     journey.step("stage update and leave the running host on its current version", "platform.update", update,
                  cases=["S-023.3", "S-023.7", "S-024.1", "S-203.10"], details=checkpoint_details)
+
 
     def verify_updated_install() -> None:
         receipt = json.loads(receipt_path.read_text())
@@ -262,6 +322,14 @@ def run_platform_update_steps(
                                       "doctor before restart")
         if doctor_status.get("pendingRestart") != pending_restart_object:
             raise RuntimeError("kb-create doctor pendingRestart differs from the update result")
+        for command_name, label in (("status", "status"), ("doctor", "doctor")):
+            human = run_command([launcher, command_name, "--platform-root", root])
+            human_output = human.stdout or ""
+            if human.returncode != 0 or pending_restart_object["command"] not in human_output:
+                raise RuntimeError(f"human {label} output omitted the pending-restart command")
+            for service in pending_restart_services:
+                if service["id"] not in human_output:
+                    raise RuntimeError(f"human {label} output omitted service {service['id']!r}")
         config_hash = _hash(config_paths[0])
         verified_hash = receipt.get("verification", {}).get("configSha256")
         if config_hash != config_checkpoints.get("beforeUpdate"):
@@ -342,6 +410,8 @@ def run_platform_update_steps(
         receipt_after = receipt_path.read_bytes()
         if receipt_after != receipt_before:
             raise RuntimeError("already-current update changed the installed receipt bytes")
+        if _outside_install_snapshot(platform_root, allowed_outside_roots) != outside_install_state:
+            raise RuntimeError("equal-version update changed a path outside the installation container")
 
     journey.step("repeat the update without version drift", "platform.update", repeat_update,
                  cases=["S-023.6"])
@@ -355,11 +425,15 @@ def run_platform_update_steps(
                                "status after update restart")
         if status.get("runningVersion") != updated_version or status.get("pendingRestart") is not None:
             raise RuntimeError("status did not clear the pending restart after restart")
+        if runtime_log_path.read_text(encoding="utf-8") != "runtime history written after update and before restart\n":
+            raise RuntimeError("runtime log history written before restart was lost")
+        if _outside_install_snapshot(platform_root, allowed_outside_roots) != outside_install_state:
+            raise RuntimeError("restart changed a path outside the installation container")
         record_config_checkpoint("afterUpdateRestart")
         record_secret_checkpoint("afterUpdateRestart")
 
     journey.step("explicitly restart services onto the installed version", "platform.restart",
-                 restart_updated_host, cases=["S-023.8"])
+                 restart_updated_host, cases=["S-023.8", "S-023.10"])
 
     def rollback() -> None:
         if not snapshot_id:
@@ -510,4 +584,76 @@ def run_platform_update_steps(
 
     journey.step("restart the installed host and run an adapter command", "platform.restart",
                  restart_and_verify_identity, cases=["PC-001.15"])
+    def update_secret_policy() -> None:
+        secrets_path = active_platform_root(platform_root) / ".kb/v2/secrets.env"
+        values = {}
+        for line in secrets_path.read_text(encoding="utf-8").splitlines():
+            name, separator, value = line.partition("=")
+            if separator and value:
+                values[name] = value
+        if not values:
+            raise RuntimeError("the installed journey fixture did not provide a stored secret for update policy")
+        secret, original = next(iter(sorted(values.items())))
+        env_name = "KB_X10_UPDATE_SECRET"
+        previous = os.environ.get(env_name)
+        shared_before = snapshot_state_tree(platform_root / "state")
+        os.environ[env_name] = original
+        identical = run_command([launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
+                                 "--input", str(request_file), "--secret-env", f"{secret}={env_name}"])
+        if identical.returncode != 0:
+            raise RuntimeError("an identical stored --secret-env value was not accepted")
+        os.environ[env_name] = original + "-changed"
+        refused = run_command([launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
+                               "--input", str(request_file), "--secret-env", f"{secret}={env_name}"])
+        try:
+            envelope = read_ux_cli_result(refused.stdout, refused.returncode)
+            failure = decode_ux_error_result(envelope)
+        except ValueError as error:
+            raise RuntimeError(f"changed update secret did not return a typed refusal: {error}") from error
+        if refused.returncode == 0 or failure.get("code") != "KB_UPDATE_SECRET_REFUSED":
+            raise RuntimeError("changed --secret-env value was not refused with KB_UPDATE_SECRET_REFUSED")
+        if snapshot_state_tree(platform_root / "state") != shared_before:
+            raise RuntimeError("refused update-time secret change modified shared runtime state")
+        hint = failure.get("hint")
+        if not isinstance(hint, str) or hint.count("`") < 2:
+            raise RuntimeError("secret refusal did not provide an executable stop/apply command")
+        suggested = hint.split("`", 2)[1]
+        commands = parse_shell_commands(suggested)
+        if len(commands) != 2:
+            raise RuntimeError("secret refusal hint did not contain the exact stop/apply sequence")
+        fingerprint_before = hashlib.sha256(secrets_path.read_bytes()).hexdigest()
+        for argv in commands:
+            if not argv or argv[0] != "kb-create":
+                raise RuntimeError("secret refusal hint command did not start with kb-create")
+            argv[0] = launcher
+            executed = run_command(argv)
+            if executed.returncode != 0:
+                raise RuntimeError(f"secret refusal next command failed ({argv[1]}): {executed.stderr.strip()}")
+        if hashlib.sha256(secrets_path.read_bytes()).hexdigest() == fingerprint_before:
+            raise RuntimeError("the suggested apply command did not change the stored secret fingerprint")
+        status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"], "status after secret apply")
+        doctor = _json_command(run_command, [launcher, "doctor", "--platform-root", root, "--json"], "doctor after secret apply")
+        try:
+            active_root = active_platform_root(platform_root)
+        except (FileNotFoundError, ValueError) as error:
+            raise RuntimeError(f"the suggested apply command left no valid active platform root: {error}") from error
+        if (not current_link_path(platform_root).is_symlink()
+                or not (active_root / ".kb/v2/receipt.json").is_file()
+                or status.get("running") is not True or status.get("reachable") is not True
+                or doctor.get("platform", {}).get("ok") is not True):
+            raise RuntimeError("the suggested apply command did not leave a healthy installed host")
+        repeated = _json_command(run_command, [launcher, "update", "--platform-root", root, "--json",
+                                               "--index", str(update_index), "--input", str(request_file),
+                                               "--secret-env", f"{secret}={env_name}"], "update with applied secret")
+        if repeated.get("alreadyUpToDate") is not True:
+            raise RuntimeError("update with the newly stored secret was not an up-to-date no-op")
+        if previous is None:
+            os.environ.pop(env_name, None)
+        else:
+            os.environ[env_name] = previous
+
+    journey.step("refuse update-time installation secret changes", "platform.update", update_secret_policy,
+                 cases=["S-023.18"])
+
+
     return journey

@@ -58,13 +58,48 @@ func TestDecodeSuccessResultRequiresTheSharedEnvelope(t *testing.T) {
 
 func TestDecodeResultReturnsCataloguedFailureEnvelope(t *testing.T) {
 	body := []byte(`{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>.","correlationId":"corr-auth-health"}}`)
-	var payload struct{ Status string `json:"status"` }
+	var payload struct {
+		Status string `json:"status"`
+	}
 	failure, err := DecodeResult(body, &payload)
 	if err != nil {
 		t.Fatalf("DecodeResult(failure): %v", err)
 	}
-	if failure == nil || failure.Code != "KB_AUTH_FORBIDDEN" || failure.Message != "Gateway auth health is unavailable." || failure.Hint != "Run kb-create doctor --platform-root <root>." {
+	entry, _ := diag.LookupCatalog("KB_AUTH_FORBIDDEN")
+	if failure == nil || failure.Code != "KB_AUTH_FORBIDDEN" || failure.Message != entry.Message || failure.Hint != entry.Hint {
 		t.Fatalf("failure = %#v, want catalogued Gateway diagnostic", failure)
+	}
+}
+
+func TestDecodeResultWithContextDropsRemoteTextAndRejectsUnknownCodes(t *testing.T) {
+	const password = "remote-password-marker"
+	const token = "remote-token-marker"
+	body := []byte(`{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"` + password + ` ` + token + `","hint":"` + token + ` ` + password + `","cause":"` + password + `","correlationId":"` + token + `","details":{"leak":"` + token + `"}}}`)
+	var payload struct{}
+	failure, err := DecodeResultWithContext(body, &payload, RemoteFailureContext{RequestStage: "register", HTTPStatus: 403})
+	if err != nil {
+		t.Fatalf("DecodeResultWithContext: %v", err)
+	}
+	if failure == nil || failure.Code != "KB_AUTH_FORBIDDEN" || failure.Meta["requestStage"] != "register" || failure.Meta["httpStatus"] != 403 {
+		t.Fatalf("failure context = %#v", failure)
+	}
+	encoded, err := json.Marshal(failure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{password, token} {
+		if bytes.Contains(encoded, []byte(secret)) || bytes.Contains([]byte(failure.Message), []byte(secret)) || bytes.Contains([]byte(failure.Hint), []byte(secret)) {
+			t.Fatalf("remote secret survived in reconstructed diagnostic: %s", encoded)
+		}
+	}
+	unknown := []byte(`{"ok":false,"error":{"code":"KB_REMOTE_UNRECOGNIZED","area":"runtime","stage":"run","severity":"error","retryable":false,"message":"` + password + `","hint":"` + token + `","correlationId":"remote"}}`)
+	failure, err = DecodeResultWithContext(unknown, &payload, RemoteFailureContext{RequestStage: "login", HTTPStatus: 401})
+	if err != nil || failure == nil || failure.Code != "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE" || failure.Meta["requestStage"] != "login" || failure.Meta["httpStatus"] != 401 {
+		t.Fatalf("unknown remote failure = (%#v, %v)", failure, err)
+	}
+	encoded, _ = json.Marshal(failure)
+	if bytes.Contains(encoded, []byte(password)) || bytes.Contains(encoded, []byte(token)) {
+		t.Fatalf("unknown remote failure leaked response text: %s", encoded)
 	}
 }
 

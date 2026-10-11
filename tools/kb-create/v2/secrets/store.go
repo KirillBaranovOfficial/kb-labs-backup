@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // EnsureGenerated fills every selected artifact's generated secret requirements
@@ -44,7 +45,10 @@ func EnsureGenerated(plan *contracts.ResolvedInstallPlan, store Store) error {
 	return nil
 }
 
-type Store struct{ PlatformRoot string }
+type Store struct {
+	PlatformRoot string
+	ReadOnly     bool
+}
 
 const (
 	BootstrapCompleted = "gateway.bootstrap.completed"
@@ -53,13 +57,20 @@ const (
 )
 
 func (store Store) Put(name, value string) error {
+	if store.ReadOnly {
+		return fmt.Errorf("secret store is read-only during staged update verification")
+	}
 	if err := validate(name); err != nil {
 		return err
 	}
 	if value == "" {
 		return fmt.Errorf("secret %q is empty", name)
 	}
-	if err := os.MkdirAll(filepath.Dir(store.path()), 0o750); err != nil {
+	path, err := store.path()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 	values, err := store.read()
@@ -72,11 +83,7 @@ func (store Store) Put(name, value string) error {
 		data = append(data, key+"="+item)
 	}
 	sortStrings(data)
-	temporary := store.path() + ".tmp"
-	if err := os.WriteFile(temporary, []byte(strings.Join(data, "\n")+"\n"), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temporary, store.path())
+	return versionroot.AtomicWriteFile(path, []byte(strings.Join(data, "\n")+"\n"), 0o600)
 }
 func (store Store) Exists(name string) (bool, error) {
 	if err := validate(name); err != nil {
@@ -134,6 +141,11 @@ func (store Store) BindEnvironments(patches []contracts.ConfigPatch) error {
 			return fmt.Errorf("secrets bound to environment variable %q hold different values", patch.Environment)
 		}
 		delivered[patch.Environment] = value
+		if existing, present, err := store.Get(patch.Environment); err != nil {
+			return err
+		} else if present && existing == value {
+			continue
+		}
 		if err := store.Put(patch.Environment, value); err != nil {
 			return err
 		}
@@ -161,11 +173,25 @@ func (store Store) Environment() (map[string]string, error) {
 	return result, nil
 }
 
-func (store Store) path() string {
-	return filepath.Join(store.PlatformRoot, ".kb", "v2", "secrets.env")
+func (store Store) path() (string, error) {
+	marker := filepath.Join(store.PlatformRoot, ".kb", "v2", "platform-layout.json")
+	if _, err := os.Stat(marker); err == nil {
+		return filepath.Join(store.PlatformRoot, ".kb", "v2", "secrets.env"), nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	layout, err := versionroot.New(store.PlatformRoot)
+	if err != nil {
+		return "", err
+	}
+	return layout.SharedRuntimePath(".kb/v2/secrets.env")
 }
 func (store Store) read() (map[string]string, error) {
-	data, err := os.ReadFile(store.path())
+	path, err := store.path()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return map[string]string{}, nil
 	}
