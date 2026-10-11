@@ -46,6 +46,11 @@ if [[ -f "$TARGET/failed-host-packages/generated-packages.txt" ]]; then
     [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
   done < "$TARGET/failed-host-packages/generated-packages.txt"
 fi
+if [[ -f "$TARGET/healthy-host-packages/generated-packages.txt" ]]; then
+  while IFS= read -r filename; do
+    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
+  done < "$TARGET/healthy-host-packages/generated-packages.txt"
+fi
 for candidate in config doctor; do
   package_list="$TARGET/staged-$candidate-packages/generated-packages.txt"
   if [[ -f "$package_list" ]]; then
@@ -104,9 +109,9 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
 (
   cd "$TARGET"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-update-jump.json release-index-update-minor.json release-index-update-failed-host.json release-index-update-bad-checksum.json release-index-update-config-failure.json release-index-update-doctor-failure.json release-index-canary.json > checksums.txt
+    sha256sum kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-update-jump.json release-index-update-minor.json release-index-update-failed-host.json release-index-update-healthy-host.json release-index-update-bad-checksum.json release-index-update-config-failure.json release-index-update-doctor-failure.json release-index-canary.json > checksums.txt
   else
-    shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-update-jump.json release-index-update-minor.json release-index-update-failed-host.json release-index-update-bad-checksum.json release-index-update-config-failure.json release-index-update-doctor-failure.json release-index-canary.json > checksums.txt
+    shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-update-jump.json release-index-update-minor.json release-index-update-failed-host.json release-index-update-healthy-host.json release-index-update-bad-checksum.json release-index-update-config-failure.json release-index-update-doctor-failure.json release-index-canary.json > checksums.txt
   fi
 )
 echo "Prepared $TARGET"

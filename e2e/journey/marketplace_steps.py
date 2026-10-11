@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from journey_resources import active_platform_root
 from service_steps import Journey
 from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
                          read_ux_cli_result, read_ux_http_result,
@@ -211,10 +212,11 @@ def validate_shared_failure(result: subprocess.CompletedProcess[str], *, json_mo
 
 def _platform_snapshot(platform_root: Path) -> tuple[str, tuple[tuple[str, str], ...]]:
     """Capture the sealed receipt and every installed package version."""
-    receipt = platform_root / ".kb" / "v2" / "receipt.json"
+    content_root = active_platform_root(platform_root)
+    receipt = content_root / ".kb" / "v2" / "receipt.json"
     receipt_hash = hashlib.sha256(receipt.read_bytes()).hexdigest()
     packages = []
-    for package_file in sorted((platform_root / "node_modules").rglob("package.json")):
+    for package_file in sorted((content_root / "node_modules").rglob("package.json")):
         try:
             package = json.loads(package_file.read_text())
         except (OSError, json.JSONDecodeError):
@@ -222,7 +224,7 @@ def _platform_snapshot(platform_root: Path) -> tuple[str, tuple[tuple[str, str],
         name = package.get("name")
         version = package.get("version")
         if isinstance(name, str) and isinstance(version, str):
-            packages.append((str(package_file.relative_to(platform_root / "node_modules")), f"{name}@{version}"))
+            packages.append((str(package_file.relative_to(content_root / "node_modules")), f"{name}@{version}"))
     return receipt_hash, tuple(packages)
 
 
@@ -371,7 +373,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
                 or project_entry.get("package") != commit_install_package
                 or not project_entry.get("integrity")):
             raise RuntimeError("project marketplace install did not record the portable exact plugin identity")
-        platform_lock_file = platform_root / ".kb" / "marketplace.lock"
+        platform_lock_file = active_platform_root(platform_root) / ".kb" / "marketplace.lock"
         try:
             platform_lock = json.loads(platform_lock_file.read_text())
         except (OSError, json.JSONDecodeError) as error:
@@ -397,7 +399,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         for scope in ("platform", "project"):
             command = ["marketplace", "uninstall", commit_package, "--scope", scope, "--json"]
             _output(cli(command), command)
-        platform_lock = json.loads((platform_root / ".kb" / "marketplace.lock").read_text())
+        platform_lock = json.loads((active_platform_root(platform_root) / ".kb" / "marketplace.lock").read_text())
         if commit_package in platform_lock.get("plugins", {}):
             raise RuntimeError("S-192 requires Commit to be absent from the platform marketplace lock")
         if commit_package in json.loads(lock_file.read_text()).get("plugins", {}):
@@ -538,7 +540,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         return
 
     def assert_default_gateway_config() -> None:
-        config_path = platform_root / ".kb" / "kb.config.jsonc"
+        config_path = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
         config = json.loads(config_path.read_text())
         gateway = config.get("gateway")
         if not isinstance(gateway, dict) or "port" in gateway:

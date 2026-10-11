@@ -5,15 +5,65 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
+	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 )
+
+func writeVersionedReceipt(t *testing.T, root string, installed contracts.InstallReceipt) {
+	t.Helper()
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed.InstallationID, err = versionroot.InstallationIDForPath(stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receipt.Write(stage, installed); err != nil {
+		t.Fatal(err)
+	}
+	version := installed.Plan.ServiceGraph.PlatformVersion
+	if version == "" {
+		version = "1.0.0"
+	}
+	if _, err := layout.ActivateInitial(stage, version, installed.Plan.PlanHash); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertEmptyOrMissing(t *testing.T, path string) {
+	t.Helper()
+	entries, err := os.ReadDir(path)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("directory %s contains entries after a read-only operation: %v, %v", path, entries, err)
+	}
+}
+
+func platformRootForTest(t *testing.T, installRoot string) string {
+	t.Helper()
+	layout, err := versionroot.New(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layout.PlatformRoot()
+}
 
 // operationTestSetup is a test-only fixture for supplying typed command inputs
 // and dependency seams. Production code receives command-local typed inputs.

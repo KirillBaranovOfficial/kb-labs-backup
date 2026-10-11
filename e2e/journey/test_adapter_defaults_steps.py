@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from adapter_defaults_steps import (_assert_required_upstreams_ready, _restore_platform_adapter_fixture,
                                     run_adapter_default_steps)
 from service_steps import Journey
+from test_install_layout import create_test_install_container
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
@@ -67,7 +68,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             calls: list[tuple[str, ...]] = []
             run_counter = 0
             host_running = True
-            platform_root = (home / "kb-platform").resolve()
+            install_root = (home / "kb-platform").resolve()
+            platform_root = create_test_install_container(install_root)
             receipt = platform_root / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text(json.dumps({"id": "sealed", "plan": {"artifacts": [
@@ -131,7 +133,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         json.dumps({"ok": True, "host": {"healthUrl": "http://health.test/health"}}), "")
                 if command[0] == "git" and args == ["ls-files", "-z"]:
                     return subprocess.CompletedProcess(command, 0, b"README.md\0", b"")
-                if command[0] == "kb-create" and args[:3] == ["doctor", "--platform-root", str(platform_root)]:
+                if command[0] == "kb-create" and args[:3] == ["doctor", "--platform-root", str(install_root)]:
                     if "--fix" in args:
                         gateway_manifest.parent.mkdir(parents=True, exist_ok=True)
                         gateway_manifest.write_text(json.dumps({"schema": "kb.create.artifact-manifest/v2", "id": "gateway-app",
@@ -148,14 +150,14 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         result = {"ok": True, "data": {"operation": "doctor", "status": "unhealthy",
                             "findings": [], "platform": {"checks": [
                             {"id": "adapters", "detail": "Adapter status cannot be checked while the host is stopped.",
-                             "hint": f'Run `kb-create start --platform-root "{platform_root}"`.'}
+                             "hint": f'Run `kb-create start --platform-root "{install_root}"`.'}
                         ]}}}
                         if args[-1] == "--json":
                             result["data"]["findings"] = [{"code": "KB_ADAPTER_CREDENTIALS_MISSING", "component": "openai",
                                 "path": "/platform/adapterOptions/llm/apiKey", "hint": "set OPENAI_API_KEY"}]
                             return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
                         return subprocess.CompletedProcess(command, 0,
-                            f'Finding KB_ADAPTER_CREDENTIALS_MISSING: package=openai path=/platform/adapterOptions/llm/apiKey\nAdapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `kb-create start --platform-root "{platform_root}"`.\n', "")
+                            f'Finding KB_ADAPTER_CREDENTIALS_MISSING: package=openai path=/platform/adapterOptions/llm/apiKey\nAdapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `kb-create start --platform-root "{install_root}"`.\n', "")
                     analytics_provider = config(platform_root).get("platform", {}).get("adapters", {}).get(
                         "analytics", "@kb-labs/adapters-analytics-sqlite")
                     statuses = [
@@ -293,7 +295,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         error = {
                             "code": "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING",
                             "message": "The installed platform is missing kb-create's sealed artifact overrides. No package was installed.",
-                            "hint": f'Run "kb-create update --platform-root {platform_root}" and retry "kb marketplace install @kb-labs/adapters-analytics-file@2.120.1 --scope platform".',
+                            "hint": f'Run "kb-create update --platform-root {install_root}" and retry "kb marketplace install @kb-labs/adapters-analytics-file@2.120.1 --scope platform".',
                         }
                         return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                     lock_path = platform_root / ".kb" / "marketplace.lock"
@@ -380,10 +382,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind-entry", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"), calls)
-            self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root), "--json"), calls)
-            self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root)), calls)
-            self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root), "--fix", "--json"), calls)
-            self.assertIn(("kb-create", "status", "--platform-root", str(platform_root), "--json"), calls)
+            self.assertIn(("kb-create", "doctor", "--platform-root", str(install_root), "--json"), calls)
+            self.assertIn(("kb-create", "doctor", "--platform-root", str(install_root)), calls)
+            self.assertIn(("kb-create", "doctor", "--platform-root", str(install_root), "--fix", "--json"), calls)
+            self.assertIn(("kb-create", "status", "--platform-root", str(install_root), "--json"), calls)
             self.assertFalse(any(call[0] == "kb-dev" and "doctor" in call for call in calls))
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs", "--scope", "platform"), calls)
             self.assertFalse(any(item.name.startswith("kb-adapter-project-b-") for item in home.iterdir()))

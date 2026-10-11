@@ -234,7 +234,8 @@ func ValidateProjectSelection(value string) (string, error) {
 	return canonical, nil
 }
 
-// ShellQuote returns a POSIX shell-safe single-quoted argument.
+// ShellQuote returns a POSIX shell-safe single-quoted argument for actionable
+// hints. ParseShellCommands parses this word grammar for exact argv execution.
 func ShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

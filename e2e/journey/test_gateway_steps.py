@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from gateway_steps import run_gateway_steps, run_llm_provider_steps
 from service_steps import Journey
+from test_install_layout import create_test_install_container
 
 
 class FakeResponse:
@@ -46,6 +47,15 @@ class JsonResponse:
 
 
 class GatewayStepTests(unittest.TestCase):
+    def setUp(self):
+        self.platform_temp = tempfile.TemporaryDirectory(prefix="journey-gateway-container-")
+        self.platform = Path(self.platform_temp.name) / "platform"
+        create_test_install_container(self.platform)
+        self.env_patcher = patch.dict(os.environ, {"KB_JOURNEY_PLATFORM_ROOT": str(self.platform)}, clear=False)
+        self.env_patcher.start()
+        self.addCleanup(self.env_patcher.stop)
+        self.addCleanup(self.platform_temp.cleanup)
+
     def test_stream_failure_claim_requires_typed_error_and_healthy_gateway(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
@@ -53,7 +63,7 @@ class GatewayStepTests(unittest.TestCase):
             "KB_JOURNEY_PROJECT_ROOT": directory,
             "KB_JOURNEY_PROJECT_ID": "project-a",
             "KB_JOURNEY_PROJECT_B_ID": "project-b",
-            "KB_JOURNEY_PLATFORM_ROOT": directory + "/platform",
+            "KB_JOURNEY_PLATFORM_ROOT": str(self.platform),
             "OPENAI_API_KEY": "fake-secret",
         }, clear=False):
             def failed(command, **_kwargs):
@@ -95,7 +105,7 @@ class GatewayStepTests(unittest.TestCase):
             "KB_JOURNEY_PROJECT_ID": "project-a",
             "KB_JOURNEY_PROJECT_B_ID": "project-b",
             "KB_JOURNEY_LLM_MOCK_BASE_URL": "http://mock-llm:8317",
-            "KB_JOURNEY_PLATFORM_ROOT": directory + "/platform",
+            "KB_JOURNEY_PLATFORM_ROOT": str(self.platform),
             "OPENAI_API_KEY": "fake-openai-key",
         }, clear=False):
             calls = []
@@ -106,11 +116,11 @@ class GatewayStepTests(unittest.TestCase):
                 elif command[1:3] == ["config", "get"]:
                     output = '{"ok":true,"data":{"value":"${OPENAI_API_KEY}"}}'
                 elif command[1:3] == ["config", "set"] and any("baseURL" in arg for arg in command):
-                    platform_root = str(Path(directory, "platform").resolve())
+                    platform_root = str(self.platform.resolve())
                     output = json.dumps({
                         "ok": True,
                         "data": {
-                            "file": platform_root + "/.kb/kb.config.jsonc",
+                            "file": str((self.platform / "current").resolve() / ".kb/kb.config.jsonc"),
                             "nextCommand": f"kb-create restart --platform-root {json.dumps(platform_root)}",
                         },
                     })

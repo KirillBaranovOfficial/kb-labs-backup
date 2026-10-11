@@ -10,6 +10,7 @@ import (
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/supervisor"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 type statusCommandInput struct{ PlatformRoot, Executable string }
@@ -19,40 +20,53 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	if root == "" {
 		root = defaultPlatformRoot()
 	}
-	active, err := receipt.Read(root)
+	layout, err := versionroot.New(root)
 	if err != nil {
-		return map[string]any{"ok": true, "operation": "status", "installed": false, "running": false, "reachable": false, "next": "kb-create install"}, nil
+		return nil, asDiag(err)
 	}
-	if active.Plan.ServiceGraph.Profile == "client" {
+	platformRoot := layout.PlatformRoot()
+	active, receiptErr := receipt.Read(platformRoot)
+	if receiptErr == nil && active.Plan.ServiceGraph.Profile == "client" {
 		return map[string]any{"ok": true, "operation": "status", "installed": true, "running": false, "reachable": false, "profile": "client", "services": []contracts.Service{}}, nil
 	}
-	state, err := host.StateHome()
+	runner, err := host.NewRecordedRunner(root)
 	if err != nil {
 		return nil, asDiag(err)
 	}
-	runner, err := host.NewRunner(root, state)
-	if err != nil {
-		return nil, asDiag(err)
-	}
+	state := runner.State
 	status, err := runner.Status(ctx)
 	if err != nil {
 		return nil, asDiag(err)
 	}
-	payload := map[string]any{"ok": true, "operation": "status", "host": status, "installed": true,
+	installed := receiptErr == nil
+	payload := map[string]any{"ok": true, "operation": "status", "host": status, "installed": installed,
 		"running": status.State == host.StateRunning, "reachable": status.Healthy}
+	if installed {
+		payload["installedVersion"] = active.Plan.ServiceGraph.PlatformVersion
+	}
+	if status.PlatformVersion != "" {
+		payload["runningVersion"] = status.PlatformVersion
+	}
+	if installed {
+		if pending := pendingRestart(active, status, root); pending != nil {
+			payload["pendingRestart"] = pending
+		}
+	}
 	next := "kb-create start"
 	if status.State == host.StateRunning && status.Healthy {
 		next = "cd ~/any-project && kb commit"
 	}
-	if inv.Executable != "" && !shim.Correct(inv.Executable, root) {
+	if inv.Executable != "" && installed && !shim.Correct(inv.Executable, platformRoot) {
 		next = "kb-create install"
 	}
 	payload["next"] = next
 	if inv.Executable != "" {
-		payload["kbShimCorrect"] = shim.Correct(inv.Executable, root)
+		payload["kbShimCorrect"] = shim.Correct(inv.Executable, platformRoot)
 	}
-	payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion, "platformChannel": active.Plan.PlatformChannel}
-	if pid, ok := supervisor.LivePID(state, root); ok {
+	if installed {
+		payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion, "platformChannel": active.Plan.PlatformChannel}
+	}
+	if pid, ok := supervisor.LivePID(state, platformRoot); ok {
 		info := map[string]any{"pid": pid}
 		if client, connectErr := control.Connect(state); connectErr == nil {
 			info["address"], info["version"] = client.File.Address, client.File.Version

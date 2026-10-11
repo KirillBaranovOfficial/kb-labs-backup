@@ -6,6 +6,7 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,7 +28,7 @@ type Supervisor struct {
 
 // Run starts the host, publishes the control channel and blocks until ctx is
 // cancelled; it then stops the host gracefully and removes its state files.
-// A second supervisor for the same state home fails with KB_HOST_ALREADY_RUNNING.
+// A second supervisor for the same installation state fails with KB_HOST_ALREADY_RUNNING.
 func (s *Supervisor) Run(ctx context.Context) error {
 	if err := s.State.Ensure(); err != nil {
 		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
@@ -52,7 +53,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if _, err := s.Runner.Start(ctx); err != nil {
 		return err
 	}
-	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version}
+	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version, Restart: s.restart}
 	if err := server.Start(); err != nil {
 		_, _ = s.Runner.Stop(context.Background())
 		return contracts.NewDiag("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", err)
@@ -64,7 +65,23 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	return err
 }
 
-// livePID returns the pid of a running supervisor for this state home.
+func (s *Supervisor) restart(ctx context.Context) (control.RestartResponse, error) {
+	previous, ok := s.Runner.(*host.ProcessRunner)
+	if !ok {
+		return control.RestartResponse{}, fmt.Errorf("supervisor restart requires the platform process runner")
+	}
+	outcome, err := host.RestartWithRecovery(ctx, s.PlatformRoot, previous,
+		func(ctx context.Context, runner *host.ProcessRunner) (host.Info, error) { return runner.Start(ctx) })
+	if outcome.Runner != nil {
+		s.Runner = outcome.Runner
+	}
+	if err != nil {
+		return control.RestartResponse{}, err
+	}
+	return control.RestartResponse{OK: true, Protocol: control.ProtocolVersion, Stopped: outcome.Stopped, Host: outcome.Info}, nil
+}
+
+// livePID returns the pid of a running supervisor for this installation state.
 // Record identifies the platform root and process held by supervisor.pid.
 type Record struct {
 	PID          int    `json:"pid"`

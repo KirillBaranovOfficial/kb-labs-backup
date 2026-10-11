@@ -337,7 +337,8 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 			{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true},
 		}}}}
 	resolved := resolvedPlan{Plan: plan, State: state}
-	store := secrets.Store{PlatformRoot: root}
+	platformRoot := platformRootForTest(t, root)
+	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 	starter := &bootstrapTestHost{address: address}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
 	firstOutput := runApplyStreamForTest(t, resolved, deps)
@@ -363,7 +364,7 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 		t.Fatalf("operation log %q is empty", firstResult.LogPath)
 	}
 	assertSecretAbsent(t, "operation log", logBytes, password)
-	receiptBytes, err := os.ReadFile(receipt.Path(root))
+	receiptBytes, err := os.ReadFile(receipt.Path(platformRoot))
 	if err != nil {
 		t.Fatalf("read apply receipt: %v", err)
 	}
