@@ -50,6 +50,7 @@ services:
       KB_JOURNEY_FRONT_DOOR: ${KB_JOURNEY_FRONT_DOOR:-agent}
       KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}
       KB_JOURNEY_SERVICE_PROFILE: ${KB_JOURNEY_SERVICE_PROFILE:-fast}
+      KB_JOURNEY_WORKSPACE_ROOT: /opt/kb-workspace
       OIDC_CORP_CLIENT_SECRET: journey-oidc-client-secret
       OIDC_CORP_ISSUER: https://idp-stub:9443
       NODE_EXTRA_CA_CERTS: /e2e-oidc-certs/ca.crt
@@ -61,6 +62,7 @@ services:
       KB_JOURNEY_SUMMARY: /summary/journey-summary.md
     volumes:
       - ../.journey/reports:/summary
+      - ../..:/opt/kb-workspace:ro
       - ./oidc-idp/certs:/e2e-oidc-certs:ro
     networks: [journey]
     init: true

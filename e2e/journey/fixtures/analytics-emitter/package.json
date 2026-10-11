@@ -6,9 +6,9 @@
   "main": "./manifest.js",
   "exports": {
     ".": "./manifest.js",
-    "./commands/*": "./commands/*"
+    "./commands/*": "./dist/commands/*"
   },
-  "files": ["manifest.js", "commands/*.js"],
+  "files": ["manifest.js", "dist/commands/*.js"],
   "kb": { "manifest": "./manifest.js" },
   "peerDependencies": { "@kb-labs/sdk": "*" },
   "license": "UNLICENSED"
