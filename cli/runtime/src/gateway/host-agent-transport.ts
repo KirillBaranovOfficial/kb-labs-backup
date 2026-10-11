@@ -11,7 +11,15 @@
 import * as net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import type { ExecutionEvent } from '@kb-labs/core-contracts';
+import { createErrorEnvelope, ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
 import type { IGatewayClient, GatewayExecuteRequest } from './types.js';
+
+function hostAgentUnavailable(socketPath: string): ErrorEnvelopeError {
+  return new ErrorEnvelopeError(createErrorEnvelope('KB_HOST_UNREACHABLE', {
+    details: { address: socketPath },
+    cause: 'The CLI could not connect to the local Host Agent IPC socket.',
+  }));
+}
 
 export class HostAgentTransport implements IGatewayClient {
   private socket: net.Socket | null = null;
@@ -84,7 +92,7 @@ export class HostAgentTransport implements IGatewayClient {
               eventPromises.shift()!.resolve({ value: undefined as unknown as ExecutionEvent, done: true });
             }
           } else if (msg.type === 'error' && msg.requestId === requestId) {
-            error = new Error(`${msg.code}: ${msg.message}`);
+            error = new ErrorEnvelopeError(toErrorEnvelope(msg));
             done = true;
             if (eventPromises.length > 0) {
               eventPromises.shift()!.reject(error);
@@ -189,10 +197,10 @@ export class HostAgentTransport implements IGatewayClient {
         this.socket = socket;
         resolve(socket);
       });
-      socket.on('error', reject);
+      socket.on('error', () => reject(hostAgentUnavailable(this.socketPath)));
       socket.setTimeout(5000, () => {
         socket.destroy();
-        reject(new Error('IPC connection timeout'));
+        reject(hostAgentUnavailable(this.socketPath));
       });
     });
   }
