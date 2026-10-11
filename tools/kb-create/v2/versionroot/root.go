@@ -192,13 +192,13 @@ func AtomicWriteFile(path string, data []byte, mode fs.FileMode) error {
 		_ = temporaryFile.Close()
 		return err
 	}
-	if err := temporaryFile.Close(); err != nil {
+	if err := errors.Join(temporaryFile.Sync(), temporaryFile.Close()); err != nil {
 		return err
 	}
 	if err := os.Rename(temporary, destination); err != nil {
 		return err
 	}
-	return nil
+	return syncDirectory(filepath.Dir(destination))
 }
 
 func atomicWriteDestination(path string) (string, error) {
