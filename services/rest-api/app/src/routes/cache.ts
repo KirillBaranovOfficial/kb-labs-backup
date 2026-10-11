@@ -1,4 +1,5 @@
 import { withUxErrorResponses } from './route-schema.js';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { platform } from '@kb-labs/core-runtime';
 /**
  * @module @kb-labs/rest-api-app/routes/cache
@@ -95,10 +96,7 @@ export async function registerCacheRoutes(
 
       return reply.code(500).send({
         ok: false,
-        error: {
-          code: 'CACHE_INVALIDATION_FAILED',
-          message: error instanceof Error ? error.message : 'Cache invalidation failed',
-        },
+        error: createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId: String(request.id) }),
         meta: {
           requestId: request.id,
           durationMs: elapsed,

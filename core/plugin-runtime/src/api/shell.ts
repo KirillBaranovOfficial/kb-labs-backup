@@ -48,7 +48,7 @@ export function createShellAPI(options: CreateShellAPIOptions): ShellAPI {
         }
       }
       if (!allowedCommands.some((pattern) => matchesPermissionPattern(command, pattern) || matchesPermissionPattern(basename(command), pattern))) {
-        throw new PermissionError('Command not in whitelist', { command, allowedCommands });
+        throw new PermissionError('Command not in whitelist', { command, allowedCommands: allowedCommands.join(', ') });
       }
 
       const requestedTimeout = execOptions?.timeout ?? quotas.timeoutMs ?? 30_000;

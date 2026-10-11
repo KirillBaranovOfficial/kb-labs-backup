@@ -23,7 +23,7 @@ import type {
   UIPromptResultMessage,
   SerializedCataloguedError,
 } from './types.js';
-import { ErrorEnvelopeError, getCatalogEntry, toErrorEnvelope } from '@kb-labs/core-platform';
+import { ErrorEnvelopeError, isErrorCode, toErrorEnvelope, type ErrorCode } from '@kb-labs/core-platform';
 import { serializeCataloguedError, rebuildCataloguedError } from './error-codec.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
@@ -80,9 +80,9 @@ async function ipcPrompt(
   });
 }
 
-function hasCataloguedCode(error: unknown): error is { code: string } {
+function hasCataloguedCode(error: unknown): error is { code: ErrorCode } {
   return typeof error === 'object' && error !== null && 'code' in error &&
-    typeof error.code === 'string' && getCatalogEntry(error.code) !== undefined;
+    typeof error.code === 'string' && isErrorCode(error.code);
 }
 
 const promptHint = 'Supply the requested value as command or request input and retry.';

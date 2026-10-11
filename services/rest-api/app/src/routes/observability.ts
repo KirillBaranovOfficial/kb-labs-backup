@@ -7,7 +7,7 @@ import { withUxErrorResponses } from './route-schema.js';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
-import { getHostServiceAddress, HostServiceAddressError } from '@kb-labs/core-platform';
+import { createErrorEnvelope, getHostServiceAddress, HostServiceAddressError } from '@kb-labs/core-platform';
 import { normalizeBasePath, resolvePaths } from './path-helpers';
 import { hostname } from 'node:os';
 import type { HistoricalMetricsCollector } from '../daemon/metrics';
@@ -56,14 +56,11 @@ export async function registerObservabilityRoutes(
 
           return reply.code(503).send({
             ok: false,
-            error: {
-              code: 'STATE_BROKER_UNAVAILABLE',
-              message: 'State Broker daemon is not available',
-              details: {
-                url: stateBrokerUrl,
-                status: response.status,
-              },
-            },
+            error: createErrorEnvelope('KB_SERVICE_UNAVAILABLE', {
+              message: 'State Broker daemon is not available.',
+              hint: 'Run `kb-dev status` to inspect the State Broker service, then retry the request.',
+              details: { service: 'state-broker', status: String(response.status) },
+            }),
           });
         }
 
@@ -90,18 +87,17 @@ export async function registerObservabilityRoutes(
 
         return reply.code(503).send({
           ok: false,
-          error: {
-            code: error instanceof HostServiceAddressError
-              ? error.code
-              : isTimeout ? 'STATE_BROKER_TIMEOUT' : 'STATE_BROKER_ERROR',
-            message: isTimeout
-              ? 'State Broker daemon did not respond in time'
-              : error instanceof Error ? error.message : String(error),
-            ...(error instanceof HostServiceAddressError ? { hint: error.hint } : {}),
-            details: {
-              isTimeout,
-            },
-          },
+          error: error instanceof HostServiceAddressError
+            ? createErrorEnvelope(error.code, {
+                message: error.message,
+                hint: error.hint,
+                details: { service: 'state-broker' },
+              })
+            : createErrorEnvelope('KB_SERVICE_UNAVAILABLE', {
+                message: isTimeout ? 'State Broker daemon did not respond in time.' : 'Failed to reach the State Broker daemon.',
+                hint: 'Run `kb-dev status` to inspect the State Broker service, then retry the request.',
+                details: { service: 'state-broker', timeout: String(isTimeout) },
+              }),
         });
       }
     });

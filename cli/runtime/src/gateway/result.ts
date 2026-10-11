@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
-import { createErrorEnvelope, ErrorEnvelopeError, isErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 
 export function requiredAuthEnvelope(gatewayUrl: string): ErrorEnvelope {
   return createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl } });
@@ -25,8 +25,8 @@ function decodeGatewayFailureBody(
   status: number,
   context: { operation: string; gatewayUrl: string },
 ): ErrorEnvelope {
-  if (isUxResult(parsed) && !parsed.ok && isErrorEnvelope(parsed.error)) {
-    return withGatewayUrl(parsed.error, context.gatewayUrl);
+  if (isUxResult(parsed) && !parsed.ok) {
+    return withGatewayUrl(toErrorEnvelope(parsed.error), context.gatewayUrl);
   }
 
   const details = {

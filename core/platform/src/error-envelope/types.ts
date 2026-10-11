@@ -6,6 +6,14 @@
  * See docs/architecture/target/08-errors.md section 2 and ADR-0033.
  */
 
+import type { CatalogErrorCode } from './error-codes.generated.js';
+
+export type PlatformErrorCode = CatalogErrorCode;
+declare const productErrorCodeBrand: unique symbol;
+/** A product code validated against the ADR-0049 `<PLUGIN>_<CONDITION>` contract. */
+export type ProductErrorCode = string & { readonly [productErrorCodeBrand]: true };
+export type ErrorCode = PlatformErrorCode | ProductErrorCode;
+
 export const ERROR_AREAS = [
   'install',
   'host',
@@ -58,7 +66,7 @@ export interface PlatformDiagnostic {
 
 export interface ErrorEnvelope {
   /** Stable, never reused: `KB_<AREA>_<CONDITION>` or `<PLUGIN>_<CONDITION>`. */
-  code: string;
+  code: ErrorCode;
   area: ErrorArea;
   /** Moment of the user journey. */
   stage: ErrorStage;
@@ -136,7 +144,7 @@ export const UxFailureResultJsonSchema = {
 
 /** One row of `errors.catalog.json`. */
 export interface ErrorCatalogEntry {
-  code: string;
+  code: PlatformErrorCode;
   /** HTTP status when this error is surfaced by HTTP; absent means it is not an HTTP-surface code. */
   httpStatus?: number;
   area: ErrorArea;

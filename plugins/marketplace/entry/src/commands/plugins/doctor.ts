@@ -45,18 +45,18 @@ export default defineCommand<unknown, DoctorInput, DoctorResultData>({
         if (scopeCtx.projectRoot) { query.projectRoot = scopeCtx.projectRoot; }
         const report = await get<DoctorResultData>('/diagnostics', query);
 
-        if (flags.json) {
-          return report;
-        } else if (report.issues.length === 0) {
-          ctx.ui?.success?.(`All ${report.total} packages healthy (${scopeCtx.scope})`);
-        } else {
-          const errors = report.issues.filter(i => i.severity === 'error');
-          ctx.ui?.warn?.(`Marketplace Doctor (${scopeCtx.scope})`, {
-            sections: [
-              { header: 'Summary', items: [`Total: ${report.total}`, `Issues: ${report.issues.length}`, `Errors: ${errors.length}`] },
-              { header: 'Issues', items: report.issues.map(i => `${i.severity === 'error' ? '❌' : '⚠'} ${i.packageId}${i.diagnosticCode ? ` [${i.diagnosticCode}]` : ''}: ${i.message}`) },
-            ],
-          });
+        if (!flags.json) {
+          if (report.issues.length === 0) {
+            ctx.ui?.success?.(`All ${report.total} packages healthy (${scopeCtx.scope})`);
+          } else {
+            const errors = report.issues.filter(i => i.severity === 'error');
+            ctx.ui?.warn?.(`Marketplace Doctor (${scopeCtx.scope})`, {
+              sections: [
+                { header: 'Summary', items: [`Total: ${report.total}`, `Issues: ${report.issues.length}`, `Errors: ${errors.length}`] },
+                { header: 'Issues', items: report.issues.map(i => `${i.severity === 'error' ? '❌' : '⚠'} ${i.packageId}${i.diagnosticCode ? ` [${i.diagnosticCode}]` : ''}: ${i.message}`) },
+              ],
+            });
+          }
         }
 
         return report.ok ? report : {

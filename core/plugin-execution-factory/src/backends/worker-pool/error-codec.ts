@@ -1,5 +1,4 @@
 import {
-  createErrorEnvelope,
   ErrorEnvelopeError,
   toErrorEnvelope,
 } from '@kb-labs/core-platform';
@@ -20,10 +19,5 @@ export function serializeCataloguedError(error: unknown): SerializedCataloguedEr
 }
 
 export function rebuildCataloguedError(error: SerializedCataloguedError): ErrorEnvelopeError {
-  return new ErrorEnvelopeError(createErrorEnvelope(error.code, {
-    message: error.message,
-    hint: error.hint,
-    ...(error.cause !== undefined ? { cause: error.cause } : {}),
-    ...(error.details !== undefined ? { details: error.details } : {}),
-  }));
+  return new ErrorEnvelopeError(toErrorEnvelope(error));
 }

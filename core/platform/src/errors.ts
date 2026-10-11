@@ -6,7 +6,7 @@
 
 /** Stable structural error contract consumed by the command boundary. */
 export interface TypedPlatformError {
-  readonly code: string;
+  readonly code: PlatformErrorCode;
   readonly message: string;
   readonly hint?: string;
   readonly details?: Record<string, unknown>;
@@ -40,7 +40,7 @@ export interface TypedPlatformError {
 export class AdapterUnavailableError extends Error implements TypedPlatformError {
   /** Adapter slot, e.g. 'llm', 'embeddings', 'notifier'. */
   public readonly slot: string;
-  public readonly code: string;
+  public readonly code: PlatformErrorCode;
   public readonly details: Record<string, unknown>;
   public readonly hint: string;
   /** Why the adapter is unavailable. */
@@ -101,7 +101,7 @@ export class AdapterProjectScopeError extends Error {
 
 /** A bound adapter cannot run because a required credential is absent. */
 export class AdapterCredentialsMissingError extends Error implements TypedPlatformError {
-  public readonly code = 'KB_ADAPTER_CREDENTIALS_MISSING';
+  public readonly code: PlatformErrorCode = 'KB_ADAPTER_CREDENTIALS_MISSING';
   public readonly slot: string;
   public readonly credential: string;
   public readonly configurationPath: string;
@@ -123,7 +123,7 @@ export class AdapterCredentialsMissingError extends Error implements TypedPlatfo
 
 /** An adapter operation failed after its own retry policy was exhausted. */
 export class AdapterOperationError extends Error {
-  public readonly code = 'KB_ADAPTER_OPERATION_FAILED';
+  public readonly code: PlatformErrorCode = 'KB_ADAPTER_OPERATION_FAILED';
 
   constructor(
     public readonly slot: string,
@@ -182,3 +182,4 @@ export class ServicePortConfigError extends Error {
     Object.setPrototypeOf(this, ServicePortConfigError.prototype);
   }
 }
+import type { PlatformErrorCode } from './error-envelope/types.js';

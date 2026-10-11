@@ -92,7 +92,6 @@ export type { ManifestForGrantValidation } from './platform/database-governance.
 // Host Wrappers
 export {
   wrapCliResult,
-  isHandlerSuccessEnvelope,
   wrapRestResult,
   unwrapRestData,
   normalizeJsonResult,

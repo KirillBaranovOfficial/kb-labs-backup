@@ -112,18 +112,17 @@ export default defineCommand({
             ...(finding.packagePath ? { path: finding.packagePath } : {}),
             hint: finding.hint,
           }));
+          const outcome = failure
+            ? { ok: false as const, error: { code: failure.code, message: failure.message, hint: failure.hint ?? 'Resolve the failed preflight check, then retry `kb release checks`.', diagnostics } }
+            : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release preflight failed.', hint: "Run `kb release doctor` to see the failed preflight checks and exact recovery steps.", diagnostics } };
           if (flags.json) {
-            return failure
-              ? { ok: false, error: { code: failure.code, message: failure.message, hint: failure.hint ?? 'Resolve the failed preflight check, then retry `kb release checks`.', diagnostics } }
-              : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release preflight failed.', hint: "Run `kb release doctor` to see the failed preflight checks and exact recovery steps.", diagnostics } };
-          } else {
-            ctx.ui?.sideBox?.({
-              title: 'Preflight failed - checks not run',
-              sections: [{ header: 'Failed', items: renderFailureLines(preReport.failures) }],
-              status: 'error',
-            });
           }
-          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release checks --help` to review its inputs and recovery steps, then retry." } };
+          ctx.ui?.sideBox?.({
+            title: 'Preflight failed - checks not run',
+            sections: [{ header: 'Failed', items: renderFailureLines(preReport.failures) }],
+            status: 'error',
+          });
+          return outcome;
         }
       }
 
@@ -179,6 +178,9 @@ export default defineCommand({
         ...(finding.packagePath ? { path: finding.packagePath } : {}),
         hint: finding.hint,
       }));
+      const outcome = ok
+        ? { ok: true, failed, results, report: runReport }
+        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release checks failed.', hint: "Run `kb release doctor` to verify the environment, then inspect the failed checks and rerun `kb release checks`.", diagnostics } };
 
       if (ok) {
         checksLoader.succeed(`All ${results.length} check(s) passed`);
@@ -187,9 +189,7 @@ export default defineCommand({
       }
 
       if (flags.json) {
-        return ok
-          ? { ok, failed, results, report: runReport }
-          : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release checks failed.', hint: "Run `kb release doctor` to verify the environment, then inspect the failed checks and rerun `kb release checks`.", diagnostics } };
+        return outcome;
       }
 
       ctx.ui?.sideBox?.({
@@ -198,7 +198,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok, failed, results, report: runReport } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release checks --help` to review its inputs and recovery steps, then retry.", diagnostics } };
+      return outcome;
     },
   },
 });

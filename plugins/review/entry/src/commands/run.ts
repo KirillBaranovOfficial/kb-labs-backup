@@ -365,9 +365,7 @@ export default defineCommand<unknown, CLIInput<RunFlags>, ReviewResult | AgentRe
         loader.succeed(`Found ${result.findings.length} issue(s)`);
 
         // Output results
-        if (flags.json) {
-          return result;
-        } else {
+        if (!flags.json) {
           // Build sections
           const sections: Array<{ header?: string; items: string[] }> = [];
 

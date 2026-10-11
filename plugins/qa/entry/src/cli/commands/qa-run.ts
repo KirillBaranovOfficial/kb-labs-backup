@@ -46,15 +46,30 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
         kind: 'run', id: '', timestamp: new Date().toISOString(), durationMs, tasks, raw,
       };
 
+      const result = raw.ok ? raw : {
+        ok: false as const,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: 'QA run failed',
+          hint: 'Review failed task output, then rerun `kb qa run`.',
+          diagnostics: raw.results.filter((task) => !task.OK).map((task) => ({
+            code: 'KB_QA_TASK_FAILED',
+            severity: 'error',
+            path: task.Package,
+            message: task.Error || task.Stderr || `Task ${task.Task} exited ${task.ExitCode}.`,
+          })),
+        },
+      };
+
       if (flags.json) {
-        return buildRunJsonReport(effective);
+        return raw.ok ? buildRunJsonReport(effective) : result;
       } else {
         for (const section of buildRunReport(effective)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return raw.ok ? raw : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'QA run failed', hint: 'Review failed task output, then rerun `kb qa run`.', diagnostics: raw.results.filter((task) => !task.OK).map((task) => ({ code: 'KB_QA_TASK_FAILED', severity: 'error', path: task.Package, message: task.Error || task.Stderr || `Task ${task.Task} exited ${task.ExitCode}.` })) } };
+      return result;
     },
   },
 });

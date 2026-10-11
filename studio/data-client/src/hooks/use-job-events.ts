@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 import type { JobEventType } from './types';
 
 // Type for job response data
@@ -27,7 +28,7 @@ function isJobResponseData(value: unknown): value is JobResponseData {
 export function decodeJobResponseData(value: unknown): JobResponseData {
   if (!isUxResult(value)) throw new Error('Gateway returned an invalid result envelope for the job response.');
   if (!value.ok) {
-    const { error } = value;
+    const error = toErrorEnvelope(value.error);
     throw new Error(`${error.code}: ${error.message} — ${error.hint}${error.correlationId ? ` (correlationId: ${error.correlationId})` : ''}`);
   }
   if (!isJobResponseData(value.data)) throw new Error('Gateway returned an invalid job response payload.');

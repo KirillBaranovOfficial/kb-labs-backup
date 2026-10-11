@@ -44,39 +44,29 @@ export default defineCommand<unknown, CLIInput<GateFlags>, unknown>({
         affectedPackages: report.affectedPackages,
       };
 
-      if (flags.json) {
-        return failed
-          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Quality gate failed', hint: 'Review the reported violations, then rerun `kb quality gate`.', diagnostics: report.violations.map((violation) => ({ code: 'KB_QUALITY_LAYERING_VIOLATION', severity: 'error', message: `${violation.fromPackage} imports ${violation.toPackage} via ${violation.importSpecifier}` })) } }
-          : result;
-      }
-
       if (!failed) {
-        const msg =
-          baseline !== null
+        if (!flags.json) {
+          const msg = baseline !== null
             ? `Gate passed — no new violations (${current} pre-existing)`
             : 'Gate passed — no layering violations';
-        ctx.ui?.success?.(msg);
-        return {  };
+          ctx.ui?.success?.(msg);
+        }
+        return flags.json ? result : {};
       }
 
-      const sections = [];
-
-      if (newViolations !== null && newViolations > 0) {
-        sections.push({
-          header: `New violations introduced: ${newViolations} (was ${baseline}, now ${current})`,
-          items: report.violations
-            .map(v => `${v.fromPackage} → ${v.toPackage}  ${v.importSpecifier}`)
-            .slice(0, 20),
-        });
-      } else {
-        sections.push({
-          header: `${current} layering violation(s) in ${report.affectedPackages.length} package(s)`,
-          items: report.affectedPackages,
-        });
-      }
-
-
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Architecture gate failed with ${current} layering violation(s).`, hint: 'Review the reported imports, then rerun `kb quality gate`.' } };
+      return {
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: `Architecture gate failed with ${current} layering violation(s).`,
+          hint: 'Review the reported imports, then rerun `kb quality gate`.',
+          diagnostics: report.violations.map((violation) => ({
+            code: 'KB_QUALITY_LAYERING_VIOLATION',
+            severity: 'error' as const,
+            message: `${violation.fromPackage} imports ${violation.toPackage} via ${violation.importSpecifier}`,
+          })),
+        },
+      };
     },
   },
 });

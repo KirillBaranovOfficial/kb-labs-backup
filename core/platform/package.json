@@ -75,6 +75,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "generate:error-codes": "node scripts/generate-error-codes.mjs",
     "clean": "rimraf dist",
     "dev": "tsup --config tsup.config.ts --watch",
     "lint": "eslint src --ext .ts",

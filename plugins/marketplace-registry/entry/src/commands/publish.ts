@@ -135,20 +135,20 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData 
 
         return result;
       } catch (err) {
-        if (flags.json) {
-          return handleError(err);
+        const failure = handleError(err);
+        if (!flags.json) {
+          const message = err instanceof Error ? err.message : String(err);
+          ctx.ui?.chain?.([
+            { title: `Packed ${meta.name}@${meta.version}`, timing: packMs },
+            {
+              title: 'Publish failed',
+              status: 'error',
+              sections: [{ items: [message] }],
+              timing: Date.now() - t0,
+            },
+          ]);
         }
-        const message = err instanceof Error ? err.message : String(err);
-        ctx.ui?.chain?.([
-          { title: `Packed ${meta.name}@${meta.version}`, timing: packMs },
-          {
-            title: 'Publish failed',
-            status: 'error',
-            sections: [{ items: [message] }],
-            timing: Date.now() - t0,
-          },
-        ]);
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: message, hint: "Run `kb hub publish --help` to review its inputs and recovery steps, then retry." } };
+        return failure;
       }
     },
   },

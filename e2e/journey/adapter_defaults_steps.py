@@ -119,7 +119,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         elif isinstance(stderr, str):
             stderr = stderr.encode()
         return subprocess.CompletedProcess(command, result.returncode,
-                                            stdout=stdout + stderr, stderr=stderr)
+                                            stdout=stdout, stderr=stderr)
     base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project_a)
     project_state = _project_state_dir(project_a, base_env)
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()

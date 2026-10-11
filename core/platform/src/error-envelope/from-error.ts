@@ -8,15 +8,20 @@
 
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, getAdapterConfigurationCommand, PlatformConfigError, ServicePortConfigError, type TypedPlatformError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
-import { createErrorDetailsContractViolation, createErrorEnvelope, getCatalogEntry, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
-import { ErrorEnvelopeError, type ErrorEnvelope } from './types.js';
+import { createErrorDetailsContractViolation, createErrorEnvelope, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
+import { ErrorEnvelopeError, type ErrorEnvelope, type ProductErrorCode } from './types.js';
+import { isErrorEnvelope, validateErrorEnvelope } from './validate.js';
 
 export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'actions' | 'docs' | 'diagnostics'>;
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
   if (error instanceof ErrorEnvelopeError) {
-    return error.envelope;
+    return canonicalizeErrorEnvelope(error.envelope, options);
+  }
+  const candidate = getErrorRecord(error);
+  if (isErrorEnvelope(candidate)) {
+    return canonicalizeErrorEnvelope(candidate, options);
   }
   if (error instanceof AdapterConfigError) {
     return createErrorEnvelope('KB_CONFIG_INVALID', {
@@ -120,57 +125,15 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
     });
   }
   const source = getErrorRecord(error);
+  if (source && (Array.isArray(source.validation) || Array.isArray(source.issues))) {
+    return createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', options);
+  }
   const sourceCode = typeof source?.code === 'string' ? source.code
     : typeof source?.errorCode === 'string' ? source.errorCode : undefined;
-  if (sourceCode && ['VALIDATION_ERROR', 'CONFIG_ERROR', 'TIMEOUT', 'PERMISSION_DENIED', 'RATE_LIMIT', 'PLATFORM_ERROR'].includes(sourceCode)) {
-    const pluginDetails = getScalarDetails(source?.details);
-    if (pluginDetails === null) {
-      return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
-        ...options,
-        message: 'Error details must be a flat map of string identifiers.',
-        hint: 'Keep error.details values as identifiers; return structured reports in data or gate findings in error.diagnostics.',
-      });
-    }
-    const message = typeof source?.message === 'string' ? source.message : 'Command failed.';
-    const base = { ...options, cause: message };
-    switch (sourceCode) {
-      case 'VALIDATION_ERROR':
-        return createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', { ...base, details: pluginDetails });
-      case 'CONFIG_ERROR':
-        return createErrorEnvelope('KB_CONFIG_INVALID', {
-          ...base,
-          details: { path: 'configuration', ...pluginDetails },
-          ...(typeof source?.hint === 'string' ? { hint: source.hint } : {}),
-        });
-      case 'TIMEOUT':
-        return createErrorEnvelope('KB_RUNTIME_TIMEOUT', { ...base, details: pluginDetails });
-      case 'PERMISSION_DENIED':
-        return createErrorEnvelope('KB_PLUGIN_PERMISSION_DENIED', {
-          ...base,
-          details: { plugin: 'the plugin', permission: 'requested', ...pluginDetails },
-        });
-      case 'RATE_LIMIT': {
-        const retryAfterMs = typeof source?.retryAfterMs === 'number'
-          ? source.retryAfterMs
-          : typeof source?.details?.retryAfterMs === 'number' ? source.details.retryAfterMs : undefined;
-        const safeDetails = { ...pluginDetails };
-        delete safeDetails.retryAfterMs;
-        return createErrorEnvelope('KB_RUNTIME_RATE_LIMITED', {
-          ...base,
-          details: {
-            ...safeDetails,
-            retryAfter: retryAfterMs === undefined ? 'a moment' : `${Math.ceil(retryAfterMs / 1000)}s`,
-          },
-        });
-      }
-      case 'PLATFORM_ERROR':
-        return createErrorEnvelope('KB_HOST_ADAPTER_UNAVAILABLE', {
-          ...base,
-          details: { slot: typeof source?.service === 'string' ? source.service : pluginDetails.service ?? 'unknown', reason: message },
-        });
-    }
+  if (source && sourceCode && isSystemErrorRecord(source)) {
+    return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', options);
   }
-  const code = sourceCode && getCatalogEntry(sourceCode) ? sourceCode : 'KB_RUNTIME_UNEXPECTED';
+  const code = sourceCode && isErrorCode(sourceCode) ? sourceCode : 'KB_RUNTIME_UNEXPECTED';
   const details = getDetails(source?.details);
   if (details === null) {
       return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
@@ -202,28 +165,32 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
     ? source.diagnostics as ErrorEnvelope['diagnostics']
     : undefined;
 
-  if (sourceCode && !sourceCode.startsWith('KB_') && !getCatalogEntry(sourceCode) && typeof source?.message === 'string') {
+  if (sourceCode && !sourceCode.startsWith('KB_')) {
     try {
+      const productDetails = details ?? {};
+      const statusCode = typeof source?.statusCode === 'number' ? source.statusCode : undefined;
       return createProductErrorEnvelope({
         ...options,
         code: sourceCode,
-        message: source.message,
-        retryable: typeof source.statusCode === 'number' && isRetryableStatus(source.statusCode),
-        ...(details || typeof source.statusCode === 'number' ? {
-          details: { ...details, ...(typeof source.statusCode === 'number' ? { statusCode: String(source.statusCode) } : {}) },
-        } : {}),
-        ...(typeof source.hint === 'string' ? { hint: source.hint } : {}),
+        message: typeof source?.message === 'string' ? source.message : '',
+        hint: typeof source?.hint === 'string' ? source.hint : '',
+        retryable: statusCode !== undefined && isRetryableStatus(statusCode),
+        details: { ...productDetails, ...(statusCode !== undefined ? { statusCode: String(statusCode) } : {}) },
+        ...(typeof source?.correlationId === 'string' ? { correlationId: source.correlationId } : {}),
         ...(diagnostics ? { diagnostics } : {}),
       });
     } catch (error) {
       if (isContractViolation(error)) {
-        return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
-          message: error.message,
-          hint: error.hint,
-        });
+        return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', { ...options, message: error.message, hint: error.hint });
       }
       throw error;
     }
+  }
+  if (sourceCode?.startsWith('KB_') && !isErrorCode(sourceCode)) {
+    return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+      message: `Plugin returned uncatalogued platform code "${sourceCode}".`,
+      hint: 'Use a KB_* code from the platform error catalog, or a valid product code with a hint.',
+    });
   }
 
   try {
@@ -247,6 +214,51 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
   }
 }
 
+/** Revalidates any envelope-shaped value through the single namespace contract. */
+export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+  try {
+    const fields = {
+      message: envelope.message,
+      hint: envelope.hint,
+      ...(envelope.details ? { details: envelope.details } : {}),
+      ...(envelope.cause ? { cause: envelope.cause } : {}),
+      ...(envelope.correlationId ? { correlationId: envelope.correlationId } : {}),
+      ...(envelope.actions ? { actions: envelope.actions } : {}),
+      ...(envelope.docs ? { docs: envelope.docs } : {}),
+      ...(envelope.diagnostics ? { diagnostics: envelope.diagnostics } : {}),
+    };
+    if (isErrorCode(envelope.code)) {
+      return assertCanonicalEnvelope(createErrorEnvelope(envelope.code, {
+        ...options,
+        ...fields,
+      }));
+    }
+    return assertCanonicalEnvelope(createProductErrorEnvelope({
+      ...options,
+      ...fields,
+      code: envelope.code,
+      retryable: envelope.retryable,
+    }));
+  } catch (cause) {
+    if (isContractViolation(cause)) {
+      return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+        ...options,
+        message: cause.message,
+        hint: cause.hint,
+      });
+    }
+    throw cause;
+  }
+}
+
+function assertCanonicalEnvelope(envelope: ErrorEnvelope): ErrorEnvelope {
+  const problems = validateErrorEnvelope(envelope);
+  if (problems.length > 0) {
+    throw productContractViolation(`Failure envelope is invalid: ${problems.join('; ')}.`);
+  }
+  return envelope;
+}
+
 type ErrorRecord = Partial<TypedPlatformError> & Record<string, unknown>;
 
 function getErrorRecord(error: unknown): ErrorRecord | undefined {
@@ -262,24 +274,16 @@ function getErrorRecord(error: unknown): ErrorRecord | undefined {
   return error as ErrorRecord;
 }
 
+function isSystemErrorRecord(source: ErrorRecord): boolean {
+  return 'errno' in source || 'syscall' in source;
+}
+
 function getDetails(value: unknown): Record<string, string> | null | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const entries = Object.entries(value);
-  if (entries.some(([key, item]) => typeof item !== 'string' || isSerializedStructuredValue(item))) {
-    return null;
-  }
+  if (entries.some(([, item]) => typeof item !== 'string' || isSerializedStructuredValue(item))) return null;
   return Object.fromEntries(entries) as Record<string, string>;
-}
-
-function getScalarDetails(value: unknown): Record<string, string> | null {
-  if (value === undefined) return {};
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const entries = Object.entries(value).filter(([, item]) => item !== undefined);
-  if (entries.some(([, item]) => typeof item === 'object' || typeof item === 'function' || isSerializedStructuredValue(String(item)))) {
-    return null;
-  }
-  return Object.fromEntries(entries.map(([key, item]) => [key, String(item)]));
 }
 
 function isContractViolation(error: unknown): error is Error & { code: string; hint: string } {
@@ -287,95 +291,62 @@ function isContractViolation(error: unknown): error is Error & { code: string; h
     && 'hint' in error && typeof error.hint === 'string';
 }
 
-/** Statuses (HTTP-style) that a caller can reasonably retry. */
-const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
-
-export const PRODUCT_FALLBACK_HINT =
-  'Run the command again with --debug for details; if it persists, include the correlationId in a report.';
-
-export function isRetryableStatus(statusCode: number): boolean {
-  return RETRYABLE_STATUS.has(statusCode);
-}
-
-/** Coerce a plugin-supplied code into the stable `<PLUGIN>_<CONDITION>` shape. */
-export function normalizeProductCode(code: string): string {
-  const upper = code
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  const candidate = /^[A-Z]/.test(upper) ? upper : `PLUGIN_${upper}`;
-  return candidate.includes('_') ? candidate : `PLUGIN_${candidate}`;
-}
-
-/** Convert scalar plugin details to strings and reject nested report values. */
-export function stringifyDetails(details: Record<string, unknown> | undefined): Record<string, string> {
-  const result: Record<string, string> = {};
-  if (details !== undefined && (typeof details !== 'object' || details === null || Array.isArray(details))) {
-    throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
-  }
-  for (const [key, value] of Object.entries(details ?? {})) {
-    if (value === undefined) {
-      continue;
-    }
-    if (typeof value === 'string') {
-      if (isSerializedStructuredValue(value)) {
-        throw createErrorDetailsContractViolation(key, 'contains serialized JSON');
-      }
-      result[key] = value;
-    } else if (typeof value === 'number' || typeof value === 'boolean') {
-      result[key] = String(value);
-    } else {
-      throw createErrorDetailsContractViolation(key, 'must be a string identifier');
-    }
-  }
-  return result;
-}
-
 export interface ProductErrorInput extends ToEnvelopeOptions {
   code: string;
   message: string;
+  hint: string;
   retryable: boolean;
   details?: Record<string, string>;
-  /** Defaults to a generic hint; product plugins should supply their own. */
-  hint?: string;
 }
 
-/** Envelope for a product-plugin code that is not in the platform catalog. */
+/** Builds and validates a product error for both thrown and returned failures. */
 export function createProductErrorEnvelope(input: ProductErrorInput): ErrorEnvelope {
+  if (typeof input.code !== 'string' || !/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(input.code) || input.code.startsWith('KB_')) {
+    throw productContractViolation(`Product error code "${input.code}" must match <PLUGIN>_<CONDITION> and must not use the KB_ prefix.`);
+  }
+  if (typeof input.message !== 'string' || input.message.length === 0) {
+    throw productContractViolation(`Product error "${input.code}" must include a non-empty message.`);
+  }
+  if (typeof input.hint !== 'string' || input.hint.length === 0) {
+    throw productContractViolation(`Product error "${input.code}" must include a non-empty hint.`);
+  }
+  if (typeof input.retryable !== 'boolean') {
+    throw productContractViolation(`Product error "${input.code}" must declare whether it is retryable.`);
+  }
   if (input.details !== undefined && (typeof input.details !== 'object' || input.details === null || Array.isArray(input.details))) {
     throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
   }
   for (const [key, value] of Object.entries(input.details ?? {})) {
-    if (typeof value !== 'string') {
-      throw createErrorDetailsContractViolation(key, 'must be a string identifier');
-    }
-    if (isSerializedStructuredValue(value)) {
-      throw createErrorDetailsContractViolation(key, 'contains serialized JSON');
+    if (typeof value !== 'string' || isSerializedStructuredValue(value)) {
+      throw createErrorDetailsContractViolation(key, 'must be a flat map of string identifiers');
     }
   }
   const envelope: ErrorEnvelope = {
-    code: normalizeProductCode(input.code),
+    code: input.code as ProductErrorCode,
     area: 'product',
     stage: 'run',
     severity: 'error',
     retryable: input.retryable,
     message: input.message,
-    hint: input.hint ?? PRODUCT_FALLBACK_HINT,
+    hint: input.hint,
   };
-  if (input.details && Object.keys(input.details).length > 0) {
-    envelope.details = input.details;
-  }
-  if (input.correlationId) {
-    envelope.correlationId = input.correlationId;
-  }
-  if (input.actions && input.actions.length > 0) {
-    envelope.actions = input.actions;
-  }
-  if (input.docs) {
-    envelope.docs = input.docs;
-  }
-  if (input.diagnostics && input.diagnostics.length > 0) {
-    envelope.diagnostics = input.diagnostics;
-  }
+  if (input.details && Object.keys(input.details).length > 0) envelope.details = input.details;
+  if (input.correlationId) envelope.correlationId = input.correlationId;
+  if (input.actions?.length) envelope.actions = input.actions;
+  if (input.docs) envelope.docs = input.docs;
+  if (input.diagnostics?.length) envelope.diagnostics = input.diagnostics;
   return envelope;
+}
+
+function productContractViolation(message: string): Error & { code: string; hint: string } {
+  return Object.assign(new Error(message), {
+    code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+    hint: 'Return a product error with a <PLUGIN>_<CONDITION> code, message, hint, and flat string details.',
+  });
+}
+
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+export function isRetryableStatus(statusCode: number): boolean {
+  return RETRYABLE_STATUS.has(statusCode);
 }

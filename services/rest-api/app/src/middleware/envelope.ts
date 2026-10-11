@@ -5,8 +5,8 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { createUxSuccessResult, isUxResult } from '@kb-labs/core-platform/ux-result';
-import { codeForHttpFailure, normalizeHttpFailure, statusForHttpFailure } from '@kb-labs/core-platform';
+import { createUxFailureResult, createUxSuccessResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
+import { codeForHttpFailure, normalizeHttpFailure, statusForHttpFailure, toErrorEnvelope } from '@kb-labs/core-platform';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
 import { ZodError } from 'zod';
 
@@ -87,7 +87,14 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
       return payload;
     }
 
-    // Pass through a valid UX result on a successful HTTP response.
+    // Validate claimed failure codes at the shared error-envelope boundary even
+    // when a route incorrectly returns a failure result with HTTP success.
+    if (reply.statusCode < 400 && isUxResultCandidate(parsedPayload) && parsedPayload.ok === false) {
+      const error = 'error' in parsedPayload ? parsedPayload.error : undefined;
+      return JSON.stringify(createUxFailureResult(toErrorEnvelope(error, { correlationId: String(request.id || '') })));
+    }
+
+    // Pass through a valid UX success result on a successful HTTP response.
     if (reply.statusCode < 400 && isUxResult(parsedPayload)) {
       return payload;
     }

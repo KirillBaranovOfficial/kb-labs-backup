@@ -146,16 +146,16 @@ export default defineCommand({
         const events = loaded.events;
 
         const report = analyzeDiagnostics(taskId ?? '', events);
-
-        if (flags.json) {
-          return { success: true, report };
-        } else {
-          printReport(ctx, report);
-        }
-
-        return report.issues.some(i => i.severity === 'critical')
-          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${report.issues.filter(i => i.severity === 'critical').length} critical trace issue(s) were found.`, hint: 'Review the diagnostic report, then rerun `kb agents trace diagnose --task-id <id>`.', diagnostics: report.issues.filter((issue) => issue.severity === 'critical').map((issue) => ({ code: 'KB_AGENT_TRACE_CRITICAL', severity: 'error', message: issue.message })) } }
+        const criticalIssues = report.issues.filter((issue) => issue.severity === 'critical');
+        const outcome: CommandResult = criticalIssues.length > 0
+          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${criticalIssues.length} critical trace issue(s) were found.`, hint: 'Review the diagnostic report, then rerun `kb agents trace diagnose --task-id <id>`.', diagnostics: criticalIssues.map((issue) => ({ code: 'KB_AGENT_TRACE_CRITICAL', severity: 'error', message: issue.message })) } }
           : report;
+        if (flags.json) {
+          return criticalIssues.length > 0 ? outcome : { success: true, report };
+        }
+        printReport(ctx, report);
+
+        return outcome;
       } catch (err) {
         return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err instanceof Error ? err.message : String(err), hint: 'Check the task ID and trace file, then rerun `kb agents trace diagnose --task-id <id>`.' } };
       }

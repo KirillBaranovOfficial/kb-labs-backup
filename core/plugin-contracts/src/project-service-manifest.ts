@@ -1,7 +1,7 @@
 import type { ProjectServiceApiDeclaration, ServiceManifest } from "./manifest.js";
 
 export class ProjectServiceManifestError extends Error {
-  readonly code = "CONFIG_ERROR";
+  readonly code = "KB_CONFIG_INVALID";
   readonly details = { path: "serviceManifest.projectApi" };
   readonly hint = "Correct projectApi.serviceId and projectApi.rewritePrefix in the service manifest, then restart the host.";
 

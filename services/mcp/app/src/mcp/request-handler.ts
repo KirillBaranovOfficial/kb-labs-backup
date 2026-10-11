@@ -16,6 +16,7 @@ import { filterTools, type McpTool } from './tool-builder.js';
 import { callTool, type PlatformResolver } from './tool-router.js';
 import type { Permits } from './authz.js';
 import type { McpObservabilityCollector } from '../observability/collector.js';
+import type { PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
 
 /** How long a per-identity tool listing stays cached. */
 export const TOOLS_CACHE_TTL_MS = 60_000;
@@ -34,7 +35,7 @@ function errorResult(envelope: ReturnType<typeof createErrorEnvelope>): CallTool
   };
 }
 
-export function mcpToolError(code: string, details: Record<string, string>, gatewayUrl?: string): CallToolResult {
+export function mcpToolError(code: PlatformErrorCode, details: Record<string, string>, gatewayUrl?: string): CallToolResult {
   const templateDetails = code === 'KB_AUTH_REQUIRED'
     ? { gatewayUrl: gatewayUrl ?? '<url>', ...details }
     : details;

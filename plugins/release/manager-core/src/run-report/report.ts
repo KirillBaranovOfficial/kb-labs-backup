@@ -4,9 +4,10 @@
  */
 
 import { basename } from 'node:path';
+import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import type { CheckPhaseTiming, CheckResult, CheckResultDetails } from '../types';
 import { classifyFailure, type FailureClassification } from './classify';
-import { createReleaseError, type ReleaseErrorEnvelope } from './error-codes';
+import { createReleaseError } from './error-codes';
 import { preflightCommand, type PreflightResult } from './preflight';
 
 export type StageStatus = 'passed' | 'failed' | 'skipped' | 'not-run';
@@ -57,7 +58,7 @@ export interface CheckFailure {
   /** Redacted tail of the captured output (partial output for timeouts). */
   outputExcerpt?: string;
   /** Envelope-compatible error (see error-codes.ts). */
-  error: ReleaseErrorEnvelope;
+  error: ErrorEnvelope;
   /** Command to re-run after fixing. */
   resumeCommand: string;
 }

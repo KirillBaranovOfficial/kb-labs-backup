@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { codeForHttpFailure, createErrorEnvelope, isErrorEnvelope, normalizeHttpFailure, statusForHttpFailure, type ILogger } from '@kb-labs/core-platform';
-import { createUxSuccessResult, isUxResult } from '@kb-labs/core-platform/ux-result';
+import { codeForHttpFailure, createErrorEnvelope, normalizeHttpFailure, statusForHttpFailure, toErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
+import { createUxFailureResult, createUxSuccessResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import { registerGatewayRouteSchemas } from './route-schema.js';
 
 /** Send the Gateway's canonical hidden/not-found response. */
@@ -28,11 +28,7 @@ export function registerGatewayUxErrorResponses(app: FastifyInstance, logger?: I
     requestLogger?.error('HTTP route failed', error instanceof Error ? error : new Error(String(error)), {
       correlationId, statusCode, errorCode,
     });
-    const errorValue = isErrorEnvelope(error)
-      ? error
-      : error && typeof error === 'object' && 'code' in error
-        ? { code: error.code }
-        : error;
+    const errorValue = normalizeHttpFailure(error, { correlationId, statusCode }).error;
     reply.serializer((payload) => JSON.stringify(payload));
     reply.code(statusCode).send({ error: errorValue });
   });
@@ -71,6 +67,10 @@ export function registerGatewayUxBoundary(app: FastifyInstance, logger: ILogger)
     }
     let body: unknown;
     try { body = JSON.parse(payload); } catch { return payload; }
+    if (isUxResultCandidate(body) && body.ok === false) {
+      const error = 'error' in body ? body.error : undefined;
+      return JSON.stringify(createUxFailureResult(toErrorEnvelope(error, { correlationId: String(request.id || '') })));
+    }
     if (isUxResult(body)) return payload;
     return JSON.stringify(createUxSuccessResult(body));
   });

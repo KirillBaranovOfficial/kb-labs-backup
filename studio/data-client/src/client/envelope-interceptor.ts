@@ -4,7 +4,8 @@
  */
 
 import type { ResponseInterceptor } from './types';
-import { isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
+import { createUxFailureResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 
 /**
  * Create envelope unwrap interceptor
@@ -44,8 +45,17 @@ export function createEnvelopeInterceptor(): ResponseInterceptor {
             statusText: response.statusText,
             headers,
           });
+        } else if (envelope.ok === false) {
+          // Canonicalize failure codes before handing the response to callers.
+          const error = 'error' in envelope ? envelope.error : undefined;
+          const headers = new Headers(response.headers);
+          headers.set('Content-Type', 'application/json');
+          return new Response(JSON.stringify(createUxFailureResult(toErrorEnvelope(error))), {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+          });
         } else {
-          // Error envelope: leave as is for error handler
           return response;
         }
       }

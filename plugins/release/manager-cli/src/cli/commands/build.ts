@@ -129,10 +129,24 @@ export default defineCommand({
         buildLoader.fail(`${failed.length} package(s) failed to build`);
       }
 
+      const outcome = ok
+        ? { ok: true, failed, results }
+        : {
+            ok: false as const,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: `Release build failed for ${failed.length} package(s).`,
+              hint: 'Inspect the failed packages and their build output, resolve the errors, then rerun `kb release build`.',
+              diagnostics: failed.map((name) => ({
+                code: 'RELEASE_PACKAGE_BUILD_FAILED',
+                severity: 'error' as const,
+                message: `Build failed for ${name}.`,
+              })),
+            },
+          };
+
       if (flags.json) {
-        return ok
-          ? { ok, failed, results }
-          : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release build failed.', hint: 'Inspect the failed packages in the result, resolve their build errors, then rerun `kb release build`.' } };
+        return outcome;
       }
 
       ctx.ui?.sideBox?.({
@@ -141,7 +155,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok, failed, results } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release build --help` to review its inputs and recovery steps, then retry." } };
+      return outcome;
     },
   },
 });

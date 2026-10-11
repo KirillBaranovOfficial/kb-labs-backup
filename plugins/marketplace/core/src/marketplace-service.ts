@@ -13,7 +13,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import type { IExtensionStore } from '@kb-labs/core-extension-store';
+import { IntegrityMismatchError, type IExtensionStore } from '@kb-labs/core-extension-store';
 import type { ILogger } from '@kb-labs/core-platform';
 import { glob } from 'glob';
 import semver from 'semver';
@@ -698,7 +698,14 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const entries = [...Object.entries(lock.plugins), ...Object.entries(lock.adapters ?? {})];
 
     for (const [id, entry] of entries) {
-      const pkgRoot = await this.resolveEntryPath(scopeRoot, id, entry);
+      let pkgRoot: string | undefined;
+      try {
+        pkgRoot = await this.resolveEntryPath(scopeRoot, id, entry);
+      } catch (error) {
+        if (!(error instanceof IntegrityMismatchError)) { throw error; }
+        // Discovery below reports this same typed mismatch with its catalogue hint.
+        continue;
+      }
 
       if (!pkgRoot) {
         issues.push({
@@ -722,18 +729,6 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           remediation: `Run "kb marketplace install ${id}" to restore`,
         });
         continue;
-      }
-
-      if (entry.integrity) {
-        const computed = await computeIntegrity(pkgRoot);
-        if (computed && computed !== entry.integrity) {
-          issues.push({
-            severity: 'warning',
-            packageId: id,
-            message: `Integrity mismatch: expected ${entry.integrity}, got ${computed}`,
-            remediation: `Re-install: kb marketplace install ${id}`,
-          });
-        }
       }
 
       if (!('signature' in entry) || !entry.signature) {

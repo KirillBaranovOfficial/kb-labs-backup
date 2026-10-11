@@ -12,8 +12,9 @@ import {
 } from './index';
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { formatError } from './errors/index';
-import { createErrorEnvelope, getCatalogEntry, mapErrorEnvelopeToExitCode, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { isHandlerSuccessEnvelope, normalizeJsonResult } from '@kb-labs/plugin-runtime';
+import { createErrorEnvelope, mapErrorEnvelopeToExitCode, toErrorEnvelope, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
+import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
+import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
 
 /**
@@ -373,7 +374,10 @@ export function defineSystemCommand<
       let result: number | TResult;
       try {
         result = await handler(handlerContext, argv as unknown as TArgv, validatedFlags);
-        if (isHandlerSuccessEnvelope(result)) {
+        if (isUxResult(result)) {
+          throw createContractViolation();
+        }
+        if (isFailureClaim(result) && !isCommandFailure(result)) {
           throw createContractViolation();
         }
         if (isCommandFailure(result)) {
@@ -429,7 +433,11 @@ function createContractViolation(): Error & { code: string; hint: string } {
   });
 }
 
-function isCommandFailure(value: unknown): value is { ok: false; error: { code: string; message: string; hint: string } } {
+function isFailureClaim(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && 'ok' in value && value.ok === false;
+}
+
+function isCommandFailure(value: unknown): value is { ok: false; error: { code: ErrorCode; message: string; hint: string } } {
   return typeof value === 'object' && value !== null && 'ok' in value && value.ok === false
     && 'error' in value && value.error !== null && typeof value.error === 'object'
     && 'code' in value.error && typeof value.error.code === 'string'
@@ -452,7 +460,7 @@ export function throwSystemCommandError(
 }
 
 export function throwSystemCataloguedFailure(
-  code: string,
+  code: PlatformErrorCode,
   message: string,
   hint: string,
   details?: Record<string, string>,
