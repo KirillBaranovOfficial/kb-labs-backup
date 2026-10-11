@@ -28,7 +28,7 @@ export default defineHandler({
       throw new Error('Missing runId parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/runs/${encodeURIComponent(runId)}/approvals`;
+    const url = `${daemonUrl}/runs/${encodeURIComponent(runId)}/approvals`;
 
     ctx.platform.logger.info(`[pending-approvals-handler] Fetching pending approvals for run ${runId}`);
 

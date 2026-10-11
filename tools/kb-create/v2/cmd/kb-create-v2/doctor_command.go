@@ -14,6 +14,7 @@ import (
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
+	"github.com/spf13/cobra"
 )
 
 type doctorFixResult struct {
@@ -32,6 +33,7 @@ type doctorOperationResult interface {
 }
 
 type doctorCommandInput struct {
+	Command      *cobra.Command
 	PlatformRoot string
 	Executable   string
 	InputFile    string

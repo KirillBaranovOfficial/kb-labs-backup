@@ -228,11 +228,12 @@ func getJSON(ctx context.Context, client *http.Client, target string, out any) (
 	if err != nil {
 		return response.StatusCode, err
 	}
-	if response.StatusCode != http.StatusOK {
-		return response.StatusCode, nil
-	}
-	if err := result.DecodeSuccessResult(data, out); err != nil {
+	failure, err := result.DecodeResult(data, out)
+	if err != nil {
 		return response.StatusCode, err
+	}
+	if failure != nil {
+		return response.StatusCode, failure
 	}
 	return response.StatusCode, nil
 }

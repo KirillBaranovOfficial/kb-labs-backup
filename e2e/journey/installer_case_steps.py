@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
@@ -24,6 +25,52 @@ from service_port_assertions import (assert_root_offset, service_ports,
 from service_steps import Journey
 
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
+
+
+class InstallerHostLifecycle:
+    """Single owner for inspecting, changing, and restoring fixture host state."""
+
+    def __init__(self, launcher: str, run_command: CommandRunner):
+        self.launcher = launcher
+        self.run_command = run_command
+
+    def state(self, root: Path) -> tuple[bool, dict]:
+        status = _json_command(self.run_command,
+                               [self.launcher, "status", "--platform-root", str(root), "--json"],
+                               f"host lifecycle status for {root}")
+        host = status.get("host", {})
+        return isinstance(host, dict) and host.get("state") == "running", status
+
+    def set_running(self, root: Path, running: bool) -> None:
+        operation = "start" if running else "stop"
+        _json_command(self.run_command,
+                      [self.launcher, operation, "--platform-root", str(root), "--json"],
+                      f"{operation} host for {root}")
+
+    @contextmanager
+    def preserve(self, roots: list[Path]):
+        initial = {root: self.state(root)[0] for root in roots}
+        action_error: Exception | None = None
+        try:
+            yield initial
+        except Exception as error:
+            action_error = error
+        finally:
+            failures = []
+            for root, was_running in reversed(list(initial.items())):
+                try:
+                    running, _ = self.state(root)
+                    if running != was_running:
+                        self.set_running(root, was_running)
+                except Exception as error:
+                    failures.append(f"{root}: {error}")
+            if failures:
+                message = "could not restore installer host state: " + "; ".join(failures)
+                if action_error is not None:
+                    raise RuntimeError(f"{action_error}; {message}") from action_error
+                raise RuntimeError(message)
+        if action_error is not None:
+            raise action_error
 
 
 def _data(result: subprocess.CompletedProcess, label: str) -> dict:
@@ -72,6 +119,132 @@ def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandR
     return run_command([str(executable), *args])
 
 
+def installer_primary_host_guard(root: Path, launcher: str,
+                                 run_command: CommandRunner) -> Callable[[str, Callable[[], str | None]], str | None]:
+    """Keep the primary host's run-state stable across each installer-case step."""
+    lifecycle = InstallerHostLifecycle(launcher, run_command)
+
+    def listener_context(payload: dict) -> str:
+        host = payload.get("host", {})
+        pid = host.get("pid", "unknown") if isinstance(host, dict) else "unknown"
+        ports = []
+        try:
+            receipt = json.loads((active_platform_root(root) / ".kb/v2/receipt.json").read_text())
+            plan = receipt.get("plan", {})
+            host_url = plan.get("host", {}).get("healthUrl")
+            if host_url and urlsplit(host_url).port:
+                ports.append(str(urlsplit(host_url).port))
+            ports.extend(str(port) for port in service_ports(plan).values())
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError) as error:
+            return f"root {root}, pid {pid}, port(s) unavailable: {error}"
+        listeners = listener_state(ports)
+        rendered_listeners = ", ".join(f"{port}/{owner_pid} ({command})"
+                                        for port, owner_pid, command in listeners) or "none"
+        return (f"root {root}, pid {pid}, port(s) {', '.join(sorted(set(ports))) or 'unknown'}, "
+                f"listeners {rendered_listeners}")
+
+    def listener_state(ports: list[str]) -> tuple[tuple[str, str, str], ...]:
+        owners = []
+        for port in sorted(set(ports)):
+            result = run_command(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp", "-Fc"])
+            if result.returncode == 1:
+                continue
+            if result.returncode != 0:
+                raise RuntimeError(f"could not inspect listener ownership for port {port}: {result.stderr.strip()}")
+            pid = None
+            command = None
+            for line in result.stdout.splitlines():
+                if line.startswith("p"):
+                    pid = line[1:]
+                elif line.startswith("c") and pid:
+                    command = line[1:]
+                    owners.append((port, pid, command))
+                    pid = None
+                    command = None
+            if pid is not None:
+                owners.append((port, pid, command or "unknown"))
+            if not result.stdout.strip():
+                continue
+        return tuple(sorted(owners))
+
+    def signature(payload: dict) -> tuple[bool, str, str, tuple[tuple[str, str, str], ...]]:
+        host = payload.get("host", {})
+        running = isinstance(host, dict) and host.get("state") == "running"
+        pid = str(host.get("pid", "unknown")) if isinstance(host, dict) else "unknown"
+        try:
+            receipt = json.loads((active_platform_root(root) / ".kb/v2/receipt.json").read_text())
+            plan = receipt.get("plan", {})
+            ports = []
+            host_url = plan.get("host", {}).get("healthUrl")
+            if host_url and urlsplit(host_url).port:
+                ports.append(str(urlsplit(host_url).port))
+            ports.extend(str(port) for port in service_ports(plan).values())
+            listeners = listener_state(ports)
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError) as error:
+            return running, pid if running else "stopped", f"listener state unavailable: {error}", ()
+        return running, pid if running else "stopped", ",".join(sorted(set(ports))), listeners
+
+    def guard(name: str, check: Callable[[], str | None]) -> str | None:
+        before_running, before = lifecycle.state(root)
+        before_signature = signature(before)
+        action_error: Exception | None = None
+        message: str | None = None
+        try:
+            message = check()
+        except Exception as error:
+            action_error = error
+        _, after = lifecycle.state(root)
+        after_signature = signature(after)
+        after_running = isinstance(after.get("host"), dict) and after["host"].get("state") == "running"
+        violation = None
+        if after_signature != before_signature:
+            violation = (f"installer step {name!r} changed primary host run-state "
+                         f"from {listener_context(before)} to {listener_context(after)}")
+            try:
+                if after_running != before_running:
+                    lifecycle.set_running(root, before_running)
+            except Exception as restore_error:
+                violation += f"; restoration failed: {restore_error}"
+        if action_error is not None:
+            if violation:
+                raise RuntimeError(f"{action_error}; {violation}") from action_error
+            raise action_error
+        if violation:
+            raise RuntimeError(violation)
+        return message
+
+    return guard
+
+
+def run_fixture_group(journey: Journey, label: str, run_fixture: Callable[[], Journey]) -> None:
+    """Run a nested fixture journey inside the owning journey's host guard and keep its rows.
+
+    The fixture always runs and always reports its claims: a guard that cannot
+    observe the host is one failed row, not a reason to drop the group.
+    """
+    collected: list[Journey] = []
+    failures: list[str] = []
+    started = False
+
+    def run() -> None:
+        nonlocal started
+        started = True
+        collected.append(run_fixture())
+
+    for attempt in (lambda: journey.step_guard(label, run), run):
+        if started:
+            break
+        try:
+            attempt()
+        except Exception as error:
+            failures.append(str(error) or error.__class__.__name__)
+    for failure in failures:
+        journey.step(f"installer fixture group: {label}", "journey.orchestration",
+                     lambda failure=failure: failure, role="lifecycle")
+    for fixture in collected:
+        journey.steps.extend(fixture.steps)
+
+
 def stop_installer_fixture_host(root: Path, launcher: str, run_command: CommandRunner) -> None:
     """Stop an installed fixture host before another journey action or cleanup."""
     try:
@@ -79,12 +252,9 @@ def stop_installer_fixture_host(root: Path, launcher: str, run_command: CommandR
     except FileNotFoundError:
         return
     if (active / ".kb/v2/receipt.json").is_file():
-        status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
-                               f"status before cleaning installer fixture {root}")
-        host = status.get("host", {})
-        if isinstance(host, dict) and host.get("state") == "running":
-            _json_command(run_command, [launcher, "stop", "--platform-root", str(root), "--json"],
-                          f"stop installer fixture host {root}")
+        lifecycle = InstallerHostLifecycle(launcher, run_command)
+        if lifecycle.state(root)[0]:
+            lifecycle.set_running(root, False)
 
 
 def cleanup_installer_fixture_root(root: Path, launcher: str, run_command: CommandRunner) -> None:
@@ -181,6 +351,58 @@ def run_uninstall_decline_step(*, mode: str, args: list[str], receipt_path: Path
     return journey
 
 
+def run_missing_project_request_steps(*, mode: str, launcher: str, stable_index: Path,
+                                      home: Path, run_command: CommandRunner) -> Journey:
+    """Reject a missing project in every request command before platform mutation."""
+    journey = Journey(mode, f"missing-project-install-{mode}")
+
+    def reject_missing_project(operations: tuple[str, ...]) -> None:
+        def path_state(path: Path) -> tuple[str, bytes | str | None] | None:
+            if path.is_symlink():
+                return "symlink", str(path.readlink())
+            if path.is_file():
+                return "file", path.read_bytes()
+            if path.is_dir():
+                return "directory", None
+            if path.exists():
+                return "other", str(path.stat().st_mode)
+            return None
+
+        shim_path = Path(launcher).resolve().parent / "kb"
+        registry_path = home / ".kb" / "projects.json"
+        shim_before = path_state(shim_path)
+        registry_before = path_state(registry_path)
+        with tempfile.TemporaryDirectory(prefix="journey-missing-project-install-") as temp:
+            root = Path(temp)
+            project = root / "missing-project"
+            for operation in operations:
+                target = root / operation
+                result = run_command([launcher, operation, "--json", "--index", str(stable_index),
+                                      "--platform-root", str(target), "--project-root", str(project)])
+                _, error = _diagnostic(result, f"{operation} with a missing project directory")
+                hint = error.get("hint", "")
+                receipt_path = target / ".kb" / "v2" / "receipt.json"
+                scenario_path = target / ".kb" / "v2" / "scenarios" / "custom.json"
+                shim_changed = path_state(shim_path) != shim_before
+                registry_changed = path_state(registry_path) != registry_before
+                if (result.returncode == 0 or error.get("code") != "KB_INSTALL_INPUT_REQUIRED"
+                        or "must exist" not in error.get("message", "")
+                        or "mkdir -p" not in hint or "existing project directory" not in hint
+                        or target.exists() or receipt_path.exists() or shim_changed or registry_changed
+                        or scenario_path.exists() or Path(str(scenario_path) + ".tmp").exists()):
+                    raise RuntimeError(f"missing project {operation} was not rejected before mutation: "
+                                       f"exit={result.returncode}, code={error.get('code')}, "
+                                       f"platform root exists={target.exists()}, receipt exists={receipt_path.exists()}, "
+                                       f"shim changed={shim_changed}, project registry changed={registry_changed}, "
+                                       f"scenario state exists={scenario_path.exists()}")
+
+    journey.step("reject installation when the selected project directory is missing",
+                 "platform.install", lambda: reject_missing_project(("install",)), cases=["S-187.7"])
+    journey.step("reject plan and apply when the selected project directory is missing",
+                 "platform.install", lambda: reject_missing_project(("plan", "apply")), cases=["S-187.8"])
+    return journey
+
+
 def _without_jsonc_comments(source: str) -> str:
     """Remove JSONC comments without changing comment markers inside strings."""
     output: list[str] = []
@@ -239,7 +461,8 @@ def run_analytics_invalid_retention_step(*, mode: str, launcher: str, platform_r
         options.setdefault("analytics", {})["retentionDays"] = 0
         config_path.write_text(json.dumps(config, indent=2) + "\n")
 
-        try:
+        lifecycle = InstallerHostLifecycle(launcher, run_command)
+        with lifecycle.preserve([platform_root]):
             result = run_command([launcher, "start", "--platform-root", str(platform_root), "--json"])
             envelope, error = _diagnostic(result, "invalid analytics retention")
             detail = json.dumps(error, sort_keys=True)
@@ -254,52 +477,10 @@ def run_analytics_invalid_retention_step(*, mode: str, launcher: str, platform_r
                     or expected_hint not in str(error.get("hint", ""))
                     or error.get("code") == "KB_RUNTIME_UNEXPECTED"):
                 raise RuntimeError(f"invalid analytics retention did not return its catalogued config error: {error}")
-        finally:
-            stopped = run_command([launcher, "stop", "--platform-root", str(platform_root), "--json"])
-            if stopped.returncode != 0:
-                raise RuntimeError(
-                    "could not stop the invalid-retention fixture host: "
-                    f"{' '.join((stopped.stderr or stopped.stdout).split())[-500:]}"
-                )
 
     journey.step("reject invalid SQLite retention during installed host startup", "platform.install",
                  invalid_retention, cases=["S-191.7"])
     return journey
-
-
-def assert_default_service_ports_free(platform_root: Path, run_command: CommandRunner) -> None:
-    """Name any listener left on the installed plan's ports before main restart."""
-    platform_root = active_platform_root(platform_root)
-    receipt_path = platform_root / ".kb/v2/receipt.json"
-    try:
-        receipt = json.loads(receipt_path.read_text())
-        plan = receipt["plan"]
-        ports: dict[int, str] = {}
-        host = plan.get("host")
-        if isinstance(host, dict) and isinstance(host.get("healthUrl"), str):
-            port = urlsplit(host["healthUrl"]).port
-            if port is not None:
-                ports[port] = "host"
-        graph = plan.get("serviceGraph", {})
-        for service in graph.get("services", []):
-            if isinstance(service, dict) and isinstance(service.get("port"), int) and service["port"] > 0:
-                ports[service["port"]] = str(service.get("id") or "service")
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
-        raise RuntimeError(f"cannot verify default ports without the main platform receipt: {error}") from error
-
-    owners = []
-    for port, purpose in sorted(ports.items()):
-        args = ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp", "-Fc"]
-        result = run_command(args)
-        if result.returncode == 1:
-            continue
-        if result.returncode != 0:
-            raise RuntimeError(f"could not inspect listener ownership for default port {port}: {result.stderr.strip()}")
-        pid = next((line[1:] for line in result.stdout.splitlines() if line.startswith("p")), "unknown")
-        command = next((line[1:] for line in result.stdout.splitlines() if line.startswith("c")), "unknown")
-        owners.append(f"port {port} ({purpose}) is owned by pid {pid} ({command})")
-    if owners:
-        raise RuntimeError("installer fixture left default service listener(s): " + "; ".join(owners))
 
 
 def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
@@ -309,15 +490,11 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
 
     def offline_plan() -> None:
         root = platform_root.parent / "s181-offline-root"
-        status = _json_command(run_command, [launcher, "status", "--platform-root", str(platform_root), "--json"],
-                               "primary status before offline cache priming")
-        host = status.get("host", {})
-        primary_was_running = (isinstance(host, dict) and host.get("state") == "running"
-                               and status.get("running") is True and status.get("reachable") is True)
-        if primary_was_running:
-            _json_command(run_command, [launcher, "stop", "--platform-root", str(platform_root), "--json"],
-                          "stop primary host for offline cache priming")
-        try:
+        lifecycle = InstallerHostLifecycle(launcher, run_command)
+        with lifecycle.preserve([platform_root]) as initial:
+            primary_was_running = initial[platform_root]
+            if primary_was_running:
+                lifecycle.set_running(platform_root, False)
             _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                "--platform-channel", "stable", "--platform-root", str(root)]),
                   "online cache priming apply")
@@ -328,10 +505,6 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
             if (plan.get("request", {}).get("source") != "offline" or not artifacts
                     or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
                 raise RuntimeError("offline plan omitted cache provenance or claimed registry/network resolution")
-        finally:
-            if primary_was_running:
-                _json_command(run_command, [launcher, "start", "--platform-root", str(platform_root), "--json"],
-                              "restore primary host after offline cache priming")
 
     journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
                  cases=["S-181.4"])
@@ -360,26 +533,18 @@ def run_secondary_root_gateway_isolation_step(*, mode: str, launcher: str, prima
         if not primary_port or not secondary_port or secondary_port == primary_port:
             raise RuntimeError(f"secondary root receipt does not declare a distinct Gateway address: {gateway_url}")
 
-        was_running: dict[Path, bool] = {}
-        for root in (primary_root, secondary_root):
-            status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
-                                   f"status before Gateway isolation for {root}")
-            host = status.get("host", {})
-            was_running[root] = (isinstance(host, dict) and host.get("state") == "running"
-                                 and status.get("running") is True and status.get("reachable") is True)
-        try:
+        lifecycle = InstallerHostLifecycle(launcher, run_command)
+        with lifecycle.preserve([primary_root, secondary_root]) as initial:
             for root in (primary_root, secondary_root):
-                if not was_running[root]:
-                    _json_command(run_command, [launcher, "start", "--platform-root", str(root), "--json"],
-                                  f"start Gateway isolation host {root}")
+                if not initial[root]:
+                    lifecycle.set_running(root, True)
 
             live = run_platform_cli(secondary_root, ["adapter", "list", "--json"], run_command)
             _, live_data = _payload(live, "secondary root adapter list while running")
             if not isinstance(live_data.get("adapters"), list):
                 raise RuntimeError("running secondary root adapter list omitted adapter state")
 
-            _json_command(run_command, [launcher, "stop", "--platform-root", str(secondary_root), "--json"],
-                          "stop secondary Gateway for isolation check")
+            lifecycle.set_running(secondary_root, False)
             stopped = run_platform_cli(secondary_root, ["adapter", "list", "--json"], run_command)
             _, error = _diagnostic(stopped, "secondary root adapter list while stopped")
             unreachable_hint = f'Run "kb-create start --platform-root {secondary_root}" and retry the command.'
@@ -389,18 +554,6 @@ def run_secondary_root_gateway_isolation_step(*, mode: str, launcher: str, prima
                                and error.get("details", {}).get("expectedInstallationId") == secondary_installation)
             if stopped.returncode == 0 or not (unreachable or primary_answers):
                 raise RuntimeError(f"stopped secondary root did not identify its own unavailable Gateway: {error}")
-        finally:
-            for root in (secondary_root, primary_root):
-                status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
-                                       f"status before restoring Gateway isolation host {root}")
-                host = status.get("host", {})
-                running = isinstance(host, dict) and host.get("state") == "running"
-                if was_running[root] and not running:
-                    _json_command(run_command, [launcher, "start", "--platform-root", str(root), "--json"],
-                                  f"restore running host state {root}")
-                elif not was_running[root] and running:
-                    _json_command(run_command, [launcher, "stop", "--platform-root", str(root), "--json"],
-                                  f"restore stopped host state {root}")
 
     journey.step("verify the secondary root's Gateway while running and stopped", "platform.install",
                  gateway_isolation, cases=["PC-001.12"])
@@ -429,8 +582,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
         assert_root_offset(automatic_plan, primary_ports, primary_transport_ports, 100,
                            "secondary receipt")
 
-        _json_command(run_command, [launcher, "stop", "--platform-root", str(automatic_root), "--json"],
-                      "stop automatic Gateway root before checking its retained allocation")
+        InstallerHostLifecycle(launcher, run_command).set_running(automatic_root, False)
 
         explicit_installed = False
         try:
@@ -474,8 +626,10 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                                   run_command: CommandRunner) -> Journey:
     """Install a custom scenario in JSON mode and verify its project registry entry."""
     journey = Journey(mode, f"json-install-project-{mode}")
+    installed = False
 
     def install_and_show() -> None:
+        nonlocal installed
         platform_root.parent.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True, exist_ok=True)
         try:
@@ -490,11 +644,32 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                 raise RuntimeError(f"JSON install did not register the canonical project path: {shown}")
             if (project_root / ".kb").exists():
                 raise RuntimeError("JSON project registration wrote KB Labs files into the project repository")
+            installed = True
+        except Exception:
+            cleanup_installer_fixture_root(platform_root, launcher, run_command)
+            raise
+
+    def update_after_project_removed() -> None:
+        if not installed:
+            raise RuntimeError("project install fixture did not complete")
+        request_path = platform_root.parent / "s187-receipt-request.json"
+        try:
+            receipt = json.loads((active_platform_root(platform_root) / ".kb/v2/receipt.json").read_text())
+            request_path.write_text(json.dumps(receipt["plan"]["request"]))
+            shutil.rmtree(project_root)
+            updated = _data(run_command([launcher, "update", "--json", "--index", str(stable_index),
+                                         "--input", str(request_path)]),
+                            "update after registered project directory was removed")
+            if updated.get("ok") is not True or not updated.get("alreadyUpToDate"):
+                raise RuntimeError(f"update did not accept the receipt request after project removal: {updated}")
         finally:
+            request_path.unlink(missing_ok=True)
             cleanup_installer_fixture_root(platform_root, launcher, run_command)
 
     journey.step("install a custom scenario in JSON mode and register its project",
                  "platform.install", install_and_show, cases=["S-187.6"])
+    journey.step("update after the registered project directory was removed",
+                 "platform.update", update_after_project_removed, cases=["S-187.9"])
     return journey
 
 
@@ -505,15 +680,10 @@ def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Pat
     root = str(platform_root)
 
     def repeat_plan() -> None:
-        status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
-                               "status before repeat plan")
-        host = status.get("host", {})
-        started_here = not (isinstance(host, dict) and host.get("state") == "running"
-                            and status.get("running") is True and status.get("reachable") is True)
-        if started_here:
-            _json_command(run_command, [launcher, "start", "--platform-root", root, "--json"],
-                          "start host for repeat plan")
-        try:
+        lifecycle = InstallerHostLifecycle(launcher, run_command)
+        with lifecycle.preserve([platform_root]) as initial:
+            if not initial[platform_root]:
+                lifecycle.set_running(platform_root, True)
             before = _snapshot_installation_owned_tree(platform_root)
             args = [launcher, "plan", "--json", "--index", str(stable_index),
                     "--platform-root", root, "--service-profile", "default",
@@ -532,10 +702,6 @@ def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Pat
             if (not isinstance(host, dict) or host.get("state") != "running"
                     or status.get("running") is not True or status.get("reachable") is not True):
                 raise RuntimeError("host health check failed after PC-001.8: expected running and reachable")
-        finally:
-            if started_here:
-                _json_command(run_command, [launcher, "stop", "--platform-root", root, "--json"],
-                              "stop host started for repeat plan")
 
     journey.step("repeat install planning without changing the installed root", "platform.install",
                  repeat_plan, cases=["PC-001.8"])
@@ -699,6 +865,8 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         journey.step("preflight installer case fixtures", "journey.orchestration",
                      lambda: "missing installer journey resource(s): " + ", ".join(missing_resources))
         return journey
+
+    journey.step_guard = installer_primary_host_guard(platform_root, launcher, run_command)
 
     fixture_dir = installer_case_fixture_root()
     root = str(platform_root)
@@ -883,7 +1051,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             install_root.rmdir()
 
     journey.step("install, update twice, restart, and uninstall inside a fresh container", "platform.update",
-                 isolated_container_install, cases=["PC-001.17", "PC-001.18", "S-023.17", "S-050.8", "S-221.4"])
+                 isolated_container_install, cases=["PC-001.17", "PC-001.18", "S-023.17", "S-050.8", "S-223.4"])
 
     def inspect_generated_config() -> None:
         config_path = apply_root / "current/.kb/kb.config.jsonc"
@@ -936,20 +1104,14 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                     raise RuntimeError(f"{operation} did not refuse the unversioned root unchanged with a reinstall command")
 
     journey.step("inspect generated runtime config and service declarations", "platform.install",
-                 inspect_generated_config, cases=["PC-001.5", "S-023.16", "S-221.3"])
+                 inspect_generated_config, cases=["PC-001.5", "S-023.16", "S-223.3"])
 
-    for step in run_analytics_invalid_retention_step(mode=mode, launcher=launcher,
-                                                     platform_root=apply_root,
-                                                     run_command=run_command).steps:
-        journey.step(step.name, step.capability,
-                     lambda step=step: None if step.status == "PASS" else step.message,
-                     cases=step.cases)
+    run_fixture_group(journey, "analytics retention validation", lambda: run_analytics_invalid_retention_step(
+        mode=mode, launcher=launcher, platform_root=apply_root, run_command=run_command))
 
-    for step in run_repeat_plan_readonly_step(mode=mode, launcher=launcher, stable_index=stable_index,
-                                              platform_root=platform_root, run_command=run_command).steps:
-        journey.step(step.name, step.capability,
-                     lambda step=step: None if step.status == "PASS" else step.message,
-                     cases=step.cases)
+    run_fixture_group(journey, "repeat plan", lambda: run_repeat_plan_readonly_step(
+        mode=mode, launcher=launcher, stable_index=stable_index,
+        platform_root=platform_root, run_command=run_command))
 
     def channel_plan(channel: str, index: Path, root_name: str) -> None:
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(index),
@@ -984,13 +1146,6 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     def secret_apply() -> None:
         if not secret_value:
             raise RuntimeError("isolated journey secret is unavailable for S-181.3")
-        primary_status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
-                                       "primary status before secondary install")
-        primary_host = primary_status.get("host", {})
-        if not (isinstance(primary_host, dict) and primary_host.get("state") == "running"
-                and primary_status.get("running") is True and primary_status.get("reachable") is True):
-            _json_command(run_command, [launcher, "start", "--platform-root", root, "--json"],
-                          "start primary before secondary install")
         apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                     "--platform-channel", "stable", "--platform-root", str(secret_root),
                                     "--scenario", "custom", "--scenario-answers",
@@ -1017,21 +1172,14 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
                  cases=["S-181.3", "PC-001.10"])
 
-    for step in run_gateway_allocation_step(mode=mode, launcher=launcher, stable_index=stable_index,
-                                            primary_root=platform_root, automatic_root=secret_root,
-                                            explicit_root=explicit_gateway_root,
-                                            run_command=run_command).steps:
-        journey.step(step.name, step.capability,
-                     lambda step=step: None if step.status == "PASS" else step.message,
-                     cases=step.cases)
+    run_fixture_group(journey, "gateway allocation", lambda: run_gateway_allocation_step(
+        mode=mode, launcher=launcher, stable_index=stable_index,
+        primary_root=platform_root, automatic_root=secret_root,
+        explicit_root=explicit_gateway_root, run_command=run_command))
 
-    for step in run_secondary_root_gateway_isolation_step(mode=mode, launcher=launcher,
-                                                           primary_root=platform_root,
-                                                           secondary_root=secret_root,
-                                                           run_command=run_command).steps:
-        journey.step(step.name, step.capability,
-                     lambda step=step: None if step.status == "PASS" else step.message,
-                     cases=step.cases)
+    run_fixture_group(journey, "secondary root gateway isolation", lambda: run_secondary_root_gateway_isolation_step(
+        mode=mode, launcher=launcher, primary_root=platform_root,
+        secondary_root=secret_root, run_command=run_command))
 
     def repair_dangling_shim() -> None:
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
@@ -1069,11 +1217,9 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey.step("uninstall a platform that does not own the kb command", "platform.install",
                  uninstall_non_owner, cases=["PC-001.11"])
 
-    for step in run_offline_plan_step(mode=mode, launcher=launcher, stable_index=stable_index,
-                                      platform_root=platform_root, run_command=run_command).steps:
-        journey.step(step.name, step.capability,
-                     lambda step=step: None if step.status == "PASS" else step.message,
-                     cases=step.cases)
+    run_fixture_group(journey, "offline plan", lambda: run_offline_plan_step(
+        mode=mode, launcher=launcher, stable_index=stable_index,
+        platform_root=platform_root, run_command=run_command))
 
     for generated_root in (apply_root, platform_root.parent / "s181-stable-root",
                            platform_root.parent / "s181-canary-root", secret_root,
@@ -1081,11 +1227,9 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                            platform_root.parent / "removed-shim-owner",
                            platform_root.parent / "s181-offline-root"):
         shutil.rmtree(generated_root, ignore_errors=True)
-    for step in run_installer_fixture_steps(mode=mode, launcher=launcher, platform_root=platform_root,
-                                            stable_index=stable_index, run_command=run_command).steps:
-        journey.step(step.name, step.capability,
-                     lambda step=step: None if step.status == "PASS" else step.message,
-                     cases=step.cases)
+    run_fixture_group(journey, "installer fixtures", lambda: run_installer_fixture_steps(
+        mode=mode, launcher=launcher, platform_root=platform_root,
+        stable_index=stable_index, run_command=run_command))
     return journey
 
 

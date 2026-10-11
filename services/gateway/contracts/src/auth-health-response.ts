@@ -1,16 +1,11 @@
 import { z } from 'zod';
+import { gatewayAuthHealthIssueSeverities, gatewayBootstrapStatuses } from './auth-health-response.enums.js';
 
-export const GatewayBootstrapStatusSchema = z.enum([
-  'not-configured',
-  'provisioned',
-  'exists-active',
-  'exists-non-active',
-  'failed',
-]);
+export const GatewayBootstrapStatusSchema = z.enum(gatewayBootstrapStatuses);
 
 export const GatewayAuthHealthIssueSchema = z.object({
   code: z.string(),
-  severity: z.enum(['error', 'warning']),
+  severity: z.enum(gatewayAuthHealthIssueSeverities),
   message: z.string(),
   hint: z.string(),
 }).strict();

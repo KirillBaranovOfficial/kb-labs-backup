@@ -29,7 +29,7 @@ export default defineHandler({
       params.append('status', validatedStatus);
     }
 
-    const url = `${daemonUrl}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs?${params}`;
+    const url = `${daemonUrl}/workflows/${encodeURIComponent(workflowId)}/runs?${params}`;
 
     ctx.platform.logger.info(`[workflow-runs-handler] Fetching run history from ${url}`);
 

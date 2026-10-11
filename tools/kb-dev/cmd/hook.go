@@ -67,7 +67,7 @@ func runHookCheck(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	_, _, err = switchToAlias(cmd.Context(), platformDir, alias, false, true)
+	_, _, err = switchToAlias(cmd.Context(), cmd, platformDir, alias, false, true)
 	return err
 }
 

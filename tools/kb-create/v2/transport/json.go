@@ -37,7 +37,7 @@ func DecodeRequest(data []byte) (contracts.InstallRequest, error) {
 }
 
 func Plan(data []byte, source catalog.Catalog) PlanResponse {
-	return PlanWith(data, source, resolve.Options{})
+	return PlanWith(data, source, resolve.Options{ProjectRootSelection: true})
 }
 
 // PlanWith is Plan for a launcher of a known version and target.
@@ -46,12 +46,20 @@ func PlanWith(data []byte, source catalog.Catalog, options resolve.Options) Plan
 	if err != nil {
 		var validation *contracts.RequestValidationError
 		if errors.As(err, &validation) {
-			response := failure(validation.Code, err)
-			response.Error.Hint = validation.Hint
-			response.Error.Meta = map[string]any{"field": validation.Field}
-			return response
+			return PlanResponse{OK: false, Error: validation.Diagnostic()}
 		}
 		return failure(contracts.CodeIncompatibleComponents, err)
+	}
+	if options.ProjectRootSelection && request.ProjectRoot != "" {
+		projectRoot, validationErr := contracts.ValidateProjectSelection(request.ProjectRoot)
+		if validationErr != nil {
+			var validation *contracts.RequestValidationError
+			if errors.As(validationErr, &validation) {
+				return PlanResponse{OK: false, Error: validation.Diagnostic()}
+			}
+			return failure(contracts.CodeIncompatibleComponents, validationErr)
+		}
+		request.ProjectRoot = projectRoot
 	}
 	resolved, err := resolve.PlanWith(request, source, options)
 	if err != nil {

@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from installer_case_steps import (_data, _seed_doctor_fixture, assert_default_service_ports_free,
+from installer_case_steps import (_data, _seed_doctor_fixture,
                                   cleanup_installer_fixture_root,
                                   run_doctor_root_isolation_step,
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
@@ -18,8 +18,10 @@ from installer_case_steps import (_data, _seed_doctor_fixture, assert_default_se
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
                                   run_gateway_allocation_step,
                                   assert_root_offset, run_json_install_project_step,
-                                  run_uninstall_decline_step, _service_ids_match,
+                                  installer_primary_host_guard, run_fixture_group,
+                                  run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
                                   _snapshot_installation_owned_tree)
+from invocations import PtyCommandTimeout
 from journey_resources import case_catalog_root
 from test_install_layout import create_test_install_container, move_test_platform_into_container
 from service_steps import Journey, record_candidate_provenance
@@ -27,6 +29,168 @@ from service_port_assertions import assert_service_ports_preserved
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_j52_installer_sequence_attributes_leak_and_keeps_later_rows(self):
+        with tempfile.TemporaryDirectory(prefix="journey-host-lifecycle-") as temp:
+            root = Path(temp) / "platform"
+            active = create_test_install_container(root)
+            receipt = active / ".kb/v2/receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"plan": {"host": {"healthUrl": "http://127.0.0.1:4000/health"}}}))
+            state = {"running": False}
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                if args[0] == "lsof":
+                    if state["running"]:
+                        return subprocess.CompletedProcess(args, 0, "p4321\ncMainThread\n", "")
+                    return subprocess.CompletedProcess(args, 1, "", "")
+                operation = args[1]
+                if operation == "status":
+                    host = {"state": "running", "pid": 4321} if state["running"] else {"state": "stopped"}
+                    payload = {"ok": True, "data": {"host": host}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+                if operation == "start":
+                    state["running"] = True
+                elif operation == "stop":
+                    state["running"] = False
+                return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{}}', "")
+
+            journey = Journey("local")
+            journey.step_guard = installer_primary_host_guard(root, "kb-create", run_command)
+            journey.step("plan, apply, and verify stable install", "platform.install", lambda: None,
+                         cases=["S-181.1"])
+            journey.step("plan, apply, and verify canary install", "platform.install", lambda: None,
+                         cases=["S-181.2"])
+            journey.step("apply a secret through an environment reference", "platform.install",
+                         lambda: run_command(["kb-create", "start", "--platform-root", str(root), "--json"]),
+                         cases=["S-181.3"])
+            def offline_plan():
+                if state["running"]:
+                    run_command(["kb-create", "stop", "--platform-root", str(root), "--json"])
+                self.assertFalse(state["running"], "S-181.4 inherited S-181.3 host state")
+                return None
+            journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
+                         cases=["S-181.4"])
+            journey.step("continue installer case fixtures", "platform.install", lambda: None,
+                         cases=["S-181.5"])
+
+        self.assertEqual([step.status for step in journey.steps], ["PASS", "PASS", "FAIL", "PASS", "PASS"])
+        self.assertIn("S-181.3", journey.steps[2].cases)
+        self.assertIn("root", journey.steps[2].message)
+        self.assertIn("pid 4321", journey.steps[2].message)
+        self.assertIn("4000", journey.steps[2].message)
+        self.assertFalse(state["running"])
+        self.assertEqual([step.name for step in journey.steps], [
+            "plan, apply, and verify stable install", "plan, apply, and verify canary install",
+            "apply a secret through an environment reference",
+            "resolve a fresh request from the local artifact cache", "continue installer case fixtures",
+        ])
+
+    def test_nested_fixture_journey_leak_is_attributed_to_its_group_and_rows_are_kept(self):
+        with tempfile.TemporaryDirectory(prefix="journey-host-lifecycle-") as temp:
+            root = Path(temp) / "platform"
+            active = create_test_install_container(root)
+            receipt = active / ".kb/v2/receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"plan": {"host": {"healthUrl": "http://127.0.0.1:4000/health"}}}))
+            state = {"running": False}
+
+            def run_command(args):
+                if args[0] == "lsof":
+                    if state["running"]:
+                        return subprocess.CompletedProcess(args, 0, "p4321\ncMainThread\n", "")
+                    return subprocess.CompletedProcess(args, 1, "", "")
+                if args[1] == "status":
+                    host = {"state": "running", "pid": 4321} if state["running"] else {"state": "stopped"}
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"host": host}}), "")
+                state["running"] = args[1] == "start"
+                return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{}}', "")
+
+            def leaking_fixture() -> Journey:
+                fixture = Journey("local", "nested-fixture")
+                fixture.step("nested claim passes", "platform.install", lambda: None, cases=["S-181.4"],
+                             details=lambda: {"evidence": "kept"})
+                fixture.blocked("nested claim is blocked", "platform.install", "needs a registry",
+                                cases=["S-181.5"])
+                run_command(["kb-create", "start", "--platform-root", str(root), "--json"])
+                return fixture
+
+            journey = Journey("local")
+            journey.step_guard = installer_primary_host_guard(root, "kb-create", run_command)
+            run_fixture_group(journey, "offline plan", leaking_fixture)
+            run_fixture_group(journey, "clean group", lambda: Journey("local", "clean-fixture"))
+
+        self.assertEqual([(step.name, step.status) for step in journey.steps], [
+            ("installer fixture group: offline plan", "FAIL"),
+            ("nested claim passes", "PASS"),
+            ("nested claim is blocked", "BLOCKED"),
+        ])
+        self.assertIn("'offline plan' changed primary host run-state", journey.steps[0].message)
+        self.assertIn("pid 4321", journey.steps[0].message)
+        self.assertEqual(journey.steps[1].details, {"evidence": "kept"})
+        self.assertEqual(journey.steps[2].cases, ["S-181.5"])
+        self.assertFalse(state["running"])
+
+    def test_nested_fixture_journey_reports_its_claims_when_the_guard_cannot_observe_the_host(self):
+        def failing_status(args):
+            return subprocess.CompletedProcess(args, 2, '{"ok":false,"error":{"code":"FAKE_FAILURE"}}', "")
+
+        def fixture() -> Journey:
+            nested = Journey("local", "nested-fixture")
+            nested.step("nested claim still reports", "platform.install", lambda: "product failure",
+                        cases=["S-181.4"])
+            return nested
+
+        with tempfile.TemporaryDirectory(prefix="journey-host-lifecycle-") as temp:
+            journey = Journey("local")
+            journey.step_guard = installer_primary_host_guard(Path(temp), "kb-create", failing_status)
+            run_fixture_group(journey, "offline plan", fixture)
+
+        self.assertEqual([(step.name, step.status, step.cases) for step in journey.steps], [
+            ("installer fixture group: offline plan", "FAIL", []),
+            ("nested claim still reports", "FAIL", ["S-181.4"]),
+        ])
+
+    # case: S-187.7
+    def test_missing_project_request_claims_check_error_and_platform_root_absence(self):
+        with tempfile.TemporaryDirectory(prefix="journey-missing-project-install-test-") as temp:
+            root = Path(temp)
+            platform = root / "platform"
+            index = root / "release-index.json"
+            index.write_text("{}")
+            calls = []
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            launcher = bin_dir / "kb-create"
+            shim_target = root / "existing-kb"
+            shim_target.write_text("existing shim target")
+            (bin_dir / "kb").symlink_to(shim_target)
+            registry_dir = root / ".kb"
+            registry_dir.mkdir()
+            registry = registry_dir / "projects.json"
+            registry.write_text('{"projects":[{"path":"existing-project"}]}')
+
+            def run_command(args):
+                calls.append(args)
+                error = {"code": "KB_INSTALL_INPUT_REQUIRED", "message": "project directory must exist",
+                         "hint": "Run mkdir -p 'missing-project' or pass an existing project directory."}
+                records = [
+                    {"ok": False, "error": error},
+                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 2}}},
+                ]
+                return subprocess.CompletedProcess(args, 2,
+                    "\n".join(json.dumps(record) for record in records) + "\n", "")
+
+            journey = run_missing_project_request_steps(mode="local", launcher=str(launcher), stable_index=index,
+                                                        home=root, run_command=run_command)
+            self.assertEqual(journey.steps[0].cases, ["S-187.7"])
+            self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+            self.assertEqual(calls[0][1:3], ["install", "--json"])
+            self.assertEqual(journey.steps[1].cases, ["S-187.8"])
+            self.assertEqual(journey.steps[1].status, "PASS", journey.steps[1].message)
+            self.assertEqual([call[1] for call in calls], ["install", "plan", "apply"])
+
     # case: S-039.1
     def test_apply_scenario_claim_checks_command_stream_and_receipt_preference(self):
         with tempfile.TemporaryDirectory(prefix="journey-apply-scenario-") as temp:
@@ -181,9 +345,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 if args[1] == "install":
                     active = create_test_install_container(platform)
                     (active / ".kb/v2/bin").mkdir(parents=True)
-                    (active / ".kb/v2/receipt.json").write_text("{}")
+                    (active / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"request": {
+                        "platformRoot": str(platform), "projectRoot": str(project)}}}))
                     (active / ".kb/v2/bin/kb").write_text("fixture")
                     return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{"operation":"install"}}', "")
+                if args[1] == "update":
+                    return subprocess.CompletedProcess(args, 0,
+                        '{"ok":true,"data":{"ok":true,"alreadyUpToDate":true}}', "")
                 if args[1] == "project":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
                         "project": {"id": "prj_test", "path": str(project.resolve())}}}), "")
@@ -197,11 +365,16 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                     run_command=run_command)
             self.assertEqual(journey.steps[0].cases, ["S-187.6"])
             self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+            self.assertEqual(journey.steps[1].cases, ["S-187.9"])
+            self.assertEqual(journey.steps[1].status, "PASS", journey.steps[1].message)
             install_args = calls[0]
             self.assertIn("--json", install_args)
             self.assertEqual(install_args[install_args.index("--scenario") + 1], "custom")
             self.assertEqual(install_args[install_args.index("--project-root") + 1], str(project))
-            self.assertEqual([call[1] for call in calls[1:]], ["project", "status", "stop", "uninstall"])
+            self.assertEqual([call[1] for call in calls[1:]], ["project", "update", "status", "stop", "uninstall"])
+            update_args = calls[2]
+            self.assertEqual(update_args[1], "update")
+            self.assertEqual(update_args[update_args.index("--input") + 1], str(platform.parent / "s187-receipt-request.json"))
 
     def test_installer_fixture_cleanup_stops_running_host_before_removing_root(self):
         with tempfile.TemporaryDirectory(prefix="journey-installer-cleanup-") as temp:
@@ -222,31 +395,6 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(calls, ["status", "stop", "uninstall"])
         self.assertFalse(root.exists())
-
-    def test_default_service_port_check_names_leftover_listener_owner(self):
-        with tempfile.TemporaryDirectory(prefix="journey-default-port-check-") as temp:
-            root = Path(temp)
-            receipt_path = root / ".kb/v2/receipt.json"
-            receipt_path.parent.mkdir(parents=True)
-            receipt_path.write_text(json.dumps({"plan": {
-                "host": {"healthUrl": "http://127.0.0.1:4000/health"},
-                "serviceGraph": {"services": [{"id": "gateway", "port": 4000},
-                                                {"id": "marketplace", "port": 5070}]},
-            }}))
-            move_test_platform_into_container(root)
-
-            calls = []
-
-            def lsof(args):
-                calls.append(args)
-                if "-iTCP:4000" in args:
-                    return subprocess.CompletedProcess(args, 0, "p363\ncMainThread\n", "")
-                return subprocess.CompletedProcess(args, 1, "", "")
-
-            with self.assertRaisesRegex(RuntimeError, r"port 4000 .* pid 363 \(MainThread\)"):
-                assert_default_service_ports_free(root, lsof)
-            self.assertEqual(len(calls), 2)
-            self.assertIn("-iTCP:4000", calls[0])
 
     def test_offline_plan_step_primes_and_uses_its_own_root_cache(self):
         with tempfile.TemporaryDirectory(prefix="journey-offline-plan-") as temp:
@@ -272,7 +420,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["S-181.4"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual([call[1] for call in calls], ["status", "apply", "plan"])
+        self.assertEqual([call[1] for call in calls], ["status", "apply", "plan", "status"])
         self.assertNotIn("--offline", calls[1])
         self.assertIn("--offline", calls[2])
         cache_root = root.parent / "s181-offline-root"
@@ -465,12 +613,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["PC-001.8"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual([args[1] for args in calls], ["status", "start", "plan", "plan", "status", "stop"])
+        self.assertEqual([args[1] for args in calls],
+                         ["status", "start", "plan", "plan", "status", "status", "stop"])
 
     def test_repeat_plan_allows_runtime_state_changes_from_running_host(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-runtime-state-") as temp:
             root = Path(temp) / "platform"
-            log_dir = root / ".kb/logs"
+            create_test_install_container(root)
+            log_dir = root / "state/logs"
             log_dir.mkdir(parents=True)
             index = Path(temp) / "release-index.json"
             index.write_text("{}")
@@ -491,10 +641,12 @@ class InstallerCaseStepsTest(unittest.TestCase):
             journey = run_repeat_plan_readonly_step(mode="local", launcher="kb-create", stable_index=index,
                                                     platform_root=root, run_command=run_command)
             installed_files = _snapshot_installation_owned_tree(root)
+            self.assertEqual((log_dir / "host-runtime.log").read_text(), "runtime update\n")
 
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual(calls, ["status", "plan", "plan", "status"])
-        self.assertEqual(set(installed_files), {".kb"})
+        self.assertEqual(calls, ["status", "plan", "plan", "status", "status"])
+        self.assertNotIn("state/logs/host-runtime.log", installed_files)
+        self.assertFalse(any(path.endswith(".kb/logs/host-runtime.log") for path in installed_files))
 
     def test_missing_installer_fixture_is_claimless_preflight_failure(self):
         with tempfile.TemporaryDirectory(prefix="journey-missing-installer-fixture-") as temp:
@@ -695,9 +847,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["S-191.7"])
         self.assertEqual(journey.steps[0].status, "FAIL")
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0][1], "start")
-        self.assertEqual(calls[1][1], "stop")
+        self.assertEqual([call[1] for call in calls], ["status", "start", "status"])
         self.assertEqual(calls[1][calls[1].index("--platform-root") + 1], str(root))
 
     def test_doctor_root_isolation_claim_checks_repair_and_main_status(self):
@@ -794,6 +944,22 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(journey.steps[0].cases, ["S-050.3"])
             self.assertEqual(journey.steps[0].status, "FAIL")
 
+    # case: S-050.3
+    def test_uninstall_decline_timeout_keeps_transcript_and_candidate_state(self):
+        with tempfile.TemporaryDirectory(prefix="journey-uninstall-timeout-") as temp:
+            receipt = Path(temp) / "receipt.json"
+            receipt.write_text('{"id":"unchanged"}')
+
+            def fake_pty(args, *, on_output):
+                raise PtyCommandTimeout(args, 120, "partial confirmation prompt", '{"host":"running"}')
+
+            journey = run_uninstall_decline_step(mode="local", args=["kb-create", "uninstall"],
+                                                 receipt_path=receipt, run_pty=fake_pty)
+            self.assertEqual(journey.steps[0].cases, ["S-050.3"])
+            self.assertEqual(journey.steps[0].status, "FAIL")
+            self.assertIn("partial confirmation prompt", journey.steps[0].message)
+            self.assertIn('{"host":"running"}', journey.steps[0].message)
+
     def test_each_claim_fails_when_the_cli_returns_a_failed_envelope(self):
         with tempfile.TemporaryDirectory(prefix="journey-installer-cases-") as temp:
             root = Path(temp)
@@ -823,11 +989,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                    run_command=fail_every_command)
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
-            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-221.3", "S-221.4", "S-025.9", "S-181.1", "S-181.2",
+            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",
-                        "S-187.4", "S-187.5", "S-187.6"}
+                        "S-187.4", "S-187.5", "S-187.6", "S-187.9"}
             self.assertEqual(set(claims), expected)
             self.assertTrue(all(claims[claim] == "FAIL" for claim in expected))
 

@@ -2,6 +2,7 @@ package contracts
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,7 +21,16 @@ func TestInstallRequestNormalizeReportsFieldAndCorrection(t *testing.T) {
 }
 
 func TestNormalizeMakesRelativeRootsAbsolute(t *testing.T) {
-	request, err := (InstallRequest{PlatformRoot: "./kb-platform", ProjectRoot: "./project"}).Normalize()
+	projectRoot, err := os.MkdirTemp(".", ".relative-project-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(projectRoot)
+	relativeProjectRoot, err := filepath.Rel(".", projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := (InstallRequest{PlatformRoot: "./kb-platform", ProjectRoot: relativeProjectRoot}).Normalize()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,6 +38,38 @@ func TestNormalizeMakesRelativeRootsAbsolute(t *testing.T) {
 		if !filepath.IsAbs(root) {
 			t.Fatalf("root is not absolute: %q", root)
 		}
+	}
+}
+
+func TestInstallRequestNormalizeDoesNotRequireSelectedProjectToExist(t *testing.T) {
+	platformRoot := filepath.Join(t.TempDir(), "platform")
+	missingProject := filepath.Join(t.TempDir(), "missing-project")
+	request, err := (InstallRequest{PlatformRoot: platformRoot, ProjectRoot: missingProject}).Normalize()
+	if err != nil {
+		t.Fatalf("Normalize() rejected a canonical but missing project path: %v", err)
+	}
+	if request.ProjectRoot != missingProject {
+		t.Fatalf("normalized project root = %q, want %q", request.ProjectRoot, missingProject)
+	}
+	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
+		t.Fatalf("request normalization created platform root: stat error = %v", err)
+	}
+}
+
+// case: S-187.7
+func TestValidateProjectSelectionRejectsMissingProjectBeforePlatformMutation(t *testing.T) {
+	platformRoot := filepath.Join(t.TempDir(), "platform")
+	missingProject := filepath.Join(t.TempDir(), "missing-project")
+	_, err := ValidateProjectSelection(missingProject)
+	var validation *RequestValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("Normalize() error = %T %v, want RequestValidationError", err, err)
+	}
+	if validation.Code != CodeInputRequired || validation.Field != "projectRoot" || !strings.Contains(validation.Hint, "mkdir -p") {
+		t.Fatalf("validation error = %#v, want actionable projectRoot input error", validation)
+	}
+	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
+		t.Fatalf("request validation created platform root: stat error = %v", err)
 	}
 }
 

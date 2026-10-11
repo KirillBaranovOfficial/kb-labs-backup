@@ -1,15 +1,18 @@
 package v2cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/secrets"
 )
@@ -17,10 +20,10 @@ import (
 //go:generate go run ../gen-gateway-bootstrap ../../../../../services/gateway/contracts/src/auth-health-response.schema.json gateway_bootstrap_gen.go
 
 type gatewayAuthHealthIssue struct {
-	Code     string `json:"code"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
-	Hint     string `json:"hint"`
+	Code     *string                         `json:"code"`
+	Severity *GatewayAuthHealthIssueSeverity `json:"severity"`
+	Message  *string                         `json:"message"`
+	Hint     *string                         `json:"hint"`
 }
 
 type gatewayAuthHealthResponse struct {
@@ -28,7 +31,7 @@ type gatewayAuthHealthResponse struct {
 	AuthEnabled  *bool                     `json:"authEnabled"`
 	TenantID     *string                   `json:"tenantId"`
 	ActiveAdmins *int                      `json:"activeAdmins"`
-	Bootstrap    GatewayBootstrapStatus    `json:"bootstrap"`
+	Bootstrap    *GatewayBootstrapStatus   `json:"bootstrap"`
 	Issues       *[]gatewayAuthHealthIssue `json:"issues"`
 }
 
@@ -66,35 +69,78 @@ func readBootstrapOutcome(ctx context.Context, healthURL string, store secrets.S
 		return fmt.Errorf("Gateway did not report first-admin bootstrap status")
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("Gateway did not report first-admin bootstrap status")
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", nil, store.PlatformRoot)
+	}
+	var payload json.RawMessage
+	failure, decodeErr := result.DecodeResult(body, &payload)
+	if failure != nil {
+		return failure
+	}
+	if decodeErr != nil || response.StatusCode != http.StatusOK {
+		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", nil, store.PlatformRoot)
+	}
+	responseFields, err := validateGatewayRequiredFields(payload, gatewayAuthHealthResponseRequiredFields[:])
+	if err != nil {
+		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", err, store.PlatformRoot)
+	}
+	var rawIssues []json.RawMessage
+	if err := json.Unmarshal(responseFields["issues"], &rawIssues); err != nil {
+		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", err, store.PlatformRoot)
+	}
+	for _, rawIssue := range rawIssues {
+		if _, err := validateGatewayRequiredFields(rawIssue, gatewayAuthHealthIssueRequiredFields[:]); err != nil {
+			return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", err, store.PlatformRoot)
+		}
 	}
 	var readiness gatewayAuthHealthResponse
-	decoder := json.NewDecoder(response.Body)
+	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&readiness); err != nil {
-		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", err)
-	}
-	if readiness.OK == nil || readiness.AuthEnabled == nil || readiness.TenantID == nil || readiness.ActiveAdmins == nil || readiness.Issues == nil {
-		return bootstrapContractFailure("Gateway returned an incomplete first-administrator health response.", nil)
-	}
-	if *readiness.ActiveAdmins < 0 {
-		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", nil)
+		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", err, store.PlatformRoot)
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return bootstrapContractFailure("Gateway returned more than one first-administrator health response.", err)
+		return bootstrapContractFailure("Gateway returned more than one first-administrator health response.", err, store.PlatformRoot)
 	}
-	switch readiness.Bootstrap {
+	if *readiness.ActiveAdmins < 0 {
+		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", nil, store.PlatformRoot)
+	}
+	switch *readiness.Bootstrap {
 	case GatewayBootstrapStatusProvisioned, GatewayBootstrapStatusExistsActive, GatewayBootstrapStatusExistsNonActive:
-		return store.Put(secrets.BootstrapCompleted, string(readiness.Bootstrap))
+		return store.Put(secrets.BootstrapCompleted, string(*readiness.Bootstrap))
+	case GatewayBootstrapStatusNotConfigured, GatewayBootstrapStatusFailed:
+		return bootstrapOutcomeFailure(store.PlatformRoot)
 	default:
-		return bootstrapContractFailure("Gateway reported that first-administrator bootstrap did not complete.", nil)
+		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", nil, store.PlatformRoot)
 	}
 }
 
-func bootstrapContractFailure(message string, cause error) *diag.Diag {
+func validateGatewayRequiredFields(payload []byte, required []string) (map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, fmt.Errorf("Gateway health response object is required")
+	}
+	for _, field := range required {
+		value, exists := fields[field]
+		if !exists || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return nil, fmt.Errorf("Gateway health response is missing required field %q", field)
+		}
+	}
+	return fields, nil
+}
+
+func bootstrapContractFailure(message string, cause error, platformRoot string) *diag.Diag {
 	return contracts.NewDiag(contracts.CodeApplyFailed, message,
-		"Update the Gateway to a version with the supported auth health contract, then rerun `kb-create install`.", cause)
+		"The installer and Gateway returned incompatible first-administrator health data. This is an internal installer/Gateway contract mismatch. Run `kb-create doctor --platform-root "+strconv.Quote(platformRoot)+"` to capture installation diagnostics, then provide the diagnostic file and output to KB Labs support.", cause)
+}
+
+func bootstrapOutcomeFailure(platformRoot string) *diag.Diag {
+	return contracts.NewDiag(contracts.CodeApplyFailed, "Gateway reported that first-administrator bootstrap did not complete.",
+		"Run `kb-create doctor --platform-root "+strconv.Quote(platformRoot)+"` to inspect Gateway authentication readiness and resolve its reported issue, then rerun `kb-create install`.", nil)
 }
 
 func errorsJoinStop(cause error, stop func() error) error {

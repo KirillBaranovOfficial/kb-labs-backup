@@ -43,10 +43,10 @@ export const defaultWorkflowClient: WorkflowDaemonClient = {
 
   getRunLogs: async () => [],
 
-  getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/api/v1/runs/${runId}/events`,
+  getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/runs/${runId}/events`,
 
   fetchRunEvents: async (runId: string, init?: RequestInit) => fetch(
-    `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/api/v1/runs/${runId}/events`,
+    `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/runs/${runId}/events`,
     init,
   ),
 

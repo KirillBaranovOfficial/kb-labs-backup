@@ -33,8 +33,14 @@ const TOKEN = "0123456789abcdef0123456789abcdef";
 /** A module that answers with what it was given: its port, host and project root. */
 function echoModule(id: string): ProjectRuntimeModule {
   return {
-    id,
-    serviceId: id,
+    manifest: {
+      schema: "kb.service/1",
+      id,
+      name: id,
+      version: "1.0.0",
+      runtime: { entry: "dist/bin.js", healthCheck: "/health" },
+      projectApi: { serviceId: id, rewritePrefix: "/api/v1" },
+    },
     setup: async (ctx) => {
       const server: Server = createServer((req, res) => {
         res.writeHead(200, { "content-type": "application/json" });
@@ -246,8 +252,7 @@ describe("project runtime composition (real runHost, minimal modules)", () => {
 
   it("releases the resolve hook after a first-module startup failure", async () => {
     const failingModule: ProjectRuntimeModule = {
-      id: "rest",
-      serviceId: "rest",
+      ...echoModule("rest"),
       setup: async () => {
         throw new Error("injected project module startup failure");
       },

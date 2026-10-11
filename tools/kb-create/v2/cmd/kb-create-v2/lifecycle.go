@@ -1,11 +1,8 @@
 package v2cli
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"path/filepath"
-	"strings"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
@@ -87,18 +84,6 @@ func activeLauncher(state host.State) (supervisor.Record, bool) {
 // captured files.
 func snapshotSummary(snapshot contracts.Snapshot) map[string]any {
 	return map[string]any{"id": snapshot.ID, "createdAt": snapshot.CreatedAt, "receiptId": snapshot.ReceiptID}
-}
-
-func readConfirmation(input io.Reader) (bool, error) {
-	line, err := bufio.NewReader(input).ReadString('\n')
-	if err != nil && len(line) == 0 {
-		return false, err
-	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	if answer == "y" || answer == "yes" {
-		return true, nil
-	}
-	return false, nil
 }
 
 func operationDiagnostic(root, correlationID, logPath string, failure *diag.Diag, plan *contracts.ResolvedInstallPlan) *diag.Diag {

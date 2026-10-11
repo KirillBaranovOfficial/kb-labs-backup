@@ -44,7 +44,7 @@ export default defineHandler({
     if (offset) {params.set('offset', offset);}
 
     const queryString = params.toString();
-    const url = `${daemonUrl}/api/v1/jobs${queryString ? `?${queryString}` : ''}`;
+    const url = `${daemonUrl}/jobs${queryString ? `?${queryString}` : ''}`;
 
     ctx.platform.logger.info(`[jobs-list-handler] Fetching jobs from ${url}`);
 

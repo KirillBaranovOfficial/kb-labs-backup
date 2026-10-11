@@ -979,7 +979,7 @@ func TestRestartFailureRestoresPreviousVersionAndReportsRecoveryDetails(t *testi
 	}
 }
 
-// case: S-221.2
+// case: S-223.2
 func TestRestartRecoveryDirectCallerReturnsSameCataloguedResult(t *testing.T) {
 	inst := newInstallation(t)
 	active, err := receipt.Read(platformRootForTest(t, inst.root))
@@ -1101,7 +1101,7 @@ func restartWithRecoveryFault(t *testing.T, fault string) (installation, string)
 	return inst, recovery
 }
 
-// case: S-221.2
+// case: S-223.2
 func TestRestartRecoveryFailuresReturnCataloguedUpdateError(t *testing.T) {
 	for _, test := range []struct {
 		name  string

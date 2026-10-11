@@ -50,7 +50,7 @@ function formatDuration(ms?: number) {
 }
 
 function CancelRunButton({ projectId, runId, onSuccess }: { projectId: string; runId: string; onSuccess: () => void }) {
-  const cancel = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `api/v1/runs/${encodeURIComponent(runId)}/cancel`));
+  const cancel = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `runs/${encodeURIComponent(runId)}/cancel`));
   return (
     <UIButton
       variant="link"
@@ -78,17 +78,17 @@ export default function WorkflowDefinitionDetail() {
   const { projectId, picker, hasProjects } = useWorkflowProject();
 
   const { data: workflowDef, isLoading: workflowLoading } = useData<WorkflowInfo>(
-    projectWorkflowEndpoint(projectId, workflowId ? `api/v1/workflows/${encodeURIComponent(workflowId)}` : 'api/v1/workflows/__none__'),
+    projectWorkflowEndpoint(projectId, workflowId ? `workflows/${encodeURIComponent(workflowId)}` : 'workflows/__none__'),
     { enabled: !!workflowId && hasProjects },
   );
 
   const { data: runsData, isLoading: runsLoading, refetch } = useData<{ runs: WorkflowRunInfo[] }>(
-    projectWorkflowEndpoint(projectId, workflowId ? `api/v1/workflows/${encodeURIComponent(workflowId)}/runs` : 'api/v1/workflows/__none__/runs'),
+    projectWorkflowEndpoint(projectId, workflowId ? `workflows/${encodeURIComponent(workflowId)}/runs` : 'workflows/__none__/runs'),
     { enabled: !!workflowId && hasProjects, pollingMs: 5000, params: { limit: 50 } },
   );
 
   const runWorkflowMutation = useMutateData<Record<string, unknown>, { runId: string }>(
-    projectWorkflowEndpoint(projectId, `api/v1/workflows/${encodeURIComponent(workflowId)}/runs`),
+    projectWorkflowEndpoint(projectId, `workflows/${encodeURIComponent(workflowId)}/runs`),
   );
 
   const runsColumns = [

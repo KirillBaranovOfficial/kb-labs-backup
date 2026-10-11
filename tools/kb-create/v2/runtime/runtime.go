@@ -96,6 +96,9 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	if plan.Schema != contracts.ResolvedPlanSchema {
 		return contracts.InstallReceipt{}, fmt.Errorf("apply resolved plan: unsupported schema %q", plan.Schema)
 	}
+	if err := contracts.ValidatePlanArtifactIdentities(plan); err != nil {
+		return contracts.InstallReceipt{}, err
+	}
 	if deps.Artifacts == nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("apply resolved plan: artifact installer is required")
 	}
@@ -304,6 +307,9 @@ func verifySecrets(plan contracts.ResolvedInstallPlan, store *secrets.Store) err
 // set. Any apply or graph-verification failure restores managed files, receipt
 // and the package-manager lock state through ArtifactInstaller.Restore.
 func Update(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.InstallReceipt, contracts.Snapshot, error) {
+	if err := contracts.ValidatePlanArtifactIdentities(plan); err != nil {
+		return contracts.InstallReceipt{}, contracts.Snapshot{}, err
+	}
 	if deps.Artifacts == nil {
 		return contracts.InstallReceipt{}, contracts.Snapshot{}, fmt.Errorf("update resolved plan: artifact installer is required")
 	}

@@ -48,7 +48,7 @@ describe('workflow project gateway address', () => {
       await expect(client.getCronJobs()).resolves.toMatchObject({
         crons: [{ id: 'user:journey-cron', schedule: '* * * * *', enabled: true }],
       });
-      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4312/workflow/api/v1/crons', undefined);
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4312/workflow/crons', undefined);
     } finally {
       vi.unstubAllGlobals();
     }

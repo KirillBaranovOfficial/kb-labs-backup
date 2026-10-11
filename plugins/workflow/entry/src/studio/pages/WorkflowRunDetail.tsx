@@ -550,7 +550,7 @@ export default function WorkflowRunDetail() {
   const runId = params.runId ?? null
   const { projectId, picker, hasProjects } = useWorkflowProject()
   const { data: runData, isLoading, error, refetch } = useData<{ run: WorkflowRun }>(
-    projectWorkflowEndpoint(projectId, runId ? `api/v1/runs/${encodeURIComponent(runId)}` : 'api/v1/runs/__none__'),
+    projectWorkflowEndpoint(projectId, runId ? `runs/${encodeURIComponent(runId)}` : 'runs/__none__'),
     { enabled: !!runId && hasProjects, pollingMs: 10_000 },
   )
 
@@ -561,11 +561,11 @@ export default function WorkflowRunDetail() {
   }, [runData])
 
   const run = localRun
-  const cancelMutation = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `api/v1/runs/${encodeURIComponent(runId ?? '__none__')}/cancel`))
+  const cancelMutation = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `runs/${encodeURIComponent(runId ?? '__none__')}/cancel`))
   const resolveApproval = useMutateData<
     { runId: string; jobId: string; stepId: string; action: string; comment?: string },
     unknown
-  >(projectWorkflowEndpoint(projectId, `api/v1/runs/${encodeURIComponent(runId ?? '__none__')}/approvals/resolve`))
+  >(projectWorkflowEndpoint(projectId, `runs/${encodeURIComponent(runId ?? '__none__')}/approvals/resolve`))
   const isRunActive = run != null && !TERMINAL_STATUSES.has(run.status)
 
   const [lastEventAt, setLastEventAt] = useState<Date | undefined>(undefined)
@@ -576,7 +576,7 @@ export default function WorkflowRunDetail() {
   }, [])
 
   const { events, error: logError, connectionStatus } = useSSE<WorkflowLogEvent>(
-    isRunActive && runId && !isLoading ? projectWorkflowEndpoint(projectId, `api/v1/runs/${encodeURIComponent(runId)}/events`) : null,
+    isRunActive && runId && !isLoading ? projectWorkflowEndpoint(projectId, `runs/${encodeURIComponent(runId)}/events`) : null,
     { events: 'workflow.event', terminalEvents: ['workflow.done'], params: { follow: 1 }, reconnect: true, onEvent: handleSseEvent },
   )
 

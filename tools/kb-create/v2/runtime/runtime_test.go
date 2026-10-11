@@ -124,6 +124,24 @@ func TestUpdateKeepsUserConfigWhenTargetAddsServiceDefault(t *testing.T) {
 	}
 }
 
+// case: S-023.2
+func TestApplyRejectsDuplicateArtifactIdentitiesBeforeInstalling(t *testing.T) {
+	plan := planIn(t.TempDir(), "duplicate-plan")
+	plan.Artifacts = []contracts.Artifact{
+		{ID: "sqlite", Kind: "platform-member", Package: "@kb/adapters-sqlite"},
+		{ID: "sqlite", Kind: "adapter", Package: "@kb/adapters-sqlite"},
+	}
+	installer := &fakeInstaller{}
+	_, err := Apply(context.Background(), plan, Dependencies{Artifacts: installer})
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodeArtifactIdentityInvalid {
+		t.Fatalf("apply error = %#v, want catalogued artifact identity diagnostic", err)
+	}
+	if len(installer.artifacts) != 0 {
+		t.Fatalf("installer received invalid plan artifacts: %#v", installer.artifacts)
+	}
+}
+
 // case: PC-001.4, S-039.2
 func TestApplyStartsAndRetainsTheResolvedHost(t *testing.T) {
 	root := t.TempDir()

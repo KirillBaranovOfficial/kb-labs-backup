@@ -1,11 +1,16 @@
 package contracts
 
-import "time"
+import (
+	"time"
+
+	"github.com/kb-labs/clikit/diag"
+)
 
 const (
-	ResolvedPlanSchema = "kb.create.resolved-plan/v2"
-	ReceiptSchema      = "kb.create.receipt/v2"
-	SnapshotSchema     = "kb.create.snapshot/v2"
+	ResolvedPlanSchema          = "kb.create.resolved-plan/v2"
+	ReceiptSchema               = "kb.create.receipt/v2"
+	SnapshotSchema              = "kb.create.snapshot/v2"
+	CodeArtifactIdentityInvalid = "KB_INSTALL_PLAN_ARTIFACT_IDENTITY_INVALID"
 )
 
 type Artifact struct {
@@ -27,6 +32,39 @@ type Artifact struct {
 	// that is installed under another Kind, e.g. a platform member that is also
 	// a catalog plugin/adapter. Empty for artifacts that are not registry entities.
 	Registry string `json:"registry,omitempty"`
+}
+
+// Identity is the single installed-unit identity shared by plan producers and
+// consumers. Package artifacts are identified by their package name; binaries
+// have no package and are identified by their target and ID.
+func (a Artifact) Identity() string {
+	if a.Package != "" {
+		return a.Package
+	}
+	return "binary:" + a.ID + ":" + a.Target
+}
+
+// DuplicateArtifactIdentity returns the first identity that the artifacts list
+// more than once, regardless of the artifact's discovery or installation role.
+func DuplicateArtifactIdentity(artifacts []Artifact) (string, bool) {
+	seen := make(map[string]struct{}, len(artifacts))
+	for _, artifact := range artifacts {
+		identity := artifact.Identity()
+		if _, exists := seen[identity]; exists {
+			return identity, true
+		}
+		seen[identity] = struct{}{}
+	}
+	return "", false
+}
+
+// ValidateArtifactIdentities rejects plan artifacts that represent one
+// installed unit more than once with the catalogued plan diagnostic.
+func ValidateArtifactIdentities(artifacts []Artifact) error {
+	if identity, duplicated := DuplicateArtifactIdentity(artifacts); duplicated {
+		return PlanArtifactIdentityFailure(identity)
+	}
+	return nil
 }
 
 // IsBinary reports whether this artifact is an executable rather than an
@@ -72,6 +110,29 @@ type ResolvedInstallPlan struct {
 	PlanHash            string        `json:"planHash"`
 	ReleaseDigest       string        `json:"releaseDigest,omitempty"`
 	ScenarioStateDigest string        `json:"scenarioStateDigest,omitempty"`
+}
+
+// ValidatePlanArtifactIdentities enforces the plan boundary invariant that
+// each installable package or binary target appears once, independent of role.
+func ValidatePlanArtifactIdentities(plan ResolvedInstallPlan) error {
+	return ValidateArtifactIdentities(plan.Artifacts)
+}
+
+// PlanArtifactIdentityFailure is the diagnostic for a resolved plan that lists
+// identity more than once. It is an internal contract break, not a user error.
+func PlanArtifactIdentityFailure(identity string) *diag.Diag {
+	return ArtifactIdentityDiagnostic("the resolved plan contains", identity,
+		"Use a current sealed release index and kb-create launcher; if the error persists, report the correlationId.")
+}
+
+// ArtifactIdentityDiagnostic renders a plan/receipt identity violation with
+// the shared catalogued error code and the context-specific next step.
+func ArtifactIdentityDiagnostic(subject string, identity string, hint string) *diag.Diag {
+	failure := diag.New(CodeArtifactIdentityInvalid,
+		subject+" more than one record for artifact "+identity,
+		diag.WithMeta(map[string]any{"artifact": identity}))
+	failure.Hint = hint
+	return failure
 }
 
 type ConfigPatch struct {

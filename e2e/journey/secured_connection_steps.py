@@ -10,7 +10,8 @@ from urllib.parse import urlparse
 import urllib.request
 
 from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
-                         open_http, read_ux_cli_result, read_ux_http_result, run_command)
+                         open_http, read_ux_cli_result, read_ux_http_result,
+                         store_report_secret, run_command)
 from service_steps import Journey
 from steps.accounts import _browser_call, _browser_login
 from steps.auth import _login, _request
@@ -210,6 +211,8 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         _expect(urlparse(url).netloc == urlparse(base).netloc, "activation URL was not on the gateway host")
         token = url.rstrip("/").rsplit("/", 1)[-1]
         _expect(bool(token), "activation URL omitted its token")
+        store_report_secret(env, "KB_JOURNEY_INVITE_TOKEN", token,
+                            "secured connection activation token")
         state.update(admin_access=access, invite_token=token)
         return None
 
@@ -254,6 +257,8 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         expires = result_data.get("expiresAt")
         if reset_url:
             state["reset_token"] = reset_url.rstrip("/").rsplit("/", 1)[-1]
+            store_report_secret(env, "KB_JOURNEY_PASSWORD_RESET_TOKEN", state["reset_token"],
+                                "secured connection password reset token")
         validate_cli_case("S-042.4", result.returncode, result.stdout, value)
         _expect(bool(reset_url) and isinstance(expires, (int, float)),
                 "reset-link JSON omitted expiresAt required by S-042.4")
@@ -316,7 +321,11 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
                              env=env, input="NewMemberPass123!\n", timeout=90)
         validate_cli_case("S-005.2", result.returncode, result.stdout)
         session = json.loads(_session_path(state.get("client_cli", cli), env).read_text())
-        state["client_access"] = session["accessToken"]
+        state["client_access"] = store_report_secret(
+            env, "KB_JOURNEY_CLIENT_ACCESS_TOKEN", session["accessToken"],
+            "secured connection client access token")
+        store_report_secret(env, "KB_JOURNEY_CLIENT_REFRESH_TOKEN", session["refreshToken"],
+                            "secured connection client refresh token")
         return None
 
     def member_status():

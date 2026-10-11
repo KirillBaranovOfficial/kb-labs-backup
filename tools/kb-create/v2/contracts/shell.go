@@ -5,12 +5,6 @@ import (
 	"strings"
 )
 
-// ShellQuote returns one POSIX shell word. Shell command hints use this same
-// grammar so callers can safely parse and execute the exact suggested argv.
-func ShellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
-}
-
 // ParseShellCommands parses the POSIX words emitted by ShellQuote and the
 // command separator used in actionable diagnostic hints. It does not evaluate
 // shell expansions, substitutions, redirections, or other shell syntax.

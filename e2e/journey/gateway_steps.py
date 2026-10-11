@@ -11,6 +11,7 @@ import urllib.request
 from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context, invocation_link,
                          open_http, read_ux_cli_result, read_ux_http_result, run_command)
 from journey_resources import active_platform_root
+from project_service_path import project_service_path
 from service_steps import Journey
 
 
@@ -340,7 +341,8 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
     with invocation_context(step_id="S-190.2"):
         rejected_status, rejected = _http("/telemetry/v1/ingest", token=token, method="POST",
                                           payload={"events": events501}, opener=opener)
-    telemetry_query = f"/api/v1/analytics/events?source={telemetry_source}"
+    project_id = os.environ.get("KB_JOURNEY_PROJECT_ID", "")
+    telemetry_query = project_service_path(project_id, "rest", f"analytics/events?source={telemetry_source}")
     if telemetry_from:
         telemetry_query += f"&from={telemetry_from}"
     with invocation_context(step_id="S-190.2"):

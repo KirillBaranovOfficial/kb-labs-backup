@@ -82,7 +82,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         })
         self.assertEqual(
             request_mock.call_args_list[0].args[0],
-            "/api/v1/projects/prj_a/rest/api/v1/plugins/agents/sessions",
+            "/api/v1/projects/prj_a/rest/plugins/agents/sessions",
         )
 
         session = {"id": "session-1", "agentId": "orchestrator",
@@ -201,7 +201,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0] for call in expect_json.call_args_list],
-            ["/ready", f"/api/v1/projects/{service_runner.PROJECT_ID or '{projectId}'}/workflow/health"],
+            ["/ready", f"/api/v1/projects/{service_runner.PROJECT_ID or '%7BprojectId%7D'}/workflow/health"],
         )
 
     def test_secured_platform_readiness_logs_in_before_checking_protected_workflow_health(self):
@@ -215,7 +215,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 return 200, {"userId": "admin"}, {}
             return 200, {"ready": True}, {}
 
-        with patch("service_runner.ADMIN_PASSWORD", "admin-pass"), \
+        with patch("service_runner.ADMIN_PASSWORD", "synthetic-admin-password"), \
                 patch("service_runner.ADMIN_EMAIL", "admin@example.test"), \
                 patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": ""}), \
                 patch("service_runner.request", side_effect=request), \
@@ -249,7 +249,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0] for call in request.call_args_list],
-            ["/api/v1/projects/prj_a", "/health", "/api/v1/projects/prj_a/rest/api/v1/health"],
+            ["/api/v1/projects/prj_a", "/health", "/api/v1/projects/prj_a/rest/health"],
         )
 
     def test_ux_contract_claim_discovers_and_checks_every_live_registry_tool(self):

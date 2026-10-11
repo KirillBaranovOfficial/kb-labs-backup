@@ -9,6 +9,7 @@ import {
 } from "@kb-labs/core-project-registry";
 import { failWithEnvelope } from "../project/project-support";
 import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path';
 
 type Client = "claude" | "codex" | "cursor";
 type ConfigFlags = { json: { type: "boolean"; description?: string } };
@@ -102,7 +103,7 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
       const local = access?.mode === "local" || host?.auth === "off";
       const gatewayTarget = await resolveActiveGateway({ cwd, env: process.env, configuredGatewayPort: gateway?.port !== undefined ? String(gateway.port) : undefined });
       const origin = gatewayTarget.gatewayUrl;
-      const url = `${origin}/api/v1/projects/${encodeURIComponent(project.id)}/mcp`;
+      const url = `${origin}${projectServicePath(project.id, "mcp")}`;
       const body = {
         client,
         projectId: project.id,

@@ -18,6 +18,7 @@ import type {
   AuthConfig,
   GatewayConfig,
 } from "@kb-labs/gateway-contracts";
+import type { ProjectServiceApiDeclaration } from "@kb-labs/plugin-contracts";
 import type { IContextLogger } from "@kb-labs/core-platform";
 import type { IDocumentDatabase } from "@kb-labs/core-platform/adapters";
 import { HostStore } from "@kb-labs/gateway-core";
@@ -103,6 +104,10 @@ export interface GatewayEmbedOptions {
    * `upstreams` of its config.
    */
   projectRouting?: ProjectRouting;
+  /** Project route IDs and internal bases derived from service manifests. */
+  projectServices?: readonly ProjectServiceApiDeclaration[];
+  /** Project-aware connection resolver; local hosts bind it to runtime leases. */
+  projectServiceTransport?: Pick<IServiceTransport, "resolveProjectService">;
   /**
    * Machine-level API routes of the host, mounted after the global auth hooks
    * (so they need no auth of their own).
@@ -505,6 +510,8 @@ export async function startGateway(
     options.hostRoutes,
     undefined,
     { installationId: installationId ?? installedIdentity?.id },
+    options.projectServices,
+    options.projectServiceTransport,
   );
 
   // 11. Listen

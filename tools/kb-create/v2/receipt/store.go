@@ -81,6 +81,9 @@ func Write(platformRoot string, receipt contracts.InstallReceipt) error {
 	if receipt.Schema != contracts.ReceiptSchema {
 		return fmt.Errorf("unsupported receipt schema %q", receipt.Schema)
 	}
+	if err := contracts.ValidatePlanArtifactIdentities(receipt.Plan); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(receipt, "", "  ")
 	if err != nil {
 		return err
@@ -228,6 +231,9 @@ func Read(platformRoot string) (contracts.InstallReceipt, error) {
 	}
 	if result.Schema != contracts.ReceiptSchema {
 		return contracts.InstallReceipt{}, fmt.Errorf("unsupported receipt schema %q", result.Schema)
+	}
+	if err := contracts.ValidatePlanArtifactIdentities(result.Plan); err != nil {
+		return contracts.InstallReceipt{}, err
 	}
 	return result, nil
 }

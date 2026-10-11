@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -114,13 +113,9 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		projectRoot = strings.TrimSpace(value)
 	}
 	if projectRoot != "" {
-		canonical, pathErr := filepath.Abs(projectRoot)
+		canonical, pathErr := contracts.ValidateProjectSelection(projectRoot)
 		if pathErr != nil {
-			return contracts.InstallRequest{}, fmt.Errorf("resolve project directory: %w", pathErr)
-		}
-		canonical, pathErr = filepath.EvalSymlinks(canonical)
-		if pathErr != nil {
-			return contracts.InstallRequest{}, fmt.Errorf("project directory %q must exist: %w", projectRoot, pathErr)
+			return contracts.InstallRequest{}, pathErr
 		}
 		projectRoot = canonical
 	}

@@ -6,6 +6,7 @@ export const manifest: ServiceManifest = {
   name: 'REST API',
   version: '1.2.0',
   description: 'Platform REST API daemon — routes, plugin execution, OpenAPI',
+  projectApi: { serviceId: 'rest', rewritePrefix: '/api/v1' },
   runtime: {
     entry: 'dist/bin.js',
     port: 5050,

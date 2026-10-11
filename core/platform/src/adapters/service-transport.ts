@@ -14,6 +14,16 @@ export interface ServiceConnectionInfo {
   socketPath?: string;
 }
 
+/** A project-specific connection, optionally held for the request lifetime. */
+export interface ProjectServiceConnectionInfo extends ServiceConnectionInfo {
+  /** Internal transport path segment (the local runtime guard uses one). */
+  pathPrefix?: string;
+  /** Replaced on the proxied request; used by local runtime guards. */
+  headers?: Readonly<Record<string, string>>;
+  /** Ends a local runtime lease once the response exchange finishes. */
+  release?: () => void;
+}
+
 /**
  * Transport-agnostic request descriptor.
  * HTTP: path="/api/v1/health", metadata=headers, payload=body
@@ -68,6 +78,12 @@ export interface IServiceTransport {
    * Called once at gateway startup.
    */
   connectionInfo(serviceId: string): ServiceConnectionInfo | undefined;
+
+  /** Resolves one declared project service by both project and service id. */
+  resolveProjectService(
+    projectId: string,
+    serviceId: string,
+  ): Promise<ProjectServiceConnectionInfo | undefined>;
 
   /**
    * Bind address for the service that hosts this serviceId — the symmetric

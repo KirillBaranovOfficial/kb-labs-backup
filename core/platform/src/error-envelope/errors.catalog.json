@@ -228,6 +228,15 @@
       "hint": "Run \"kb-create doctor --fix\" to rebuild generated files from the install receipt."
     },
     {
+      "code": "KB_INSTALL_PLAN_ARTIFACT_IDENTITY_INVALID",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The resolved plan contains more than one record for artifact {artifact}.",
+      "hint": "Use a current sealed release index and kb-create launcher; if the error persists, report the correlationId."
+    },
+    {
       "code": "KB_INSTALL_APPLY_FAILED",
       "area": "install",
       "stage": "apply",
@@ -1027,7 +1036,8 @@
       "severity": "error",
       "retryable": true,
       "message": "The operation did not finish in time.",
-      "hint": "Retry or increase the timeout."
+      "hint": "Retry or increase the timeout.",
+      "httpStatus": 504
     },
     {
       "code": "KB_RUNTIME_DISK_FULL",

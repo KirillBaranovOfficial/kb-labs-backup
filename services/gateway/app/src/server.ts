@@ -16,6 +16,7 @@ import {
   type IServiceTransport,
 } from "@kb-labs/core-platform";
 import type { GatewayConfig } from "@kb-labs/gateway-contracts";
+import type { ProjectServiceApiDeclaration } from "@kb-labs/plugin-contracts";
 import { HostRegistrationSchema } from "@kb-labs/gateway-contracts";
 import {
   AuthService,
@@ -141,6 +142,8 @@ export async function createServer(
   hostRoutes?: HostRoutes,
   routeObserver?: (route: RouteOptions) => void,
   installationIdentity?: { installationId?: string },
+  projectServices?: readonly ProjectServiceApiDeclaration[],
+  projectServiceTransport?: Pick<IServiceTransport, "resolveProjectService">,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -330,10 +333,15 @@ export async function createServer(
   // `/api/v1/projects/{projectId}/*` is resolved per request by the embedding
   // host, unlike the static upstreams above. Registered after the global auth
   // hooks, so it is covered by the same authentication.
-  if (projectRouting) {
-    await registerProjectRoutes(app, projectRouting);
+  if (projectServices) {
+    await registerProjectRoutes(
+      app,
+      projectServices,
+      projectServiceTransport ?? serviceTransport,
+      config.projectRequestTimeoutMs ?? 30_000,
+    );
     gatewayLogger.info(
-      "Project routing enabled: /api/v1/projects/{projectId}/*",
+      "Project routing enabled: /api/v1/projects/{projectId}/{serviceId}/*",
     );
   }
 

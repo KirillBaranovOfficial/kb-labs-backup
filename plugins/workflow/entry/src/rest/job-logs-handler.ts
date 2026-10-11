@@ -27,7 +27,7 @@ export default defineHandler({
     params.append('offset', String(validatedOffset));
     params.append('level', validatedLevel);
 
-    const url = `${daemonUrl}/api/v1/jobs/${encodeURIComponent(jobId)}/logs?${params}`;
+    const url = `${daemonUrl}/jobs/${encodeURIComponent(jobId)}/logs?${params}`;
 
     ctx.platform.logger.info(`[job-logs-handler] Fetching logs from ${url}`);
 

@@ -316,7 +316,7 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	}
 }
 
-// case: S-221.5
+// case: S-223.5
 func TestStatusAndStopUseTheDurableHostRecordWhenLayoutMetadataIsUnreadable(t *testing.T) {
 	inst := newInstallation(t)
 	started, code, output := inst.run("start", "--json")

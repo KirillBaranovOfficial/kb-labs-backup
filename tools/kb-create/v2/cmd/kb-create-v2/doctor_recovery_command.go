@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/charmbracelet/x/term"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
@@ -32,22 +32,11 @@ func executeRecover(inv doctorCommandInput) (doctorRecoveryResult, *diag.Diag) {
 		failure.ProcessExitCode = diag.ExitInput
 		return doctorRecoveryResult{}, failure
 	}
+	interaction := clikitcommand.FromCommand(inv.Command)
 	if !inv.Recover.Yes {
-		if inv.Recover.JSON || !term.IsTerminal(os.Stdin.Fd()) {
-			failure := contracts.NewDiag("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.",
-				fmt.Sprintf("rerun `kb-create doctor --platform-root %q --recover --yes`", inv.PlatformRoot), fmt.Errorf("confirmation unavailable without a terminal"))
-			failure.ProcessExitCode = diag.ExitInput
-			return doctorRecoveryResult{}, failure
-		}
-		fmt.Fprintf(os.Stdout, "This will run the platform's administrator recovery tool for %s. Continue? [y/N] ", inv.PlatformRoot)
-		confirmed, err := readConfirmation(os.Stdin)
-		if err != nil {
-			failure := contracts.NewDiag("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.", "rerun the command with `--yes`", err)
-			failure.ProcessExitCode = diag.ExitInput
-			return doctorRecoveryResult{}, failure
-		}
-		if !confirmed {
-			return doctorRecoveryResult{}, contracts.NewDiag("KB_INSTALL_OPERATION_CANCELLED", "The operation was cancelled.", "rerun the command and confirm when prompted", nil)
+		_, confirmFailure := interaction.Confirm(fmt.Sprintf("This will run the platform's administrator recovery tool for %s. Continue? [y/N] ", inv.PlatformRoot), fmt.Sprintf("rerun `kb-create doctor --platform-root %q --recover --yes`", inv.PlatformRoot))
+		if confirmFailure != nil {
+			return doctorRecoveryResult{}, confirmFailure
 		}
 	}
 	release, err := state.AcquireOperation("recover")
@@ -65,7 +54,7 @@ func executeRecover(inv doctorCommandInput) (doctorRecoveryResult, *diag.Diag) {
 		return doctorRecoveryResult{}, contracts.NewDiag(contracts.CodeRecoveryHostRunning, "Recovery needs the host to be stopped, but it is running.", "Run \"kb-create stop\", recover, then \"kb-create start\".", nil)
 	}
 	var toolOutput bytes.Buffer
-	code, err := runner.RunTool(ctx, *runner.Spec.Recover, inv.Recover.args(), os.Stdin, &toolOutput, os.Stderr)
+	code, err := runner.RunTool(ctx, *runner.Spec.Recover, inv.Recover.args(), interaction.Input(), &toolOutput, interaction.ErrorWriter())
 	if err != nil {
 		return doctorRecoveryResult{}, contracts.NewDiag(contracts.CodeRecoveryFailed, "The platform's recovery tool could not be run.", "Inspect the platform installation with \"kb-create doctor\".", err)
 	}

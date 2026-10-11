@@ -28,7 +28,7 @@ export default function WorkflowsDefinitions() {
   const [runModalWorkflow, setRunModalWorkflow] = React.useState<WorkflowInfo | null>(null);
   const { projectId, picker, hasProjects } = useWorkflowProject();
 
-  const { data: workflowsData, isLoading } = useData<{ workflows: WorkflowInfo[] }>(projectWorkflowEndpoint(projectId, 'api/v1/workflows'), {
+  const { data: workflowsData, isLoading } = useData<{ workflows: WorkflowInfo[] }>(projectWorkflowEndpoint(projectId, 'workflows'), {
     params: { limit: 100 },
     enabled: hasProjects,
   });
@@ -37,7 +37,7 @@ export default function WorkflowsDefinitions() {
     { workflowId: string; input: Record<string, unknown> },
     { runId: string; status: string }
   >(
-    (p) => projectWorkflowEndpoint(projectId, `api/v1/workflows/${encodeURIComponent(p.workflowId)}/runs`),
+    (p) => projectWorkflowEndpoint(projectId, `workflows/${encodeURIComponent(p.workflowId)}/runs`),
     { mapBody: (p) => ({ inputs: p.input }) },
   );
 

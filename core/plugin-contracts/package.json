@@ -12,6 +12,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./project-service-path": {
+      "types": "./dist/project-service-path.d.ts",
+      "import": "./dist/project-service-path.js",
+      "require": "./dist/project-service-path.cjs"
     }
   },
   "files": [

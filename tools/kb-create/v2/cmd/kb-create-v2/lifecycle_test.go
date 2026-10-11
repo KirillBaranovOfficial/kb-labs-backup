@@ -27,18 +27,6 @@ import (
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
-func TestReadConfirmation(t *testing.T) {
-	for _, test := range []struct {
-		answer string
-		want   bool
-	}{{"y\n", true}, {"yes\n", true}, {"n\n", false}, {"\n", false}} {
-		got, err := readConfirmation(strings.NewReader(test.answer))
-		if err != nil || got != test.want {
-			t.Fatalf("answer %q: got %v, %v", test.answer, got, err)
-		}
-	}
-}
-
 type snapshotRestoreRecorder struct {
 	artifacts []contracts.Artifact
 	calls     int
@@ -318,7 +306,7 @@ func TestRollbackFailureIncludesOperationLogAndDiagnosticDossier(t *testing.T) {
 	}
 }
 
-// case: S-221.3
+// case: S-223.3
 func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 	t.Setenv(host.KBHomeEnv, t.TempDir())
 	for _, test := range []struct{ operation, code string }{{"rollback", contracts.CodePlatformLayoutUnsupported}, {"uninstall", contracts.CodePlatformLayoutUnsupported}} {

@@ -33,7 +33,7 @@ export default defineHandler({
     _input: RestInput
   ): Promise<CronListResponse> {
     const daemonUrl = getWorkflowDaemonUrl();
-    const url = `${daemonUrl}/api/v1/crons`;
+    const url = `${daemonUrl}/crons`;
 
     ctx.platform.logger.info(`[cron-list-handler] Fetching cron jobs from ${url}`);
 

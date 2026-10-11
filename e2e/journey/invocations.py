@@ -7,19 +7,44 @@ import inspect
 import os
 import pty
 from pathlib import Path
+import re
 import select
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
-from typing import Any, Callable, Mapping, NoReturn
+from typing import Any, Callable, Mapping, MutableMapping, NoReturn
 from urllib.error import HTTPError, URLError
 
-from platform_state_dump import _redact_text
+from platform_state_dump import _redact_json, _redact_text
 
 _STEP_ID: ContextVar[str] = ContextVar("journey_step_id", default="journey.setup")
 _REPORT_ROOT: ContextVar[Path | None] = ContextVar("journey_report_root", default=None)
+# Only long values are safe to replace globally: shorter secrets can be ordinary
+# identifiers, exit codes, URL fragments, or path components in useful evidence.
+MIN_SECRET_VALUE_LENGTH = 12
+_SECRET_ARGUMENT_NAME = r"(?:password|token|secret|api[-_]?key|private[-_]?key)"
+_SECRET_ARGUMENT = re.compile(rf"(?i)^--{_SECRET_ARGUMENT_NAME}$")
+_SECRET_ARGUMENT_TEXT = re.compile(
+    rf"(?i)(--{_SECRET_ARGUMENT_NAME}(?:=\s*|\s+))([^\s,;]+)"
+)
+
+
+def is_secret_key(key: str) -> bool:
+    """Return whether an environment key is covered by the report redactor."""
+    return any(part in key.upper() for part in ("PASSWORD", "TOKEN", "SECRET", "API_KEY"))
+
+
+def store_report_secret(env: MutableMapping[str, str], key: str, value: str, source: str) -> str:
+    """Validate and store a harness credential where subprocesses and reports can redact it."""
+    if not is_secret_key(key):
+        raise AssertionError(f"{source} must use a secret-like environment key")
+    if len(value) < MIN_SECRET_VALUE_LENGTH:
+        raise AssertionError(f"{source} must contain at least {MIN_SECRET_VALUE_LENGTH} characters for safe journey reporting")
+    env[key] = value
+    return value
 
 
 def _invalid_ux_result(message: str) -> NoReturn:
@@ -162,28 +187,93 @@ def invocation_context(*, step_id: str | None = None, report_root: str | Path | 
     return Context()
 
 
-def _redact(value: str, env: Mapping[str, str] | None = None) -> str:
-    secrets = [value for key, value in (env or {}).items()
-               if value and any(part in key.upper() for part in ("PASSWORD", "TOKEN", "SECRET", "API_KEY"))]
-    for secret in secrets:
+def _secret_values(env: Mapping[str, str] | None, extra: tuple[str, ...] = ()) -> set[str]:
+    environments = (os.environ, env) if env is not None else (os.environ,)
+    secrets = {value for values in environments for key, value in values.items()
+               if len(value) >= MIN_SECRET_VALUE_LENGTH and is_secret_key(key)}
+    return secrets | {secret for secret in extra if len(secret) >= MIN_SECRET_VALUE_LENGTH}
+
+
+def _redact(value: str, env: Mapping[str, str] | None = None,
+            extra_secrets: tuple[str, ...] = ()) -> str:
+    for secret in _secret_values(env, extra_secrets):
         value = value.replace(secret, "[REDACTED]")
-    return _redact_text(value, "")
+    value = _redact_text(value, "")
+    return _SECRET_ARGUMENT_TEXT.sub(r"\1[REDACTED]", value)
 
 
-def _redact_argv(argv: list[str], env: Mapping[str, str]) -> list[str]:
-    result = []
+def redact_report_value(value: Any, env: Mapping[str, str] | None = None,
+                        secrets: tuple[str, ...] = ()) -> Any:
+    """Redact strings and secret-keyed fields before journey evidence leaves memory."""
+    if isinstance(value, str):
+        return _redact(value, env, secrets)
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            if str(key).casefold() == "argv" and isinstance(item, list):
+                redacted[key] = _redact_argv(item, env, secrets)
+            else:
+                redacted[key] = redact_report_value(item, env, secrets)
+        return _redact_json(redacted)
+    if isinstance(value, list):
+        return [redact_report_value(item, env, secrets) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_report_value(item, env, secrets) for item in value)
+    return value
+
+
+def _redact_argv(argv: list[Any], env: Mapping[str, str] | None,
+                 secrets: tuple[str, ...]) -> list[Any]:
+    result: list[Any] = []
     redact_next = False
-    for arg in argv:
+    for raw in argv:
+        argument = raw if isinstance(raw, str) else str(raw)
         if redact_next:
             result.append("[REDACTED]")
             redact_next = False
             continue
-        result.append(_redact(str(arg), env))
-        if str(arg).lower().lstrip("-").replace("_", "-") in {
-            "password", "token", "secret", "api-key", "private-key",
-        }:
-            redact_next = True
+        flag, separator, _inline_value = argument.partition("=")
+        if argument.startswith("--") and _SECRET_ARGUMENT.search(flag):
+            if separator:
+                result.append(f"{flag}=[REDACTED]")
+            else:
+                result.append(argument)
+                redact_next = True
+            continue
+        result.append(_redact(argument, env, secrets))
     return result
+
+
+def write_report_json(path: str | Path, value: Any, *, env: Mapping[str, str] | None = None,
+                      append: bool = False, indent: int | None = 2,
+                      ensure_ascii: bool = False, secrets: tuple[str, ...] = ()) -> Any:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    redacted = redact_report_value(value, env, secrets)
+    rendered = json.dumps(redacted, indent=indent, ensure_ascii=ensure_ascii) + "\n"
+    with target.open("a" if append else "w", encoding="utf-8") as stream:
+        stream.write(rendered)
+    return redacted
+
+
+def write_report_text(path: str | Path, value: str, *, env: Mapping[str, str] | None = None,
+                      append: bool = False, secrets: tuple[str, ...] = ()) -> str:
+    rendered = _redact(value, env, secrets)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a" if append else "w", encoding="utf-8") as stream:
+        stream.write(rendered)
+    return rendered
+
+
+def print_report_text(value: str, *, env: Mapping[str, str] | None = None,
+                      stream=None, end: str = "\n", flush: bool = False) -> str:
+    rendered = _redact(value, env)
+    output = stream or sys.stdout
+    output.write(rendered + end)
+    if flush:
+        output.flush()
+    return rendered
 
 
 def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
@@ -197,26 +287,41 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         root = Path(path) if path else None
     if root is None:
         return None
-    env = env or {}
+    effective_env = env if env is not None else os.environ
     record = {
         "step_id": _STEP_ID.get(),
         "kind": kind,
-        "argv": _redact_argv(argv, env),
-        "url": _redact(url, env) if url else None,
-        "request_body": _redact(request_body, env) if request_body is not None else None,
+        "argv": argv,
+        "url": url,
+        "request_body": request_body,
         "cwd": str(cwd or Path.cwd()),
-        "home_label": env.get("KB_JOURNEY_HOME_LABEL", "main"),
+        "home_label": effective_env.get("KB_JOURNEY_HOME_LABEL", "main"),
         "exit_code": exit_code,
-        "stdout": _redact(stdout, env),
-        "stderr": _redact(stderr, env),
-        "error": _redact(error, env) if error else None,
+        "stdout": stdout,
+        "stderr": stderr,
+        "error": error,
         "duration_seconds": round(duration_seconds, 3),
     }
     target = root / "invocations" / "calls.jsonl"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(record, ensure_ascii=False) + "\n")
-    return record
+    return write_report_json(target, record, env=effective_env, append=True, indent=None, ensure_ascii=False)
+
+
+class PtyCommandTimeout(subprocess.TimeoutExpired):
+    """PTY timeout retaining the received terminal output and candidate state."""
+
+    def __init__(self, cmd: list[str], timeout: float, transcript: str, candidate_state: str | None):
+        super().__init__(cmd, timeout, output=transcript)
+        self.candidate_state = candidate_state
+
+    def __str__(self) -> str:
+        details = [f"PTY command timed out after {self.timeout}s"]
+        if self.output:
+            details.append(f"transcript received:\n{self.output}")
+        else:
+            details.append("no output received before the timeout")
+        if self.candidate_state:
+            details.append(f"candidate state:\n{self.candidate_state}")
+        return "\n".join(details)
 
 
 def invocation_link(step_id: str) -> str | None:
@@ -423,12 +528,16 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
         os.close(master)
     rendered = transcript.decode(errors="replace")
     duration = time.monotonic() - started
-    error = f"timed out after {timeout}s" if timed_out else None
+    candidate_state = (env if env is not None else os.environ).get("KB_JOURNEY_STATES") if timed_out else None
+    error = (f"timed out after {timeout}s" if rendered else
+             f"no output received before the timeout ({timeout}s)") if timed_out else None
+    if timed_out and candidate_state:
+        error += f"; candidate state: {candidate_state}"
     record_invocation(kind="command", argv=argv, cwd=cwd, env=env,
                       exit_code=process.returncode, stdout=rendered,
                       duration_seconds=duration, error=error)
     if timed_out and raise_on_timeout:
-        raise subprocess.TimeoutExpired(argv, timeout, output=rendered)
+        raise PtyCommandTimeout(argv, timeout, rendered, candidate_state)
     return subprocess.CompletedProcess(argv, process.returncode, stdout=rendered, stderr=""), duration
 
 

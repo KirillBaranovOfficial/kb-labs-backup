@@ -15,16 +15,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import select_from_cases
 from select_from_cases import read_coverage_result, selection_from_coverage, selectors_from_coverage
 from service_steps import Journey
+from select_from_cases import _case_declarations
 
 
 def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "active", release: bool = True):
+    root = Path(__file__).resolve().parents[2]
+    line = next(iter(_case_declarations(source, root)))
     return {
         "mode": mode,
         "cases": [{
             "id": "S-042",
             "status": status,
             "release": release,
-            "steps": [{"stepId": "S-042.1", "claims": [{"source": source, "kind": kind, "line": 393}]}],
+            "steps": [{"stepId": "S-042.1", "claims": [{"source": source, "kind": kind, "line": line}]}],
         }],
     }
 
@@ -54,7 +57,9 @@ class CaseJourneySelectionTests(unittest.TestCase):
                     "ok": True, "data": {"mode": mode, "cases": [{
                         "id": "S-042", "status": "active", "release": True,
                         "steps": [{"stepId": "S-042.1", "claims": [{
-                            "kind": "journey", "source": "e2e/journey/service_runner.py", "line": 393,
+                            "kind": "journey", "source": "e2e/journey/service_runner.py",
+                            "line": next(iter(_case_declarations(
+                                "e2e/journey/service_runner.py", Path(__file__).resolve().parents[2]))),
                         }]}],
                     }]},
                 }), "")
@@ -139,7 +144,10 @@ class CaseJourneySelectionTests(unittest.TestCase):
         case = result["cases"][0]
         case["steps"] = [
             {"stepId": f"S-042.{number}", "claims": [{
-                "kind": "journey", "source": "e2e/journey/service_runner.py", "line": 393}]} for number in (1, 2, 3)
+                "kind": "journey", "source": "e2e/journey/service_runner.py",
+                "line": next(iter(_case_declarations("e2e/journey/service_runner.py",
+                                                       Path(__file__).resolve().parents[2])))}]}
+            for number in (1, 2, 3)
         ]
         for step in case["steps"]:
             step_id = step["stepId"]

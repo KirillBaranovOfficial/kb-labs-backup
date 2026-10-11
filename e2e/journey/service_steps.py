@@ -9,8 +9,8 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
-from invocations import invocation_context, invocation_link
+from typing import Any, Callable, Iterable, Mapping
+from invocations import invocation_context, invocation_link, write_report_json, write_report_text
 
 
 @dataclass
@@ -50,6 +50,7 @@ class Journey:
         self.selected_claims = set(self.selected_steps)
         self.prerequisite_steps = set(filter(None, os.getenv("KB_JOURNEY_PREREQUISITE_STEPS", "").split(",")))
         self.selection = list(filter(None, os.getenv("KB_JOURNEY_CASES", "").split(",")))
+        self.step_guard: Callable[[str, Callable[[], str | None]], str | None] | None = None
 
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
              details: Callable[[], dict[str, Any]] | None = None, *,
@@ -83,7 +84,7 @@ class Journey:
         started = time.monotonic()
         try:
             with invocation_context(step_id=",".join(case_ids) or name):
-                message = check()
+                message = self.step_guard(name, check) if self.step_guard else check()
             if isinstance(message, str) and message.startswith("BLOCKED:"):
                 status = "BLOCKED"
                 message = message.removeprefix("BLOCKED:").strip()
@@ -108,7 +109,8 @@ class Journey:
         return result
 
     def skipped(self, name: str, capability: str, message: str = "not selected") -> StepResult:
-        result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, message, [])
+        result = StepResult(name, capability, self.mode, "SKIPPED", 0.0,
+                            message, [])
         self.steps.append(result)
         return result
 
@@ -116,7 +118,8 @@ class Journey:
         case_ids = list(cases)
         if self.selected_claims and (not case_ids or not self.selected_claims.intersection(case_ids)):
             return self.skipped(name, capability)
-        result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, reason, case_ids)
+        result = StepResult(name, capability, self.mode, "BLOCKED", 0.0,
+                            reason, case_ids)
         self.steps.append(result)
         return result
 
@@ -162,10 +165,32 @@ class Journey:
 
     def write_json(self, path: str | Path) -> JourneyResult:
         result = self.result()
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(asdict(result), indent=2) + "\n")
+        write_report_json(path, asdict(result))
         return result
+
+
+def replay_steps(source: Journey, target: Journey) -> None:
+    """Record every step collected by a fixture journey in the journey that owns the report."""
+    for step in source.steps:
+        target.step(step.name, step.capability,
+                    lambda step=step: None if step.status == "PASS" else step.message,
+                    cases=step.cases)
+
+
+def record_runner_exception(journey: Journey, error: Exception,
+                            diagnostics_path: str | Path | None = None, *,
+                            env: Mapping[str, str] | None = None) -> StepResult:
+    """Turn an unexpected runner exception into a durable journey failure row."""
+    diagnostic = traceback.format_exc()
+    if diagnostics_path:
+        write_report_text(diagnostics_path,
+                          "\n== unexpected exception in outer journey orchestration ==\n" + diagnostic,
+                          env=env, append=True)
+
+    def failed() -> str:
+        raise RuntimeError(str(error) or error.__class__.__name__)
+
+    return journey.step("outer journey orchestration", "journey.runner", failed)
 
 
 class FlowGraph:
@@ -213,10 +238,9 @@ class FlowGraph:
 
     def _write_traceback(self, group: str, name: str) -> None:
         if self.diagnostics_path:
-            self.diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.diagnostics_path.open("a", encoding="utf-8") as stream:
-                stream.write(f"\n== unexpected exception in {group}/{name} ==\n")
-                stream.write(traceback.format_exc())
+            write_report_text(self.diagnostics_path,
+                              f"\n== unexpected exception in {group}/{name} ==\n{traceback.format_exc()}",
+                              append=True)
 
     def step(self, name: str, group: str, capability: str, check: Callable[[], str | None],
              cases: Iterable[str] = ()) -> StepResult:

@@ -232,7 +232,7 @@ export class WorkflowDaemonClient {
    */
   async getJobStatus(jobId: string): Promise<JobStatusDetail> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs/${encodedJobId}`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -248,7 +248,7 @@ export class WorkflowDaemonClient {
    */
   async getJobSteps(jobId: string): Promise<JobStepsResponse> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}/steps`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs/${encodedJobId}/steps`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -264,7 +264,7 @@ export class WorkflowDaemonClient {
    */
   async getJobLogs(jobId: string): Promise<JobLogsResponse['logs']> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}/logs`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs/${encodedJobId}/logs`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -280,7 +280,7 @@ export class WorkflowDaemonClient {
    * Get active executions
    */
   async getExecutions(): Promise<JobStatusInfo[]> {
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs`);
     if (!response.ok) {
       throw new Error(`Failed to get executions: ${response.statusText}`);
     }
@@ -294,7 +294,7 @@ export class WorkflowDaemonClient {
    * Get cron jobs
    */
   async getCronJobs(): Promise<CronListResponse> {
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/crons`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/crons`);
     if (!response.ok) {
       throw new Error(`Failed to get cron jobs: ${response.statusText}`);
     }
@@ -304,7 +304,7 @@ export class WorkflowDaemonClient {
 
   async setCronEnabled(id: string, enabled: boolean): Promise<{ enabled: boolean }> {
     const action = enabled ? 'enable' : 'disable';
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/crons/${encodeURIComponent(id)}/${action}`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/crons/${encodeURIComponent(id)}/${action}`, {
       method: 'POST',
     });
     const data = await this.parseJsonResponse<unknown>(response);
@@ -324,7 +324,7 @@ export class WorkflowDaemonClient {
     input?: unknown;
     priority?: number;
   }): Promise<{ id: string; status: string }> {
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/jobs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -362,7 +362,7 @@ export class WorkflowDaemonClient {
     if (params.tags) { query.set('tags', params.tags); }
 
     const qs = query.toString();
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/workflows${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/workflows${qs ? `?${qs}` : ''}`);
     if (!response.ok) {
       throw new Error(`Failed to list workflows: ${response.statusText}`);
     }
@@ -376,7 +376,7 @@ export class WorkflowDaemonClient {
    */
   async getWorkflow(id: string): Promise<WorkflowInfo> {
     const encodedId = encodeURIComponent(id);
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/workflows/${encodedId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/workflows/${encodedId}`);
     if (response.status === 404) {
       throw new Error(`Workflow ${id} not found`);
     }
@@ -401,7 +401,7 @@ export class WorkflowDaemonClient {
     if (params.workflowId) { query.set('workflowId', params.workflowId); }
 
     const qs = query.toString();
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs${qs ? `?${qs}` : ''}`);
     if (!response.ok) {
       throw new Error(`Failed to list runs: ${response.statusText}`);
     }
@@ -415,7 +415,7 @@ export class WorkflowDaemonClient {
    */
   async getRun(runId: string): Promise<WorkflowRunDetail> {
     const encodedId = encodeURIComponent(runId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}`);
     if (response.status === 404) {
       throw new Error(`Run ${runId} not found`);
     }
@@ -445,7 +445,7 @@ export class WorkflowDaemonClient {
 
     const encodedId = encodeURIComponent(runId);
     const qs = query.toString();
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}/logs${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/logs${qs ? `?${qs}` : ''}`);
     if (response.status === 404) {
       throw new Error(`Run ${runId} not found`);
     }
@@ -461,7 +461,7 @@ export class WorkflowDaemonClient {
    * Stream run events via SSE (returns a ReadableStream or EventSource-compatible URL)
    */
   getRunEventsUrl(runId: string): string {
-    return `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/events`;
+    return `${this.baseUrl}/runs/${encodeURIComponent(runId)}/events`;
   }
 
   /**
@@ -479,7 +479,7 @@ export class WorkflowDaemonClient {
     }>;
   }> {
     const encodedId = encodeURIComponent(runId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}/approvals`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/approvals`);
     if (!response.ok) {
       const message = await response
         .json()
@@ -516,7 +516,7 @@ export class WorkflowDaemonClient {
     data?: Record<string, unknown>
   ): Promise<{ runId: string; jobId: string; stepId: string; action: string; resolved: boolean }> {
     const encodedId = encodeURIComponent(runId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}/approvals/resolve`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/approvals/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jobId, stepId, action, comment, data }),
@@ -540,7 +540,7 @@ export class WorkflowDaemonClient {
    */
   async cancelRun(runId: string): Promise<void> {
     const encodedId = encodeURIComponent(runId);
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}/cancel`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/runs/${encodedId}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
@@ -562,7 +562,7 @@ export class WorkflowDaemonClient {
     request: WorkflowRunRequest = {}
   ): Promise<{ runId: string; status: string }> {
     const response = await this.authorizedFetch(
-      `${this.baseUrl}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`,
+      `${this.baseUrl}/workflows/${encodeURIComponent(workflowId)}/runs`,
       {
         method: 'POST',
         headers: {
@@ -600,7 +600,7 @@ export class WorkflowDaemonClient {
     request: WorkflowRerunRequest = {},
   ): Promise<{ runId: string; status: string }> {
     const response = await this.authorizedFetch(
-      `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/rerun`,
+      `${this.baseUrl}/runs/${encodeURIComponent(runId)}/rerun`,
       {
         method: 'POST',
         headers: {
@@ -630,7 +630,7 @@ export class WorkflowDaemonClient {
     request: WorkflowRestartRequest = {},
   ): Promise<WorkflowRestartResponse> {
     const response = await this.authorizedFetch(
-      `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/restart`,
+      `${this.baseUrl}/runs/${encodeURIComponent(runId)}/restart`,
       {
         method: 'POST',
         headers: {

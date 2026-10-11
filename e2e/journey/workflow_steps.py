@@ -13,7 +13,7 @@ from typing import Callable
 from service_steps import Journey
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
 from invocations import (decode_ux_error_result, invocation_context, read_ux_cli_result,
-                         run_command, run_pty_command)
+                         run_command, run_pty_command, write_report_json)
 
 
 def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120,
@@ -1076,5 +1076,4 @@ def merge_workflow_result(service_report: Path, workflow_result: dict) -> dict:
     if workflow_result.get("status") != "PASS":
         service_result["status"] = "FAIL"
         service_result["first_failure"] = service_result.get("first_failure") or workflow_result.get("first_failure")
-    service_report.write_text(json.dumps(service_result, indent=2) + "\n", encoding="utf-8")
-    return service_result
+    return write_report_json(service_report, service_result)

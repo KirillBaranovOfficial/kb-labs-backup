@@ -225,6 +225,7 @@ export type {
   // Service transport adapter contract (for adapter authors)
   IServiceTransport,
   ServiceConnectionInfo,
+  ProjectServiceConnectionInfo,
   ServiceListenAddress,
   ServiceTransportRequest,
   ServiceTransportResponse,

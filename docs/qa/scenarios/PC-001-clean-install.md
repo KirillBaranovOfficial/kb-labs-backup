@@ -51,5 +51,8 @@ test.
 
 No artifact is selected from ambient `node_modules`; configuration and service
 metadata come from the published manifests. Any failure has a stable error
-code, a hint, a transcript under `.kb/logs/`, and a redacted diagnostic dossier
-under `.kb/diagnostics/`.
+code and hint, an operation transcript under `$PLATFORM_ROOT/installer/logs/`,
+and a redacted installer dossier under `$PLATFORM_ROOT/installer/diagnostics/`.
+Runtime history remains in `$PLATFORM_ROOT/state/logs/` and
+`$PLATFORM_ROOT/state/diagnostics/`, exposed through the active version's
+`.kb/logs/` and `.kb/diagnostics/` links.

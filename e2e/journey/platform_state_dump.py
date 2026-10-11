@@ -73,6 +73,18 @@ def _redact_text(text: str, admin_password: str) -> str:
     )
 
 
+def _write_evidence_text(target: Path, value: str, *, env: Mapping[str, str] | None = None,
+                         secrets: tuple[str, ...] = (), append: bool = False) -> str:
+    from invocations import write_report_text
+    return write_report_text(target, value, env=env, secrets=secrets, append=append)
+
+
+def _write_evidence_json(target: Path, value: Any, *, env: Mapping[str, str] | None = None,
+                         secrets: tuple[str, ...] = ()) -> Any:
+    from invocations import write_report_json
+    return write_report_json(target, value, env=env, secrets=secrets)
+
+
 def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = False) -> int:
     try:
         if not source.is_file():
@@ -85,16 +97,14 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
             content = "\n".join(content.splitlines()[-TAIL_LINES:]) + "\n"
             # A pathological single line must not defeat the per-file and dump caps.
             content = content[-MAX_FILE_BYTES:]
-        if source.suffix.lower() in {".json", ".jsonc"}:
-            try:
-                content = _redact_text(json.dumps(_redact_json(json.loads(content)), indent=2) + "\n",
-                                       admin_password)
-            except json.JSONDecodeError:
-                content = _redact_text(content, admin_password)
-        else:
-            content = _redact_text(content, admin_password)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
+        if source.suffix.lower() == ".json":
+            try:
+                _write_evidence_json(target, json.loads(content), secrets=(admin_password,))
+                return target.stat().st_size
+            except json.JSONDecodeError:
+                pass
+        _write_evidence_text(target, content, secrets=(admin_password,))
         return target.stat().st_size
     except OSError:
         return 0
@@ -111,7 +121,7 @@ def _write_secret_fingerprints(source: Path, target: Path) -> int:
         if not entries:
             return 0
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps({"entries": entries}, indent=2) + "\n")
+        _write_evidence_json(target, {"entries": entries})
         return target.stat().st_size
     except OSError:
         return 0
@@ -156,11 +166,11 @@ def _write_auth_state_probe(platform_root: Path, target: Path) -> int:
             "users": users,
         }
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(payload, indent=2) + "\n")
+        _write_evidence_json(target, payload)
         return target.stat().st_size
     except (OSError, sqlite3.Error, KeyError, TypeError, ValueError) as error:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps({"available": False, "reason": error.__class__.__name__}, indent=2) + "\n")
+        _write_evidence_json(target, {"available": False, "reason": error.__class__.__name__})
         return target.stat().st_size
 
 
@@ -207,7 +217,7 @@ def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platfo
             if category is None:
                 continue
             record.setdefault("logId", row_id)
-            grouped.setdefault(category, []).append(_redact_json(record))
+            grouped.setdefault(category, []).append(record)
         for category, records in grouped.items():
             target = destination / database.parents[1].name / f"{category}.jsonl"
             encoded_records = []
@@ -220,9 +230,8 @@ def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platfo
                 category_bytes += len(line)
             encoded = b"".join(encoded_records)
             if encoded:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(encoded)
-                used += len(encoded)
+                rendered = _write_evidence_text(target, encoded.decode(errors="replace"))
+                used += len(rendered.encode())
             if used >= SERVICE_LOG_BUDGET:
                 return destination
     return destination
@@ -236,13 +245,12 @@ def _command(output: Path, label: str, args: list[str], *, env: Mapping[str, str
         body = f"exit_code: {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     except (OSError, subprocess.TimeoutExpired) as error:
         body = f"error: {error.__class__.__name__}: {error}"
-    body = _redact_text(body, admin_password)
     encoded = f"{label}\n{body}\n".encode()
     if len(encoded) > budget:
         encoded = encoded[:budget]
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(encoded)
-    return len(encoded)
+    rendered = _write_evidence_text(output, encoded.decode(errors="replace"), secrets=(admin_password,))
+    return len(rendered.encode())
 
 
 def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, mode: str,
@@ -323,7 +331,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                 target = destination / "receipt-artifact-manifests.json"
                 encoded = json.dumps(artifact_manifests, indent=2) + "\n"
                 if used + len(encoded.encode()) <= CONTENT_BUDGET:
-                    target.write_text(encoded)
+                    _write_evidence_json(target, artifact_manifests, env=env)
                     used += target.stat().st_size
                     entries.append(f"- `receipt-artifact-manifests.json` ({target.stat().st_size} bytes)")
         except (OSError, json.JSONDecodeError, AttributeError, TypeError):
@@ -387,7 +395,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             listing = "\n".join(packages) + "\n"
             target = destination / "kb-labs-packages.txt"
             if used + len(listing.encode()) <= CONTENT_BUDGET:
-                target.write_text(listing)
+                _write_evidence_text(target, listing, env=env)
                 used += target.stat().st_size
                 entries.append(f"- `kb-labs-packages.txt` ({target.stat().st_size} bytes)")
 
@@ -439,18 +447,21 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             entries.append("- Platform root was already removed; only remaining runner evidence was captured.")
         if used > CONTENT_BUDGET:
             raise AssertionError("platform state dump exceeded its size cap")
-        failure_excerpt = _redact_text(first_failure, admin_password)[:20_000]
+        failure_excerpt = first_failure[:20_000]
         revision = command_env.get("KB_JOURNEY_GIT_REVISION", "unknown")
-        index = "# Platform state dump\n\nJourney git revision: " + _redact_text(revision, admin_password)
+        index = "# Platform state dump\n\nJourney git revision: " + revision
         index += "\n\nFirst failure: " + failure_excerpt
         index += "\n\nFiles:\n" + ("\n".join(entries) if entries else "- No platform files or commands were available.") + "\n"
-        (destination / "index.md").write_text(index)
+        _write_evidence_text(destination / "index.md", index, env=command_env,
+                             secrets=(admin_password,))
     except Exception as error:  # diagnostics must never mask the journey failure
         try:
             destination.mkdir(parents=True, exist_ok=True)
-            (destination / "index.md").write_text(
+            _write_evidence_text(
+                destination / "index.md",
                 "# Platform state dump\n\nDump failed: "
-                + _redact_text(f"{error.__class__.__name__}: {error}", admin_password) + "\n"
+                + f"{error.__class__.__name__}: {error}\n",
+                env=env, secrets=(admin_password,),
             )
         except OSError:
             pass

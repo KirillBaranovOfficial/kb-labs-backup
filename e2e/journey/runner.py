@@ -21,14 +21,16 @@ from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
 from platform_channel_steps import run_platform_channel_steps
-from installer_case_steps import (assert_default_service_ports_free, run_doctor_root_isolation_step,
+from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_installer_case_steps, run_invalid_request_step,
                                   run_apply_scenario_step,
-                                  run_uninstall_decline_step)
+                                  run_uninstall_decline_step, run_missing_project_request_steps,
+                                  run_fixture_group)
 from journey_resources import case_catalog_root, journey_module, workspace_resource
+from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, record_candidate_provenance, record_runner_failure,
-                           source_selected)
+                           record_runner_exception, replay_steps, source_selected)
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
 from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status,
                         run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
@@ -37,8 +39,9 @@ from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps,
 from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
 from scoreboard import release_claims_for_case, write_scoreboards
 from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
-                         invocation_context, open_http, read_ux_cli_result, run_command, run_pty_command,
-                         start_background_command)
+                         invocation_context, open_http, print_report_text, read_ux_cli_result,
+                         store_report_secret, run_command, run_pty_command,
+                         start_background_command, write_report_text)
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = os.getenv("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -198,13 +201,14 @@ def fail(message: str):
         FIRST_FAILURE = message
 
 
+def write_journey_diagnostic(message: str, *, env=None) -> None:
+    report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
+    write_report_text(report.with_name("journey-diagnostics.log"), message,
+                      env=env or BASE_ENV, append=True)
+
+
 def log_group_exception(group: str) -> None:
-    diagnostics = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
-        "journey-diagnostics.log")
-    diagnostics.parent.mkdir(parents=True, exist_ok=True)
-    with diagnostics.open("a", encoding="utf-8") as stream:
-        stream.write(f"\n== unexpected exception in {group} ==\n")
-        stream.write(traceback.format_exc())
+    write_journey_diagnostic(f"\n== unexpected exception in {group} ==\n{traceback.format_exc()}")
 
 
 def configure_secured_platform(
@@ -337,7 +341,7 @@ def verify_project_mcp(env: dict[str, str], local: bool):
     try:
         project = decode_ux_success_result(read_ux_cli_result(registered.stdout, registered.returncode))["project"]
         project_id = project["id"]
-        url = f"http://127.0.0.1:4000/api/v1/projects/{project_id}/mcp"
+        url = f"http://127.0.0.1:4000{project_service_path(project_id, 'mcp')}"
         token = None
         if not local:
             try:
@@ -445,10 +449,11 @@ def append_summary(passed: bool):
         CASE_JOURNEY.write_json(report.with_name(
             f"installer-case-{CASE_JOURNEY.mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}.json"))
     if not report.exists():
-        report.write_text("| Journey | Result | First broken step | install.sh | questions | apply | start | first command | total | platform root | peak pnpm RSS |\n"
-                          "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
-    with report.open("a") as stream:
-        stream.write("\n".join(lines) + "\n")
+        write_report_text(report,
+                          "| Journey | Result | First broken step | install.sh | questions | apply | start | first command | total | platform root | peak pnpm RSS |\n"
+                          "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+                          env=BASE_ENV)
+    write_report_text(report, "\n".join(lines) + "\n", env=BASE_ENV, append=True)
     if (not passed and BASE_ENV.get("KB_JOURNEY_SERVICE_PROFILE") == "nightly"
             and (VARIANT.endswith("secured") or SCENARIO == "explore")):
         mode = "secured" if VARIANT.endswith("secured") else "local"
@@ -456,22 +461,27 @@ def append_summary(passed: bool):
         if not service_report.exists():
             record_runner_failure(service_report, mode, FIRST_FAILURE)
     if not passed:
-        diagnosis = report.with_name("journey-diagnostics.log")
         candidates = sorted((PLATFORM / "state" / "diagnostics").glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
         logs = sorted((PLATFORM / "state" / "logs").glob("*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
-        with diagnosis.open("a") as stream:
-            for path in [*candidates[:1], *logs[:1]]:
-                stream.write(f"\n== {title}: {path.name} ==\n{path.read_text(errors='replace')[-5000:]}\n")
-            for path in [PLATFORM / "node_modules/.bin/kb", PLATFORM / "node_modules/@kb-labs/cli-bin", PLATFORM / "node_modules/@kb-labs/cli-bin/dist/bin.js", BIN / "kb"]:
-                try:
-                    target = os.readlink(path)
-                except OSError:
-                    target = ""
-                stream.write(f"tree {path}: exists={path.exists()} symlink={path.is_symlink()} target={target!r} resolved={path.resolve(strict=False)}\n")
-                if path.is_file() and path.name in {"kb", "bin.js"}:
-                    stream.write(f"file {path}: {path.read_text(errors='replace')[:3000]}\n")
+        for path in [*candidates[:1], *logs[:1]]:
+            write_journey_diagnostic(
+                f"\n== {title}: {path.name} ==\n{path.read_text(errors='replace')[-5000:]}\n",
+                env=BASE_ENV,
+            )
+        for path in [PLATFORM / "node_modules/.bin/kb", PLATFORM / "node_modules/@kb-labs/cli-bin", PLATFORM / "node_modules/@kb-labs/cli-bin/dist/bin.js", BIN / "kb"]:
+            try:
+                target = os.readlink(path)
+            except OSError:
+                target = ""
+            write_journey_diagnostic(
+                f"tree {path}: exists={path.exists()} symlink={path.is_symlink()} target={target!r} resolved={path.resolve(strict=False)}\n",
+                env=BASE_ENV,
+            )
+            if path.is_file() and path.name in {"kb", "bin.js"}:
+                write_journey_diagnostic(f"file {path}: {path.read_text(errors='replace')[:3000]}\n",
+                                          env=BASE_ENV)
     write_scoreboards(report.parent, case_catalog_root())
-    print("\n".join(lines))
+    print_report_text("\n".join(lines), env=BASE_ENV, flush=True)
 
 
 def extract_request(payload):
@@ -817,9 +827,10 @@ def main():
         if apply_offset is not None:
             TIMES["apply"] = duration - apply_offset
         if VARIANT.startswith("human-"):
-            diagnostic = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log")
-            with diagnostic.open("a", encoding="utf-8") as stream:
-                stream.write(f"\n== {FRONT}/{SCENARIO}: install-pty (access={access_mode}, exit {code}) ==\n{output[-12000:]}\n")
+            write_journey_diagnostic(
+                f"\n== {FRONT}/{SCENARIO}: install-pty (access={access_mode}, exit {code}) ==\n{output[-12000:]}\n",
+                env=env,
+            )
         human_text_is_clean(output)
         if code != 0:
             fail(f"kb-create install: exit {code}; {' '.join(output.split())[-2000:]}")
@@ -841,6 +852,7 @@ def main():
                        cases=["PC-001.2", "S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3", "S-203.10"])
     else:
         operation = "plan" if VARIANT in {"input", "relative-path"} else "install"
+        PROJECT.mkdir(parents=True, exist_ok=True)
         install_scenario = "custom" if VARIANT.endswith("secured") else SCENARIO
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                 "--platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
@@ -902,6 +914,8 @@ def main():
                 if len(credentials) == 1:
                     credential = credentials[0]
                     password = credential.get("password", "")
+                    store_report_secret(env, "KB_JOURNEY_ADMIN_PASSWORD", password,
+                                        "installed first-admin password")
                     first_admin_shown_once = (
                         credential.get("email") == "journey-admin@example.test"
                         and credential.get("shownOnce") is True
@@ -910,7 +924,6 @@ def main():
                     )
                     if first_admin_shown_once:
                         env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
-                        env["KB_JOURNEY_ADMIN_PASSWORD"] = password
                 if not first_admin_shown_once:
                     fail("secured install did not return exactly one firstAdmin credential with shownOnce=true")
             payload = {}
@@ -942,7 +955,6 @@ def main():
                             "agent install stream omitted progress or terminal success", cases=["S-203.10"])
         if VARIANT.endswith("secured"):
             env.setdefault("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
-            env.setdefault("KB_JOURNEY_ADMIN_PASSWORD", "")
         if VARIANT == "input":
             request = extract_request(payload)
             if request is None:
@@ -1043,19 +1055,16 @@ def main():
     result, elapsed = run(["bash", "-c", f'. "$HOME/.profile"; {help_command}'], env=env, cwd=PROJECT, timeout=180)
     TIMES["first command"] = elapsed
     if not require(result, step="new login shell kb --help"):
-        with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
-            stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: first-command-output ==\n{result.stdout[-5000:]}\n")
+        write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-command-output ==\n{result.stdout[-5000:]}\n", env=env)
     else:
         if FRONT == "agent" and SCENARIO == "commit":
             result, elapsed = run(["bash", "-c", '. "$HOME/.profile"; kb commit --dry-run --scope root'],
                                   env=env, cwd=PROJECT, timeout=300)
             TIMES["first command"] += elapsed
             if not require(result, step="kb commit first value"):
-                with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
-                    stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n")
+                write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n", env=env)
             elif 'scope "root"' not in result.stdout:
-                with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
-                    stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n")
+                write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n", env=env)
                 fail("kb commit first value: output did not include the supplied scope")
         status, _ = run(["git", "status", "--porcelain"], env=env, cwd=PROJECT)
         clean_repo = not (PROJECT / ".kb").exists() and status.stdout.strip() in {"?? note.txt", "A  note.txt"}
@@ -1203,12 +1212,10 @@ def main():
     for command, key in (("status", ""), ("doctor", "")):
         result, _ = run([launcher, command, "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
         if not require(result, step=f"kb-create {command}"):
-            with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
-                stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: {command}-output ==\n{result.stdout[-5000:]}\n")
+            write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: {command}-output ==\n{result.stdout[-5000:]}\n", env=env)
             if command == "doctor":
                 diagnostic, _ = run([launcher, command, "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
-                with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
-                    stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: doctor-json (exit {diagnostic.returncode}) ==\n{(diagnostic.stdout or '')[-12000:]}\n{(diagnostic.stderr or '')[-4000:]}\n")
+                write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: doctor-json (exit {diagnostic.returncode}) ==\n{(diagnostic.stdout or '')[-12000:]}\n{(diagnostic.stderr or '')[-4000:]}\n", env=env)
         elif command == "doctor":
             try:
                 health = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
@@ -1228,8 +1235,7 @@ def main():
                 record_case("post-restart doctor", passed,
                            "doctor JSON did not report a healthy platform after restart", cases=["PC-004.3"])
         elif key and not re.search(key, result.stdout, re.I | re.S):
-            with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
-                stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: {command}-output ==\n{result.stdout[-5000:]}\n")
+            write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: {command}-output ==\n{result.stdout[-5000:]}\n", env=env)
             fail(f"kb-create {command}: expected human summary '{key}'")
         if command == "status":
             try:
@@ -1272,15 +1278,19 @@ def main():
                 raise RuntimeError(f"GET {canary_url} returned HTTP {canary_status}")
             canary_index.write_bytes(canary_body)
         installer_secret = env.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyInstallSecret1!")
+        store_report_secret(env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
+                            "installer first-admin password")
         def root_isolation_command(args: list[str]):
             installer_env = env.copy()
             if "--secret-env" in args:
-                installer_env["KB_JOURNEY_ADMIN_PASSWORD"] = installer_secret
+                store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
+                                    "root-isolation installer password")
             return run(args, env=installer_env, timeout=1200)[0]
         def installer_command(args: list[str]):
             installer_env = env.copy()
             if "--secret-env" in args:
-                installer_env["KB_JOURNEY_ADMIN_PASSWORD"] = installer_secret
+                store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
+                                    "installer scenario password")
             return run(args, env=installer_env, timeout=1200)[0]
         root_isolation_journey = run_doctor_root_isolation_step(
             mode=mode, launcher=launcher, platform_root=PLATFORM, run_command=root_isolation_command,
@@ -1292,6 +1302,7 @@ def main():
         stopped, _ = run([launcher, "stop", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
         if stopped.returncode != 0:
             raise RuntimeError(f"could not stop the main host before isolated installer fixtures: {stopped.stderr or stopped.stdout}")
+        installer_case_journey = None
         try:
             container_update_indexes = {}
             candidate_base = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/"
@@ -1318,18 +1329,26 @@ def main():
                 mode=mode, launcher=launcher, stable_index=stable_index,
                 platform_root=PLATFORM, run_command=installer_command,
             ).steps)
+            run_fixture_group(installer_case_journey, "missing project request", lambda: run_missing_project_request_steps(
+                mode=mode, launcher=launcher, stable_index=stable_index,
+                home=HOME, run_command=installer_command,
+            ))
         finally:
-            assert_default_service_ports_free(PLATFORM, installer_command)
-            started, _ = run([launcher, "start", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=180)
+            body_error = sys.exc_info()[1]
+            if installer_case_journey is not None:
+                replay_steps(installer_case_journey, CASE_JOURNEY)
+            started, _ = run([launcher, "start", "--platform-root", str(PLATFORM), "--json"],
+                             env=env, timeout=180)
             if started.returncode != 0:
-                raise RuntimeError(f"could not restart the main host after isolated installer fixtures: {started.stderr or started.stdout}")
+                restart_failure = ("could not restart the main host after isolated installer fixtures: "
+                                   f"{' '.join((started.stderr or started.stdout).split())[-500:]}")
+                CASE_JOURNEY.step("restart the main host after isolated installer fixtures",
+                                  "journey.orchestration", lambda: restart_failure)
+                if body_error is None:
+                    raise RuntimeError(restart_failure)
         installer_case_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
             f"installer-cases-{mode}.json")
-        installer_case_result = installer_case_journey.write_json(installer_case_report)
-        for step in installer_case_result.steps:
-            CASE_JOURNEY.step(step["name"], step["capability"],
-                              lambda step=step: None if step["status"] == "PASS" else step["message"],
-                              cases=step["cases"])
+        installer_case_journey.write_json(installer_case_report)
 
     local_service_journey = FRONT == "agent" and SCENARIO == "explore" and VARIANT == "default"
     secured_service_journey = FRONT == "human" and VARIANT.endswith("secured")
@@ -1341,7 +1360,8 @@ def main():
         service_env["KB_JOURNEY_PROJECT_ROOT"] = str(PROJECT)
         if mode == "secured":
             service_env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
-            service_env["KB_JOURNEY_ADMIN_PASSWORD"] = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+            store_report_secret(service_env, "KB_JOURNEY_ADMIN_PASSWORD",
+                                env["KB_JOURNEY_ADMIN_PASSWORD"], "service journey admin password")
             oauth_claims = release_claims_for_case(
                 "S-109", case_catalog_root())
             configured = login_and_configure_secured_admin(
@@ -1459,6 +1479,10 @@ def main():
             )
             recovered_password = "JourneyRecovered123!"
 
+            def store_recovered_password(password: str) -> None:
+                store_report_secret(service_env, "KB_JOURNEY_ADMIN_PASSWORD", password,
+                                    "recovered journey admin password")
+
             def bootstrap_admin_recovery():
                 removed, _ = run([str(BIN / "kb"), "project", "remove", str(PROJECT), "--yes", "--json"],
                                  env=env, cwd=PROJECT, timeout=90)
@@ -1468,7 +1492,7 @@ def main():
                     run_bootstrap_recovery_steps(
                         launcher, str(PLATFORM), service_env["KB_JOURNEY_ADMIN_EMAIL"],
                         service_env["KB_JOURNEY_ADMIN_PASSWORD"], recovered_password, env, run,
-                        on_valid_password=lambda password: service_env.__setitem__("KB_JOURNEY_ADMIN_PASSWORD", password),
+                        on_valid_password=store_recovered_password,
                     )
                 finally:
                     added, _ = run([str(BIN / "kb"), "project", "add", "--json"],
@@ -1793,14 +1817,17 @@ def main():
                         "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
                         service_env["KB_JOURNEY_ADMIN_PASSWORD"])
                 studio_env["KB_STUDIO_MEMBER_EMAIL"] = member_email
-                studio_env["KB_STUDIO_MEMBER_PASSWORD"] = member_password
+                store_report_secret(studio_env, "KB_STUDIO_MEMBER_PASSWORD", member_password,
+                                    "Studio member password")
                 with invocation_context(step_id="journey.setup"):
                     admin_token, member_token = create_studio_access_tokens(
                         "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
                         service_env["KB_JOURNEY_ADMIN_PASSWORD"], member_email, member_password,
                         env=service_env)
-                studio_env["KB_STUDIO_ADMIN_TOKEN"] = admin_token
-                studio_env["KB_STUDIO_MEMBER_TOKEN"] = member_token
+                store_report_secret(studio_env, "KB_STUDIO_ADMIN_TOKEN", admin_token,
+                                    "Studio admin access token")
+                store_report_secret(studio_env, "KB_STUDIO_MEMBER_TOKEN", member_token,
+                                    "Studio member access token")
                 required_studio_credentials = (
                     "KB_STUDIO_ADMIN_EMAIL", "KB_STUDIO_ADMIN_PASSWORD",
                     "KB_STUDIO_MEMBER_EMAIL", "KB_STUDIO_MEMBER_PASSWORD",
@@ -1914,16 +1941,12 @@ if __name__ == "__main__":
     try:
         exit_code = main()
     except Exception as error:
-        diagnostics = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
-            "journey-diagnostics.log")
-        diagnostics.parent.mkdir(parents=True, exist_ok=True)
-        import traceback
-        with diagnostics.open("a", encoding="utf-8") as stream:
-            stream.write("\n== unexpected exception in outer journey orchestration ==\n")
-            stream.write(traceback.format_exc())
         if CASE_JOURNEY is not None:
-            CASE_JOURNEY.step("outer journey orchestration", "journey.runner",
-                              lambda: str(error) or error.__class__.__name__)
+            diagnostics = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
+                "journey-diagnostics.log")
+            record_runner_exception(CASE_JOURNEY, error, diagnostics, env=BASE_ENV)
+        else:
+            log_group_exception("outer journey orchestration")
         fail(f"outer journey orchestration: {error}")
         if (ACTIVE_OUTER_GRAPH is not None and ACTIVE_MAIN_ENV is not None and ACTIVE_LAUNCHER
                 and (PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json").is_file()):

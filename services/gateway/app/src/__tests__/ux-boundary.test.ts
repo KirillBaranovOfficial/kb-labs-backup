@@ -4,6 +4,8 @@ import { createErrorEnvelope, type ICache, type ILogger } from '@kb-labs/core-pl
 import { createUxFailureResult, isUxResult } from '@kb-labs/core-platform/ux-result';
 import successFixture from '../../../../../contracts/ux-result/fixtures/valid/success.json';
 import failureFixture from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
+import gatewayAuthHealthFixture from '../../../../../contracts/ux-result/fixtures/valid/gateway-auth-health.json';
+import { GatewayAuthHealthResponseSchema } from '@kb-labs/gateway-contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerGatewayUxBoundary } from '../ux-boundary.js';
 import { registerAuthHealthRoute } from '../auth/health-route.js';
@@ -131,6 +133,8 @@ describe('Gateway UX boundary', () => {
 
     expect(isUxResult(successFixture)).toBe(true);
     expect(isUxResult(failureFixture)).toBe(true);
+    expect(isUxResult(gatewayAuthHealthFixture)).toBe(true);
+    expect(GatewayAuthHealthResponseSchema.parse(gatewayAuthHealthFixture.data)).toMatchObject({ bootstrap: 'exists-non-active' });
     expect(routes.length).toBeGreaterThan(0);
     for (const route of routes) {
       if (route.config?.ux === 'raw') continue;

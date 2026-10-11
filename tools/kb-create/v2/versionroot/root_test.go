@@ -206,7 +206,7 @@ func TestActivationRefusalLeavesActiveRootUntouched(t *testing.T) {
 	}
 }
 
-// case: S-221.1
+// case: S-223.1
 func TestHandoffCrashBoundariesKeepCompleteActiveAndRecoveryRoots(t *testing.T) {
 	points := []HandoffPoint{HandoffMetadataWritten, HandoffTargetFinalized, HandoffLinkPrepared, HandoffLinkSwitched}
 	for _, point := range points {
@@ -244,7 +244,7 @@ func TestHandoffCrashBoundariesKeepCompleteActiveAndRecoveryRoots(t *testing.T) 
 	}
 }
 
-// case: S-221.1
+// case: S-223.1
 func TestInitialHandoffLeavesOnlyCompleteInstallTreesAtEachBoundary(t *testing.T) {
 	points := []HandoffPoint{HandoffInitialMetadataWritten, HandoffInitialTargetFinalized, HandoffInitialLinkPrepared, HandoffInitialLinkSwitched}
 	for _, point := range points {

@@ -25,7 +25,8 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_i
                             PROJECT_ID,
                             _prepare_and_export_mcp_projects,
                             main as service_main, mcp_probe, run_grouped_service_steps, run_service_steps)
-from service_steps import FlowGraph, Journey, record_runner_failure
+from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
+from invocations import run_pty_command, store_report_secret
 from steps.auth import run_secured_auth_steps
 
 
@@ -50,6 +51,44 @@ class FakeGitHub:
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_runner_exception_keeps_completed_steps_and_adds_crash_row_to_report(self):
+        with tempfile.TemporaryDirectory(prefix="journey-runner-crash-") as temp:
+            root = Path(temp)
+            journey = Journey("local", "runner-crash")
+            for number in range(3):
+                journey.step(f"completed step {number + 1}", "journey.test", lambda: None,
+                             cases=[f"S-900.{number + 1}"])
+            try:
+                raise RuntimeError("runner body failed after recorded steps")
+            except RuntimeError as error:
+                record_runner_exception(journey, error, root / "journey-diagnostics.log")
+            report = root / "journey.json"
+            result = journey.write_json(report)
+            saved = json.loads(report.read_text())
+            diagnostic = (root / "journey-diagnostics.log").read_text()
+
+        self.assertEqual(len(saved["steps"]), 4)
+        self.assertEqual([step["status"] for step in saved["steps"]], ["PASS", "PASS", "PASS", "FAIL"])
+        self.assertEqual(saved["steps"][-1]["name"], "outer journey orchestration")
+        self.assertEqual(len(saved["case_run"]["claims"]), 3)
+        self.assertIn("Traceback", diagnostic)
+        self.assertEqual(result.status, "FAIL")
+
+    def test_fixture_journey_rows_are_replayed_into_the_reporting_journey(self):
+        fixture = Journey("local", "fixture-rows")
+        fixture.step("fixture passes", "journey.test", lambda: None, cases=["S-900.1"])
+        fixture.step("fixture fails", "journey.test", lambda: "fixture left a host running", cases=["S-900.2"])
+        report = Journey("local", "reporting")
+        report.step("earlier row", "journey.test", lambda: None, cases=["S-900.3"])
+
+        replay_steps(fixture, report)
+
+        self.assertEqual([(step.name, step.status, step.cases) for step in report.steps],
+                         [("earlier row", "PASS", ["S-900.3"]),
+                          ("fixture passes", "PASS", ["S-900.1"]),
+                          ("fixture fails", "FAIL", ["S-900.2"])])
+        self.assertEqual(report.steps[-1].message, "fixture left a host running")
+
     def test_journey_registry_is_shared_with_npm_resolution(self):
         compose = (Path(__file__).parent / "docker-compose.yml").read_text()
         registry = re.search(r"^\s+KB_JOURNEY_REGISTRY:\s*(.+)$", compose, re.MULTILINE)
@@ -489,6 +528,54 @@ class ServiceJourneyTests(unittest.TestCase):
                 self.assertEqual(archive.call_args.kwargs["platform_root"], str(Path(directory) / "platform"))
                 self.assertNotIn("Traceback", stdout.getvalue())
 
+    def test_pty_timeout_redacts_secret_from_invocation_step_report_and_stdout(self):
+        with tempfile.TemporaryDirectory(prefix="journey-redaction-") as directory:
+            root = Path(directory)
+            output = root / "service-local.json"
+            env = {
+                "HOME": str(root / "home"),
+                "KB_HOME": str(root / "home" / ".kb"),
+                "KB_JOURNEY_PLATFORM_ROOT": str(root / "platform"),
+                "KB_JOURNEY_INVOCATIONS": str(root),
+            }
+            password = store_report_secret(
+                env, "KB_JOURNEY_ADMIN_PASSWORD", "synthetic-journey-password-never-print",
+                "synthetic PTY regression secret")
+            env["KB_JOURNEY_STATES"] = json.dumps({"candidateState": password})
+            stdout = io.StringIO()
+
+            def add_timeout_step(journey, *_args, **_kwargs):
+                journey.step(
+                    "synthetic PTY timeout", "journey.auth",
+                    lambda: run_pty_command(
+                        [sys.executable, "-c",
+                         "import os,time; print(os.environ['KB_JOURNEY_ADMIN_PASSWORD'], flush=True); time.sleep(5)"],
+                        env=os.environ.copy(), timeout=0.3,
+                    ),
+                )
+
+            with patch.dict(os.environ, env, clear=False), \
+                    patch("service_runner.checks", return_value=[]), \
+                    patch("service_runner.configure_installed_cli_path"), \
+                    patch("service_runner.run_service_steps", side_effect=add_timeout_step), \
+                    patch("service_runner.FlowGraph.flow", return_value=None), \
+                    patch("service_runner.archive_service_logs"), \
+                    patch("sys.argv", ["service_runner.py", "--mode", "local", "--output", str(output)]), \
+                    redirect_stdout(stdout):
+                status = service_main()
+
+            report_text = output.read_text()
+            report = json.loads(report_text)
+            invocation_text = (root / "invocations" / "calls.jsonl").read_text()
+            step_message = next(step["message"] for step in report["steps"]
+                                if step["name"] == "synthetic PTY timeout")
+            for rendered in (invocation_text, step_message, report_text, stdout.getvalue()):
+                if password in rendered:
+                    self.fail("synthetic secret leaked through a journey output boundary")
+            self.assertEqual(status, 1)
+            self.assertIn("[REDACTED]", step_message)
+            self.assertIn("[REDACTED]", invocation_text)
+
     def test_pre_service_failure_is_saved_with_step_and_message(self):
         with tempfile.TemporaryDirectory() as directory:
             result = record_runner_failure(Path(directory) / "service-local.json", "local",
@@ -725,7 +812,7 @@ class ServiceJourneyTests(unittest.TestCase):
             if path == "/auth/invites":
                 return {"activationUrl": "http://localhost/activate/invite-token"}
             if path.endswith("password-reset-link"):
-                return {"resetUrl": "http://localhost/reset-password/reset-token"}
+                return {"resetUrl": "http://localhost/reset-password/reset-token-for-journey"}
             if path == "/auth/me" and token == "admin-access":
                 self.assertEqual(expected, 401 if state["admin_revoked"] else 200)
                 return {} if state["admin_revoked"] else {"email": "admin@example.test"}
@@ -756,14 +843,14 @@ class ServiceJourneyTests(unittest.TestCase):
 
         with patch("steps.auth._request", side_effect=fake_request), \
              patch("steps.auth._login", side_effect=fake_login):
-            run_secured_auth_steps("http://gateway.test", "admin@example.test", "secret",
+            run_secured_auth_steps("http://gateway.test", "admin@example.test", "synthetic-admin-password",
                                    "member@example.test", restart_host)
 
         restart = calls.index(("RESTART", "", None, None, None))
         restart_check = calls.index(("GET", "/auth/me", "admin-access", None, 200), restart)
         logout = calls.index(("POST", "/auth/logout/cli", None, {"refreshToken": "admin-refresh"}, 200))
         revoked_check = calls.index(("GET", "/auth/me", "admin-access", None, 401))
-        fresh_login = calls.index(("LOGIN", "admin@example.test", "secret", None, None), restart)
+        fresh_login = calls.index(("LOGIN", "admin@example.test", "synthetic-admin-password", None, None), restart)
         fresh_check = calls.index(("GET", "/auth/me", "fresh-admin-token", None, 200))
         self.assertLess(restart_check, logout)
         self.assertLess(logout, revoked_check)

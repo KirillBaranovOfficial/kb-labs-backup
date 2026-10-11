@@ -90,6 +90,9 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 		}
 		active, readErr := receipt.Read(activeRoot)
 		if readErr != nil {
+			if failure := receiptArtifactIdentityFailure(readErr, request.Index, plan.Request.PlatformRoot); failure != nil {
+				return planResult{}, inputFailure(failure)
+			}
 			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be read for update comparison", "restore a named V2 snapshot, then rerun `kb-create plan`", readErr)
 			return planResult{}, inputFailure(failure)
 		}
@@ -102,6 +105,16 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 	}
 	outcome, errorCode = "success", ""
 	return planResult{Plan: plan, UpdateSummary: updateSummary}, nil
+}
+
+func receiptArtifactIdentityFailure(err error, index, platformRoot string) *diag.Diag {
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != contracts.CodeArtifactIdentityInvalid {
+		return nil
+	}
+	failure.Hint = fmt.Sprintf("Reinstall this platform with `kb-create apply --index %s --platform-root %s`.",
+		contracts.ShellQuote(index), contracts.ShellQuote(platformRoot))
+	return failure
 }
 
 func inputFailure(failure *diag.Diag) *diag.Diag {
@@ -166,22 +179,35 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		if marshalErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeInputRequired, "install request could not be encoded", "correct direct CI flags or provide --input", marshalErr)
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
+		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"})
 	} else if input.RequestFile != "" {
 		data, readErr := readRequest(input.RequestFile)
 		if readErr != nil {
 			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", readErr)
 		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
+		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion, ProjectRootSelection: input.Operation != "update"})
 	} else {
 		request, requestErr := input.Direct.normalize()
 		if requestErr != nil {
-			diagnostic := failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr)
 			var validation *contracts.RequestValidationError
 			if errors.As(requestErr, &validation) {
+				diagnostic := validation.Diagnostic()
 				setRequestRetryHint(diagnostic, input, validation.Field)
+				return resolvedPlan{}, diagnostic
 			}
-			return resolvedPlan{}, diagnostic
+			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr)
+		}
+		if input.Operation != "update" && request.ProjectRoot != "" {
+			request.ProjectRoot, requestErr = contracts.ValidateProjectSelection(request.ProjectRoot)
+			if requestErr != nil {
+				var validation *contracts.RequestValidationError
+				if errors.As(requestErr, &validation) {
+					diagnostic := validation.Diagnostic()
+					setRequestRetryHint(diagnostic, input, validation.Field)
+					return resolvedPlan{}, diagnostic
+				}
+				return resolvedPlan{}, failure(contracts.CodeInputRequired, "project selection is invalid", "pass an existing project directory, then retry", requestErr)
+			}
 		}
 		if input.ScenarioID != "" {
 			request, requestErr = compileScenario(input.ScenarioID, input.Answers, input.Resume, request)
@@ -306,14 +332,21 @@ func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
 	}
 	args = append(args, "--json")
 	command := strings.Join(args, " ")
+	var retry string
 	if input.RequestFile != "" {
-		diagnostic.Hint = fmt.Sprintf("Correct %s in request file %s, then retry: %s", field, contracts.ShellQuote(input.RequestFile), command)
+		retry = fmt.Sprintf("Correct %s in request file %s, then retry: %s", field, contracts.ShellQuote(input.RequestFile), command)
 	} else {
-		diagnostic.Hint = fmt.Sprintf("Correct %s using the corresponding request flag, then retry: %s", field, command)
+		retry = fmt.Sprintf("Correct %s using the corresponding request flag, then retry: %s", field, command)
 		if input.ScenarioID != "" {
 			// Scenario answers can contain secret values, so keep them out of diagnostics.
-			diagnostic.Hint += " Reuse the scenario answers from your original command if needed."
+			retry += " Reuse the scenario answers from your original command if needed."
 		}
+	}
+	catalogEntry, catalogued := diag.LookupCatalog(diagnostic.Code)
+	if diagnostic.Hint == "" || (catalogued && diagnostic.Hint == catalogEntry.Hint) {
+		diagnostic.Hint = retry
+	} else {
+		diagnostic.Hint += " " + retry
 	}
 	if diagnostic.Meta == nil {
 		diagnostic.Meta = map[string]any{}

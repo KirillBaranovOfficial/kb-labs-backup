@@ -3,7 +3,9 @@
  * HTTP implementation of ObservabilityDataSource
  */
 
+import type { AxiosRequestConfig } from 'axios';
 import type { HttpClient } from '../client/http-client';
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path';
 import { KBError } from '../errors/kb-error';
 import type { ObservabilityDataSource } from './observability-source';
 import type {
@@ -37,12 +39,16 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
 
   private path(path: string): string {
     if (!this.projectId) {throw new Error('Select a project to view project observability.');}
-    return `/projects/${encodeURIComponent(this.projectId)}${path}`;
+    return projectServicePath(this.projectId, 'rest', path);
+  }
+
+  private fetch<T>(path: string, options: AxiosRequestConfig = {}): Promise<T> {
+    return this.client.fetch<T>(path, { ...options, baseURL: '' });
   }
 
   async getStateBrokerStats(): Promise<StateBrokerStats> {
     try {
-      return await this.client.fetch<StateBrokerStats>(
+      return await this.fetch<StateBrokerStats>(
         this.path('/observability/state-broker')
       );
     } catch (error) {
@@ -57,7 +63,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
 
   async getDevKitHealth(): Promise<DevKitHealth> {
     try {
-      return await this.client.fetch<DevKitHealth>(
+      return await this.fetch<DevKitHealth>(
         this.path('/observability/devkit')
       );
     } catch (error) {
@@ -72,7 +78,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
 
   async getPrometheusMetrics(): Promise<PrometheusMetrics> {
     try {
-      const payload = await this.client.fetch<string>(
+      const payload = await this.fetch<string>(
         this.path('/metrics'),
         { responseType: 'text' }
       );
@@ -96,7 +102,8 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
       onError(new Error('Select a project to view project events.'));
       return () => {};
     }
-    const eventSource = new EventSource(`${this.client.getBaseUrl()}${this.path('/events/registry')}`);
+    const baseUrl = this.client.getGatewayBaseUrl();
+    const eventSource = new EventSource(`${baseUrl}${this.path('/events/registry')}`);
 
     eventSource.addEventListener('registry', (e) => {
       try {
@@ -144,7 +151,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
       const queryString = params.toString();
       const url = this.path(queryString ? `/logs?${queryString}` : '/logs');
 
-      return await this.client.fetch<LogQueryResponse>(url);
+      return await this.fetch<LogQueryResponse>(url);
     } catch (error) {
       throw new KBError(
         'LOGS_QUERY_FAILED',
@@ -172,7 +179,8 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
     if (filters?.tenantId) {params.append('tenantId', filters.tenantId);}
 
     const queryString = params.toString();
-    const streamBase = `${this.client.getBaseUrl()}${this.path('')}`;
+    const baseUrl = this.client.getGatewayBaseUrl();
+    const streamBase = `${baseUrl}${this.path('')}`;
     const url = queryString
       ? `${streamBase}/logs/stream?${queryString}`
       : `${streamBase}/logs/stream`;
@@ -201,7 +209,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
 
   async summarizeLogs(request: LogSummarizeRequest): Promise<LogSummarizeResponse> {
     try {
-      return await this.client.fetch<LogSummarizeResponse>(this.path('/logs/summarize'), {
+      return await this.fetch<LogSummarizeResponse>(this.path('/logs/summarize'), {
         method: 'POST',
         data: request,
       });
@@ -225,7 +233,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
       const queryString = params.toString();
       const url = this.path(queryString ? `/logs/${id}?${queryString}` : `/logs/${id}`);
 
-      return await this.client.fetch<{ log: LogRecord; related?: LogRecord[] }>(url);
+      return await this.fetch<{ log: LogRecord; related?: LogRecord[] }>(url);
     } catch (error) {
       throw new KBError(
         'LOG_FETCH_FAILED',
@@ -238,7 +246,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
 
   async getRelatedLogs(id: string): Promise<{ total: number; logs: LogRecord[]; correlationKeys: Record<string, unknown> }> {
     try {
-      return await this.client.fetch<{ total: number; logs: LogRecord[]; correlationKeys: Record<string, unknown> }>(
+      return await this.fetch<{ total: number; logs: LogRecord[]; correlationKeys: Record<string, unknown> }>(
         this.path(`/logs/${id}/related`)
       );
     } catch (error) {
@@ -259,7 +267,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
       if (query.interval) {params.append('interval', query.interval);}
 
       // HttpClient auto-unwraps { ok, data } envelope in response interceptor
-      return await this.client.fetch<HistoricalDataPoint[]>(
+      return await this.fetch<HistoricalDataPoint[]>(
         this.path(`/observability/metrics/history?${params.toString()}`)
       );
     } catch (error) {
@@ -279,7 +287,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
       if (query.days) {params.append('days', String(query.days));}
 
       // HttpClient auto-unwraps { ok, data } envelope in response interceptor
-      return await this.client.fetch<HeatmapCell[]>(
+      return await this.fetch<HeatmapCell[]>(
         this.path(`/observability/metrics/heatmap?${params.toString()}`)
       );
     } catch (error) {
@@ -314,7 +322,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
       const url = this.path(queryString ? `/observability/incidents/history?${queryString}` : '/observability/incidents/history');
 
       // HttpClient auto-unwraps { ok, data } envelope in response interceptor
-      return await this.client.fetch<Incident[]>(url);
+      return await this.fetch<Incident[]>(url);
     } catch (error) {
       throw new KBError(
         'INCIDENTS_QUERY_FAILED',
@@ -328,7 +336,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
   async createIncident(payload: IncidentCreatePayload): Promise<Incident> {
     try {
       // HttpClient auto-unwraps { ok, data } envelope in response interceptor
-      return await this.client.fetch<Incident>(
+      return await this.fetch<Incident>(
         this.path('/observability/incidents'),
         {
           method: 'POST',
@@ -348,7 +356,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
   async resolveIncident(id: string, resolutionNotes?: string): Promise<Incident> {
     try {
       // HttpClient auto-unwraps { ok, data } envelope in response interceptor
-      return await this.client.fetch<Incident>(
+      return await this.fetch<Incident>(
         this.path(`/observability/incidents/${id}/resolve`),
         {
           method: 'POST',
@@ -369,7 +377,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
     try {
       const params = buildIncidentQueryParams(query);
       const url = this.path(`/observability/incidents${params ? `?${params}` : ''}`);
-      const response = await this.client.fetch<IncidentsListResponse['data']>(url);
+      const response = await this.fetch<IncidentsListResponse['data']>(url);
 
       return {
         ok: true,
@@ -387,7 +395,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
 
   async getIncident(id: string): Promise<IncidentDetailResponse> {
     try {
-      const data = await this.client.fetch<Incident>(this.path(`/observability/incidents/${id}`));
+      const data = await this.fetch<Incident>(this.path(`/observability/incidents/${id}`));
 
       return {
         ok: true,
@@ -405,7 +413,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
 
   async analyzeIncident(id: string): Promise<IncidentAnalysisResponse> {
     try {
-      const data = await this.client.fetch<IncidentAnalysisResponse['data']>(
+      const data = await this.fetch<IncidentAnalysisResponse['data']>(
         this.path(`/observability/incidents/${id}/analyze`),
         { method: 'POST' }
       );
@@ -443,7 +451,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
     };
   }> {
     try {
-      return await this.client.fetch<{
+      return await this.fetch<{
         answer: string;
         context: string[];
         usage: {

@@ -12,6 +12,7 @@ export const manifest: AdapterManifest = {
   networkRequired: true,
   configSchema: {
     services: { type: 'object', required: true },
+    projectServices: { type: 'object' },
     offset: { type: 'number' },
   },
 };

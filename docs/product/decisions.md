@@ -21,7 +21,7 @@ per-user Gateway registry and CLI diagnostic log. Uninstall removes
 contract-owned entries, then removes the install root only when no foreign
 entries remain. This supersedes the sibling-directory location below.
 Cases: PC-001.5, PC-001.17, PC-003, S-023.10, S-023.16, S-023.17, S-050.5,
-S-050.6, S-050.8, S-221.
+S-050.6, S-050.8, S-223.
 
 ### Version-root updates recover to the last healthy installation
 
@@ -37,7 +37,7 @@ the former recovery root. Update, restart, and rollback refuse roots outside
 this layout with a typed reinstall hint; they do not migrate legacy roots.
 Uninstall removes the stable link and the entire owned version-root directory.
 Cases: PC-001.5, PC-001.13, S-023.3, S-023.15, S-023.16, S-024.6,
-S-050.5, S-050.6, S-221.
+S-050.5, S-050.6, S-223.
 
 ## 2026-10-09
 

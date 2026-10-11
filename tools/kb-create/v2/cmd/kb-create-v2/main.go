@@ -95,8 +95,8 @@ func productionCommandDependencies(command *cobra.Command) commandDependencies {
 	return commandDependencies{
 		Runtime:       &runtime.Dependencies{},
 		NodeCheck:     func() error { return preflight.EnsureNode(nil) },
-		InstallInput:  os.Stdin,
-		InstallOutput: command.OutOrStdout(),
+		InstallInput:  clikitcommand.FromCommand(command).Input(),
+		InstallOutput: clikitcommand.FromCommand(command).ProgressWriter(),
 		Command:       command,
 		Executable:    executablePath(),
 		ProjectRegistrar: func(platformRoot, projectRoot string) (string, error) {

@@ -33,7 +33,7 @@ describe('workflow-run-handler (REST)', () => {
       status: 'queued',
     });
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/api/v1/workflows/hello/runs',
+      'http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/workflows/hello/runs',
       expect.objectContaining({ method: 'POST' }),
     );
   });

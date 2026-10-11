@@ -154,3 +154,40 @@ in `IPlatformAdapters` only, outside `ADAPTER_REGISTRY`.
 | `core/plugin-contracts` | `socket?: string` on `ServiceRuntime` |
 | `tools/kb-dev` | `ProbeUnix`, `ClassifyServiceProbe`, `Socket` config field, `KB_SOCKET_PATH` injection, socket cleanup on stop |
 | `e2e/gateway` | Transport e2e tests (TR-01..TR-07) |
+
+## Project-aware resolution amendment (2026-10-09)
+
+`IServiceTransport` also resolves project-scoped connections by both project
+and service identity:
+
+```typescript
+interface IServiceTransport {
+  resolveProjectService(
+    projectId: string,
+    serviceId: string,
+  ): Promise<ProjectServiceConnectionInfo | undefined>;
+}
+
+interface ProjectServiceConnectionInfo extends ServiceConnectionInfo {
+  pathPrefix?: string;
+  headers?: Readonly<Record<string, string>>;
+  release?: () => void;
+}
+```
+
+`release` is optional because cloud services need no lease; local transport
+returns it to release the lazy runtime after the request. The local host
+implementation resolves the project through `ProjectRouting.acquire` and uses
+the runtime's internal `/{serviceId}` guard mount. Cloud transport reads the
+per-project service address map, for example
+`projectServices[projectId][serviceId].url`; a deployment may provide this map
+or a per-project address template. Gateway routing always calls the same
+project-aware transport contract and does not branch on topology.
+
+Public project URLs are service-namespaced:
+`/api/v1/projects/{projectId}/{serviceId}/{servicePath}`. Service manifests
+supply the public `serviceId` and internal `rewritePrefix`; the Gateway removes
+the public service namespace and restores only that declared internal mount.
+Unknown service IDs are rejected before transport resolution. Because a
+project-scoped service ID is part of the public API, renaming or splitting a
+service is a breaking change.
