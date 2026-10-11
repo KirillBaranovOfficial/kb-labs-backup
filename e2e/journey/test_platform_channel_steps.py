@@ -116,8 +116,9 @@ class PlatformChannelStepsTest(unittest.TestCase):
         self.assertIn("1200.00 MiB is available", steps["apply a fresh installation from the sealed canary channel"]["message"])
         self.assertIn("1228.80 MiB available memory", steps["apply a fresh installation from the sealed canary channel"]["message"])
         self.assertEqual(steps["verify canary channel and version in receipt, status, and doctor"]["status"], "BLOCKED")
+        self.assertIn("canary install preflight requires", steps["verify canary channel and version in receipt, status, and doctor"]["message"])
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
-        self.assertEqual(claims["S-052.2"], "BLOCKED")
+        self.assertNotIn("S-052.2", claims)
         self.assertEqual([command[1] for command in self.commands], ["plan", "stop", "apply", "start"])
 
 

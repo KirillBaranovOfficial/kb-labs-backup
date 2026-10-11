@@ -19,6 +19,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
+from journey_dependencies import Dependency
 import service_runner
 from invocations import invocation_context, open_http, run_command
 
@@ -699,16 +700,21 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertGreater(len(lifecycle_assertions), 20)
             original_commit_entry = dict(fixture_entry)
             all_case_claims = {case_id for step in journey.steps for case_id in step.cases}
-            for index, failpoint in enumerate(lifecycle_assertions):
-                with self.subTest(lifecycle_assertion=failpoint):
-                    registry_version = "2.120.1"
-                    save_lock(project, {"schema": "kb.marketplace/3", "plugins": {
-                        "@kb-labs/commit": dict(original_commit_entry),
-                    }})
-                    save_lock(platform_root, {"schema": "kb.marketplace/3", "plugins": {}, "adapters": {}})
-                    trial = Journey("local", f"marketplace-failure-{index}")
-                    trial.selected_steps = set(all_case_claims)
-                    trial.selected_claims = set(all_case_claims)
+            modes = (
+                ("batch", set()),
+                ("selected", set(all_case_claims)),
+            )
+            for mode_name, selected_steps in modes:
+                for index, failpoint in enumerate(lifecycle_assertions):
+                    with self.subTest(mode=mode_name, lifecycle_assertion=failpoint):
+                        registry_version = "2.120.1"
+                        save_lock(project, {"schema": "kb.marketplace/3", "plugins": {
+                            "@kb-labs/commit": dict(original_commit_entry),
+                        }})
+                        save_lock(platform_root, {"schema": "kb.marketplace/3", "plugins": {}, "adapters": {}})
+                        trial = Journey("local", f"marketplace-failure-{mode_name}-{index}")
+                        trial.selected_steps = set(selected_steps)
+                        trial.selected_claims = set(selected_steps)
                     trial_fixture_entry = prepare_commit_project_fixture(
                         trial, project, "http://registry.test", env, fake_run)
                     self.assertEqual(trial_fixture_entry, original_commit_entry)
@@ -717,7 +723,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     original_step = trial.step
 
                     def record_requirements(name, capability, check, cases=(), details=None, *, requires=(), role="step"):
-                        requirements[name] = tuple(requires)
+                        requirements[name] = tuple(Dependency.parse(item).name for item in requires)
                         return original_step(name, capability, check, cases=cases, details=details,
                                              requires=requires, role=role)
 
@@ -765,7 +771,7 @@ class MarketplaceStepTests(unittest.TestCase):
                         self.assertEqual(dependent.status, "BLOCKED", dependent_name)
                         self.assertTrue(dependent.details.get("prerequisiteFailures"), dependent_name)
                         for claim_id in dependent.cases:
-                            self.assertNotEqual(claims_by_id.get(claim_id), "PASS", claim_id)
+                            self.assertNotIn(claim_id, claims_by_id, f"blocked claim {claim_id} must not be emitted")
                     for independent_name in lifecycle_assertions:
                         if independent_name != failpoint and independent_name not in blocked_dependents:
                             self.assertIn(independent_name, checked_steps, independent_name)

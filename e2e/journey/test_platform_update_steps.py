@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from platform_update_steps import run_platform_update_steps
+from service_steps import FlowGraph, Journey
 
 
 class PlatformUpdateStepsTest(unittest.TestCase):
@@ -30,6 +31,14 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.project_user_checks: list[int] = []
         self.running_version = "3.0.0"
         self.pending_restart = None
+        parent = Journey("local", "update-step-test-parent")
+        parent.step("candidate provenance", "journey.orchestration", lambda: None)
+        parent.step("launcher version", "platform.install", lambda: None)
+        graph = FlowGraph(parent, {})
+        graph.flow("start platform host", "host", "platform.host",
+                   lambda: parent.step("start host", "platform.host", lambda: None))
+        parent.step("verify installed project registration", "projects", lambda: None)
+        self.parent_journey = parent
 
     def tearDown(self):
         self.temp.cleanup()
@@ -144,6 +153,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=omit_summary,
         )
@@ -162,6 +172,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=rewrite_repeat_receipt,
         )
@@ -176,6 +187,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index,
             request_file=self.root / "request.json", base_version="3.0.0", updated_version="3.0.1",
             run_command=self.fake_kb, verify_user=verify_user,
@@ -245,6 +257,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=self.fake_kb, verify_user=failed_login,
         )
@@ -271,6 +284,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=missing_initial_status,
         )
@@ -289,6 +303,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_after_rollback,
         )
@@ -307,6 +322,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_recovery,
         )
@@ -326,6 +342,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_update,
         )
@@ -342,6 +359,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_rollback,
         )
@@ -359,6 +377,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index,
             request_file=self.root / "request.json", base_version="3.0.0", updated_version="3.0.1",
             run_command=broken,
@@ -381,6 +400,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            parent_journey=self.parent_journey,
             update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=drifting,
         )
