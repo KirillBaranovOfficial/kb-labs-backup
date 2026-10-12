@@ -3,27 +3,57 @@
 package host
 
 import (
+	"encoding/binary"
+	"errors"
 	"fmt"
-	"strconv"
+	"os"
 
 	"golang.org/x/sys/unix"
 )
 
 func ProcessIdentityForPID(pid int) (string, error) {
-	process, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if pid == os.Getpid() {
+		return currentProcessIdentity()
+	}
+	data, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil {
-		return "", fmt.Errorf("read process %d start identity: %w", pid, err)
+		return "", fmt.Errorf("read process %d arguments and environment: %w", pid, err)
 	}
-	if int(process.Proc.P_pid) != pid {
-		return "", fmt.Errorf("process identity returned PID %d for requested PID %d", process.Proc.P_pid, pid)
-	}
-	return strconv.FormatInt(process.Proc.P_starttime.Sec, 10) + "." + strconv.FormatInt(int64(process.Proc.P_starttime.Usec), 10), nil
+	return processIdentityFromProcArgs(data)
 }
 
-func ProcessIdentityMatches(pid int, expected string) bool {
-	if pid <= 0 || expected == "" || !processAlive(pid) {
-		return false
+func processIdentityFromProcArgs(data []byte) (string, error) {
+	if len(data) < 4 {
+		return "", errors.New("process argument record is truncated")
 	}
-	actual, err := ProcessIdentityForPID(pid)
-	return err == nil && actual == expected
+	argc := int(binary.NativeEndian.Uint32(data[:4]))
+	if argc < 0 {
+		return "", errors.New("process argument count is invalid")
+	}
+	offset := 4
+	if offset = skipProcString(data, offset); offset < 0 {
+		return "", errors.New("process executable path is missing")
+	}
+	for offset < len(data) && data[offset] == 0 {
+		offset++
+	}
+	for range argc {
+		offset = skipProcString(data, offset)
+		if offset < 0 {
+			return "", errors.New("process argument list is truncated")
+		}
+	}
+	return processIdentityFromEnvironment(data[offset:])
+}
+
+func skipProcString(data []byte, offset int) int {
+	if offset >= len(data) {
+		return -1
+	}
+	for index := offset; index < len(data); index++ {
+		if data[index] == 0 {
+			return index + 1
+		}
+	}
+	return -1
 }

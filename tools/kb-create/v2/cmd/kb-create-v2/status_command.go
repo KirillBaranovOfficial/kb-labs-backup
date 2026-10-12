@@ -20,7 +20,7 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	if root == "" {
 		root = defaultPlatformRoot()
 	}
-	layout, err := versionroot.New(root)
+	layout, err := versionroot.ForPlatformPath(root)
 	if err != nil {
 		return nil, asDiag(err)
 	}
@@ -43,7 +43,10 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 			return nil, failure
 		}
 	}
-	if record, stale := supervisor.StaleRecord(state); stale {
+	if record, identityStatus, stale := supervisor.StaleRecord(state); stale {
+		if identityStatus == host.ProcessIdentityUndetermined && record.InstallationID != "" {
+			return nil, host.UndeterminedProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
+		}
 		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
 	}
 	installed := receiptErr == nil
