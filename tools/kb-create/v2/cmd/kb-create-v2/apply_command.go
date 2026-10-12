@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 	"time"
 
@@ -398,6 +399,31 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 }
 
 func unsupportedPlatformLayout(root string, cause error) *diag.Diag {
+	if errors.Is(cause, versionroot.ErrOwnershipPublicationConflict) {
+		next := contracts.ShellCommand("kb-create", "install", "--platform-root", root)
+		failure := contracts.NewDiag(contracts.CodeOperationInProgress,
+			"Another first install is publishing ownership for this platform root.",
+			"Wait for the other install to finish, then retry with `"+next+"`.", cause)
+		failure.Meta = map[string]any{"platformRoot": root, "nextCommand": next}
+		failure.ProcessExitCode = diag.ExitInput
+		return failure
+	}
+	var staging *versionroot.OwnershipStagingArtifactError
+	if errors.As(cause, &staging) {
+		paths := staging.Paths
+		if len(paths) == 0 {
+			paths = []string{staging.Path}
+		}
+		removeArgs := append([]string{"rm", "--"}, paths...)
+		remove := contracts.ShellCommand(removeArgs...)
+		retry := contracts.ShellCommand("kb-create", "install", "--platform-root", root)
+		hint := fmt.Sprintf("The named staging files cannot prove ownership of this root. Inspect %s; after confirming they are abandoned installer staging files, remove them with `%s`, then retry with %s.", strings.Join(paths, ", "), remove, retry)
+		failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
+			"The platform root contains an ownership staging file that cannot be validated.", hint, cause)
+		failure.Meta = map[string]any{"platformRoot": root, "stagingPaths": paths, "nextCommand": remove}
+		failure.ProcessExitCode = diag.ExitInput
+		return failure
+	}
 	failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 		"This platform root does not use the supported versioned installation layout.",
 		"Choose a fresh writable path, then run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"`.", cause)
