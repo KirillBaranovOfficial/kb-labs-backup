@@ -824,7 +824,7 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 	if filepath.Clean(recorded.PlatformRoot) != filepath.Clean(activeReceiptRoot) {
 		t.Fatalf("active record root %q differs from registered root %q", recorded.PlatformRoot, activeReceiptRoot)
 	}
-	if !host.ProcessIdentityMatches(recorded.PID, recorded.ProcessIdentity) {
+	if host.ProcessIdentityOf(recorded.PID, recorded.ProcessIdentity) != host.ProcessIdentityMatch {
 		t.Fatalf("registered host PID %d does not match its recorded identity", recorded.PID)
 	}
 	payload, code, output := b.run("start", "--json")

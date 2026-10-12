@@ -121,7 +121,7 @@ func startProcessForTest(t *testing.T, runner *ProcessRunner, ctx context.Contex
 				runner.mu.Lock()
 				processIdentity := runner.processIdentity
 				runner.mu.Unlock()
-				if ProcessIdentityMatches(info.PID, processIdentity) {
+				if ProcessIdentityOf(info.PID, processIdentity) == ProcessIdentityMatch {
 					if !KillProcessGroupIfIdentity(info.PID, processIdentity) || !runner.waitGone(info.PID, processIdentity, 5*time.Second) {
 						t.Errorf("test host cleanup could not kill verified process %d after stop error", info.PID)
 					}
@@ -583,10 +583,10 @@ func TestProcessIdentityDistinguishesAReusedPID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ProcessIdentityMatches(os.Getpid(), identity) {
+	if ProcessIdentityOf(os.Getpid(), identity) != ProcessIdentityMatch {
 		t.Fatal("current process did not match its captured instance token")
 	}
-	if ProcessIdentityMatches(os.Getpid(), identity+"-reused") {
+	if ProcessIdentityOf(os.Getpid(), identity+"-reused") == ProcessIdentityMatch {
 		t.Fatal("current process matched a different instance token")
 	}
 }

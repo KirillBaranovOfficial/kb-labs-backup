@@ -72,7 +72,7 @@ func TestProcessIdentitySurvivesExecTransition(t *testing.T) {
 	if line, err := reader.ReadString('\n'); err != nil || line != "after\n" {
 		t.Fatalf("post-exec barrier = %q, %v", line, err)
 	}
-	if !ProcessIdentityMatches(command.Process.Pid, identity) {
+	if got := ProcessIdentityOf(command.Process.Pid, identity); got != ProcessIdentityMatch {
 		t.Fatal("the same live PID no longer matches its per-start token after exec")
 	}
 	if err := stdin.Close(); err != nil {
