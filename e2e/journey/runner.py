@@ -952,14 +952,14 @@ def main():
                                         "installed first-admin password")
                     first_admin_shown_once = (
                         credential.get("email") == "journey-admin@example.test"
-                        and credential.get("shownOnce") is True
+                        and credential.get("state") == "disclosed"
                         and bool(password)
                         and result.stdout.count(password) == 1
                     )
                     if first_admin_shown_once:
                         env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
                 if not first_admin_shown_once:
-                    fail("secured install did not return exactly one firstAdmin credential with shownOnce=true")
+                    fail("secured install did not return exactly one firstAdmin credential with state=disclosed")
             payload = {}
         else:
             try:
