@@ -32,6 +32,8 @@ import { createEmailPasswordProvider } from '../providers/email-password.js';
 import { createPasswordPolicy } from '../password-policy.js';
 import { createUserAuthService, AuthError } from '../user-auth-service.js';
 import { verifyUserRefreshToken } from '../jwt.js';
+import { ensureBootstrapAdmin } from '../bootstrap-admin.js';
+import { evaluateAuthReadiness } from '../auth-readiness.js';
 
 const HOUR = 60 * 60 * 1000;
 const tenant = 'kblabs-cloud';
@@ -344,6 +346,46 @@ describe('changePassword', () => {
       currentPassword: 'correct-pw-12', newPassword: 'short',
     })).rejects.toMatchObject({ code: 'weak_password', reason: 'too_short' });
   });
+
+  // case: S-222.11
+  it('bootstrap after a user password change does not compare against the original password', async () => {
+    const originalPassword = 'Bootstrap-Password-12';
+    const bootstrap = { adminEmail: 'alice@x.com', adminPassword: originalPassword, tenantId: tenant };
+    const bootstrapProviders = [{ id: 'email-password', kind: 'password' as const, operational: { state: 'operational' as const, checkedAt: 0 } }];
+    const bootstrapErrors: unknown[] = [];
+    const bootstrapLogger = { info: () => undefined, warn: () => undefined, error: (...args: unknown[]) => { bootstrapErrors.push(args); } };
+    await ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: bootstrapProviders, bcryptCost: 4, logger: bootstrapLogger });
+    const userId = (await users.findByEmailTenant(bootstrap.adminEmail, tenant))!.userId;
+    const session = await svc.login(
+      { providerId: 'email-password', input: { email: bootstrap.adminEmail, password: originalPassword } },
+      tenant, {},
+    );
+    await svc.changePassword({
+      userId,
+      currentFamilyId: session.familyId,
+      currentPassword: originalPassword,
+      newPassword: 'Changed-Password-34',
+    });
+
+    await expect(ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: bootstrapProviders, bcryptCost: 4, logger: bootstrapLogger }))
+      .resolves.toBe('exists-active');
+    expect(bootstrapErrors).toHaveLength(0);
+    await expect(svc.login(
+      { providerId: 'email-password', input: { email: bootstrap.adminEmail, password: 'Changed-Password-34' } },
+      tenant, {},
+    )).resolves.toMatchObject({ user: { userId } });
+    await expect(evaluateAuthReadiness({
+      authEnabled: true,
+      loopbackOnly: false,
+      tenantId: tenant,
+      jwtSecretIsDefault: false,
+      bootstrap: { status: 'exists-active', email: bootstrap.adminEmail },
+      users,
+      memberships,
+      credentials,
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
+    })).resolves.toMatchObject({ ok: true, activeAdmins: 1 });
+  });
 });
 
 // ─── activate ──────────────────────────────────────────────────────────
@@ -455,6 +497,36 @@ describe('admin-generated password reset', () => {
     )).resolves.toMatchObject({ user: { userId } });
     await expect(svc.completePasswordReset({ token: reset.token, newPassword: 'AnotherPassword123!' }))
       .rejects.toMatchObject({ code: 'KB_AUTH_INVALID_PASSWORD_RESET' });
+  });
+
+  // case: S-222.11
+  it('bootstrap after reset-by-link accepts the active admin without rechecking the old secret', async () => {
+    const originalPassword = 'Bootstrap-Password-12';
+    const bootstrap = { adminEmail: 'alice@x.com', adminPassword: originalPassword, tenantId: tenant };
+    const bootstrapProviders = [{ id: 'email-password', kind: 'password' as const, operational: { state: 'operational' as const, checkedAt: 0 } }];
+    const bootstrapLogger = { info: () => undefined, warn: () => undefined, error: () => undefined };
+    await ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: bootstrapProviders, bcryptCost: 4, logger: bootstrapLogger });
+    const userId = (await users.findByEmailTenant(bootstrap.adminEmail, tenant))!.userId;
+    const reset = await svc.issuePasswordReset({ userId, tenantId: tenant, createdBy: 'admin', ttlMs: HOUR });
+    await svc.completePasswordReset({ token: reset.token, newPassword: 'Reset-Link-Password-56' });
+
+    await expect(ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: bootstrapProviders, bcryptCost: 4, logger: bootstrapLogger }))
+      .resolves.toBe('exists-active');
+    await expect(svc.login(
+      { providerId: 'email-password', input: { email: bootstrap.adminEmail, password: 'Reset-Link-Password-56' } },
+      tenant, {},
+    )).resolves.toMatchObject({ user: { userId } });
+    await expect(evaluateAuthReadiness({
+      authEnabled: true,
+      loopbackOnly: false,
+      tenantId: tenant,
+      jwtSecretIsDefault: false,
+      bootstrap: { status: 'exists-active', email: bootstrap.adminEmail },
+      users,
+      memberships,
+      credentials,
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
+    })).resolves.toMatchObject({ ok: true, activeAdmins: 1 });
   });
 });
 

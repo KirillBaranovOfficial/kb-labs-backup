@@ -20,7 +20,7 @@ import { createInMemoryDocumentDatabase } from '@kb-labs/sdk/testing';
 import { UsersStore } from '../users-store.js';
 import { CredentialsStore } from '../credentials-store.js';
 import { MembershipsStore } from '../memberships-store.js';
-import { BootstrapCredentialConflictError, ensureBootstrapAdmin } from '../bootstrap-admin.js';
+import { ensureBootstrapAdmin } from '../bootstrap-admin.js';
 import { evaluateAuthReadiness } from '../auth-readiness.js';
 import { createEmailPasswordProvider } from '../providers/email-password.js';
 
@@ -30,6 +30,7 @@ let credentials: CredentialsStore;
 let memberships: MembershipsStore;
 let warnings: unknown[];
 let logRecords: unknown[];
+let errors: unknown[];
 
 beforeEach(() => {
   docs = createInMemoryDocumentDatabase();
@@ -38,6 +39,7 @@ beforeEach(() => {
   memberships = new MembershipsStore(docs);
   warnings = [];
   logRecords = [];
+  errors = [];
 });
 
 class InterruptUsersStore extends UsersStore {
@@ -80,7 +82,7 @@ class InterruptMembershipsStore extends MembershipsStore {
 const logger = {
   warn: (...args: unknown[]) => { warnings.push(args); logRecords.push(args); },
   info: (...args: unknown[]) => { logRecords.push(args); },
-  error: (...args: unknown[]) => { logRecords.push(args); },
+  error: (...args: unknown[]) => { errors.push(args); logRecords.push(args); },
 };
 
 const cfg = {
@@ -96,7 +98,7 @@ describe('happy path', () => {
       users,
       credentials,
       memberships,
-      providers: [{ id: 'email-password', kind: 'password' }],
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
       bcryptCost: 4,
       logger,
     });
@@ -120,23 +122,24 @@ describe('happy path', () => {
 describe('idempotency', () => {
   it('three consecutive runs yield exactly one admin', async () => {
     for (let i = 0; i < 3; i++) {
-      await ensureBootstrapAdmin({ bootstrap: cfg, users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger });
+      await ensureBootstrapAdmin({ bootstrap: cfg, users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }], bcryptCost: 4, logger });
     }
     const u = await users.findByEmailTenant(cfg.adminEmail, cfg.tenantId);
     expect(u).not.toBeNull();
     const originalCredential = await credentials.getCredential(u!.userId, 'email-password');
-    await expect(ensureBootstrapAdmin({
+    expect(await ensureBootstrapAdmin({
       bootstrap: { ...cfg, adminPassword: 'different-bootstrap-password' },
       users,
       credentials,
       memberships,
-      providers: [{ id: 'email-password', kind: 'password' }],
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
       bcryptCost: 4,
       logger,
-    })).rejects.toBeInstanceOf(BootstrapCredentialConflictError);
+    })).toBe('exists-active');
     const allMem = await memberships.listByUser(u!.userId);
     expect(allMem).toHaveLength(1);
     expect(warnings.length).toBe(0); // no warnings on idempotent reruns
+    expect(errors.length).toBe(0); // an already-usable account is not a failed bootstrap
     expect(await credentials.getCredential(u!.userId, 'email-password')).toEqual(originalCredential);
     const auth = createEmailPasswordProvider({ users, credentials, tenantId: cfg.tenantId, bcryptCost: 4 });
     await expect(auth.authenticate({ email: cfg.adminEmail, password: cfg.adminPassword }))
@@ -161,7 +164,7 @@ describe('interrupted bootstrap recovery', () => {
         users: interruptedUsers,
         credentials: interruptedCredentials,
         memberships: interruptedMemberships,
-        providers: [{ id: 'email-password', kind: 'password' }],
+        providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
         bcryptCost: 4,
         logger,
       })).rejects.toThrow('injected');
@@ -174,7 +177,7 @@ describe('interrupted bootstrap recovery', () => {
         users: restartedUsers,
         credentials: restartedCredentials,
         memberships: restartedMemberships,
-        providers: [{ id: 'email-password', kind: 'password' }],
+        providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
         bcryptCost: 4,
         logger,
       });
@@ -202,7 +205,7 @@ describe('interrupted bootstrap recovery', () => {
         users: restartedUsers,
         credentials: restartedCredentials,
         memberships: restartedMemberships,
-        providers: [{ id: 'email-password', kind: 'password' }],
+        providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
       })).resolves.toMatchObject({ ok: true, activeAdmins: 1 });
       expect(JSON.stringify(logRecords)).not.toContain(cfg.adminPassword);
     }
@@ -216,7 +219,7 @@ describe('interrupted bootstrap recovery', () => {
       users,
       credentials: interruptedCredentials,
       memberships,
-      providers: [{ id: 'email-password', kind: 'password' }],
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
       bcryptCost: 4,
       logger,
     })).rejects.toThrow('injected credential write interruption');
@@ -227,7 +230,7 @@ describe('interrupted bootstrap recovery', () => {
       users,
       credentials,
       memberships,
-      providers: [{ id: 'email-password', kind: 'password' }],
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
       bcryptCost: 4,
       logger,
     });
@@ -248,7 +251,7 @@ describe('absent bootstrap config', () => {
   it('is a no-op when bootstrap is undefined', async () => {
     await ensureBootstrapAdmin({
       bootstrap: undefined,
-      users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger,
+      users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }], bcryptCost: 4, logger,
     });
     expect(await users.findByEmailTenant(cfg.adminEmail, cfg.tenantId)).toBeNull();
   });
@@ -257,7 +260,7 @@ describe('absent bootstrap config', () => {
     await expect(
       ensureBootstrapAdmin({
         bootstrap: { adminEmail: cfg.adminEmail, adminPassword: '', tenantId: cfg.tenantId },
-        users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger,
+        users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }], bcryptCost: 4, logger,
       }),
     ).rejects.toThrow();
   });
@@ -272,7 +275,7 @@ describe('conflicting state', () => {
       email: cfg.adminEmail,
       status: 'disabled',
     });
-    await ensureBootstrapAdmin({ bootstrap: cfg, users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger });
+    await ensureBootstrapAdmin({ bootstrap: cfg, users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }], bcryptCost: 4, logger });
     const u = await users.findByEmailTenant(cfg.adminEmail, cfg.tenantId);
     expect(u!.userId).toBe('pre-existing');
     expect(u!.status).toBe('disabled');
@@ -284,7 +287,7 @@ describe('conflicting state', () => {
 
 describe('returned outcome', () => {
   const run = (bootstrap: typeof cfg | undefined) =>
-    ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger });
+    ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }], bcryptCost: 4, logger });
 
   it("'not-configured' when there is no bootstrap config", async () => {
     expect(await run(undefined)).toBe('not-configured');

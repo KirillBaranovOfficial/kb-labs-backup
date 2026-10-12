@@ -100,7 +100,7 @@ class InterleavedCredentialsStore extends CredentialsStore {
 const logger = { info: () => undefined, warn: () => undefined, error: () => undefined };
 const tenantId = 'bootstrap-concurrency';
 const adminEmail = 'admin@bootstrap.test';
-const providers = [{ id: 'email-password', kind: 'password' as const }];
+const providers = [{ id: 'email-password', kind: 'password' as const, operational: { state: 'operational' as const, checkedAt: 0 } }];
 const roots: string[] = [];
 const databases: IDocumentDatabase[] = [];
 

@@ -17,6 +17,7 @@ import { createPasswordPolicy } from '../password-policy.js';
 import { createEmailPasswordProvider } from '../providers/email-password.js';
 import { ensureBootstrapAdmin } from '../bootstrap-admin.js';
 import { resetAdmin, ResetAdminError } from '../reset-admin.js';
+import { evaluateAuthReadiness } from '../auth-readiness.js';
 
 const TENANT = 'kblabs-cloud';
 const EMAIL = 'admin@kblabs.ru';
@@ -58,7 +59,7 @@ const seedBootstrapAdmin = async (): Promise<string> => {
     users,
     credentials,
     memberships,
-      providers: [{ id: 'email-password', kind: 'password' }],
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
     bcryptCost: 4,
     logger,
   });
@@ -96,7 +97,7 @@ describe('admin stranded in a broken state', () => {
     // Bootstrap never rewrites an active account. The operator uses explicit recovery.
     await expect(ensureBootstrapAdmin({
       bootstrap: { adminEmail: EMAIL, adminPassword: OLD_PASSWORD, tenantId: TENANT },
-      users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger,
+      users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }], bcryptCost: 4, logger,
     })).rejects.toThrow('existing active account is not usable');
     expect(await canLogin(OLD_PASSWORD)).toBe(false);
 
@@ -116,6 +117,30 @@ describe('admin stranded in a broken state', () => {
 
     expect(await canLogin(OLD_PASSWORD)).toBe(false);
     expect(await canLogin(NEW_PASSWORD)).toBe(true);
+  });
+
+  // case: S-222.11
+  it('bootstrap after reset-admin leaves the usable active account ready', async () => {
+    const userId = await seedBootstrapAdmin();
+    await reset({ password: NEW_PASSWORD });
+
+    await expect(ensureBootstrapAdmin({
+      bootstrap: { adminEmail: EMAIL, adminPassword: OLD_PASSWORD, tenantId: TENANT },
+      users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }], bcryptCost: 4, logger,
+    })).resolves.toBe('exists-active');
+    expect(await users.findByEmailTenant(EMAIL, TENANT)).toMatchObject({ userId, status: 'active' });
+    expect(await canLogin(NEW_PASSWORD)).toBe(true);
+    await expect(evaluateAuthReadiness({
+      authEnabled: true,
+      loopbackOnly: false,
+      tenantId: TENANT,
+      jwtSecretIsDefault: false,
+      bootstrap: { status: 'exists-active', email: EMAIL },
+      users,
+      memberships,
+      credentials,
+      providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
+    })).resolves.toMatchObject({ ok: true, activeAdmins: 1 });
   });
 
   it('user disabled — reactivates', async () => {

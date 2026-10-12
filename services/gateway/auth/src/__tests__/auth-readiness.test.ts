@@ -7,13 +7,16 @@
  * login time (membership AND active user in the right tenant).
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { createServer } from 'node:http';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createInMemoryDocumentDatabase } from '@kb-labs/sdk/testing';
 import { UsersStore } from '../users-store.js';
 import { CredentialsStore } from '../credentials-store.js';
 import { MembershipsStore } from '../memberships-store.js';
 import { ensureBootstrapAdmin } from '../bootstrap-admin.js';
 import { evaluateAuthReadiness, type AuthReadinessInput } from '../auth-readiness.js';
+import { ProviderRegistry } from '../provider-registry.js';
+import { createOidcProvider } from '../providers/oidc.js';
 
 const TENANT = 'kblabs-cloud';
 const EMAIL = 'admin@kblabs.ru';
@@ -41,7 +44,7 @@ const evaluate = (overrides: Partial<AuthReadinessInput> = {}) =>
     users,
     memberships,
     credentials,
-    providers: [{ id: 'email-password', kind: 'password' }],
+    providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }],
     ...overrides,
   });
 
@@ -54,7 +57,7 @@ const seedAdmin = async (userId = 'u1', status: 'active' | 'disabled' = 'active'
 describe('auth enabled', () => {
   it('is ok with one active admin and a real secret', async () => {
     await seedAdmin();
-    const r = await evaluate({ providers: [{ id: 'email-password', kind: 'password' }] });
+    const r = await evaluate({ providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }] });
     expect(r).toMatchObject({ ok: true, activeAdmins: 1, issues: [] });
   });
 
@@ -74,16 +77,82 @@ describe('auth enabled', () => {
   });
 
   // case: S-222.9
-  it('counts passwordless active admins only when a configured provider can authenticate them', async () => {
+  it('uses real OIDC discovery state and retains valid readiness until its cached result expires', async () => {
     await users.create({ userId: 'sso', tenantId: TENANT, email: 'sso@x.test', status: 'active' });
     await memberships.addMembership({ userId: 'sso', tenantId: TENANT, groupId: 'tenant-admin' });
+    const issuer = 'https://corp.example.test';
+    let mode: 'ready' | 'unreachable' | 'invalid' = 'ready';
+    let discoveryRequests = 0;
+    const server = createServer((_request, response) => {
+      discoveryRequests += 1;
+      if (mode === 'unreachable') {
+        response.writeHead(503).end();
+        return;
+      }
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({
+        issuer: mode === 'invalid' ? 'https://other.example.test' : issuer,
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: `${issuer}/token`,
+        jwks_uri: `${issuer}/jwks`,
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') { throw new Error('OIDC stub did not bind a TCP port'); }
+    const fetchStub: typeof fetch = (input, init) => {
+      const target = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      return fetch(`http://127.0.0.1:${address.port}${target.pathname}`, init);
+    };
+    let now = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const createRegistry = async () => {
+      const registry = new ProviderRegistry();
+      registry.register(createOidcProvider({
+        type: 'oidc', id: 'corp', issuer, clientId: 'client', clientSecret: 'test-secret',
+      }, {
+        users: { findByEmailTenant: async () => null },
+        credentials: { getCredential: async () => null },
+        tenantId: TENANT,
+        bcryptCost: 4,
+        logger: { warn: () => undefined, info: () => undefined, error: () => undefined },
+        fetch: fetchStub,
+      }));
+      return registry;
+    };
+    try {
+      const registry = await createRegistry();
+      const readyProviders = await registry.operationalList();
+      expect(await evaluate({ providers: readyProviders, bootstrap: { status: 'not-configured' } }))
+        .toMatchObject({ ok: true, activeAdmins: 1 });
+      expect(discoveryRequests).toBe(1);
 
-    expect((await evaluate({ providers: [] })).activeAdmins).toBe(0);
-    expect(await evaluate({
-      providers: [{ id: 'corp', kind: 'redirect' }],
-      bootstrap: { status: 'not-configured' },
-    }))
-      .toMatchObject({ ok: true, activeAdmins: 1 });
+      mode = 'unreachable';
+      now += 30_000;
+      expect(await evaluate({ providers: await registry.operationalList(), bootstrap: { status: 'not-configured' } }))
+        .toMatchObject({ ok: true, activeAdmins: 1 });
+      expect(discoveryRequests).toBe(1);
+
+      now += 30_001;
+      const unreachable = await evaluate({ providers: await registry.operationalList(), bootstrap: { status: 'not-configured' } });
+      expect(unreachable).toMatchObject({ ok: false, activeAdmins: 0, issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'login_provider_unavailable', providerId: 'corp', failure: 'unreachable' }),
+      ]) });
+      expect(JSON.stringify(unreachable)).not.toContain(issuer);
+
+      mode = 'invalid';
+      const invalidRegistry = await createRegistry();
+      const invalid = await evaluate({ providers: await invalidRegistry.operationalList(), bootstrap: { status: 'not-configured' } });
+      expect(invalid).toMatchObject({ ok: false, activeAdmins: 0, issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'login_provider_unavailable', providerId: 'corp', failure: 'invalid-discovery' }),
+      ]) });
+      await credentials.setCredential({ userId: 'sso', providerId: 'email-password', hash: 'test-hash' });
+      expect(await evaluate({ providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: now } }], bootstrap: { status: 'not-configured' } }))
+        .toMatchObject({ ok: true, activeAdmins: 1 });
+    } finally {
+      nowSpy.mockRestore();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   });
 
   it('a disabled admin does not count', async () => {
@@ -162,7 +231,7 @@ describe('the seeded-by-bootstrap path', () => {
   it('a bootstrap-provisioned admin makes a fresh install ready', async () => {
     const status = await ensureBootstrapAdmin({
       bootstrap: { adminEmail: EMAIL, adminPassword: 'long-enough-password', tenantId: TENANT },
-      users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger,
+      users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password', operational: { state: 'operational', checkedAt: 0 } }], bcryptCost: 4, logger,
     });
     expect(status).toBe('provisioned');
     expect(await evaluate({ bootstrap: { status, email: EMAIL } })).toMatchObject({ ok: true, activeAdmins: 1 });

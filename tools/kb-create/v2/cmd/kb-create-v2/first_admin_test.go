@@ -56,6 +56,31 @@ func TestFirstAdminCredentialIsShownOnceAndNeverPersisted(t *testing.T) {
 	}
 }
 
+func TestFirstAdminDisclosureRefusesToRediscloseAfterCompletion(t *testing.T) {
+	root := t.TempDir()
+	store := secrets.Store{PlatformRoot: root}
+	for key, value := range map[string]string{
+		secrets.BootstrapCompleted:   "provisioned",
+		secrets.BootstrapGenerated:   "true",
+		"gateway.bootstrap.password": "stored-bootstrap-password",
+	} {
+		if err := store.Put(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	credential, failure := firstAdminDisclosure(store, "admin@example.test", true, "<platform-root>")
+	if credential != nil || failure == nil || failure.Code != contracts.CodeApplyFailed {
+		t.Fatalf("completed bootstrap disclosure = (%#v, %#v), want typed refusal", credential, failure)
+	}
+	if strings.Contains(failure.Error(), "stored-bootstrap-password") {
+		t.Fatalf("diagnostic leaked stored credential: %v", failure)
+	}
+	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
+		t.Fatalf("refusal recorded disclosure marker = %v, err %v; want unchanged", disclosed, err)
+	}
+}
+
 type bootstrapTestHost struct {
 	address string
 	stop    func() error
@@ -146,6 +171,22 @@ func TestGatewayBootstrapContractUsesSharedSchemaAndFixture(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`"critical"`), new(GatewayAuthHealthIssueSeverity)); err == nil {
 		t.Fatal("unknown Gateway auth health issue severity was accepted")
+	}
+}
+
+func TestGatewayAuthHealthContractAcceptsProviderFailureDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"ok":true,"data":{"ok":false,"authEnabled":true,"tenantId":"workspace","activeAdmins":0,"bootstrap":"not-configured","issues":[{"code":"login_provider_unavailable","severity":"error","message":"Provider is unavailable","hint":"Inspect Gateway auth readiness","providerId":"corp-sso","failure":"unreachable"}]},"meta":{"requestId":"provider-state"}}`)
+	}))
+	defer server.Close()
+	store := secrets.Store{PlatformRoot: t.TempDir()}
+	failure := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
+	var typed *diag.Diag
+	if !errors.As(failure, &typed) || typed.Code != contracts.CodeApplyFailed || typed.Message != "Gateway did not prove first-administrator bootstrap and secured authentication are ready with a usable active administrator." {
+		t.Fatalf("provider readiness response failure = %v; want typed readiness refusal, not contract mismatch", failure)
+	}
+	if completed, err := store.Exists(secrets.BootstrapCompleted); err != nil || completed {
+		t.Fatalf("provider readiness refusal completion marker = %v, err %v; want absent", completed, err)
 	}
 }
 

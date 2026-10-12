@@ -54,12 +54,13 @@ describe('PERMISSIONS enum', () => {
 });
 
 describe('IIdentityProvider contract', () => {
-  it('requires id, kind, and authenticate', () => {
+  it('requires id, kind, operational state, and authenticate', () => {
     expectTypeOf<IIdentityProvider>().toHaveProperty('id').toEqualTypeOf<string>();
     expectTypeOf<IIdentityProvider>()
       .toHaveProperty('kind')
       .toEqualTypeOf<'password' | 'redirect'>();
     expectTypeOf<IIdentityProvider>().toHaveProperty('authenticate');
+    expectTypeOf<IIdentityProvider>().toHaveProperty('getOperationalState');
   });
 
   it('IdentityResult is a discriminated union on `ok`', () => {
