@@ -31,6 +31,8 @@ type recoveryCommandResult struct {
 	Snapshot         map[string]any `json:"snapshot"`
 	HostRestarted    bool           `json:"hostRestarted"`
 	LogPath          string         `json:"logPath"`
+	ShimAction       string         `json:"shimAction,omitempty"`
+	ShimOwner        string         `json:"shimOwner,omitempty"`
 	PreservedEntries []string       `json:"preservedEntries,omitempty"`
 }
 
@@ -38,13 +40,17 @@ type uninstallCommandInput struct {
 	PlatformRoot, Registry, Executable string
 	Yes, JSON                          bool
 	Command                            *cobra.Command
+	Artifacts                          runtime.ArtifactInstaller
 }
 type rollbackCommandInput struct {
 	PlatformRoot, Registry, Executable, Snapshot string
 	Yes, JSON                                    bool
 	Command                                      *cobra.Command
 }
-type recoveryRuntimeInput struct{ Registry, Executable string }
+type recoveryRuntimeInput struct {
+	Registry, Executable string
+	Artifacts            runtime.ArtifactInstaller
+}
 
 func executeUninstall(ctx context.Context, input uninstallCommandInput) (recoveryCommandResult, *diag.Diag) {
 	root := input.PlatformRoot
@@ -82,6 +88,20 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 		return recoveryCommandResult{}, unsupportedPlatformLayout(root, layoutErr)
 	}
 	platformRoot := layout.PlatformRoot()
+	var shimOwner string
+	hasShimOwner := false
+	if input.Executable != "" {
+		shimOwner, hasShimOwner = shim.Owner(input.Executable)
+	}
+	var shimRemoval shim.Removal
+	removeShim := false
+	var err error
+	if input.Executable != "" {
+		shimRemoval, removeShim, err = shim.PrepareRemoval(input.Executable, platformRoot)
+		if err != nil {
+			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the kb command ownership could not be checked before uninstall", "inspect the launcher directory, then retry `"+contracts.ShellCommand("kb-create", "uninstall", "--platform-root", root, "--yes")+"`", err)
+		}
+	}
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
@@ -111,21 +131,30 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 	if err != nil {
 		return recoveryCommandResult{}, unsupportedPlatformLayout(root, err)
 	}
-	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable}, root, state, "uninstall", "", true, func(ctx context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
+	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable, Artifacts: input.Artifacts}, root, state, "uninstall", "", true, func(ctx context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
 		return runtime.Uninstall(root, deps)
 	})
 	if failure != nil {
 		return recoveryCommandResult{}, failure
 	}
-	if input.Executable != "" {
-		if err := shim.Remove(input.Executable, platformRoot); err != nil {
+	shimAction := "absent"
+	if removeShim {
+		if err := shimRemoval.Remove(input.Executable); err != nil {
 			return recoveryCommandResult{}, contracts.NewDiag("KB_INSTALL_APPLY_FAILED", "installation was removed but the kb command shim could not be removed", "remove the stale kb link from the launcher directory after checking its target", err)
+		}
+		shimAction = "removed"
+	} else if hasShimOwner {
+		shimAction = "left"
+	} else if input.Executable != "" {
+		if _, err := os.Readlink(shim.Path(input.Executable)); err == nil {
+			shimAction = "left-foreign"
 		}
 	}
 	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Remove(platformRoot); err != nil {
 		return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installation was removed but its Gateway address could not be released", "check launcher state permissions, then rerun `kb-create apply` for remaining roots", err)
 	}
-	return recoveryCommandResult{OK: true, Operation: "uninstall", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: false, LogPath: result.LogPath, PreservedEntries: preservedEntries}, nil
+	return recoveryCommandResult{OK: true, Operation: "uninstall", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: false, LogPath: result.LogPath,
+		ShimAction: shimAction, ShimOwner: shimOwner, PreservedEntries: preservedEntries}, nil
 }
 
 func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryCommandResult, *diag.Diag) {
@@ -233,7 +262,10 @@ func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root s
 		return recoveryMutationResult{}, contracts.NewDiag("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the platform root is writable", err)
 	}
 	defer transcript.Close()
-	installer := artifacts.Composite{Packages: artifacts.Pnpm{Root: activeRoot, Registry: input.Registry, Log: transcript}, Binaries: artifacts.Binaries{Root: activeRoot}}
+	var installer runtime.ArtifactInstaller = input.Artifacts
+	if installer == nil {
+		installer = artifacts.Composite{Packages: artifacts.Pnpm{Root: activeRoot, Registry: input.Registry, Log: transcript}, Binaries: artifacts.Binaries{Root: activeRoot}}
+	}
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: correlationID}
 	command := hostCommand{PlatformRoot: root, Executable: input.Executable, Version: buildVersion}
 	if ctx == nil {

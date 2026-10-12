@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 const registrySchema = 1
@@ -45,15 +47,15 @@ func (r Registry) Read() ([]Root, error) {
 		}
 		return nil, fmt.Errorf("installed Gateway root index %s is invalid: %w", r.Path, err)
 	}
-	seen := make(map[string]struct{}, len(value.Roots))
-	for _, root := range value.Roots {
+	for index, root := range value.Roots {
 		if !filepath.IsAbs(root.PlatformRoot) || !validOrigin(root.URL) {
 			return nil, fmt.Errorf("installed Gateway root index %s contains an invalid root or URL", r.Path)
 		}
-		if _, exists := seen[root.PlatformRoot]; exists {
-			return nil, fmt.Errorf("installed Gateway root index %s contains duplicate root %s", r.Path, root.PlatformRoot)
+		for _, previous := range value.Roots[:index] {
+			if sameInstallation(previous.PlatformRoot, root.PlatformRoot) {
+				return nil, fmt.Errorf("installed Gateway root index %s contains duplicate root %s", r.Path, root.PlatformRoot)
+			}
 		}
-		seen[root.PlatformRoot] = struct{}{}
 	}
 	return value.Roots, nil
 }
@@ -84,7 +86,7 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 	roots = append(roots, known...)
 	claimed := make(map[string]struct{}, len(roots))
 	for _, root := range roots {
-		if filepath.Clean(root.PlatformRoot) == filepath.Clean(platformRoot) {
+		if sameInstallation(root.PlatformRoot, platformRoot) {
 			return root.URL, nil
 		}
 		claimed[root.URL] = struct{}{}
@@ -121,7 +123,7 @@ func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (
 		return Root{}, false, err
 	}
 	for _, root := range append(roots, known...) {
-		if filepath.Clean(root.PlatformRoot) != filepath.Clean(platformRoot) && root.URL == gatewayURL {
+		if !sameInstallation(root.PlatformRoot, platformRoot) && root.URL == gatewayURL {
 			return root, true, nil
 		}
 	}
@@ -133,22 +135,25 @@ func (r Registry) RegisterMany(values []Root) error {
 	if err != nil {
 		return err
 	}
-	byRoot := make(map[string]Root, len(roots)+len(values))
-	for _, root := range roots {
-		byRoot[filepath.Clean(root.PlatformRoot)] = root
-	}
+	byRoot := append([]Root(nil), roots...)
 	for _, root := range values {
 		if !filepath.IsAbs(root.PlatformRoot) || !validOrigin(root.URL) {
 			return fmt.Errorf("platform root and Gateway URL must be absolute and valid")
 		}
 		root.PlatformRoot = filepath.Clean(root.PlatformRoot)
-		byRoot[root.PlatformRoot] = root
+		replaced := false
+		for index := range byRoot {
+			if sameInstallation(byRoot[index].PlatformRoot, root.PlatformRoot) {
+				byRoot[index] = root
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			byRoot = append(byRoot, root)
+		}
 	}
-	roots = roots[:0]
-	for _, root := range byRoot {
-		roots = append(roots, root)
-	}
-	return r.write(roots)
+	return r.write(byRoot)
 }
 
 func (r Registry) Register(platformRoot, gatewayURL string) error {
@@ -162,7 +167,7 @@ func (r Registry) Register(platformRoot, gatewayURL string) error {
 	root := filepath.Clean(platformRoot)
 	updated := false
 	for index := range roots {
-		if filepath.Clean(roots[index].PlatformRoot) == root {
+		if sameInstallation(roots[index].PlatformRoot, root) {
 			roots[index].URL = gatewayURL
 			updated = true
 			break
@@ -182,11 +187,31 @@ func (r Registry) Remove(platformRoot string) error {
 	root := filepath.Clean(platformRoot)
 	filtered := roots[:0]
 	for _, entry := range roots {
-		if filepath.Clean(entry.PlatformRoot) != root {
+		if !sameInstallation(entry.PlatformRoot, root) {
 			filtered = append(filtered, entry)
 		}
 	}
 	return r.write(filtered)
+}
+
+func sameInstallation(left, right string) bool {
+	if filepath.Clean(left) == filepath.Clean(right) {
+		return true
+	}
+	leftLayout, err := versionroot.ForPlatformPath(left)
+	if err != nil || leftLayout.Validate() != nil {
+		return false
+	}
+	rightLayout, err := versionroot.ForPlatformPath(right)
+	if err != nil || rightLayout.Validate() != nil {
+		return false
+	}
+	leftID, err := versionroot.InstallationIDForPath(left)
+	if err != nil {
+		return false
+	}
+	rightID, err := versionroot.InstallationIDForPath(right)
+	return err == nil && leftID == rightID
 }
 
 func (r Registry) write(roots []Root) error {

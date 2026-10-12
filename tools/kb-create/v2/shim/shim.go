@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Failure identifies the filesystem operation that prevented shim creation.
@@ -36,35 +36,36 @@ type EnsureResult struct {
 }
 
 func Ensure(launcher, platformRoot string) (EnsureResult, error) {
-	path, target := Path(launcher), Target(platformRoot)
-	cliEntry := filepath.Join(platformRoot, "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
+	path := Path(launcher)
+	requested, err := installation(platformRoot)
+	if err != nil {
+		return EnsureResult{}, failed(path, "cannot verify the installation that should own the kb command", err)
+	}
+	target := Target(requested.platformRoot)
+	cliEntry := filepath.Join(requested.platformRoot, "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
 	if _, err := os.Stat(cliEntry); err != nil {
 		return EnsureResult{}, failed(cliEntry, "cannot read the installed kb command", err)
 	}
 	if existing, err := os.Readlink(path); err == nil {
-		if existing == target {
+		owner, valid := installationForTarget(existing)
+		if !valid {
+			return EnsureResult{}, failed(path, fmt.Sprintf("already points to an unverified target %s; inspect it and remove it with %s before installing the kb command", existing, RemoveCommand(path)), nil)
+		}
+		if owner.id != requested.id {
 			if err := ensureTarget(target, cliEntry); err != nil {
 				return EnsureResult{}, err
 			}
-			return EnsureResult{Linked: true, Owner: platformRoot}, nil
-		}
-		owner, managed := managedRoot(existing)
-		if !managed {
-			return EnsureResult{}, failed(path, fmt.Sprintf("already points to unmanaged target %s", existing), nil)
-		}
-		if _, err := receipt.Read(owner); err == nil {
-			if err := ensureTarget(target, cliEntry); err != nil {
-				return EnsureResult{}, err
-			}
-			return EnsureResult{Linked: false, Owner: owner}, nil
+			return EnsureResult{Linked: false, Owner: owner.root}, nil
 		}
 		if err := ensureTarget(target, cliEntry); err != nil {
 			return EnsureResult{}, err
 		}
-		if err := replaceLink(path, target); err != nil {
-			return EnsureResult{}, err
+		if existing != target {
+			if err := replaceLink(path, target); err != nil {
+				return EnsureResult{}, err
+			}
 		}
-		return EnsureResult{Linked: true, Owner: platformRoot}, nil
+		return EnsureResult{Linked: true, Owner: requested.root}, nil
 	} else if !os.IsNotExist(err) {
 		return EnsureResult{}, failed(path, "cannot inspect the launcher path", err)
 	}
@@ -74,7 +75,37 @@ func Ensure(launcher, platformRoot string) (EnsureResult, error) {
 	if err := os.Symlink(target, path); err != nil {
 		return EnsureResult{}, failed(path, "cannot create the launcher symlink", err)
 	}
-	return EnsureResult{Linked: true, Owner: platformRoot}, nil
+	return EnsureResult{Linked: true, Owner: requested.root}, nil
+}
+
+type installationOwner struct {
+	id           string
+	root         string
+	platformRoot string
+}
+
+func installation(platformRoot string) (installationOwner, error) {
+	layout, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return installationOwner{}, err
+	}
+	if err := layout.Validate(); err != nil {
+		return installationOwner{}, err
+	}
+	id, err := versionroot.InstallationIDForPath(platformRoot)
+	if err != nil {
+		return installationOwner{}, err
+	}
+	return installationOwner{id: id, root: layout.InstallRoot(), platformRoot: layout.PlatformRoot()}, nil
+}
+
+func installationForTarget(target string) (installationOwner, bool) {
+	candidate, managed := managedRoot(target)
+	if !managed {
+		return installationOwner{}, false
+	}
+	owner, err := installation(candidate)
+	return owner, err == nil
 }
 
 func managedRoot(target string) (string, bool) {
@@ -91,14 +122,14 @@ func Dangling(launcher string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	root, managed := managedRoot(target)
+	_, managed := managedRoot(target)
 	if !managed {
 		return "", false
 	}
-	if _, err := receipt.Read(root); err == nil {
+	if _, valid := installationForTarget(target); valid {
 		return "", false
 	}
-	return root, true
+	return target, true
 }
 
 func replaceLink(path, target string) error {
@@ -152,27 +183,68 @@ func shellQuote(value string) string {
 }
 
 func Remove(launcher, platformRoot string) error {
-	path, target := Path(launcher), Target(platformRoot)
+	token, owned, err := PrepareRemoval(launcher, platformRoot)
+	if err != nil || !owned {
+		return err
+	}
+	return token.Remove(launcher)
+}
+
+type Removal struct {
+	target string
+	id     string
+}
+
+func PrepareRemoval(launcher, platformRoot string) (Removal, bool, error) {
+	path := Path(launcher)
+	existing, err := os.Readlink(path)
+	if os.IsNotExist(err) {
+		return Removal{}, false, nil
+	}
+	if err != nil {
+		info, statErr := os.Lstat(path)
+		if statErr == nil && info.Mode()&os.ModeSymlink == 0 {
+			return Removal{}, false, nil
+		}
+		return Removal{}, false, err
+	}
+	requested, err := installation(platformRoot)
+	if err != nil {
+		return Removal{}, false, nil
+	}
+	owner, valid := installationForTarget(existing)
+	if !valid || owner.id != requested.id {
+		return Removal{}, false, nil
+	}
+	return Removal{target: existing, id: owner.id}, true, nil
+}
+
+func (r Removal) Remove(launcher string) error {
+	path := Path(launcher)
 	existing, err := os.Readlink(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
-		info, statErr := os.Lstat(path)
-		if statErr == nil && info.Mode()&os.ModeSymlink == 0 {
-			return nil
-		}
 		return err
 	}
-	if existing != target {
+	if existing != r.target || r.id == "" {
 		return nil
 	}
 	return os.Remove(path)
 }
 
 func Correct(launcher, platformRoot string) bool {
+	requested, err := installation(platformRoot)
+	if err != nil {
+		return false
+	}
 	target, err := os.Readlink(Path(launcher))
-	return err == nil && target == Target(platformRoot)
+	if err != nil {
+		return false
+	}
+	owner, valid := installationForTarget(target)
+	return valid && owner.id == requested.id
 }
 
 // Owner returns the installed platform root currently named by the managed kb
@@ -182,12 +254,11 @@ func Owner(launcher string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	root, managed := managedRoot(target)
-	if !managed {
+	owner, valid := installationForTarget(target)
+	if !valid {
 		return "", false
 	}
-	if _, err := receipt.Read(root); err != nil {
-		return "", false
-	}
-	return filepath.Clean(root), true
+	return owner.root, true
 }
+
+func RemoveCommand(path string) string { return "`rm -- " + shellQuote(path) + "`" }

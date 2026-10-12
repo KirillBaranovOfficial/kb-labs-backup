@@ -98,9 +98,9 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 		return nil, asDiag(stateErr)
 	}
 	if in.Executable != "" {
-		if _, dangling := shim.Dangling(in.Executable); dangling {
+		if target, unverified := shim.Dangling(in.Executable); unverified {
 			response.Findings = append(response.Findings, doctor.Finding{Code: "KB_INSTALL_SHIM_DANGLING", Severity: doctor.SeverityError,
-				Component: "kb-create", Path: shim.Path(in.Executable), Hint: "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "`."})
+				Component: "kb-create", Path: shim.Path(in.Executable), Hint: fmt.Sprintf("The target %s cannot be mapped to a validated installation. Inspect it, then remove the launcher with %s.", target, shim.RemoveCommand(shim.Path(in.Executable)))})
 		}
 	}
 	if active, readErr := receipt.Read(platformRoot); readErr == nil {
@@ -135,7 +135,11 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	}
 	installation := doctor.InspectInstallation(platformRoot, state)
 	if in.Executable != "" && !shim.Correct(in.Executable, platformRoot) {
-		installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "` to repair the command shim when its current owner has been removed."})
+		hint := "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "` to repair the command shim."
+		if _, unverified := shim.Dangling(in.Executable); unverified {
+			hint = "Inspect the existing target, then remove the unverified launcher with " + shim.RemoveCommand(shim.Path(in.Executable)) + "."
+		}
+		installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing, foreign, or points to another installation.", Hint: hint})
 		installation.OK = false
 	}
 	platform := in.inspectPlatform()

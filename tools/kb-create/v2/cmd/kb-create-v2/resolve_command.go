@@ -145,9 +145,13 @@ func knownGatewayRoots(executable string) []gateway.Root {
 		if candidate == "" {
 			return
 		}
-		if active, readErr := receipt.Read(candidate); readErr == nil {
+		layout, layoutErr := versionroot.ForPlatformPath(candidate)
+		if layoutErr != nil {
+			return
+		}
+		if active, readErr := receipt.Read(layout.PlatformRoot()); readErr == nil {
 			if url := recordedGatewayURL(active); url != "" {
-				root := filepath.Clean(candidate)
+				root := filepath.Clean(layout.PlatformRoot())
 				known[root] = gateway.Root{PlatformRoot: root, URL: url}
 			}
 		}
@@ -166,7 +170,7 @@ func knownGatewayRoots(executable string) []gateway.Root {
 }
 
 func activePlatformRoot(installRoot string) (string, error) {
-	layout, err := versionroot.New(installRoot)
+	layout, err := versionroot.ForPlatformPath(installRoot)
 	if err != nil {
 		return "", err
 	}

@@ -347,10 +347,13 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	if planned.Host != nil {
 		roots := make([]gateway.Root, 0, 2)
-		if owner, ok := shim.Owner(input.Executable); ok && filepath.Clean(owner) != filepath.Clean(platformRoot) {
-			if activeOwner, ownerErr := receipt.Read(owner); ownerErr == nil {
-				if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" {
-					roots = append(roots, gateway.Root{PlatformRoot: owner, URL: ownerURL})
+		if owner, ok := shim.Owner(input.Executable); ok && !shim.Correct(input.Executable, platformRoot) {
+			ownerLayout, layoutErr := versionroot.ForPlatformPath(owner)
+			if layoutErr == nil {
+				if activeOwner, ownerErr := receipt.Read(ownerLayout.PlatformRoot()); ownerErr == nil {
+					if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" {
+						roots = append(roots, gateway.Root{PlatformRoot: ownerLayout.PlatformRoot(), URL: ownerURL})
+					}
 				}
 			}
 		}
@@ -503,8 +506,11 @@ func shimFailure(code, root string, cause error) *diag.Diag {
 		if failureCause.Cause != nil {
 			reason = failureCause.Cause.Error()
 		}
-		diagnostic := contracts.NewDiag(code, fmt.Sprintf("Platform files and receipt remain applied at %s, but the kb command shim could not be created.", root),
-			"Fix the filesystem reason for the shim path, then run `"+contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root)+"`.", cause)
+		hint := "Fix the filesystem reason for the shim path, then run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "`."
+		if strings.Contains(failureCause.Reason, "unverified target") {
+			hint = fmt.Sprintf("Inspect the existing target, then remove the unverified launcher with %s and rerun `%s`.", shim.RemoveCommand(failureCause.Path), contracts.ShellCommand("kb-create", "apply", "--platform-root", root))
+		}
+		diagnostic := contracts.NewDiag(code, fmt.Sprintf("Platform files and receipt remain applied at %s, but the kb command shim could not be created.", root), hint, cause)
 		diagnostic.Reason = fmt.Sprintf("The filesystem refused shim path %s: %s", failureCause.Path, reason)
 		diagnostic.Meta = map[string]any{"path": failureCause.Path, "reason": reason}
 		return diagnostic

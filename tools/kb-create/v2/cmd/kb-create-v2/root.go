@@ -74,7 +74,11 @@ var operationDescriptors = []operationDescriptor{
 		return executeUpdate(ctx, input, deps)
 	}},
 	{Name: "uninstall", Short: "Remove the installation", Args: cobra.NoArgs, Flags: []string{"platform-root", "registry", "yes"}, Human: renderUninstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
-		return executeUninstall(ctx, uninstallCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd})
+		var artifactInstaller runtime.ArtifactInstaller
+		if deps.Runtime != nil {
+			artifactInstaller = deps.Runtime.Artifacts
+		}
+		return executeUninstall(ctx, uninstallCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd, Artifacts: artifactInstaller})
 	}},
 	{Name: "rollback", Short: "Restore a saved snapshot", Args: cobra.NoArgs, Flags: []string{"platform-root", "registry", "snapshot", "yes"}, Human: renderRollback, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		return executeRollback(ctx, rollbackCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Snapshot: flags.String("snapshot"), Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd})
@@ -213,10 +217,22 @@ func renderUpdate(value any) string {
 func renderRollback(any) string { return "Platform rollback completed." }
 func renderUninstall(value any) string {
 	result, ok := value.(recoveryCommandResult)
-	if !ok || len(result.PreservedEntries) == 0 {
+	if !ok {
 		return "Platform uninstalled."
 	}
-	return "Platform uninstalled. Preserved foreign entries:\n  " + strings.Join(result.PreservedEntries, "\n  ")
+	message := "Platform uninstalled."
+	if len(result.PreservedEntries) > 0 {
+		message += " Preserved foreign entries:\n  " + strings.Join(result.PreservedEntries, "\n  ")
+	}
+	switch result.ShimAction {
+	case "removed":
+		message += " The kb command was removed."
+	case "left":
+		message += fmt.Sprintf(" The kb command remains with its owner at %s.", result.ShimOwner)
+	case "left-foreign":
+		message += " The existing kb command was left untouched because its owner could not be verified."
+	}
+	return message
 }
 func renderStart(any) string     { return "KB Labs host started." }
 func renderStop(any) string      { return "KB Labs host stopped." }

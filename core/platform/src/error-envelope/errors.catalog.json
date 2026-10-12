@@ -907,8 +907,8 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
-      "message": "The managed `kb` command points to a platform root without a valid installation receipt.",
-      "hint": "Run `kb-create doctor --fix --platform-root <platform-root>` to point the command at the live installation."
+      "message": "The `kb` command points to a target that cannot be mapped to a validated installation.",
+      "hint": "Inspect the target, then remove the unverified launcher with `rm -- <shim-path>` before recreating it."
     },
     {
       "code": "KB_INSTALL_TOOLCHAIN_UNSUPPORTED",
