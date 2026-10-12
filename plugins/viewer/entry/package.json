@@ -22,6 +22,8 @@
   ],
   "scripts": {
     "build": "tsup --config tsup.config.ts && pnpm run build:studio",
+    "dev": "pnpm run build:studio --watch",
+    "test:cli": "vitest run",
     "build:studio": "rspack build --config rspack.studio.config.mjs",
     "clean": "rimraf dist",
     "type-check": "tsc --noEmit",
@@ -29,7 +31,6 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@kb-labs/sdk": "workspace:*",
     "@kb-labs/viewer-contracts": "workspace:*",
     "@kb-labs/viewer-core": "workspace:*",
     "fflate": "^0.8.3",
@@ -47,14 +48,16 @@
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@kb-labs/sdk": "workspace:*"
   },
   "peerDependencies": {
     "@ant-design/icons": "^5.4.0",
     "antd": "^5.21.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.0.0"
+    "react-router-dom": "^7.0.0",
+    "@kb-labs/sdk": "workspace:^"
   },
   "peerDependenciesMeta": {
     "@ant-design/icons": {

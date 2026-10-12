@@ -14,8 +14,7 @@ import type {
   WorkflowRun,
   WorkflowListResponse,
 } from '@kb-labs/workflow-contracts';
-import { getHostServiceAddress, useEnv } from '@kb-labs/sdk';
-import { deriveProjectId } from '@kb-labs/core-project-registry';
+import { deriveProjectId, getHostServiceAddress, useEnv } from '@kb-labs/sdk';
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
 import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 

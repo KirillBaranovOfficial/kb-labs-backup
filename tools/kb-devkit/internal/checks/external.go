@@ -3,6 +3,7 @@ package checks
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -58,7 +59,8 @@ type externalFixOutput struct {
 	Actions []string `json:"actions"`
 }
 
-func (r *externalRule) Name() string { return r.name }
+func (r *externalRule) Name() string  { return r.name }
+func (r *externalRule) Scope() string { return r.scope }
 
 func (r *externalRule) appliesToCategory(category string) bool {
 	if len(r.categories) == 0 {
@@ -72,11 +74,19 @@ func (r *externalRule) appliesToCategory(category string) bool {
 	return false
 }
 
+// AppliesToPackage is the package-level category predicate used by execution,
+// selection validation, and reporting through Registry.ApplicableRulesFor.
+func (r *externalRule) AppliesToPackage(pkg workspace.Package) bool {
+	return r.scope == "workspace" || r.appliesToCategory(pkg.Category)
+}
+
+// ApplicableCategories describes a package-scoped external check's category filter.
+func (r *externalRule) ApplicableCategories() []string {
+	return append([]string(nil), r.categories...)
+}
+
 func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issue {
 	if r.scope == "workspace" {
-		return nil
-	}
-	if !r.appliesToCategory(pkg.Category) {
 		return nil
 	}
 	out, err := r.runCommand(r.run, pkg, preset, nil, false)
@@ -87,10 +97,12 @@ func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issu
 		return out.Issues
 	}
 	return []Issue{{
-		Check:    r.name,
-		Severity: SeverityError,
-		Message:  err.Error(),
-		File:     pkg.Dir,
+		Check:        r.name,
+		Severity:     SeverityError,
+		Message:      "External check could not complete.",
+		CheckFailure: true,
+		Cause:        safeExternalCause(err),
+		File:         pkg.Dir,
 	}}
 }
 
@@ -115,7 +127,7 @@ func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 	if len(out.Issues) > 0 {
 		return out.Issues
 	}
-	return []Issue{{Check: r.name, Severity: SeverityError, Message: err.Error(), File: ws.Root}}
+	return []Issue{{Check: r.name, Severity: SeverityError, Message: "External check could not complete.", CheckFailure: true, Cause: safeExternalCause(err), File: ws.Root}}
 }
 
 func (r *externalRule) Apply(pkg workspace.Package, issues []Issue, dryRun bool) error {
@@ -174,18 +186,19 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 		}
 	}
 
-	if runErr != nil && len(parsed.Issues) == 0 {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = strings.TrimSpace(stdout.String())
-		}
-		if msg == "" {
-			msg = runErr.Error()
-		}
-		return externalCheckOutput{}, fmt.Errorf("external check %s failed: %s", r.name, msg)
+	if runErr != nil {
+		return externalCheckOutput{}, fmt.Errorf("external command exited unsuccessfully: %w", runErr)
 	}
 
 	return parsed, nil
+}
+
+func safeExternalCause(err error) string {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return fmt.Sprintf("external command exited with status %d", exitErr.ExitCode())
+	}
+	return "external check output could not be read or decoded"
 }
 
 func modeForCommand(issues []Issue) string {

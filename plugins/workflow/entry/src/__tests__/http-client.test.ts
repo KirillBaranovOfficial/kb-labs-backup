@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deriveProjectId } from '@kb-labs/core-project-registry';
-
 vi.mock('@kb-labs/sdk', () => ({
   useEnv: (name: string) => process.env[name],
+  deriveProjectId: () => 'prj_0123456789abcdef',
   getHostServiceAddress: (_service: string, environment: Record<string, string | undefined>) => {
     if (!environment.KB_GATEWAY_URL) { throw new Error('gateway address missing'); }
     return environment.KB_GATEWAY_URL.replace(/\/+$/, '');

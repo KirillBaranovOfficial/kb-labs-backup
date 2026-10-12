@@ -86,6 +86,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-config": "workspace:*",
+    "@kb-labs/core-contracts": "workspace:*",
     "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-retry": "workspace:*",
     "@kb-labs/platform-client": "workspace:*",

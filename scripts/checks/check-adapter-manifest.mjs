@@ -22,10 +22,11 @@ async function main() {
     throw new Error('workspace-scoped manifest-declaration check requires devkit workspace package data on stdin');
   }
   const platform = await import('@kb-labs/core-platform');
+  const packages = workspace.packages.filter((pkg) => pkg.language === 'typescript');
 
   const registeredManifestPackages = new Set();
   const scannedManifestPackages = new Set();
-  for (const pkg of workspace.packages) {
+  for (const pkg of packages) {
     const packageJsonPath = path.join(pkg.dir, 'package.json');
     const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8'));
     const declaredPath = platform.declaredManifestPath(packageJson);
@@ -53,7 +54,7 @@ async function main() {
   }
 
   const platformAdapters = [];
-  for (const pkg of workspace.packages) {
+  for (const pkg of packages) {
     const result = await platform.loadAdapterManifest({ packageRoot: pkg.dir });
     const loaded = result.kind === 'adapter'
       ? { manifest: result.manifest, modulePath: result.modulePath }
@@ -70,7 +71,7 @@ async function main() {
     }
   }
 
-  const categorizedAdapters = workspace.packages.filter(pkg => pkg.category === 'adapter');
+  const categorizedAdapters = packages.filter(pkg => pkg.category === 'adapter');
   const discoveredPaths = new Set(platformAdapters.map(({ pkg }) => pkg.dir));
   for (const pkg of platformAdapters.map(({ pkg }) => pkg)) {
     if (pkg.category !== 'adapter') {

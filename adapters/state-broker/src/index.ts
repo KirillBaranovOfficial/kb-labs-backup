@@ -1,5 +1,5 @@
 import type { ICache } from "@kb-labs/sdk/adapters";
-import { getHostServiceAddress, type HostServiceEnvironment } from "@kb-labs/core-platform";
+import { getHostServiceAddress, type HostServiceEnvironment } from "@kb-labs/sdk";
 import { createBroker, type Broker } from "./broker.js";
 
 export { manifest } from "./manifest.js";

@@ -23,6 +23,7 @@ import { DiagnosticCollector } from './diagnostics.js';
 import { resolveCliHandlerPath } from './resolve-cli-handler.js';
 import { describeHandlerAccessFailure } from './handler-access.js';
 import { readMarketplaceLock } from './marketplace-lock.js';
+import { resolveMarketplaceLockScope, type MarketplaceLockRoots } from './marketplace-lock-scope.js';
 import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
 import { findWorkspaceCandidates } from './workspace-source.js';
@@ -138,6 +139,7 @@ async function hasFile(filePath: string): Promise<boolean> {
  */
 export class DiscoveryManager {
   private readonly scopes: ScopeRoot[];
+  private readonly lockRoots: MarketplaceLockRoots;
   private readonly importTimeoutMs: number;
   private readonly verifyIntegrity: boolean;
   private readonly workspace: boolean;
@@ -148,6 +150,11 @@ export class DiscoveryManager {
 
   constructor(opts: DiscoveryOptions = {}) {
     const root = opts.root ?? process.cwd();
+    this.lockRoots = opts.platformRoot
+      ? { platformRoot: opts.platformRoot, projectRoot: root }
+      : opts.scope === 'project'
+        ? { projectRoot: root }
+        : { platformRoot: root };
     this.scopes = opts.platformRoot && opts.platformRoot !== root
       ? [{ scope: 'platform', root: opts.platformRoot }, { scope: 'project', root }]
       : [{ scope: opts.scope ?? 'platform', root }];
@@ -227,7 +234,8 @@ export class DiscoveryManager {
     // with the same lock key (project overrides platform).
     const locked = new Map<string, Candidate>();
     for (const { scope, root } of this.scopes) {
-      const lock = await readMarketplaceLock(root, diag, 'platform', this.onInputRead);
+      const lockScope = await resolveMarketplaceLockScope(this.lockRoots, root);
+      const lock = await readMarketplaceLock(root, diag, lockScope, this.onInputRead);
       if (!lock) {continue;}
       for (const [id, entry] of Object.entries(lock.plugins)) {
         let packageRoot: string | undefined;
