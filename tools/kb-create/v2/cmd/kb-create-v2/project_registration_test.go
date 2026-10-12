@@ -183,21 +183,6 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	if err := readBootstrapOutcome(context.Background(), realGateway+"/health", secretStore); err != nil {
 		t.Fatalf("record first-admin completion from the secured Gateway auth-readiness route: %v", err)
 	}
-	layout, err := versionroot.New(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secretStorePath, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
-	if err != nil {
-		t.Fatal(err)
-	}
-	withoutPassword := func() {
-		t.Helper()
-		if err := os.WriteFile(secretStorePath, []byte("gateway.bootstrap.completed=provisioned\ngateway.bootstrap.disclosed=true\ngateway.bootstrap.generated=true\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
 	activeRoot := projectReceiptRoot(root)
 	cliBin := filepath.Join(activeRoot, "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
 	if err := os.MkdirAll(filepath.Dir(cliBin), 0o755); err != nil {
@@ -302,6 +287,31 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		if strings.Contains(output, `"password":`) || strings.Contains(output, `"Password":`) {
 			t.Fatalf("secured repeat install disclosed a password: %s", output)
 		}
+		assertSecretAbsent(t, "JSON repeat-install result", []byte(output), password)
+		repeatResult := applyResultFromStream(t, output)
+		humanOutput := renderInstall(repeatResult)
+		if strings.Contains(humanOutput, "Password:") || strings.Contains(humanOutput, `"password"`) {
+			t.Fatalf("secured repeat install human result contains a password field: %s", humanOutput)
+		}
+		assertSecretAbsent(t, "human repeat-install result", []byte(humanOutput), password)
+		if repeatResult.FirstAdmin == nil || repeatResult.FirstAdmin.State != firstAdminPreviouslyDisclosed {
+			t.Fatalf("repeat install first-admin state = %#v; want explicit previously-disclosed notice", repeatResult.FirstAdmin)
+		}
+		logBytes, err := os.ReadFile(repeatResult.LogPath)
+		if err != nil {
+			t.Fatalf("read repeat-install transcript %q: %v", repeatResult.LogPath, err)
+		}
+		assertSecretAbsent(t, "repeat-install transcript", logBytes, password)
+		receiptBytes, err := os.ReadFile(receipt.Path(activeRoot))
+		if err != nil {
+			t.Fatalf("read repeat-install receipt: %v", err)
+		}
+		assertSecretAbsent(t, "repeat-install receipt", receiptBytes, password)
+		planBytes, err := json.Marshal(repeatResult.Receipt.Plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertSecretAbsent(t, "repeat-install plan", planBytes, password)
 		if !strings.Contains(output, `"operation":"apply"`) || !strings.Contains(output, `"projectId":"`+registered.ID+`"`) {
 			t.Fatalf("repeat install did not apply and return the recorded project identity: %s", output)
 		}
@@ -326,9 +336,6 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		if updated.ProjectSelectedPath != identityBefore.ProjectSelectedPath || updated.ProjectID != identityBefore.ProjectID || updated.ProjectCanonicalPath != identityBefore.ProjectCanonicalPath {
 			t.Fatalf("repeat install changed recorded project identity: selected=%q id=%q canonical=%q", updated.ProjectSelectedPath, updated.ProjectID, updated.ProjectCanonicalPath)
 		}
-		if projectPath == selected {
-			withoutPassword()
-		}
 	}
 	requestsMu.Lock()
 	loginCalls, registrationCalls := requestCounts["login"], requestCounts["register"]
@@ -341,8 +348,8 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	if err != nil || !bytes.Equal(registryBytesBefore, registryBytesAfter) {
 		t.Fatalf("matching install changed $KB_HOME/projects.json bytes: read err=%v", err)
 	}
-	if stored, present, err := (secrets.Store{PlatformRoot: root}).Get("gateway.bootstrap.password"); err != nil || present || stored != "" {
-		t.Fatalf("repeat install credentials state = present %v, err %v", present, err)
+	if stored, present, err := (secrets.Store{PlatformRoot: root}).Get("gateway.bootstrap.password"); err != nil || !present || stored != password {
+		t.Fatalf("repeat install should leave the known sentinel in the store for secrecy assertions: present %v, err %v", present, err)
 	}
 }
 
@@ -859,6 +866,20 @@ func TestExistingInstallationRejectsDifferentProjectBeforeApply(t *testing.T) {
 	}
 	if _, failure := existingProjectSelection(platformRootForTest(t, root), ""); failure != nil {
 		t.Fatalf("empty project selection refused: %v", failure)
+	}
+}
+
+// case: S-222.11
+func TestExistingInstallRetriesRegistrationForTheRecordedSelection(t *testing.T) {
+	root := t.TempDir()
+	selectedProject := t.TempDir()
+	active := contracts.InstallReceipt{ID: "receipt-registration-pending", Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{
+		PlatformRoot: root, ProjectRoot: selectedProject,
+	}}}
+	writeVersionedReceipt(t, root, active)
+	existing, failure := existingProjectSelection(platformRootForTest(t, root), selectedProject)
+	if existing || failure != nil {
+		t.Fatalf("retry selection = existing %v, failure %#v; want apply and retry registration", existing, failure)
 	}
 }
 
