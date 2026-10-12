@@ -1488,6 +1488,12 @@ def main():
             def bootstrap_admin_status():
                 if not first_admin_shown_once:
                     raise AssertionError("secured install did not disclose a first administrator credential exactly once")
+                installed, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"],
+                                   env=service_env, timeout=120)
+                status_result = read_ux_cli_result(installed.stdout, installed.returncode)
+                status_payload = decode_ux_success_result(status_result)
+                if status_payload.get("bootstrapCompleted") is not True:
+                    raise AssertionError("kb-create status did not report completed first-administrator bootstrap")
                 run_cli_auth_status(str(BIN / "kb"), service_env, authenticated=True,
                                     email=service_env["KB_JOURNEY_ADMIN_EMAIL"],
                                     password=service_env["KB_JOURNEY_ADMIN_PASSWORD"],

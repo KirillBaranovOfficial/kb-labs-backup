@@ -85,6 +85,7 @@ async function run(): Promise<void> {
     users,
     credentials,
     memberships,
+    providers: providers.list(),
     bcryptCost: 4,
     logger,
   });
@@ -100,6 +101,7 @@ async function run(): Promise<void> {
     users,
     credentials,
     memberships,
+    providers: providers.list(),
   }));
   await app.register(fastifyCookie);
   app.addHook('onRequest', createAuthMiddleware(cache, jwtConfig, {

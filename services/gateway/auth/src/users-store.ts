@@ -21,6 +21,7 @@ import type {
   BaseDocument,
   IDocumentDatabase,
 } from '@kb-labs/core-platform/adapters';
+import { isUniqueIndexConflict } from './store-errors.js';
 
 const COLLECTION = 'users';
 
@@ -35,6 +36,8 @@ export interface User {
   status: UserStatus;
   /** Identifies records whose pending state is owned by first-admin bootstrap. */
   bootstrapManaged?: boolean;
+  /** Monotonic fence for concurrent pending-bootstrap credential writes. */
+  bootstrapRevision?: number;
   createdAt: number;
   updatedAt?: number;
 }
@@ -47,6 +50,7 @@ interface UserDoc extends BaseDocument {
   displayName?: string;
   status: UserStatus;
   bootstrapManaged?: boolean;
+  bootstrapRevision?: number;
 }
 
 /**
@@ -65,6 +69,7 @@ const docToUser = (doc: UserDoc): User => ({
   displayName: doc.displayName,
   status: doc.status,
   bootstrapManaged: doc.bootstrapManaged,
+  bootstrapRevision: doc.bootstrapRevision,
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
 });
@@ -123,6 +128,17 @@ export class UsersStore {
     return created;
   }
 
+  async createBootstrapPendingOrGet(input: CreateUserInput): Promise<User> {
+    try {
+      return await this.create(input);
+    } catch (error) {
+      if (!isUniqueIndexConflict(error)) { throw error; }
+      const raced = await this.findByEmailTenant(input.email, input.tenantId);
+      if (raced) { return raced; }
+      throw error;
+    }
+  }
+
   async getById(userId: string): Promise<User | null> {
     await this.ensureSchema();
     const doc = await this.docs.findById<UserDoc>(COLLECTION, userId);
@@ -161,6 +177,41 @@ export class UsersStore {
       { userId: { $eq: userId } },
       { $set: { status } },
     );
+  }
+
+  /** Atomic pending/bootstrap-owned → active transition; null means another
+   * process changed the record before this compare-and-set committed. */
+  async beginBootstrapCredentialWrite(userId: string): Promise<number | null> {
+    await this.ensureSchema();
+    const updated = await this.docs.updateOne<UserDoc>(
+      COLLECTION,
+      {
+        $and: [
+          { userId: { $eq: userId } },
+          { status: { $eq: 'pending' } },
+          { bootstrapManaged: { $eq: true } },
+        ],
+      },
+      { $inc: { bootstrapRevision: 1 } },
+    );
+    return updated?.bootstrapRevision ?? null;
+  }
+
+  async activateBootstrapAdmin(userId: string, revision: number): Promise<User | null> {
+    await this.ensureSchema();
+    const updated = await this.docs.updateOne<UserDoc>(
+      COLLECTION,
+      {
+        $and: [
+          { userId: { $eq: userId } },
+          { status: { $eq: 'pending' } },
+          { bootstrapManaged: { $eq: true } },
+          { bootstrapRevision: { $eq: revision } },
+        ],
+      },
+      { $set: { status: 'active' } },
+    );
+    return updated ? docToUser(updated) : null;
   }
 
   /** List all users for a given tenant. */

@@ -4,6 +4,12 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-12
+
+### Gateway readiness follows configured identity methods
+
+An active tenant administrator is usable when a configured login method can authenticate that user: the configured email-password provider needs its credential, while a configured redirect provider resolves an authenticated provider email to an active user in the tenant. A secured install with no bootstrap email does not require a bootstrap-completion marker; Gateway readiness and `kb-create doctor` report the configured sign-in path. Cases: S-100, S-222.
+
 ## 2026-10-11
 
 ### The chosen install directory is the complete installation container

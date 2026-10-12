@@ -1,21 +1,37 @@
 import type { Credential } from './credentials-store.js';
 import type { Membership } from './memberships-store.js';
-import type { User } from './users-store.js';
+import type { ProviderInfo } from './provider-registry.js';
+import type { User, UserStatus } from './users-store.js';
 
-export const isUsableActiveAdmin = (
+export interface UsableAdminOptions {
+  tenantId: string;
+  providers: ProviderInfo[];
+  allowedStatuses?: UserStatus[];
+  requireBootstrapOwnership?: boolean;
+}
+
+/**
+ * The shared login predicate used by readiness and bootstrap completion.
+ * Redirect providers authenticate the email and then resolve an active local
+ * user in the tenant. Password providers require that provider's credential.
+ */
+export const isUsableAdmin = (
   user: User | null,
-  credential: Credential | null,
+  credentials: Credential[],
   memberships: Membership[],
-  tenantId: string,
+  options: UsableAdminOptions,
 ): boolean => Boolean(
   user !== null
-  && user.tenantId === tenantId
-  && user.status === 'active'
-  && credential !== null
-  && credential.userId === user.userId
-  && credential.providerId === 'email-password'
+  && user.tenantId === options.tenantId
+  && (options.allowedStatuses ?? ['active']).includes(user.status)
+  && (!options.requireBootstrapOwnership || user.bootstrapManaged === true)
   && memberships.some((membership) =>
     membership.userId === user.userId
-    && membership.tenantId === tenantId
-    && membership.groupId === 'tenant-admin'),
+    && membership.tenantId === options.tenantId
+    && membership.groupId === 'tenant-admin')
+  && options.providers.some((provider) =>
+    provider.kind === 'redirect'
+    || (provider.kind === 'password'
+      && credentials.some((credential) =>
+        credential.userId === user.userId && credential.providerId === provider.id))),
 );

@@ -18,7 +18,8 @@ import type { UsersStore } from './users-store.js';
 import type { MembershipsStore } from './memberships-store.js';
 import type { CredentialsStore } from './credentials-store.js';
 import type { BootstrapOutcome } from './bootstrap-admin.js';
-import { isUsableActiveAdmin } from './usable-admin.js';
+import type { ProviderInfo } from './provider-registry.js';
+import { isUsableAdmin } from './usable-admin.js';
 
 export type AuthIssueCode =
   | 'no_active_admin'
@@ -51,6 +52,7 @@ export interface AuthReadinessInput {
   users: Pick<UsersStore, 'getById'>;
   memberships: Pick<MembershipsStore, 'listByTenant'>;
   credentials: Pick<CredentialsStore, 'getCredential'>;
+  providers: ProviderInfo[];
 }
 
 export interface AuthReadiness {
@@ -67,14 +69,22 @@ const countActiveAdmins = async (
   users: AuthReadinessInput['users'],
   memberships: AuthReadinessInput['memberships'],
   credentials: AuthReadinessInput['credentials'],
+  providers: ProviderInfo[],
   tenantId: string,
 ): Promise<number> => {
   const admins = (await memberships.listByTenant(tenantId)).filter((m) => m.groupId === 'tenant-admin');
   const found = await Promise.all(admins.map(async (membership) => {
     const user = await users.getById(membership.userId);
-    const credential = user ? await credentials.getCredential(user.userId, 'email-password') : null;
+    const userCredentials = user
+      ? await Promise.all(providers
+        .filter((provider) => provider.kind === 'password')
+        .map((provider) => credentials.getCredential(user.userId, provider.id)))
+      : [];
     const userMemberships = admins.filter((candidate) => candidate.userId === membership.userId);
-    return isUsableActiveAdmin(user, credential, userMemberships, tenantId);
+    return isUsableAdmin(user, userCredentials.filter((credential) => credential !== null), userMemberships, {
+      tenantId,
+      providers,
+    });
   }));
   return found.filter(Boolean).length;
 };
@@ -86,7 +96,7 @@ export const evaluateAuthReadiness = async (input: AuthReadinessInput): Promise<
   let activeAdmins = 0;
 
   if (authEnabled) {
-    activeAdmins = await countActiveAdmins(input.users, input.memberships, input.credentials, tenantId);
+    activeAdmins = await countActiveAdmins(input.users, input.memberships, input.credentials, input.providers, tenantId);
     if (activeAdmins === 0) {
       issues.push({
         code: 'no_active_admin',

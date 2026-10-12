@@ -23,7 +23,9 @@ import bcrypt from 'bcryptjs';
 import type { UsersStore } from './users-store.js';
 import type { CredentialsStore } from './credentials-store.js';
 import type { MembershipsStore } from './memberships-store.js';
-import { isUsableActiveAdmin } from './usable-admin.js';
+import type { ProviderInfo } from './provider-registry.js';
+import { isUsableAdmin } from './usable-admin.js';
+import { isUniqueIndexConflict } from './store-errors.js';
 
 export interface BootstrapConfig {
   adminEmail: string;
@@ -42,6 +44,7 @@ export interface EnsureBootstrapAdminOptions {
   users: UsersStore;
   credentials: CredentialsStore;
   memberships: MembershipsStore;
+  providers: ProviderInfo[];
   bcryptCost: number;
   logger: BootstrapAdminLogger;
 }
@@ -56,12 +59,20 @@ export type BootstrapOutcome =
   | 'exists-active'
   | 'exists-non-active';
 
+export class BootstrapCredentialConflictError extends Error {
+  readonly code = 'bootstrap_credential_conflict';
+  constructor() {
+    super('bootstrap-admin: another bootstrap run committed a different password for this administrator');
+    this.name = 'BootstrapCredentialConflictError';
+  }
+}
+
 const isNonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
 export const ensureBootstrapAdmin = async (
   opts: EnsureBootstrapAdminOptions,
 ): Promise<BootstrapOutcome> => {
-  const { bootstrap, users, credentials, memberships, bcryptCost, logger } = opts;
+  const { bootstrap, users, credentials, memberships, providers, bcryptCost, logger } = opts;
 
   if (!bootstrap) {
     logger.info('bootstrap-admin: no bootstrap config provided, skipping');
@@ -78,12 +89,19 @@ export const ensureBootstrapAdmin = async (
     );
   }
 
-  const existing = await users.findByEmailTenant(bootstrap.adminEmail, bootstrap.tenantId);
+  let existing = await users.findByEmailTenant(bootstrap.adminEmail, bootstrap.tenantId);
 
   if (existing) {
     const existingCredential = await credentials.getCredential(existing.userId, 'email-password');
     const existingMemberships = await memberships.listByUser(existing.userId);
-    if (isUsableActiveAdmin(existing, existingCredential, existingMemberships, bootstrap.tenantId)) {
+    if (isUsableAdmin(existing, existingCredential ? [existingCredential] : [], existingMemberships, {
+      tenantId: bootstrap.tenantId,
+      providers,
+    })) {
+      if (providers.some((provider) => provider.id === 'email-password' && provider.kind === 'password')
+        && (!existingCredential || !await bcrypt.compare(bootstrap.adminPassword, existingCredential.hash))) {
+        throw new BootstrapCredentialConflictError();
+      }
       logger.info('bootstrap-admin: admin already exists and is active, skipping');
       return 'exists-active';
     }
@@ -97,29 +115,27 @@ export const ensureBootstrapAdmin = async (
       );
       return 'exists-non-active';
     }
-    await completeBootstrap(existing.userId, bootstrap, users, credentials, memberships, bcryptCost);
-    logger.info('bootstrap-admin: completed interrupted tenant-admin bootstrap', {
-      userId: existing.userId,
-      tenantId: existing.tenantId,
-    });
-    return 'provisioned';
+    return completeBootstrap(existing.userId, bootstrap, users, credentials, memberships, providers, bcryptCost);
   }
 
   const userId = randomUUID();
-  await users.create({
+  existing = await users.createBootstrapPendingOrGet({
     userId,
     tenantId: bootstrap.tenantId,
     email: bootstrap.adminEmail,
     status: 'pending',
     bootstrapManaged: true,
   });
-  await completeBootstrap(userId, bootstrap, users, credentials, memberships, bcryptCost);
-
-  logger.info('bootstrap-admin: provisioned tenant-admin', {
-    userId,
-    tenantId: bootstrap.tenantId,
-  });
-  return 'provisioned';
+  if (!existing || !existing.bootstrapManaged || existing.status !== 'pending') {
+    const credential = existing ? await credentials.getCredential(existing.userId, 'email-password') : null;
+    const existingMemberships = existing ? await memberships.listByUser(existing.userId) : [];
+    if (isUsableAdmin(existing, credential ? [credential] : [], existingMemberships, {
+      tenantId: bootstrap.tenantId,
+      providers,
+    })) { return 'exists-active'; }
+    return 'exists-non-active';
+  }
+  return completeBootstrap(existing.userId, bootstrap, users, credentials, memberships, providers, bcryptCost);
 };
 
 const completeBootstrap = async (
@@ -128,28 +144,149 @@ const completeBootstrap = async (
   users: UsersStore,
   credentials: CredentialsStore,
   memberships: MembershipsStore,
+  providers: ProviderInfo[],
   bcryptCost: number,
-): Promise<void> => {
-  const hash = await bcrypt.hash(bootstrap.adminPassword, bcryptCost);
-  await credentials.setCredential({ userId, providerId: 'email-password', hash });
-
-  const existingMembership = (await memberships.listByUser(userId))
-    .find((membership) => membership.tenantId === bootstrap.tenantId);
-  if (existingMembership && existingMembership.groupId !== 'tenant-admin') {
-    await memberships.setGroup(userId, bootstrap.tenantId, 'tenant-admin');
-  } else if (!existingMembership) {
-    await memberships.addMembership({ userId, tenantId: bootstrap.tenantId, groupId: 'tenant-admin' });
+): Promise<BootstrapOutcome> => {
+  let revision = await users.beginBootstrapCredentialWrite(userId);
+  if (revision === null) {
+    return bootstrapWinnerOutcome(userId, bootstrap, users, credentials, memberships, providers, bcryptCost);
   }
+  const hash = await bcrypt.hash(bootstrap.adminPassword, bcryptCost);
+  await ensureAdminMembership(userId, bootstrap.tenantId, memberships);
 
-  const user = await users.getById(userId);
-  if (!user) {
+  let user = await users.getById(userId);
+  if (!user || user.status !== 'pending' || !user.bootstrapManaged) {
     throw new Error('bootstrap-admin: persisted administrator record is missing');
   }
-  const credential = await credentials.getCredential(userId, 'email-password');
+  let credential = await credentials.setBootstrapCredential({
+    userId,
+    providerId: 'email-password',
+    hash,
+    revision,
+  });
+  if (!(await bcrypt.compare(bootstrap.adminPassword, credential.hash))) {
+    throw new BootstrapCredentialConflictError();
+  }
+
+  user = await users.getById(userId);
+  if (!user || user.status !== 'pending' || !user.bootstrapManaged) {
+    return bootstrapWinnerOutcome(userId, bootstrap, users, credentials, memberships, providers, bcryptCost);
+  }
+  if (user.bootstrapRevision !== revision || credential.bootstrapRevision !== revision) {
+    revision = user.bootstrapRevision ?? revision;
+    credential = await credentials.setBootstrapCredential({
+      userId,
+      providerId: 'email-password',
+      hash,
+      revision,
+    });
+    if (!(await bcrypt.compare(bootstrap.adminPassword, credential.hash))) {
+      throw new BootstrapCredentialConflictError();
+    }
+  }
+
+  user = await users.getById(userId);
+  if (!user || user.status !== 'pending' || !user.bootstrapManaged || user.bootstrapRevision !== revision
+    || credential.bootstrapRevision !== revision) {
+    return bootstrapWinnerOutcome(userId, bootstrap, users, credentials, memberships, providers, bcryptCost);
+  }
   const allMemberships = await memberships.listByUser(userId);
-  if (!isUsableActiveAdmin({ ...user, status: 'active' }, credential, allMemberships, bootstrap.tenantId)) {
+  if (!isUsableAdmin(user, [credential], allMemberships, {
+    tenantId: bootstrap.tenantId,
+    providers: [{ id: 'email-password', kind: 'password' }],
+    allowedStatuses: ['pending'],
+    requireBootstrapOwnership: true,
+  })) {
     throw new Error('bootstrap-admin: persisted administrator credentials or membership are incomplete');
   }
-  // Activation is the commit point: readiness and login ignore pending users.
-  await users.setStatus(userId, 'active');
+  // This compare-and-set is the one commit point. No retry writes a new hash.
+  const activated = await users.activateBootstrapAdmin(userId, revision);
+  if (activated) { return 'provisioned'; }
+
+  return bootstrapWinnerOutcome(userId, bootstrap, users, credentials, memberships, providers, bcryptCost);
+};
+
+const bootstrapWinnerOutcome = async (
+  userId: string,
+  bootstrap: BootstrapConfig,
+  users: UsersStore,
+  credentials: CredentialsStore,
+  memberships: MembershipsStore,
+  providers: ProviderInfo[],
+  bcryptCost: number,
+): Promise<BootstrapOutcome> => {
+  const winner = await users.getById(userId);
+  const winnerCredential = await credentials.getCredential(userId, 'email-password');
+  const winnerMemberships = await memberships.listByUser(userId);
+  if (isUsableAdmin(winner, winnerCredential ? [winnerCredential] : [], winnerMemberships, {
+    tenantId: bootstrap.tenantId,
+    providers,
+  })) {
+    if (winnerCredential && await bcrypt.compare(bootstrap.adminPassword, winnerCredential.hash)) {
+      return 'exists-active';
+    }
+    throw new BootstrapCredentialConflictError();
+  }
+  if (winner?.status === 'pending' && winner.bootstrapManaged && winner.bootstrapRevision !== undefined) {
+    const hash = await bcrypt.hash(bootstrap.adminPassword, bcryptCost);
+    const currentCredential = await credentials.setBootstrapCredential({
+      userId,
+      providerId: 'email-password',
+      hash,
+      revision: winner.bootstrapRevision,
+    });
+    if (!(await bcrypt.compare(bootstrap.adminPassword, currentCredential.hash))) {
+      throw new BootstrapCredentialConflictError();
+    }
+    const current = await users.getById(userId);
+    const allMemberships = await memberships.listByUser(userId);
+    const currentRevision = current?.bootstrapRevision;
+    if (current?.status === 'pending' && current.bootstrapManaged
+      && currentRevision !== undefined
+      && currentRevision === currentCredential.bootstrapRevision
+      && isUsableAdmin(current, [currentCredential], allMemberships, {
+        tenantId: bootstrap.tenantId,
+        providers: [{ id: 'email-password', kind: 'password' }],
+        allowedStatuses: ['pending'],
+        requireBootstrapOwnership: true,
+      })) {
+      const activated = await users.activateBootstrapAdmin(userId, currentRevision);
+      if (activated) { return 'provisioned'; }
+      const finalUser = await users.getById(userId);
+      const finalCredential = await credentials.getCredential(userId, 'email-password');
+      const finalMemberships = await memberships.listByUser(userId);
+      if (isUsableAdmin(finalUser, finalCredential ? [finalCredential] : [], finalMemberships, {
+        tenantId: bootstrap.tenantId,
+        providers,
+      })) {
+        if (finalCredential && await bcrypt.compare(bootstrap.adminPassword, finalCredential.hash)) {
+          return 'exists-active';
+        }
+        throw new BootstrapCredentialConflictError();
+      }
+    }
+  }
+  throw new Error('bootstrap-admin: activation compare-and-set lost before the administrator became usable');
+};
+
+const ensureAdminMembership = async (
+  userId: string,
+  tenantId: string,
+  memberships: MembershipsStore,
+): Promise<void> => {
+  const existing = (await memberships.listByUser(userId))
+    .find((membership) => membership.tenantId === tenantId);
+  if (existing?.groupId === 'tenant-admin') { return; }
+  if (existing) {
+    await memberships.setGroup(userId, tenantId, 'tenant-admin');
+    return;
+  }
+  try {
+    await memberships.addMembership({ userId, tenantId, groupId: 'tenant-admin' });
+  } catch (error) {
+    if (!isUniqueIndexConflict(error)) { throw error; }
+    const raced = (await memberships.listByUser(userId))
+      .find((membership) => membership.tenantId === tenantId);
+    if (raced?.groupId !== 'tenant-admin') { throw error; }
+  }
 };

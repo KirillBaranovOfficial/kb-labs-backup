@@ -259,6 +259,7 @@ export async function startGateway(
       users,
       credentials,
       memberships,
+      providers: providers.list(),
       bcryptCost,
       logger,
     }).catch((err): BootstrapStatus => {
@@ -326,6 +327,7 @@ export async function startGateway(
         users,
         memberships,
         credentials,
+        providers: providers.list(),
       });
     await logAuthReadiness(authReadiness, logger);
 

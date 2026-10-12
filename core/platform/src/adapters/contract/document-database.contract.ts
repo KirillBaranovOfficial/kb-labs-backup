@@ -170,6 +170,24 @@ export function runDocumentDatabaseContract(factory: ContractFactory): void {
     });
 
     describe('updateById / updateOne', () => {
+      it('matches and updates conditionally as one atomic single-document operation', async () => {
+        const pending = await db.insertOne<User>('users', {
+          email: 'bootstrap@example.com', name: 'Bootstrap', age: 1, active: false,
+        });
+        const transition = (name: string) => db.updateOne<User>(
+          'users',
+          { id: { $eq: pending.id }, active: { $eq: false } },
+          { $set: { name, active: true } },
+        );
+
+        const outcomes = await Promise.all([transition('first'), transition('second')]);
+        expect(outcomes.filter(Boolean)).toHaveLength(1);
+        expect(outcomes.filter((result) => result === null)).toHaveLength(1);
+        const stored = await db.findById<User>('users', pending.id);
+        expect(stored?.active).toBe(true);
+        expect(['first', 'second']).toContain(stored?.name);
+      });
+
       it('applies $set and bumps updatedAt', async () => {
         const inserted = await db.insertOne<User>('users', {
           email: 'u@example.com',
