@@ -148,9 +148,9 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		}
 		return result, nil
 	}
-	if existingSelection && plan.Request.ProjectRoot != "" {
-		if _, err := fmt.Fprintf(out, "\nThe installation already records project %s (%s).\nNext: run `%s`.\n", result.Receipt.ProjectID, result.Receipt.ProjectCanonicalPath,
-			contracts.ShellCommand("kb", "project", "show", result.Receipt.ProjectCanonicalPath)); err != nil {
+	if !projectRegistrationRequired(plan.Request.ProjectRoot, existingSelection) {
+		if _, err := fmt.Fprintf(out, "\nVerification: platform installed at %s; project %s remains registered at %s.\nNext: run `%s` and `%s`.\n", root, result.Receipt.ProjectID, result.Receipt.ProjectCanonicalPath,
+			contracts.ShellCommand("kb-create", "status", "--platform-root", root), contracts.ShellCommand("kb", "project", "show", result.Receipt.ProjectCanonicalPath)); err != nil {
 			return applyCommandResult{}, progressWriteFailure(err, "install")
 		}
 		return result, nil
@@ -257,7 +257,7 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 		return streamCompletion{ExitCode: writer.ExitCode()}, nil
 	}
 	request := result.Receipt.Plan.Request
-	if request.ProjectRoot != "" && !existingSelection {
+	if projectRegistrationRequired(request.ProjectRoot, existingSelection) {
 		registered, err := deps.ProjectRegistrar(request.PlatformRoot, request.ProjectRoot)
 		if err != nil {
 			failure := projectRegistrationFailure(request.PlatformRoot, request.ProjectRoot, err)
@@ -305,6 +305,10 @@ func finishInstallStreamFailure(writer *stream.Writer, failure *diag.Diag) (stre
 func executeApplyPlanJSON(ctx context.Context, input installCommandInput, resolved resolvedPlan, deps commandDependencies) (applyCommandResult, *diag.Diag) {
 	return executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
 		Executable: input.Executable, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent}, deps)
+}
+
+func projectRegistrationRequired(projectRoot string, existingSelection bool) bool {
+	return projectRoot != "" && !existingSelection
 }
 
 func recordProjectIdentity(platformRoot, selectedPath string, registered projectRegistrationResult) (contracts.InstallReceipt, error) {

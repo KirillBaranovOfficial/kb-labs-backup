@@ -218,16 +218,11 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if securedAdmin {
 		var existsErr error
 		bootstrapCompleted, existsErr = store.Exists(secrets.BootstrapCompleted)
-		if existsErr == nil {
+		if existsErr == nil && !bootstrapCompleted {
 			adminPasswordPresent, existsErr = store.Exists("gateway.bootstrap.password")
 		}
 		if existsErr != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read from the secret store", "check that the platform root is writable, then rerun `kb-create install`", existsErr)
-		}
-		if bootstrapCompleted && !adminPasswordPresent {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
-				"the secured Gateway was bootstrapped, but its stored first administrator password is missing",
-				"Recover the account with `"+contracts.ShellCommand("kb-create", "doctor", "--recover", "--platform-root", root)+"`.", nil)
 		}
 	}
 	if err := secrets.EnsureGenerated(&planned, store); err != nil {

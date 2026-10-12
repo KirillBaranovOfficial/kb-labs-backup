@@ -103,6 +103,25 @@ def _data(result: subprocess.CompletedProcess, label: str) -> dict:
     raise RuntimeError(f"{label}: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
 
 
+def _assert_repeat_install_applied(result: subprocess.CompletedProcess, *, launcher: str, root: Path,
+                                   run_command: CommandRunner, expected_identity: dict, label: str) -> None:
+    data = _data(result, label)
+    if data.get("operation") != "apply":
+        raise RuntimeError(f"{label}: expected an ordinary apply result")
+    receipt = data.get("receipt", {})
+    fields = ("projectSelectedPath", "projectId", "projectCanonicalPath")
+    if any(receipt.get(field) != expected_identity.get(field) for field in fields):
+        raise RuntimeError(f"{label}: repeat install changed the recorded project identity")
+    if "first administrator credentials" in result.stdout.lower() or "password:" in result.stdout.lower():
+        raise RuntimeError(f"{label}: repeat install disclosed or prompted for credentials")
+    status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
+                           f"host status after {label}")
+    host = status.get("host", {})
+    if (not isinstance(host, dict) or host.get("state") != "running"
+            or status.get("running") is not True or status.get("reachable") is not True):
+        raise RuntimeError(f"{label}: host is not running and reachable after apply")
+
+
 def _payload(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dict]:
     try:
         envelope = read_ux_cli_result(result.stdout, result.returncode)
@@ -792,22 +811,30 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                                    "--platform-root", str(root), "--service-profile", "default",
                                    "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
                                    "--project-root", str(selected_alias)])
-            _data(initial, "initial install for repeated project selection")
+            initial_data = _data(initial, "initial install for repeated project selection")
+            recorded_identity = {field: initial_data.get("receipt", {}).get(field)
+                                 for field in ("projectSelectedPath", "projectId", "projectCanonicalPath")}
             before = registry_path.read_bytes()
             repeated = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                     "--platform-root", str(root), "--service-profile", "default",
                                     "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
                                     "--project-root", str(selected_alias)])
-            _data(repeated, "repeat install with the recorded selected spelling")
+            _assert_repeat_install_applied(repeated, launcher=launcher, root=root, run_command=run_command,
+                                           expected_identity=recorded_identity,
+                                           label="repeat install with the recorded selected spelling")
             canonical_repeat = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                             "--platform-root", str(root), "--service-profile", "default",
                                             "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
                                             "--project-root", str(selected_project.resolve())])
-            _data(canonical_repeat, "repeat install with the recorded canonical spelling")
+            _assert_repeat_install_applied(canonical_repeat, launcher=launcher, root=root, run_command=run_command,
+                                           expected_identity=recorded_identity,
+                                           label="repeat install with the recorded canonical spelling")
             omitted = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                    "--platform-root", str(root), "--service-profile", "default",
                                    "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}'])
-            _data(omitted, "repeat install with no selected project")
+            _assert_repeat_install_applied(omitted, launcher=launcher, root=root, run_command=run_command,
+                                           expected_identity=recorded_identity,
+                                           label="repeat install with no selected project")
             after = registry_path.read_bytes()
             if (initial.returncode != 0 or repeated.returncode != 0 or canonical_repeat.returncode != 0 or omitted.returncode != 0
                     or after != before):
@@ -851,6 +878,8 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                     or receipt.get("projectId") != registered[0].get("id")
                     or canonical_path not in result.stdout):
                 raise RuntimeError("secured install did not report the registry-owned project identity")
+            recorded_identity = {field: receipt.get(field)
+                                 for field in ("projectSelectedPath", "projectId", "projectCanonicalPath")}
             gateway_url = receipt.get("verification", {}).get("hostHealthUrl", "")
             gateway_origin = urlsplit(gateway_url)
             gateway_url = f"{gateway_origin.scheme}://{gateway_origin.netloc}"
@@ -870,18 +899,24 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                                   "--scenario", "custom", "--scenario-answers",
                                   '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}',
                                   "--project-root", str(project_alias)])
-            _data(repeat, "repeat secured install with its recorded project")
+            _assert_repeat_install_applied(repeat, launcher=launcher, root=root, run_command=run_command,
+                                           expected_identity=recorded_identity,
+                                           label="repeat secured install with its recorded project")
             canonical_repeat = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                             "--platform-root", str(root), "--service-profile", "default",
                                             "--scenario", "custom", "--scenario-answers",
                                             '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}',
                                             "--project-root", str(project.resolve())])
-            _data(canonical_repeat, "repeat secured install with recorded canonical path")
+            _assert_repeat_install_applied(canonical_repeat, launcher=launcher, root=root, run_command=run_command,
+                                           expected_identity=recorded_identity,
+                                           label="repeat secured install with recorded canonical path")
             omitted = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                    "--platform-root", str(root), "--service-profile", "default",
                                    "--scenario", "custom", "--scenario-answers",
                                    '{"access.mode":"secured","admin.email":"x18-admin@example.test","admin.tenant":"default"}'])
-            _data(omitted, "repeat secured install without a project selection")
+            _assert_repeat_install_applied(omitted, launcher=launcher, root=root, run_command=run_command,
+                                           expected_identity=recorded_identity,
+                                           label="repeat secured install without a project selection")
             if repeat.returncode != 0 or canonical_repeat.returncode != 0 or omitted.returncode != 0 or registry_path.read_bytes() != registry_before_repeat:
                 raise RuntimeError("secured existing project selections unexpectedly required login")
             receipt_path = active_platform_root(root) / ".kb/v2/receipt.json"
