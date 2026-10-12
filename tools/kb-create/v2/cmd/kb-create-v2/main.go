@@ -82,8 +82,9 @@ func Execute() int {
 }
 
 type directRequest struct {
-	PlatformRoot, ProjectRoot, PlatformVersion, PlatformChannel, SDKVersion, ServiceProfile, GatewayURL, Plugins, Adapters, Providers, Policy string
-	Offline                                                                                                                                   bool
+	PlatformRoot, ProjectRoot, PlatformVersion, PlatformChannel, SDKVersion, ServiceProfile, GatewayURL, Plugins, Adapters, Policy string
+	Providers                                                                                                                      []string
+	Offline                                                                                                                        bool
 }
 
 type commandDependencies struct {
@@ -304,22 +305,24 @@ func configuredFirstAdmin(request contracts.InstallRequest) (string, bool) {
 	return email, true
 }
 
-func parseProviders(value string) (map[string]string, error) {
+func parseProviders(values []string) (map[string]string, error) {
 	preferences := map[string]string{}
-	if value == "" {
-		return preferences, nil
-	}
-	for _, item := range strings.Split(value, ",") {
-		item = strings.TrimSpace(item)
-		capability, adapter, ok := strings.Cut(item, "=")
-		capability, adapter = strings.TrimSpace(capability), strings.TrimSpace(adapter)
-		if !ok || strings.TrimSpace(capability) == "" || strings.TrimSpace(adapter) == "" {
-			return nil, fmt.Errorf("provider %q must be capability=adapter", item)
+	for _, value := range values {
+		for _, item := range strings.Split(value, ",") {
+			item = strings.TrimSpace(item)
+			capability, adapter, ok := strings.Cut(item, "=")
+			capability, adapter = strings.TrimSpace(capability), strings.TrimSpace(adapter)
+			if !ok || capability == "" || adapter == "" {
+				if item == "" {
+					return nil, diag.New("KB_RUNTIME_INPUT_INVALID", "The --provider flag contains an empty item.", diag.WithHint("Pass each provider as capability=adapter, or omit --provider for automatic selection, then rerun `kb-create plan`."))
+				}
+				return nil, fmt.Errorf("provider %q must be capability=adapter", item)
+			}
+			if _, exists := preferences[capability]; exists {
+				return nil, fmt.Errorf("provider for capability %q was specified more than once", capability)
+			}
+			preferences[capability] = adapter
 		}
-		if _, exists := preferences[capability]; exists {
-			return nil, fmt.Errorf("provider for capability %q was specified more than once", capability)
-		}
-		preferences[capability] = adapter
 	}
 	return preferences, nil
 }
