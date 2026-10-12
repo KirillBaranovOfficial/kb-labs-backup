@@ -277,6 +277,8 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}
 	cmd := exec.Command(r.Spec.Command, r.Spec.Args...)
 	cmd.Dir = r.Spec.WorkingDir
+	startupStarted := time.Now()
+	startupDeadline := startupStarted.Add(r.Spec.ReadyTimeout)
 	processIdentity, err := NewProcessIdentityToken()
 	if err != nil {
 		_ = logFile.Close()
@@ -310,8 +312,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}()
 	record := pidRecord{PID: cmd.Process.Pid, ProcessIdentity: processIdentity, InstallationID: r.InstallationID, PlatformRoot: r.PlatformRoot, TreeRoot: r.Identity.TreeRoot, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command,
 		PlatformVersion: r.Identity.PlatformVersion, ReceiptID: r.Identity.ReceiptID, ServiceIDs: append([]string(nil), r.Identity.ServiceIDs...)}
-	identityStarted := time.Now()
-	identityStatus := WaitForProcessIdentityWithReader(cmd.Process.Pid, processIdentity, exited, time.Second, r.identityReader)
+	identityStatus := WaitForProcessIdentityWithReader(cmd.Process.Pid, processIdentity, exited, startupDeadline, r.identityReader)
 	switch identityStatus {
 	case ProcessIdentityMatch:
 	case ProcessIdentityMismatch:
@@ -376,14 +377,14 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 				r.mu.Lock()
 				r.pid, r.exited, r.processIdentity = 0, nil, ""
 				r.mu.Unlock()
-				waited := time.Since(identityStarted).Round(time.Millisecond)
+				waited := time.Since(startupStarted).Round(time.Millisecond)
 				return Info{}, r.startFailed(fmt.Errorf("host process identity remained undetermined after %s; the started process was terminated", waited), map[string]string{"waited": waited.String()})
 			}
 			_ = os.Remove(r.State.HostPID())
 			r.mu.Lock()
 			r.pid, r.exited, r.processIdentity = 0, nil, ""
 			r.mu.Unlock()
-			waited := time.Since(identityStarted).Round(time.Millisecond)
+			waited := time.Since(startupStarted).Round(time.Millisecond)
 			return Info{}, r.startFailed(fmt.Errorf("host process identity remained undetermined after %s and the started process could not be stopped: %w", waited, killErr), map[string]string{"waited": waited.String()})
 		}
 	default:
@@ -397,7 +398,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		r.kill(cmd.Process.Pid)
 		return Info{}, hostError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+r.State.Dir+".", "Fix the directory permissions or free disk space.", err, map[string]string{"path": r.State.Dir})
 	}
-	if err := r.waitReady(ctx, record.PID, exited); err != nil {
+	if err := r.waitReadyUntil(ctx, record.PID, exited, startupDeadline); err != nil {
 		return Info{}, err
 	}
 	layout, layoutErr := versionroot.New(r.InstallRoot)
@@ -535,9 +536,9 @@ func (r *ProcessRunner) startFailed(cause error, evidence map[string]string) *di
 	return StartFailure(r.State, cause, evidence)
 }
 
-func (r *ProcessRunner) waitReady(ctx context.Context, pid int, exited <-chan struct{}) error {
+func (r *ProcessRunner) waitReadyUntil(ctx context.Context, pid int, exited <-chan struct{}, startupDeadline time.Time) error {
 	started := time.Now()
-	deadline := time.NewTimer(r.Spec.ReadyTimeout)
+	deadline := time.NewTimer(time.Until(startupDeadline))
 	defer deadline.Stop()
 	ticker := time.NewTicker(r.interval())
 	defer ticker.Stop()

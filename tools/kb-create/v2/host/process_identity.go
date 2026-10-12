@@ -122,18 +122,12 @@ func ProcessIdentityOf(pid int, expected string) ProcessIdentityStatus {
 	return processIdentityStatusWithReader(pid, expected, ProcessIdentityForPID, processAlive)
 }
 
-// WaitForProcessIdentity retries undetermined reads while the launched process is alive.
-func WaitForProcessIdentity(pid int, expected string, exited <-chan struct{}, timeout time.Duration) ProcessIdentityStatus {
-	return WaitForProcessIdentityWithReader(pid, expected, exited, timeout, ProcessIdentityForPID)
-}
-
-// WaitForProcessIdentityWithReader applies the startup wait contract with an
-// injectable OS reader so callers can exercise unreadable-environment states.
-func WaitForProcessIdentityWithReader(pid int, expected string, exited <-chan struct{}, timeout time.Duration, readIdentity func(int) (string, error)) ProcessIdentityStatus {
+// WaitForProcessIdentityWithReader retries until the caller's startup deadline.
+func WaitForProcessIdentityWithReader(pid int, expected string, exited <-chan struct{}, deadlineAt time.Time, readIdentity func(int) (string, error)) ProcessIdentityStatus {
 	if readIdentity == nil {
 		readIdentity = ProcessIdentityForPID
 	}
-	deadline := time.NewTimer(timeout)
+	deadline := time.NewTimer(time.Until(deadlineAt))
 	defer deadline.Stop()
 	ticker := time.NewTicker(processIdentityPollInterval)
 	defer ticker.Stop()

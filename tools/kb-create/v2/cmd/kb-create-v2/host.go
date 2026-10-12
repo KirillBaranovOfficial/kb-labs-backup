@@ -24,13 +24,12 @@ import (
 // hostCommand carries everything a host lifecycle command needs; nothing is
 // read from package state.
 type hostCommand struct {
-	PlatformRoot        string
-	Foreground          bool
-	Executable          string // launcher binary re-executed by `start` to run `supervise`
-	Version             string
-	Err                 io.Writer
-	identityReader      func(int) (string, error)
-	identityWaitTimeout time.Duration
+	PlatformRoot   string
+	Foreground     bool
+	Executable     string // launcher binary re-executed by `start` to run `supervise`
+	Version        string
+	Err            io.Writer
+	identityReader func(int) (string, error)
 }
 
 type hostCommandResult map[string]any
@@ -148,6 +147,8 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	}
 	defer logFile.Close()
 	cmd := exec.Command(executable, "supervise", "--json", "--platform-root", c.PlatformRoot)
+	started := time.Now()
+	startupDeadline := started.Add(process.Spec.ReadyTimeout)
 	identityToken, err := host.NewProcessIdentityToken()
 	if err != nil {
 		return host.Info{}, contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "The supervisor process identity could not be created.", "Check that system randomness is available, then run `"+contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)+"`.", err)
@@ -161,12 +162,7 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	exited := make(chan struct{})
 	waitErr := make(chan error, 1)
 	go func() { waitErr <- cmd.Wait(); close(exited) }()
-	started := time.Now()
-	waitTimeout := c.identityWaitTimeout
-	if waitTimeout <= 0 {
-		waitTimeout = time.Second
-	}
-	identityStatus := host.WaitForProcessIdentityWithReader(cmd.Process.Pid, identityToken, exited, waitTimeout, c.identityReader)
+	identityStatus := host.WaitForProcessIdentityWithReader(cmd.Process.Pid, identityToken, exited, startupDeadline, c.identityReader)
 	switch identityStatus {
 	case host.ProcessIdentityMatch:
 	case host.ProcessIdentityMismatch:
@@ -210,7 +206,8 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	default:
 		return host.Info{}, host.StartFailure(state, errors.New("started supervisor process identity result is invalid"), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 	}
-	deadline := time.After(process.Spec.ReadyTimeout + 10*time.Second)
+	deadline := time.NewTimer(time.Until(startupDeadline))
+	defer deadline.Stop()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -222,7 +219,7 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 		select {
 		case <-exited:
 			return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
-		case <-deadline:
+		case <-deadline.C:
 			host.KillProcessIfIdentity(cmd.Process.Pid, identityToken)
 			return host.Info{}, host.StartFailure(state, errors.New("supervisor did not report a healthy host in time"), map[string]string{
 				"supervisorLog": state.SupervisorLog(), "readinessURL": process.Spec.HealthURL,
