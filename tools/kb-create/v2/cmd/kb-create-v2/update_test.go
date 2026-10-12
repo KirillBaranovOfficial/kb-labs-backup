@@ -757,6 +757,20 @@ func TestFreshInstallWritesCompleteRunningIdentityBeforeFirstUpdate(t *testing.T
 	if code != 0 || status["runningVersion"] != "1.0.0" || status["installedVersion"] != "2.0.0" || status["pendingRestart"] == nil {
 		t.Fatalf("first update did not report pending restart from fresh identity: code=%d status=%#v raw=%s", code, status, raw)
 	}
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spelling := range []string{root, layout.PlatformRoot(), activeRoot} {
+		status, code, raw = inst.runAt(spelling, "status", "--json")
+		if code != 0 || status["runningVersion"] != "1.0.0" || status["installedVersion"] != "2.0.0" || status["pendingRestart"] == nil {
+			t.Fatalf("status after update for %q = code %d, %#v, %s", spelling, code, status, raw)
+		}
+	}
 }
 
 func TestFreshContainerInstallUpdateUpdateRestartUninstallWritesStayInsideRoot(t *testing.T) {

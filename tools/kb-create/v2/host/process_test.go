@@ -118,6 +118,14 @@ func startProcessForTest(t *testing.T, runner *ProcessRunner, ctx context.Contex
 	if err == nil {
 		t.Cleanup(func() {
 			if _, stopErr := runner.Stop(context.Background()); stopErr != nil {
+				runner.mu.Lock()
+				processIdentity := runner.processIdentity
+				runner.mu.Unlock()
+				if ProcessIdentityMatches(info.PID, processIdentity) {
+					if !KillProcessGroupIfIdentity(info.PID, processIdentity) || !runner.waitGone(info.PID, processIdentity, 5*time.Second) {
+						t.Errorf("test host cleanup could not kill verified process %d after stop error", info.PID)
+					}
+				}
 				t.Errorf("test host cleanup could not stop process: %v", stopErr)
 			}
 		})
@@ -141,7 +149,7 @@ func newRunner(t *testing.T, ready, grace int, hostArgs ...string) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(t.TempDir(), "state")}, PlatformRoot: root, TreeRoot: root, Identity: identity, PollInterval: 20 * time.Millisecond}
+	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(t.TempDir(), "state")}, InstallRoot: root, InstallationID: identity.InstallationID, PlatformRoot: root, TreeRoot: root, Identity: identity, PollInterval: 20 * time.Millisecond}
 	t.Cleanup(func() {
 		if _, stopErr := runner.Stop(context.Background()); stopErr != nil {
 			t.Errorf("test runner cleanup could not stop process: %v", stopErr)
@@ -224,7 +232,7 @@ func TestRunnerDoesNotObserveOrStopAHostForAnotherRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := &ProcessRunner{Spec: f.runner.Spec, State: f.runner.State, PlatformRoot: rootB, TreeRoot: f.runner.TreeRoot, Identity: f.runner.Identity}
+	other := &ProcessRunner{Spec: f.runner.Spec, State: f.runner.State, InstallRoot: rootB, InstallationID: "other-installation", PlatformRoot: rootB, TreeRoot: f.runner.TreeRoot, Identity: f.runner.Identity}
 	status, err := other.Status(context.Background())
 	if err != nil || status.State != StateStopped || status.PID != 0 {
 		t.Fatalf("other-root status = %#v, %v; want stopped", status, err)
@@ -294,6 +302,11 @@ func TestPortInUse(t *testing.T) {
 
 // case: S-025.8, PC-001.9
 func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ProcessIdentityEnv, token)
 	root := filepath.Join(t.TempDir(), "KB Labs ' root")
 	writeReceipt(t, root, &contracts.HostSpec{Command: fakeHostBinary, HealthURL: "http://127.0.0.1:4100/health"})
 	platformRoot := filepath.Join(root, "current")
@@ -314,7 +327,11 @@ func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSONFile(state.HostPID(), pidRecord{PID: os.Getpid(), ProcessIdentity: processIdentity, PlatformRoot: platformRoot}); err != nil {
+	installationID, err := versionroot.InstallationIDForPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(state.HostPID(), pidRecord{PID: os.Getpid(), ProcessIdentity: processIdentity, InstallationID: installationID, PlatformRoot: platformRoot}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := receipt.Read(platformRoot); err != nil {
@@ -387,13 +404,18 @@ func TestActiveHostRejectsAReusedPID(t *testing.T) {
 	if err := state.Ensure(); err != nil {
 		t.Fatal(err)
 	}
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
 	configureHostProcess(child)
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		killProcessGroup(child.Process.Pid)
+		KillProcessGroupIfIdentity(child.Process.Pid, token)
 		_ = child.Wait()
 	})
 	if err := writeJSONFile(state.HostPID(), map[string]any{
@@ -411,17 +433,22 @@ func TestStopDoesNotSignalAReusedPID(t *testing.T) {
 	if err := f.runner.State.Ensure(); err != nil {
 		t.Fatal(err)
 	}
+	foreignIdentity, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), foreignIdentity)
 	configureHostProcess(child)
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		killProcessGroup(child.Process.Pid)
+		KillProcessGroupIfIdentity(child.Process.Pid, foreignIdentity)
 		_ = child.Wait()
 	})
 	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
-		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot, "processIdentity": "different-process-identity",
+		"pid": child.Process.Pid, "platformRoot": f.runner.PlatformRoot, "installationId": f.runner.InstallationID, "processIdentity": "recorded-owner-token",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -443,13 +470,18 @@ func TestOldHostRecordWithoutIdentityIsDiagnosedAndNeverSignalled(t *testing.T) 
 	if err := f.runner.State.Ensure(); err != nil {
 		t.Fatal(err)
 	}
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
 	configureHostProcess(child)
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		killProcessGroup(child.Process.Pid)
+		KillProcessGroupIfIdentity(child.Process.Pid, token)
 		_ = child.Wait()
 	})
 	// This is the host.pid shape written before processIdentity was required.
@@ -473,16 +505,89 @@ func TestOldHostRecordWithoutIdentityIsDiagnosedAndNeverSignalled(t *testing.T) 
 	}
 }
 
+func TestX26RecordWithoutInstallationIDFailsClosed(t *testing.T) {
+	f := newRunner(t, 10, 1)
+	if err := f.runner.State.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(fakeHostBinary, "-port", fmt.Sprint(freePort(t)))
+	child.Env = ProcessEnvironmentWithIdentity(os.Environ(), token)
+	configureHostProcess(child)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		KillProcessGroupIfIdentity(child.Process.Pid, token)
+		_ = child.Wait()
+	})
+	if err := writeJSONFile(f.runner.State.HostPID(), map[string]any{
+		"pid": child.Process.Pid, "processIdentity": token, "platformRoot": f.runner.PlatformRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "status", run: func() error { _, err := f.runner.Status(context.Background()); return err }},
+		{name: "stop", run: func() error { _, err := f.runner.Stop(context.Background()); return err }},
+	} {
+		t.Run(action.name, func(t *testing.T) {
+			err := action.run()
+			failure, ok := err.(*diag.Diag)
+			if !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+				t.Fatalf("x26 record diagnostic = %#v", err)
+			}
+			if !processAlive(child.Process.Pid) {
+				t.Fatal("operation signalled the live process from an x26-format record")
+			}
+		})
+	}
+}
+
+func TestStatusReportsAProcessRecordFromPreviousBootAsStale(t *testing.T) {
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ProcessIdentityEnv, token)
+	f := newRunner(t, 10, 1)
+	if err := f.runner.State.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(f.runner.State.HostPID(), pidRecord{
+		PID: os.Getpid(), ProcessIdentity: "recorded-before-reboot", InstallationID: f.runner.InstallationID,
+		PlatformRoot: f.runner.PlatformRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(f.runner.State.HostPID()) })
+	if _, err := f.runner.Status(context.Background()); err == nil {
+		t.Fatal("status accepted a process identity from a previous boot")
+	} else if failure, ok := err.(*diag.Diag); !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("previous-boot status diagnostic = %#v", err)
+	}
+}
+
 func TestProcessIdentityDistinguishesAReusedPID(t *testing.T) {
+	token, err := NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ProcessIdentityEnv, token)
 	identity, err := ProcessIdentityForPID(os.Getpid())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ProcessIdentityMatches(os.Getpid(), identity) {
-		t.Fatal("current process did not match its captured start identity")
+		t.Fatal("current process did not match its captured instance token")
 	}
 	if ProcessIdentityMatches(os.Getpid(), identity+"-reused") {
-		t.Fatal("current process matched a different process-start identity")
+		t.Fatal("current process matched a different instance token")
 	}
 }
 

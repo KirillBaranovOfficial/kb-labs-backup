@@ -412,7 +412,11 @@ func newEmptyInstallation(t *testing.T) installation {
 }
 
 func (i installation) run(args ...string) (map[string]any, int, string) {
-	command := exec.Command(i.launcher, append(args, "--platform-root", i.root)...)
+	return i.runAt(i.root, args...)
+}
+
+func (i installation) runAt(root string, args ...string) (map[string]any, int, string) {
+	command := exec.Command(i.launcher, append(args, "--platform-root", root)...)
 	command.Env = append(os.Environ(), "KB_HOME="+i.kbHome)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
@@ -434,13 +438,15 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 			}
 		}
 		i.t.Cleanup(func() {
-			_, stopCode, stopOutput := i.run("stop", "--json")
-			if stopCode != 0 {
-				i.t.Errorf("test cleanup stop failed: %s", stopOutput)
-			}
-			status, statusCode, statusOutput := i.run("status", "--json")
-			if statusCode != 0 || status["running"] == true {
-				i.t.Errorf("test cleanup left host running: %s", statusOutput)
+			if _, rootErr := os.Stat(i.root); rootErr == nil {
+				_, stopCode, stopOutput := i.run("stop", "--json")
+				if stopCode != 0 {
+					i.t.Errorf("test cleanup stop failed: %s", stopOutput)
+				}
+				status, statusCode, statusOutput := i.run("status", "--json")
+				if statusCode != 0 || status["running"] == true {
+					i.t.Errorf("test cleanup left host running: %s", statusOutput)
+				}
 			}
 			if pid != 0 && !waitHostExit(pid, 5*time.Second) {
 				i.t.Errorf("test cleanup host process %d did not exit", pid)
@@ -448,6 +454,29 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 		})
 	}
 	return parsed, code, stdout.String() + stderr.String()
+}
+
+// case: PC-001.7, PC-002.2
+func TestStatusUsesOneInstallationIdentityAcrossRootSpellings(t *testing.T) {
+	inst := newInstallation(t)
+	started, code, output := inst.run("start", "--json")
+	if code != 0 {
+		t.Fatalf("start host: %d %s", code, output)
+	}
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physicalRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{inst.root, layout.PlatformRoot(), physicalRoot} {
+		status, statusCode, statusOutput := inst.runAt(root, "status", "--json")
+		if statusCode != 0 || status["running"] != true || status["reachable"] != true {
+			t.Fatalf("status for %q after PID %v started: code=%d output=%s", root, started["host"].(map[string]any)["pid"], statusCode, statusOutput)
+		}
+	}
 }
 
 func (i installation) runCommand(args []string, extraEnv ...string) commandResult {
@@ -782,10 +811,15 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 	var recorded struct {
 		PID             int    `json:"pid"`
 		ProcessIdentity string `json:"processIdentity"`
+		InstallationID  string `json:"installationId"`
 		PlatformRoot    string `json:"platformRoot"`
 	}
 	if err := json.Unmarshal(processRecord, &recorded); err != nil {
 		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(layoutA.InstallRoot())
+	if err != nil || recorded.InstallationID != installationID {
+		t.Fatalf("record installation identity %q differs from layout identity %q: %v", recorded.InstallationID, installationID, err)
 	}
 	if filepath.Clean(recorded.PlatformRoot) != filepath.Clean(activeReceiptRoot) {
 		t.Fatalf("active record root %q differs from registered root %q", recorded.PlatformRoot, activeReceiptRoot)
@@ -818,6 +852,11 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 }
 
 func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *testing.T) {
+	identity, err := host.NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(host.ProcessIdentityEnv, identity)
 	inst := newInstallation(t)
 	started, code, output := inst.run("start", "--json")
 	if code != 0 {
@@ -838,8 +877,8 @@ func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *tes
 			t.Errorf("restore active supervisor record: %v", err)
 		}
 	})
-	// A live supervisor.pid from the previous format has no process identity.
-	oldRecord, err := json.Marshal(map[string]any{"pid": os.Getpid(), "platformRoot": inst.root})
+	// The x26 record had a process identity but no installation identity.
+	oldRecord, err := json.Marshal(map[string]any{"pid": os.Getpid(), "processIdentity": identity, "platformRoot": inst.root})
 	if err != nil {
 		t.Fatal(err)
 	}

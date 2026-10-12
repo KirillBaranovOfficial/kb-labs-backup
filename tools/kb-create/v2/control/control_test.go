@@ -53,6 +53,11 @@ func (f *fakeRunner) Status(context.Context) (host.Status, error) {
 
 func startServer(t *testing.T) (*Server, *fakeRunner, host.State) {
 	t.Helper()
+	identity, err := host.NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(host.ProcessIdentityEnv, identity)
 	runner := &fakeRunner{}
 	state := host.State{Dir: filepath.Join(t.TempDir(), "state")}
 	server := &Server{Runner: runner, State: state, Version: "9.9.9-test"}
