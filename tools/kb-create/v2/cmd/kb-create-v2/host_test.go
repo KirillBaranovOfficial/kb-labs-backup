@@ -4,7 +4,9 @@ package v2cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -25,6 +27,7 @@ import (
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
@@ -274,9 +277,11 @@ func childEnvironment(base []string, overrides map[string]string) []string {
 }
 
 var (
-	buildOnce sync.Once
-	buildDir  string
-	buildErr  error
+	buildOnce                sync.Once
+	buildDir                 string
+	buildErr                 error
+	hostSupervisorHelperOnce sync.Once
+	hostSupervisorHelperErr  error
 )
 
 // binaries builds the real launcher and the fake host once per test binary.
@@ -300,10 +305,28 @@ func binaries(t *testing.T) (launcher, fakehost string) {
 	return filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost")
 }
 
+func hostSupervisorHelperBinary(t *testing.T) string {
+	t.Helper()
+	binaries(t)
+	hostSupervisorHelperOnce.Do(func() {
+		output, err := exec.Command("go", "build", "-tags", "kb_create_test_support", "-o", filepath.Join(buildDir, "kb-create-supervisor.test"), "../../testsupport/identity-supervisor").CombinedOutput()
+		if err != nil {
+			hostSupervisorHelperErr = fmt.Errorf("build host test supervisor helper: %w\n%s", err, output)
+		}
+	})
+	if hostSupervisorHelperErr != nil {
+		t.Fatal(hostSupervisorHelperErr)
+	}
+	return filepath.Join(buildDir, "kb-create-supervisor.test")
+}
+
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if buildDir != "" {
-		for _, binary := range []string{filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost")} {
+		for _, binary := range []string{filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost"), filepath.Join(buildDir, "kb-create-supervisor.test")} {
+			if _, err := os.Stat(binary); os.IsNotExist(err) {
+				continue
+			}
 			output, err := exec.Command("lsof", "-nP", "-t", binary).CombinedOutput()
 			if err == nil && len(bytes.TrimSpace(output)) > 0 {
 				fmt.Fprintf(os.Stderr, "test process remains alive for %s:\n%s", binary, output)
@@ -412,7 +435,11 @@ func newEmptyInstallation(t *testing.T) installation {
 }
 
 func (i installation) run(args ...string) (map[string]any, int, string) {
-	command := exec.Command(i.launcher, append(args, "--platform-root", i.root)...)
+	return i.runAt(i.root, args...)
+}
+
+func (i installation) runAt(root string, args ...string) (map[string]any, int, string) {
+	command := exec.Command(i.launcher, append(args, "--platform-root", root)...)
 	command.Env = append(os.Environ(), "KB_HOME="+i.kbHome)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
@@ -434,13 +461,15 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 			}
 		}
 		i.t.Cleanup(func() {
-			_, stopCode, stopOutput := i.run("stop", "--json")
-			if stopCode != 0 {
-				i.t.Errorf("test cleanup stop failed: %s", stopOutput)
-			}
-			status, statusCode, statusOutput := i.run("status", "--json")
-			if statusCode != 0 || status["running"] == true {
-				i.t.Errorf("test cleanup left host running: %s", statusOutput)
+			if _, rootErr := os.Stat(i.root); rootErr == nil {
+				_, stopCode, stopOutput := i.run("stop", "--json")
+				if stopCode != 0 {
+					i.t.Errorf("test cleanup stop failed: %s", stopOutput)
+				}
+				status, statusCode, statusOutput := i.run("status", "--json")
+				if statusCode != 0 || status["running"] == true {
+					i.t.Errorf("test cleanup left host running: %s", statusOutput)
+				}
 			}
 			if pid != 0 && !waitHostExit(pid, 5*time.Second) {
 				i.t.Errorf("test cleanup host process %d did not exit", pid)
@@ -448,6 +477,29 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 		})
 	}
 	return parsed, code, stdout.String() + stderr.String()
+}
+
+// case: PC-001.7, PC-002.2
+func TestStatusUsesOneInstallationIdentityAcrossRootSpellings(t *testing.T) {
+	inst := newInstallation(t)
+	started, code, output := inst.run("start", "--json")
+	if code != 0 {
+		t.Fatalf("start host: %d %s", code, output)
+	}
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physicalRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{inst.root, layout.PlatformRoot(), physicalRoot} {
+		status, statusCode, statusOutput := inst.runAt(root, "status", "--json")
+		if statusCode != 0 || status["running"] != true || status["reachable"] != true {
+			t.Fatalf("status for %q after PID %v started: code=%d output=%s", root, started["host"].(map[string]any)["pid"], statusCode, statusOutput)
+		}
+	}
 }
 
 func (i installation) runCommand(args []string, extraEnv ...string) commandResult {
@@ -782,15 +834,20 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 	var recorded struct {
 		PID             int    `json:"pid"`
 		ProcessIdentity string `json:"processIdentity"`
+		InstallationID  string `json:"installationId"`
 		PlatformRoot    string `json:"platformRoot"`
 	}
 	if err := json.Unmarshal(processRecord, &recorded); err != nil {
 		t.Fatal(err)
 	}
+	installationID, err := versionroot.InstallationIDForPath(layoutA.InstallRoot())
+	if err != nil || recorded.InstallationID != installationID {
+		t.Fatalf("record installation identity %q differs from layout identity %q: %v", recorded.InstallationID, installationID, err)
+	}
 	if filepath.Clean(recorded.PlatformRoot) != filepath.Clean(activeReceiptRoot) {
 		t.Fatalf("active record root %q differs from registered root %q", recorded.PlatformRoot, activeReceiptRoot)
 	}
-	if !host.ProcessIdentityMatches(recorded.PID, recorded.ProcessIdentity) {
+	if host.ProcessIdentityOf(recorded.PID, recorded.ProcessIdentity) != host.ProcessIdentityMatch {
 		t.Fatalf("registered host PID %d does not match its recorded identity", recorded.PID)
 	}
 	payload, code, output := b.run("start", "--json")
@@ -818,6 +875,11 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 }
 
 func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *testing.T) {
+	identity, err := host.NewProcessIdentityToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(host.ProcessIdentityEnv, identity)
 	inst := newInstallation(t)
 	started, code, output := inst.run("start", "--json")
 	if code != 0 {
@@ -838,8 +900,8 @@ func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *tes
 			t.Errorf("restore active supervisor record: %v", err)
 		}
 	})
-	// A live supervisor.pid from the previous format has no process identity.
-	oldRecord, err := json.Marshal(map[string]any{"pid": os.Getpid(), "platformRoot": inst.root})
+	// The x26 record had a process identity but no installation identity.
+	oldRecord, err := json.Marshal(map[string]any{"pid": os.Getpid(), "processIdentity": identity, "platformRoot": inst.root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -859,6 +921,263 @@ func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *tes
 	}
 	if !host.ProcessAlive(hostPID) {
 		t.Fatal("restart stopped the genuine host while rejecting the stale supervisor")
+	}
+}
+
+func TestSupervisorIdentityTimeoutTerminatesAndReapsChild(t *testing.T) {
+	inst := newInstallation(t)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.Spec.ReadyTimeout = 100 * time.Millisecond
+	launcher := filepath.Join(t.TempDir(), "supervisor-launcher")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childPID := 0
+	command := hostCommand{PlatformRoot: inst.root, Executable: launcher, testBackstopGrace: 100 * time.Millisecond,
+		identityReader: func(pid int) (string, error) {
+			childPID = pid
+			return "", errors.New("injected process environment unavailable")
+		}}
+	_, err = command.spawnSupervisor(context.Background(), runner, state)
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_HOST_START_FAILED" || typed.Meta["waited"] == nil {
+		t.Fatalf("supervisor identity timeout = %#v; want typed elapsed startup failure", err)
+	}
+	if childPID == 0 || host.ProcessAlive(childPID) {
+		t.Fatalf("supervisor child PID %d remains alive after failed start", childPID)
+	}
+	if _, statErr := os.Stat(state.SupervisorPID()); !os.IsNotExist(statErr) {
+		t.Fatalf("supervisor pid file must be absent after failed start: %v", statErr)
+	}
+}
+
+func TestDetachedStartReadinessFailureCleansUpChildProcesses(t *testing.T) {
+	inst := newInstallation(t, "-unhealthy")
+	setHostReadyTimeout(t, inst, 1)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hostPID, supervisorPID int
+	watchDone := make(chan struct{})
+	watchStopped := make(chan struct{})
+	go func() {
+		defer close(watchStopped)
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if record, ok := host.ActiveHost(state); ok {
+				hostPID = record.PID
+			}
+			if record, ok := supervisor.ReadRecord(state); ok {
+				supervisorPID = record.PID
+			}
+			select {
+			case <-watchDone:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	payload, code, output := inst.run("start", "--json")
+	close(watchDone)
+	<-watchStopped
+	if code != 1 || errorCode(payload) != "KB_HOST_START_FAILED" {
+		t.Fatalf("detached readiness failure: %d %s", code, output)
+	}
+	failure := payload["error"].(map[string]any)
+	details := failure["details"].(map[string]any)
+	if !strings.Contains(fmt.Sprint(failure["cause"]), "readiness check") || details["waited"] == nil ||
+		!strings.Contains(fmt.Sprint(details["stderrTail"]), "fakehost: ready") ||
+		details["readinessStatus"] != "500" {
+		t.Fatalf("outer command hid the inner readiness diagnosis: %s", output)
+	}
+	if hostPID == 0 || supervisorPID == 0 || host.ProcessAlive(hostPID) || host.ProcessAlive(supervisorPID) {
+		t.Fatalf("failed detached start left host PID %d or supervisor PID %d alive", hostPID, supervisorPID)
+	}
+	for _, path := range []string{state.HostPID(), state.SupervisorPID(), state.Control()} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("failed detached start left state file %s: %v", path, statErr)
+		}
+	}
+	if conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", inst.port), 100*time.Millisecond); dialErr == nil {
+		_ = conn.Close()
+		t.Fatal("failed detached start left the host listener open")
+	}
+}
+
+func TestDetachedStartHostIdentityTimeoutCleansUpChildProcesses(t *testing.T) {
+	inst := newInstallation(t, "-stderr-line=API_TOKEN=fake-secret-token")
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.Spec.ReadyTimeout = 950 * time.Millisecond
+	state := runner.State
+	helperBinary := hostSupervisorHelperBinary(t)
+	hostPIDFile := filepath.Join(t.TempDir(), "host.pid")
+	t.Setenv("KB_CREATE_TEST_HOST_PID_FILE", hostPIDFile)
+	var supervisorPID int
+	command := hostCommand{
+		PlatformRoot: inst.root,
+		Executable:   helperBinary,
+		identityReader: func(pid int) (string, error) {
+			supervisorPID = pid
+			return host.ProcessIdentityForPID(pid)
+		},
+	}
+	_, failure := command.start(context.Background(), runner, state)
+	if failure == nil || failure.Code != "KB_HOST_START_FAILED" ||
+		!strings.Contains(failure.Cause, "host process identity remained undetermined") ||
+		strings.Contains(failure.Cause, "supervisor did not report") || failure.Meta["waited"] == nil {
+		t.Fatalf("detached host identity timeout = %#v; want the inner typed identity failure with elapsed time", failure)
+	}
+	tail := fmt.Sprint(failure.Meta["stderrTail"])
+	if !strings.Contains(tail, "fakehost: ready") || !strings.Contains(tail, "[REDACTED]") || strings.Contains(tail, "fake-secret-token") {
+		hostLog, _ := os.ReadFile(state.HostLog())
+		t.Fatalf("identity timeout stderr tail = %q; want ready line with secret redacted; diagnosis=%#v host log=%q", tail, failure, hostLog)
+	}
+	data, err := os.ReadFile(hostPIDFile)
+	if err != nil {
+		t.Fatalf("host process identity seam did not record the launched PID: %v", err)
+	}
+	hostPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || hostPID <= 0 || host.ProcessAlive(hostPID) {
+		t.Fatalf("launched host PID %q remains alive or is invalid: %v", data, err)
+	}
+	if supervisorPID <= 0 || host.ProcessAlive(supervisorPID) {
+		t.Fatalf("supervisor PID %d remains alive after the inner identity verdict", supervisorPID)
+	}
+	assertDetachedStartStateEmpty(t, state, inst.port)
+}
+
+func TestDetachedStartReadyBeforeDeadlineSucceeds(t *testing.T) {
+	inst := newInstallation(t, "-delay=2200ms")
+	setHostReadyTimeout(t, inst, 3)
+	started := time.Now()
+	payload, code, output := inst.run("start", "--json")
+	if code != 0 || payload["ok"] != true {
+		t.Fatalf("host became ready before the startup deadline: %d %s", code, output)
+	}
+	if elapsed := time.Since(started); elapsed < 2*time.Second {
+		t.Fatalf("delayed host returned in %s, expected the launch delay", elapsed)
+	}
+}
+
+func TestDetachedStartUsesHandedDownDeadline(t *testing.T) {
+	inst := newInstallation(t, "-unhealthy")
+	setHostReadyTimeout(t, inst, 3)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(350 * time.Millisecond)
+	command := hostCommand{PlatformRoot: inst.root, Executable: inst.launcher, testBackstopGrace: 2 * time.Second}
+	started := time.Now()
+	_, err = command.spawnSupervisorUntil(context.Background(), runner, state, deadline)
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_HOST_START_FAILED" ||
+		!strings.Contains(typed.Cause, "readiness check") || typed.Meta["waited"] == nil ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fakehost: ready") {
+		t.Fatalf("inner runner did not use the handed-down deadline: %#v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("inner runner took %s to honor the handed-down 350ms deadline", elapsed)
+	}
+	assertDetachedStartStateEmpty(t, state, inst.port)
+}
+
+func TestDetachedStartHungSupervisorBackstopStopsHost(t *testing.T) {
+	inst := newInstallation(t)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hostPID, supervisorPID int
+	command := hostCommand{PlatformRoot: inst.root, Executable: inst.launcher, testBackstopGrace: 100 * time.Millisecond}
+	command.testSupervisorHealthy = func(context.Context, host.State) bool {
+		if record, ok := host.ActiveHost(state); ok {
+			hostPID = record.PID
+		}
+		if record, ok := supervisor.ReadRecord(state); ok {
+			supervisorPID = record.PID
+		}
+		return false
+	}
+	_, err = command.spawnSupervisorUntil(context.Background(), runner, state, time.Now().Add(time.Second))
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_HOST_START_FAILED" || typed.Meta["failureKind"] != "supervisorHung" {
+		t.Fatalf("hung supervisor diagnosis = %#v; want distinct typed backstop failure", err)
+	}
+	if hostPID == 0 || supervisorPID == 0 || host.ProcessAlive(hostPID) || host.ProcessAlive(supervisorPID) {
+		t.Fatalf("hung supervisor cleanup left host PID %d or supervisor PID %d alive", hostPID, supervisorPID)
+	}
+	assertDetachedStartStateEmpty(t, state, inst.port)
+}
+
+func TestDetachedStartSupervisorCrashReportsExitAndCleansUp(t *testing.T) {
+	inst := newInstallation(t)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(t.TempDir(), "supervisor-crash")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nprintf 'supervisor-crash-marker\\n' >&2\nexit 23\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := hostCommand{PlatformRoot: inst.root, Executable: launcher, testBackstopGrace: time.Second}
+	_, err = command.spawnSupervisorUntil(context.Background(), runner, state, time.Now().Add(time.Second))
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_HOST_START_FAILED" ||
+		typed.Meta["supervisorExit"] != "exit status 23" ||
+		!strings.Contains(fmt.Sprint(typed.Meta["supervisorStderrTail"]), "supervisor-crash-marker") {
+		t.Fatalf("supervisor crash diagnosis = %#v; want exit status and stderr tail", err)
+	}
+	assertDetachedStartStateEmpty(t, state, inst.port)
+}
+
+func assertDetachedStartStateEmpty(t *testing.T, state host.State, port int) {
+	t.Helper()
+	for _, path := range []string{state.HostPID(), state.SupervisorPID(), state.Control()} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("failed detached start left state file %s: %v", path, err)
+		}
+	}
+	if conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Error("failed detached start left its host listener open")
+	}
+}
+
+func setHostReadyTimeout(t *testing.T, inst installation, seconds int) {
+	t.Helper()
+	platformRoot := platformRootForTest(t, inst.root)
+	active, err := receipt.Read(platformRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Plan.Host.ReadyTimeoutSeconds = seconds
+	if err := receipt.Write(platformRoot, active); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -59,7 +59,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		return updateCommandResult{}, inputFailure(updateCompatibilityDiag(failure))
 	}
 	plan := resolved.Plan
-	layout, layoutErr := versionroot.New(plan.Request.PlatformRoot)
+	layout, layoutErr := versionroot.ForPlatformPath(plan.Request.PlatformRoot)
 	if layoutErr == nil {
 		layoutErr = layout.Validate()
 	}
@@ -185,7 +185,7 @@ func requireUpdateSecrets(plan contracts.ResolvedInstallPlan, store secrets.Stor
 // runUpdateCommand stages and verifies a complete version root before the
 // stable platform path is atomically switched to it.
 func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot string, plan contracts.ResolvedInstallPlan, state, launcherState host.State, runtimeOverrides *runtime.Dependencies) (updateCommandResult, *diag.Diag) {
-	layout, err := versionroot.New(installRoot)
+	layout, err := versionroot.ForPlatformPath(installRoot)
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The install root cannot use the required atomic layout.", "Run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"` on Linux or macOS.", err)
 	}

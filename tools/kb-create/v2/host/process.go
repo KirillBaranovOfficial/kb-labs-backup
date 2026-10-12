@@ -32,6 +32,7 @@ import (
 type pidRecord struct {
 	PID             int       `json:"pid"`
 	ProcessIdentity string    `json:"processIdentity,omitempty"`
+	InstallationID  string    `json:"installationId"`
 	PlatformRoot    string    `json:"platformRoot"`
 	TreeRoot        string    `json:"treeRoot,omitempty"`
 	StartedAt       time.Time `json:"startedAt"`
@@ -66,6 +67,15 @@ func NewProcessIdentity(active contracts.InstallReceipt, platformRoot, treeRoot 
 
 func StaleProcessIdentityFailure(recordPath, kind string, pid int, platformRoot, gatewayURL string) *diag.Diag {
 	message := fmt.Sprintf("PID %d is running, but its recorded %s process identity is missing or does not match, so it cannot be verified as this installation's recorded %s and may still be serving its Gateway. kb-create did not and will not signal it.", pid, kind, kind)
+	return processIdentityFailure(recordPath, kind, pid, platformRoot, gatewayURL, message)
+}
+
+func UndeterminedProcessIdentityFailure(recordPath, kind string, pid int, platformRoot, gatewayURL string) *diag.Diag {
+	message := fmt.Sprintf("PID %d is running, but kb-create could not read its recorded %s process identity, so it cannot verify whether this installation owns it. It may still be serving its Gateway. kb-create did not and will not signal it.", pid, kind)
+	return processIdentityFailure(recordPath, kind, pid, platformRoot, gatewayURL, message)
+}
+
+func processIdentityFailure(recordPath, kind string, pid int, platformRoot, gatewayURL, message string) *diag.Diag {
 	if gatewayURL == "" {
 		gatewayURL = recordedGatewayURL(recordPath)
 	}
@@ -115,6 +125,7 @@ func WriteRecordFile(path string, data []byte) error {
 // ActiveHostRecord identifies a live host process in the installation container.
 type ActiveHostRecord struct {
 	PID             int
+	InstallationID  string
 	PlatformRoot    string
 	ProcessIdentity string
 }
@@ -134,26 +145,36 @@ func ActiveHost(state State) (ActiveHostRecord, bool) {
 		_ = os.Remove(state.HostPID())
 		return ActiveHostRecord{}, false
 	}
-	if !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+	if record.InstallationID == "" {
 		return ActiveHostRecord{}, false
 	}
-	return ActiveHostRecord{PID: record.PID, PlatformRoot: record.PlatformRoot, ProcessIdentity: record.ProcessIdentity}, true
+	identityStatus := ProcessIdentityOf(record.PID, record.ProcessIdentity)
+	switch identityStatus {
+	case ProcessIdentityMatch:
+	case ProcessIdentityMismatch, ProcessIdentityUndetermined:
+		return ActiveHostRecord{}, false
+	default:
+		return ActiveHostRecord{}, false
+	}
+	return ActiveHostRecord{PID: record.PID, InstallationID: record.InstallationID, PlatformRoot: record.PlatformRoot, ProcessIdentity: record.ProcessIdentity}, true
 }
 
 // ProcessRunner spawns the host command directly in its own process group,
 // records a pid file and log under the installation state directory, polls the health URL, and
 // stops it with a graceful terminate followed by a kill after the grace period.
 type ProcessRunner struct {
-	Spec         Spec
-	State        State
-	InstallRoot  string
-	PlatformRoot string
-	TreeRoot     string
-	Identity     ProcessIdentity
-	Operation    string
+	Spec           Spec
+	State          State
+	InstallRoot    string
+	InstallationID string
+	PlatformRoot   string
+	TreeRoot       string
+	Identity       ProcessIdentity
+	Operation      string
 	// HTTP and PollInterval exist for tests; zero values use sane defaults.
-	HTTP         *http.Client
-	PollInterval time.Duration
+	HTTP           *http.Client
+	PollInterval   time.Duration
+	identityReader func(int) (string, error)
 	// SecretEnv supplies the host's stored values and any environment entries
 	// that must be suppressed on every Start.
 	SecretEnv func() (secrets.Environment, error)
@@ -165,6 +186,7 @@ type ProcessRunner struct {
 	stderr          *tailBuffer
 	secrets         []string
 	processIdentity string
+	startupDeadline time.Time
 }
 
 const startupStderrLimit = 8 * 1024
@@ -222,14 +244,25 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		return Info{}, hostError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+r.State.Dir+".", "Fix the directory permissions or free disk space.", err, map[string]string{"path": r.State.Dir})
 	}
 	if record, ok := r.readPID(); ok {
-		if processAlive(record.PID) && !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+		identityStatus := ProcessIdentityOf(record.PID, record.ProcessIdentity)
+		if processAlive(record.PID) && record.InstallationID == "" {
 			return Info{}, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
 		}
-		if ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
-			if record.PlatformRoot != r.PlatformRoot {
+		switch identityStatus {
+		case ProcessIdentityMatch:
+			if record.InstallationID != r.InstallationID {
 				return Info{}, RootConflict(record.PlatformRoot, record.PID)
 			}
 			return Info{}, hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil, pidDetail(record.PID))
+		case ProcessIdentityMismatch:
+			if processAlive(record.PID) {
+				return Info{}, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
+			}
+		case ProcessIdentityUndetermined:
+			if processAlive(record.PID) {
+				return Info{}, UndeterminedProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
+			}
+		default:
 		}
 		_ = os.Remove(r.State.HostPID())
 	}
@@ -246,22 +279,29 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}
 	cmd := exec.Command(r.Spec.Command, r.Spec.Args...)
 	cmd.Dir = r.Spec.WorkingDir
+	startupStarted := time.Now()
+	startupDeadline := startupStarted.Add(r.Spec.ReadyTimeout)
+	r.mu.Lock()
+	if !r.startupDeadline.IsZero() {
+		startupDeadline = r.startupDeadline
+		r.startupDeadline = time.Time{}
+	}
+	r.mu.Unlock()
+	processIdentity, err := NewProcessIdentityToken()
+	if err != nil {
+		_ = logFile.Close()
+		return Info{}, r.startFailed(err, nil)
+	}
 	env, err := r.environment()
 	if err != nil {
 		_ = logFile.Close()
 		return Info{}, r.startFailed(err, nil)
 	}
-	cmd.Env = env
+	cmd.Env = ProcessEnvironmentWithIdentity(env, processIdentity)
 	r.stderr = &tailBuffer{limit: startupStderrLimit}
 	cmd.Stdout, cmd.Stderr = logFile, io.MultiWriter(logFile, r.stderr)
 	configureHostProcess(cmd)
 	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		return Info{}, r.startFailed(err, nil)
-	}
-	processIdentity, err := ProcessIdentityForPID(cmd.Process.Pid)
-	if err != nil {
-		_ = cmd.Process.Kill()
 		_ = logFile.Close()
 		return Info{}, r.startFailed(err, nil)
 	}
@@ -278,13 +318,95 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		r.mu.Unlock()
 		close(exited)
 	}()
-	record := pidRecord{PID: cmd.Process.Pid, ProcessIdentity: processIdentity, PlatformRoot: r.PlatformRoot, TreeRoot: r.Identity.TreeRoot, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command,
+	record := pidRecord{PID: cmd.Process.Pid, ProcessIdentity: processIdentity, InstallationID: r.InstallationID, PlatformRoot: r.PlatformRoot, TreeRoot: r.Identity.TreeRoot, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command,
 		PlatformVersion: r.Identity.PlatformVersion, ReceiptID: r.Identity.ReceiptID, ServiceIDs: append([]string(nil), r.Identity.ServiceIDs...)}
+	identityStatus := WaitForProcessIdentityWithReader(cmd.Process.Pid, processIdentity, exited, startupDeadline, r.identityReader)
+	switch identityStatus {
+	case ProcessIdentityMatch:
+	case ProcessIdentityMismatch:
+		select {
+		case <-exited:
+			r.mu.Lock()
+			cause := r.waitErr
+			r.mu.Unlock()
+			if cause == nil {
+				cause = errors.New("process exited before its identity could be verified")
+			}
+			return Info{}, r.startFailed(fmt.Errorf("host exited before startup identity was verified: %s", processExit(cause)), processExitDetails(cause))
+		default:
+		}
+		killErr := TerminateAndReapLaunchedProcess(cmd.Process, exited)
+		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			return Info{}, r.startFailed(fmt.Errorf("started host process identity did not match the token assigned by this launcher, and the child could not be stopped: %w", killErr), nil)
+		}
+		if errors.Is(killErr, os.ErrProcessDone) {
+			r.mu.Lock()
+			cause := r.waitErr
+			r.mu.Unlock()
+			if cause == nil {
+				cause = errors.New("process exited before its identity could be verified")
+			}
+			return Info{}, r.startFailed(fmt.Errorf("host exited before startup identity was verified: %s", processExit(cause)), processExitDetails(cause))
+		}
+		return Info{}, r.startFailed(errors.New("started host process identity does not match the token assigned by this launcher"), nil)
+	case ProcessIdentityUndetermined:
+		select {
+		case <-exited:
+			r.mu.Lock()
+			cause := r.waitErr
+			r.mu.Unlock()
+			if cause == nil {
+				cause = errors.New("process exited before its identity could be verified")
+			}
+			return Info{}, r.startFailed(fmt.Errorf("host exited before startup identity was verified: %s", processExit(cause)), processExitDetails(cause))
+		default:
+			if !processAlive(cmd.Process.Pid) {
+				<-exited
+				r.mu.Lock()
+				cause := r.waitErr
+				r.mu.Unlock()
+				if cause == nil {
+					cause = errors.New("process exited before its identity could be verified")
+				}
+				return Info{}, r.startFailed(fmt.Errorf("host exited before startup identity was verified: %s", processExit(cause)), processExitDetails(cause))
+			}
+			killErr := TerminateAndReapLaunchedProcess(cmd.Process, exited)
+			if errors.Is(killErr, os.ErrProcessDone) {
+				r.mu.Lock()
+				cause := r.waitErr
+				r.mu.Unlock()
+				if cause == nil {
+					cause = errors.New("process exited before its identity could be verified")
+				}
+				return Info{}, r.startFailed(fmt.Errorf("host exited before startup identity was verified: %s", processExit(cause)), processExitDetails(cause))
+			}
+			if killErr == nil {
+				_ = os.Remove(r.State.HostPID())
+				r.mu.Lock()
+				r.pid, r.exited, r.processIdentity = 0, nil, ""
+				r.mu.Unlock()
+				waited := time.Since(startupStarted).Round(time.Millisecond)
+				return Info{}, r.startFailed(fmt.Errorf("host process identity remained undetermined after %s; the started process was terminated", waited), map[string]string{"waited": waited.String()})
+			}
+			_ = os.Remove(r.State.HostPID())
+			r.mu.Lock()
+			r.pid, r.exited, r.processIdentity = 0, nil, ""
+			r.mu.Unlock()
+			waited := time.Since(startupStarted).Round(time.Millisecond)
+			return Info{}, r.startFailed(fmt.Errorf("host process identity remained undetermined after %s and the started process could not be stopped: %w", waited, killErr), map[string]string{"waited": waited.String()})
+		}
+	default:
+		return Info{}, r.startFailed(errors.New("started host process identity result is invalid"), nil)
+	}
+	if r.InstallationID == "" {
+		r.kill(cmd.Process.Pid)
+		return Info{}, hostError(contracts.CodeReceiptUnavailable, "The installation identity is missing while recording the host.", "Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", r.InstallRoot)+"` and repair the install-root ownership record.", nil, map[string]string{"installRoot": r.InstallRoot})
+	}
 	if err := writeJSONFile(r.State.HostPID(), record); err != nil {
 		r.kill(cmd.Process.Pid)
 		return Info{}, hostError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+r.State.Dir+".", "Fix the directory permissions or free disk space.", err, map[string]string{"path": r.State.Dir})
 	}
-	if err := r.waitReady(ctx, record.PID, exited); err != nil {
+	if err := r.waitReadyUntil(ctx, record.PID, exited, startupDeadline); err != nil {
 		return Info{}, err
 	}
 	layout, layoutErr := versionroot.New(r.InstallRoot)
@@ -310,7 +432,7 @@ func (r *ProcessRunner) RunTool(ctx context.Context, tool Tool, extra []string, 
 		return 0, err
 	}
 	cmd := exec.CommandContext(ctx, tool.Command, append(append([]string(nil), tool.Args...), extra...)...)
-	cmd.Dir, cmd.Env = r.Spec.WorkingDir, env
+	cmd.Dir, cmd.Env = r.Spec.WorkingDir, ProcessEnvironmentWithoutIdentity(env)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
@@ -437,9 +559,9 @@ func (r *ProcessRunner) startFailed(cause error, evidence map[string]string) *di
 	return StartFailure(r.State, cause, evidence)
 }
 
-func (r *ProcessRunner) waitReady(ctx context.Context, pid int, exited <-chan struct{}) error {
+func (r *ProcessRunner) waitReadyUntil(ctx context.Context, pid int, exited <-chan struct{}, startupDeadline time.Time) error {
 	started := time.Now()
-	deadline := time.NewTimer(r.Spec.ReadyTimeout)
+	deadline := time.NewTimer(time.Until(startupDeadline))
 	defer deadline.Stop()
 	ticker := time.NewTicker(r.interval())
 	defer ticker.Stop()
@@ -592,6 +714,17 @@ func (r *ProcessRunner) stderrTail() string {
 	return redactHostOutput(r.stderr.String(), r.secrets)
 }
 
+// StartupStderrTail reads a bounded, redacted tail from a startup log file.
+func StartupStderrTail(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	tail := &tailBuffer{limit: startupStderrLimit}
+	_, _ = tail.Write(data)
+	return redactHostOutput(tail.String(), nil)
+}
+
 func redactHostOutput(value string, secrets []string) string {
 	value = diagnostics.Redact(value, secrets)
 	return diag.RedactText(value)
@@ -672,14 +805,16 @@ func registeredGatewayRoot(port string, pid int) (string, string) {
 			continue
 		}
 		var record pidRecord
-		if json.Unmarshal(data, &record) != nil || record.PID != pid || filepath.Clean(record.PlatformRoot) != filepath.Clean(candidate.PlatformRoot) {
+		if json.Unmarshal(data, &record) != nil || record.PID != pid {
 			continue
 		}
-		if ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
-			return record.PlatformRoot, ""
-		}
-		if processAlive(record.PID) {
+		candidateID, identityErr := versionroot.InstallationIDForPath(candidate.PlatformRoot)
+		identityStatus := ProcessIdentityOf(record.PID, record.ProcessIdentity)
+		if processAlive(record.PID) && (record.InstallationID == "" || identityStatus == ProcessIdentityMismatch || identityStatus == ProcessIdentityUndetermined) {
 			return record.PlatformRoot, rootState.HostPID()
+		}
+		if identityErr == nil && record.InstallationID == candidateID && identityStatus == ProcessIdentityMatch {
+			return record.PlatformRoot, ""
 		}
 	}
 	return "", ""
@@ -787,7 +922,8 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 			continue
 		}
 		owner := listenerOwner(port)
-		if active.PID > 0 && filepath.Clean(active.PlatformRoot) == filepath.Clean(plan.Request.PlatformRoot) &&
+		installationID, identityErr := versionroot.InstallationIDForPath(plan.Request.PlatformRoot)
+		if active.PID > 0 && identityErr == nil && active.InstallationID == installationID &&
 			owner.PID == strconv.Itoa(active.PID) {
 			continue
 		}
@@ -836,10 +972,24 @@ func (r *ProcessRunner) kill(pid int) {
 	r.mu.Lock()
 	processIdentity := r.processIdentity
 	r.mu.Unlock()
-	if ProcessIdentityMatches(pid, processIdentity) {
-		killProcessGroup(pid)
-		r.waitGone(pid, processIdentity, 5*time.Second)
+	switch ProcessIdentityOf(pid, processIdentity) {
+	case ProcessIdentityMatch:
+		KillProcessGroupIfIdentity(pid, processIdentity)
+		if !r.waitGone(pid, processIdentity, 5*time.Second) {
+			return
+		}
+	case ProcessIdentityMismatch:
+		r.removePIDRecord(pid, processIdentity)
+		return
+	case ProcessIdentityUndetermined:
+		return
+	default:
+		return
 	}
+	r.removePIDRecord(pid, processIdentity)
+}
+
+func (r *ProcessRunner) removePIDRecord(pid int, processIdentity string) {
 	if record, ok := r.readPID(); ok && record.PID == pid && record.ProcessIdentity == processIdentity {
 		_ = os.Remove(r.State.HostPID())
 	}
@@ -854,28 +1004,57 @@ func (r *ProcessRunner) healthy(ctx context.Context) bool {
 func (r *ProcessRunner) Stop(ctx context.Context) (StopResult, error) {
 	result := StopResult{Runner: r.Name()}
 	record, ok := r.readPID()
-	if ok && processAlive(record.PID) && !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+	identityStatus := ProcessIdentityUndetermined
+	if ok {
+		identityStatus = ProcessIdentityOf(record.PID, record.ProcessIdentity)
+	}
+	if ok && processAlive(record.PID) && record.InstallationID == "" {
 		return result, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
 	}
-	if ok && ProcessIdentityMatches(record.PID, record.ProcessIdentity) && record.PlatformRoot != r.PlatformRoot {
+	switch identityStatus {
+	case ProcessIdentityMatch:
+		if record.InstallationID != r.InstallationID {
+			return result, nil
+		}
+	case ProcessIdentityMismatch:
+		if processAlive(record.PID) {
+			return result, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
+		}
+		_ = os.Remove(r.State.HostPID())
 		return result, nil
+	case ProcessIdentityUndetermined:
+		if ok && processAlive(record.PID) {
+			return result, UndeterminedProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
+		}
+		if ok {
+			_ = os.Remove(r.State.HostPID())
+		}
+		return result, nil
+	default:
+		return result, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
 	}
-	if !ok || !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+	if !ok {
 		_ = os.Remove(r.State.HostPID())
 		return result, nil
 	}
 	result.WasRunning, result.PID = true, record.PID
-	terminateProcessGroup(record.PID)
+	TerminateProcessGroupIfIdentity(record.PID, record.ProcessIdentity)
 	if r.waitGoneCtx(ctx, record.PID, record.ProcessIdentity, r.Spec.StopGrace) {
 		result.Graceful = true
 		_ = os.Remove(r.State.HostPID())
 		return result, nil
 	}
-	if !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+	switch ProcessIdentityOf(record.PID, record.ProcessIdentity) {
+	case ProcessIdentityMatch:
+	case ProcessIdentityMismatch:
 		_ = os.Remove(r.State.HostPID())
 		return result, nil
+	case ProcessIdentityUndetermined:
+		return result, UndeterminedProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
+	default:
+		return result, UndeterminedProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
 	}
-	killProcessGroup(record.PID)
+	KillProcessGroupIfIdentity(record.PID, record.ProcessIdentity)
 	result.Forced = true
 	if !r.waitGoneCtx(ctx, record.PID, record.ProcessIdentity, 5*time.Second) {
 		return result, hostError("KB_HOST_STOP_FAILED", fmt.Sprintf("The host process %d did not stop.", record.PID), "Run `"+contracts.ShellCommand("kb-create", "stop", "--platform-root", r.PlatformRoot)+"` again, then check its status.", nil, pidDetail(record.PID))
@@ -884,14 +1063,14 @@ func (r *ProcessRunner) Stop(ctx context.Context) (StopResult, error) {
 	return result, nil
 }
 
-func (r *ProcessRunner) waitGone(pid int, processStart string, timeout time.Duration) bool {
-	return r.waitGoneCtx(context.Background(), pid, processStart, timeout)
+func (r *ProcessRunner) waitGone(pid int, processIdentity string, timeout time.Duration) bool {
+	return r.waitGoneCtx(context.Background(), pid, processIdentity, timeout)
 }
 
 // waitGoneCtx waits for pid to disappear. When this runner spawned the process
 // its own Wait goroutine reaps it, so the exit channel is authoritative;
 // otherwise the pid is polled (the owner of the child reaps it).
-func (r *ProcessRunner) waitGoneCtx(ctx context.Context, pid int, processStart string, timeout time.Duration) bool {
+func (r *ProcessRunner) waitGoneCtx(ctx context.Context, pid int, processIdentity string, timeout time.Duration) bool {
 	r.mu.Lock()
 	var exited chan struct{}
 	if r.pid == pid {
@@ -909,8 +1088,20 @@ func (r *ProcessRunner) waitGoneCtx(ctx context.Context, pid int, processStart s
 				return true
 			default:
 			}
-		} else if !ProcessIdentityMatches(pid, processStart) {
-			return true
+		} else {
+			switch ProcessIdentityOf(pid, processIdentity) {
+			case ProcessIdentityMatch:
+			case ProcessIdentityMismatch:
+				return true
+			case ProcessIdentityUndetermined:
+				if !processAlive(pid) {
+					return true
+				}
+			default:
+				if !processAlive(pid) {
+					return true
+				}
+			}
 		}
 		select {
 		case <-deadline.C:
@@ -930,20 +1121,41 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 	if !ok {
 		return status, nil
 	}
-	if processAlive(record.PID) && !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+	if !processAlive(record.PID) {
+		_ = os.Remove(r.State.HostPID())
+		status.StalePID = true
+		return status, nil
+	}
+	if record.InstallationID == "" {
 		return status, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
 	}
-	if record.PlatformRoot != r.PlatformRoot {
+	identityStatus := ProcessIdentityOf(record.PID, record.ProcessIdentity)
+	switch identityStatus {
+	case ProcessIdentityMatch:
+	case ProcessIdentityMismatch:
+		return status, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
+	case ProcessIdentityUndetermined:
+		return status, UndeterminedProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
+	default:
+		return status, UndeterminedProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
+	}
+	if r.InstallationID == "" || record.InstallationID != r.InstallationID {
 		return status, nil
 	}
 	status.PlatformVersion = record.PlatformVersion
 	status.TreeRoot = record.TreeRoot
 	status.ReceiptID = record.ReceiptID
 	status.ServiceIDs = append([]string(nil), record.ServiceIDs...)
-	if !ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+	switch ProcessIdentityOf(record.PID, record.ProcessIdentity) {
+	case ProcessIdentityMatch:
+	case ProcessIdentityMismatch:
 		_ = os.Remove(r.State.HostPID())
 		status.StalePID = true
 		return status, nil
+	case ProcessIdentityUndetermined:
+		return status, UndeterminedProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
+	default:
+		return status, UndeterminedProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
 	}
 	started := record.StartedAt
 	status.PID, status.StartedAt = record.PID, &started

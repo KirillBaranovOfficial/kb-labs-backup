@@ -161,6 +161,83 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	}
 }
 
+// case: PC-001.7, PC-002.2, S-040.3
+func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
+	_, fakehost := binaries(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(host.KBHomeEnv, filepath.Join(home, ".kb"))
+	root := filepath.Join(home, "kb-platform")
+	launcher, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(home, "release-index.json")
+	port := freeLoopbackPort(t)
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Host = &contracts.HostSpec{Command: launcher, Args: []string{"-test.run=^TestHostExecLauncher$"},
+		Env:       map[string]string{"KB_TEST_FAKEHOST": fakehost, "KB_TEST_FAKEHOST_PORT": fmt.Sprint(port)},
+		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
+		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}
+	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
+	release, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+	commandFactory := func(cmd *cobra.Command) commandDependencies {
+		deps.Command = cmd
+		return deps
+	}
+	var installOutput, installError bytes.Buffer
+	installCode := clikitcommand.Execute(newRootCommandWithDependencyFactory(commandFactory), []string{"install", "--json", "--index", indexPath,
+		"--platform-root", root, "--service-profile", "default", "--scenario", "explore"}, &installOutput, &installError)
+	if installCode != 0 {
+		state, _ := host.StateForRoot(root)
+		hostLog, _ := os.ReadFile(state.HostLog())
+		supervisorLog, _ := os.ReadFile(state.SupervisorLog())
+		t.Fatalf("install argv exit=%d: stdout=%s stderr=%s hostLog=%s supervisorLog=%s", installCode, installOutput.String(), installError.String(), hostLog, supervisorLog)
+	}
+	t.Cleanup(func() {
+		var stdout, stderr bytes.Buffer
+		code := clikitcommand.Execute(newRootCommand(), []string{"stop", "--platform-root", root, "--json"}, &stdout, &stderr)
+		if code != 0 {
+			t.Errorf("stop installed test host: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		}
+	})
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physicalRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spelling := range []string{root, layout.PlatformRoot(), physicalRoot} {
+		var stdout, stderr bytes.Buffer
+		code := clikitcommand.Execute(newRootCommand(), []string{"status", "--platform-root", spelling, "--json"}, &stdout, &stderr)
+		var response struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+			t.Fatalf("status for %q was not JSON: %v; stdout=%s stderr=%s", spelling, err, stdout.String(), stderr.String())
+		}
+		if code != 0 || response.Data["installed"] != true || response.Data["running"] != true || response.Data["reachable"] != true {
+			t.Fatalf("status for %q after Execute install: code=%d data=%#v stdout=%s stderr=%s", spelling, code, response.Data, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
 	t.Setenv("KB_HOME", t.TempDir())
 	state, err := host.StateHome()

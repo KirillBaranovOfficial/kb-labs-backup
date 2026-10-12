@@ -15,6 +15,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Supervisor owns one host Runner and one control server.
@@ -33,10 +34,20 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	if record, exists := readRecordFile(s.State); exists && host.ProcessAlive(record.PID) {
-		if !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+		identityStatus := host.ProcessIdentityOf(record.PID, record.ProcessIdentity)
+		switch identityStatus {
+		case host.ProcessIdentityMatch:
+			if record.InstallationID == "" {
+				return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+			}
+			return Refusal(record, s.PlatformRoot)
+		case host.ProcessIdentityMismatch:
+			return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+		case host.ProcessIdentityUndetermined:
+			return host.UndeterminedProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+		default:
 			return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
 		}
-		return Refusal(record, s.PlatformRoot)
 	}
 	if record, ok := ReadRecord(s.State); ok {
 		e := Refusal(record, s.PlatformRoot)
@@ -48,9 +59,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	processIdentity, err := host.ProcessIdentityForPID(os.Getpid())
 	if err != nil {
-		return contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "The supervisor process identity could not be recorded.", "Retry the host start after checking that the process table is available.", err)
+		return contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "The supervisor process identity could not be recorded.", "Start the supervisor through `"+contracts.ShellCommand("kb-create", "start", "--platform-root", root)+"` so the launcher supplies its per-start identity token.", err)
 	}
-	record := Record{PID: os.Getpid(), ProcessIdentity: processIdentity, PlatformRoot: filepath.Clean(root)}
+	installationID, err := versionroot.InstallationIDForPath(root)
+	if err != nil {
+		return contracts.NewDiag(contracts.CodeReceiptUnavailable, "The installation ownership identity could not be read.", "Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` and repair its layout before starting the host.", err)
+	}
+	record := Record{PID: os.Getpid(), ProcessIdentity: processIdentity, InstallationID: installationID, PlatformRoot: filepath.Clean(root)}
 	data, err := json.Marshal(record)
 	if err != nil {
 		return err
@@ -95,6 +110,7 @@ func (s *Supervisor) restart(ctx context.Context) (control.RestartResponse, erro
 type Record struct {
 	PID             int    `json:"pid"`
 	ProcessIdentity string `json:"processIdentity,omitempty"`
+	InstallationID  string `json:"installationId"`
 	PlatformRoot    string `json:"platformRoot"`
 }
 
@@ -108,15 +124,36 @@ func ReadRecord(state host.State) (Record, bool) {
 		_ = os.Remove(state.SupervisorPID())
 		return Record{}, false
 	}
-	if !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+	switch host.ProcessIdentityOf(record.PID, record.ProcessIdentity) {
+	case host.ProcessIdentityMatch:
+		if record.InstallationID != "" {
+			return record, true
+		}
+	case host.ProcessIdentityMismatch:
+	case host.ProcessIdentityUndetermined:
+	default:
 		return Record{}, false
 	}
-	return record, true
+	return Record{}, false
 }
 
-func StaleRecord(state host.State) (Record, bool) {
+func StaleRecord(state host.State) (Record, host.ProcessIdentityStatus, bool) {
 	record, ok := readRecordFile(state)
-	return record, ok && host.ProcessAlive(record.PID) && !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity)
+	if !ok || !host.ProcessAlive(record.PID) {
+		return record, host.ProcessIdentityUndetermined, false
+	}
+	if record.InstallationID == "" {
+		return record, host.ProcessIdentityUndetermined, true
+	}
+	identityStatus := host.ProcessIdentityOf(record.PID, record.ProcessIdentity)
+	switch identityStatus {
+	case host.ProcessIdentityMatch:
+		return Record{}, identityStatus, false
+	case host.ProcessIdentityMismatch, host.ProcessIdentityUndetermined:
+		return record, identityStatus, true
+	default:
+		return record, host.ProcessIdentityUndetermined, true
+	}
 }
 
 func readRecordFile(state host.State) (Record, bool) {
@@ -134,23 +171,23 @@ func readRecordFile(state host.State) (Record, bool) {
 
 // LivePID reports only a supervisor serving the requested platform root.
 func LivePID(state host.State, platformRoot string) (int, bool) {
-	root, err := filepath.Abs(platformRoot)
+	record, ok := ReadRecord(state)
+	if !ok {
+		return 0, false
+	}
+	installationID, err := versionroot.InstallationIDForPath(platformRoot)
 	if err != nil {
 		return 0, false
 	}
-	record, ok := ReadRecord(state)
-	if !ok || record.PlatformRoot != filepath.Clean(root) {
+	if record.InstallationID != installationID {
 		return 0, false
 	}
 	return record.PID, true
 }
 
 func Refusal(record Record, requestedRoot string) *diag.Diag {
-	root, err := filepath.Abs(requestedRoot)
-	if err != nil {
-		root = requestedRoot
-	}
-	if record.PlatformRoot == filepath.Clean(root) {
+	installationID, err := versionroot.InstallationIDForPath(requestedRoot)
+	if err == nil && record.InstallationID == installationID {
 		failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.",
 			"Use `"+contracts.ShellCommand("kb-create", "status", "--platform-root", requestedRoot)+"` or `"+
 				contracts.ShellCommand("kb-create", "restart", "--platform-root", requestedRoot)+"`.", nil)

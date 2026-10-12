@@ -1868,6 +1868,7 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, platform_root: P
     """Prove the per-user launcher never controls a different platform root."""
     journey = Journey(mode, f"doctor-root-isolation-{mode}")
     root = platform_root.parent / "installer-case-fixtures" / "s025-root-isolation"
+    main_receipt_id = json.loads((platform_root / "current/.kb/v2/receipt.json").read_text()).get("id")
 
     def repair_fixture_without_stopping_main() -> None:
         requirement = {"id": "fixture.default", "path": "/fixture/default", "required": True,
@@ -1885,6 +1886,12 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, platform_root: P
                             "main platform status after isolated-root repair")
         if main_status.get("host", {}).get("state") != "running":
             raise RuntimeError("repairing an isolated root stopped or replaced the main platform host")
+        for spelling in (platform_root, platform_root / "current", (platform_root / "current").resolve()):
+            spelling_status = _data(run_command([launcher, "status", "--platform-root", str(spelling), "--json"]),
+                                    f"main platform status through {spelling}")
+            if (spelling_status.get("host", {}).get("state") != "running"
+                    or spelling_status.get("installation", {}).get("receiptId") != main_receipt_id):
+                raise RuntimeError(f"status through {spelling} did not identify platform A's original running host")
 
     journey.step("repair an isolated root without stopping the running platform", "platform.install",
                  repair_fixture_without_stopping_main, cases=["S-025.7"])

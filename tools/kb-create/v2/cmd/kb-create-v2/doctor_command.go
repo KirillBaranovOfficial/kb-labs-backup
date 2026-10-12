@@ -51,7 +51,7 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	if root == "" {
 		root = defaultPlatformRoot()
 	}
-	layout, layoutErr := versionroot.New(root)
+	layout, layoutErr := versionroot.ForPlatformPath(root)
 	if layoutErr != nil {
 		return nil, unsupportedPlatformLayout(root, layoutErr)
 	}
