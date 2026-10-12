@@ -45,6 +45,7 @@ func TestProcessIdentityReaderReturnsThreeStates(t *testing.T) {
 	}{
 		{name: "match", reader: reader("recorded-token", nil), want: ProcessIdentityMatch},
 		{name: "mismatch", reader: reader("other-token", nil), want: ProcessIdentityMismatch},
+		{name: "missing launch token", reader: reader("", nil), want: ProcessIdentityMismatch},
 		{name: "undetermined", reader: reader("", errors.New("process environment unavailable")), want: ProcessIdentityUndetermined},
 	} {
 		t.Run(test.name, func(t *testing.T) {

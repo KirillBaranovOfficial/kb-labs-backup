@@ -657,6 +657,37 @@ func TestStartFailureWhenHostExits(t *testing.T) {
 	}
 }
 
+func TestStartIdentityTimeoutTerminatesAndReapsHost(t *testing.T) {
+	f := newRunner(t, 10, 5)
+	childPID := 0
+	f.runner.identityReader = func(pid int) (string, error) {
+		childPID = pid
+		return "", errors.New("injected process environment unavailable")
+	}
+	_, err := startProcessForTest(t, f.runner, context.Background())
+	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
+		t.Fatalf("code %s", code)
+	}
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Meta["waited"] == nil ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fakehost: ready") {
+		t.Fatalf("identity timeout diagnostic = %#v; want elapsed time and stderr tail", err)
+	}
+	if f.runner.pid != 0 {
+		t.Fatalf("runner retained child PID %d after failed start", f.runner.pid)
+	}
+	if childPID == 0 || processAlive(childPID) {
+		t.Fatalf("host child PID %d remains alive after failed start", childPID)
+	}
+	if _, statErr := os.Stat(f.runner.State.HostPID()); !os.IsNotExist(statErr) {
+		t.Fatalf("pid file must be absent after failed start: %v", statErr)
+	}
+	if conn, dialErr := net.DialTimeout("tcp", f.runner.Spec.HealthAddress(), 200*time.Millisecond); dialErr == nil {
+		_ = conn.Close()
+		t.Fatal("host listener remains after identity timeout")
+	}
+}
+
 func TestReadyTimeoutKillsHost(t *testing.T) {
 	f := newRunner(t, 1, 5, "-unhealthy")
 	_, err := startProcessForTest(t, f.runner, context.Background())

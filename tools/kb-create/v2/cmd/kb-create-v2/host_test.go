@@ -4,7 +4,9 @@ package v2cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -898,6 +900,39 @@ func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *tes
 	}
 	if !host.ProcessAlive(hostPID) {
 		t.Fatal("restart stopped the genuine host while rejecting the stale supervisor")
+	}
+}
+
+func TestSupervisorIdentityTimeoutTerminatesAndReapsChild(t *testing.T) {
+	inst := newInstallation(t)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(t.TempDir(), "supervisor-launcher")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childPID := 0
+	command := hostCommand{PlatformRoot: inst.root, Executable: launcher, identityWaitTimeout: time.Millisecond,
+		identityReader: func(pid int) (string, error) {
+			childPID = pid
+			return "", errors.New("injected process environment unavailable")
+		}}
+	_, err = command.spawnSupervisor(context.Background(), runner, state)
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_HOST_START_FAILED" || typed.Meta["waited"] == nil {
+		t.Fatalf("supervisor identity timeout = %#v; want typed elapsed startup failure", err)
+	}
+	if childPID == 0 || host.ProcessAlive(childPID) {
+		t.Fatalf("supervisor child PID %d remains alive after failed start", childPID)
+	}
+	if _, statErr := os.Stat(state.SupervisorPID()); !os.IsNotExist(statErr) {
+		t.Fatalf("supervisor pid file must be absent after failed start: %v", statErr)
 	}
 }
 

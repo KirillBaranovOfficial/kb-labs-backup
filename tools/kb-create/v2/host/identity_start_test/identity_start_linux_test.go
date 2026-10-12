@@ -3,9 +3,12 @@
 package identity_start
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,4 +93,75 @@ func TestExitedProcessIdentityIsUndetermined(t *testing.T) {
 	if got := host.ProcessIdentityOf(command.Process.Pid, identity); got != host.ProcessIdentityUndetermined {
 		t.Fatalf("exited process identity status = %v, want undetermined", got)
 	}
+}
+
+// TestExecChainIdentityChecks exercises the installed launch shape: a shebang
+// script enters an interpreter, then performs several exec transitions before
+// the final process waits on stdin. The first observation uses the old
+// immediate check; the second uses the bounded startup check.
+// case: PC-002.1
+func TestExecChainIdentityChecks(t *testing.T) {
+	directory := t.TempDir()
+	const transitions = 12
+	scripts := make([]string, transitions)
+	for index := range scripts {
+		scripts[index] = filepath.Join(directory, fmt.Sprintf("kb-host-%02d", index))
+	}
+	for index, script := range scripts {
+		next := "/bin/cat >/dev/null"
+		if index+1 < len(scripts) {
+			next = "/bin/sh " + shellQuote(scripts[index+1])
+		}
+		if err := os.WriteFile(script, []byte("#!/bin/sh\nexec "+next+"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const starts = 1000
+	oldUndetermined, oldMismatches, boundedFailures := 0, 0, 0
+	for index := range starts {
+		identity, err := host.NewProcessIdentityToken()
+		if err != nil {
+			t.Fatal(err)
+		}
+		process := exec.Command(scripts[0])
+		process.Env = host.ProcessEnvironmentWithIdentity(os.Environ(), identity)
+		process.Stdout, process.Stderr = io.Discard, io.Discard
+		stdin, err := process.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := process.Start(); err != nil {
+			t.Fatalf("start chain %d: %v", index, err)
+		}
+		exited := make(chan struct{})
+		waitErr := make(chan error, 1)
+		go func() {
+			waitErr <- process.Wait()
+			close(exited)
+		}()
+		switch got := host.ProcessIdentityOf(process.Process.Pid, identity); got {
+		case host.ProcessIdentityUndetermined:
+			oldUndetermined++
+			if !host.ProcessAlive(process.Process.Pid) {
+				t.Fatalf("chain %d was not alive after the immediate identity check returned undetermined", index)
+			}
+		case host.ProcessIdentityMismatch:
+			oldMismatches++
+		}
+		if got := host.WaitForProcessIdentity(process.Process.Pid, identity, exited, time.Second); got != host.ProcessIdentityMatch {
+			boundedFailures++
+		}
+		_ = stdin.Close()
+		if err := <-waitErr; err != nil {
+			t.Fatalf("exec chain %d exit: %v", index, err)
+		}
+	}
+	t.Logf("launch chain: old immediate undetermined %d/%d, mismatches %d/%d; bounded check failures %d/%d", oldUndetermined, starts, oldMismatches, starts, boundedFailures, starts)
+	if boundedFailures != 0 {
+		t.Fatalf("bounded identity verification failed %d/%d chained launches", boundedFailures, starts)
+	}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
