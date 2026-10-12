@@ -26,7 +26,8 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_i
                             project_plugin_settings_isolation, repository_git_status,
                             PROJECT_ID,
                             _prepare_and_export_mcp_projects,
-                            main as service_main, mcp_probe, run_grouped_service_steps, run_service_steps)
+                            journey_result_exit_code, main as service_main, mcp_probe,
+                            run_grouped_service_steps, run_service_steps)
 from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
 from invocations import run_pty_command, store_report_secret
 from steps.auth import run_secured_auth_steps
@@ -383,6 +384,33 @@ raise SystemExit(1)
         self.assertEqual(result.status, "PASS")
         self.assertEqual(result.details["selectionRole"], "lifecycle")
 
+    def test_selected_closure_state_consumer_without_edge_fails_and_exits_nonzero(self):
+        shared_state = {}
+
+        def produce_state():
+            shared_state["project"] = "registered"
+
+        def consume_state():
+            return shared_state["project"]
+
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": "S-042.1",
+            "KB_JOURNEY_PREREQUISITE_STEPS": "",
+        }, clear=False):
+            journey = Journey("local", "selected-closure-state-missing-edge")
+            producer = journey.step("closure state producer", "test", produce_state)
+            consumer = journey.step("closure state consumer", "test", consume_state,
+                                    cases=("S-042.1",))
+            result = journey.result()
+
+        self.assertEqual(producer.status, "SKIPPED")
+        self.assertEqual(consumer.status, "FAIL")
+        self.assertEqual(result.status, "FAIL")
+        self.assertEqual(result.case_run["claims"], [
+            {"claimId": "S-042.1", "kind": "journey", "status": "FAIL"},
+        ])
+        self.assertEqual(journey_result_exit_code(result), 1)
+
     def test_failed_prerequisite_blocks_the_selected_step_with_reason(self):
         def selection_environment(*, cases):
             return {
@@ -403,7 +431,7 @@ raise SystemExit(1)
         self.assertEqual(journey.result().case_run["claims"], [])
         self.assertEqual(journey.result().status, "FAIL")
 
-    def test_missing_prerequisite_blocks_selected_step_with_journey_status_blocked(self):
+    def test_unknown_required_producer_fails_selected_step_with_journey_status_fail(self):
         def selection_environment(*, cases):
             return {
                 "KB_JOURNEY_SELECTED_STEPS": cases[0],
@@ -414,22 +442,26 @@ raise SystemExit(1)
             target = journey.step("update", "platform.update", lambda: None, cases=["S-042.1"],
                                   requires=("step:unrun-prerequisite",))
 
-        self.assertEqual(target.status, "BLOCKED")
-        self.assertIn("unrun-prerequisite did not run before update", target.message)
-        self.assertEqual(journey.result().case_run["claims"], [])
-        self.assertEqual(journey.result().status, "BLOCKED")
+        self.assertEqual(target.status, "FAIL")
+        self.assertIn("harness defect: unknown journey prerequisite 'unrun-prerequisite'", target.message)
+        self.assertEqual(journey.result().case_run["claims"], [
+            {"claimId": "S-042.1", "kind": "journey", "status": "FAIL"},
+        ])
+        self.assertEqual(journey.result().status, "FAIL")
 
-    def test_reflected_recorder_still_blocks_unseen_runtime_dependency(self):
+    def test_reflected_recorder_unknown_producer_fails_selected_step(self):
         with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": "S-042.1"}, clear=False):
             journey = Journey("local", "reflected-recorder-prerequisite")
             recorder = getattr(journey, "step")
             target = recorder("update", "platform.update", lambda: None,
                               cases=["S-042.1"], requires=("step:unrun-prerequisite",))
 
-        self.assertEqual(target.status, "BLOCKED")
-        self.assertIn("step:unrun-prerequisite did not run before update", target.message)
-        self.assertEqual(journey.result().case_run["claims"], [])
-        self.assertEqual(journey.result().status, "BLOCKED")
+        self.assertEqual(target.status, "FAIL")
+        self.assertIn("harness defect: unknown journey prerequisite 'unrun-prerequisite'", target.message)
+        self.assertEqual(journey.result().case_run["claims"], [
+            {"claimId": "S-042.1", "kind": "journey", "status": "FAIL"},
+        ])
+        self.assertEqual(journey.result().status, "FAIL")
 
     def test_failed_host_start_blocks_nested_update_in_full_run(self):
         with patch.dict(os.environ, {

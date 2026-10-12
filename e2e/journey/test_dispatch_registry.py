@@ -16,7 +16,7 @@ from select_from_cases import (read_coverage_result, selection_from_coverage,
                                _step_declaration, _source_step_declarations,
                                _imported_journey_sources, selectors_from_coverage,
                                validate_dependency_declarations,
-                               validate_registered_state_dependencies,
+                               lint_direct_module_global_state_handoffs,
                                validate_runner_conditions, validate_journey_environment_reads,
                                full_runner_plans)
 from platform_update_steps import run_platform_update_steps
@@ -63,7 +63,7 @@ class DispatchRegistryTests(unittest.TestCase):
                          r"harness defect: undeclared dependency: reader 'project consumer' "
                          r"reads key 'project' from producer 'project setup'")
 
-    def test_state_rail_rejects_module_global_capture(self):
+    def test_module_global_state_lint_detects_shared_mutable_global(self):
         with tempfile.TemporaryDirectory(prefix="journey-global-state-rail-") as directory:
             root = Path(directory)
             (root / "fixture_steps.py").write_text(
@@ -76,10 +76,10 @@ class DispatchRegistryTests(unittest.TestCase):
                 'journey.step("consumer", "test", check)\n',
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, "registered callbacks share module-global mutable state"):
-                validate_registered_state_dependencies({"fixture_steps.py"}, root)
+            with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
 
-    def test_state_rail_rejects_attribute_held_state(self):
+    def test_module_global_state_lint_detects_attribute_held_global(self):
         with tempfile.TemporaryDirectory(prefix="journey-attribute-state-rail-") as directory:
             root = Path(directory)
             (root / "fixture_steps.py").write_text(
@@ -94,10 +94,10 @@ class DispatchRegistryTests(unittest.TestCase):
                 'journey.step("consumer", "test", check)\n',
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, "registered callbacks share module-global mutable state"):
-                validate_registered_state_dependencies({"fixture_steps.py"}, root)
+            with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
 
-    def test_state_rail_rejects_helper_mediated_global_read(self):
+    def test_module_global_state_lint_detects_helper_mediated_global_read(self):
         with tempfile.TemporaryDirectory(prefix="journey-helper-state-rail-") as directory:
             root = Path(directory)
             (root / "fixture_steps.py").write_text(
@@ -112,10 +112,10 @@ class DispatchRegistryTests(unittest.TestCase):
                 'journey.step("consumer", "test", check)\n',
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, "registered callbacks share module-global mutable state"):
-                validate_registered_state_dependencies({"fixture_steps.py"}, root)
+            with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
 
-    def test_environment_rail_rejects_kb_journey_read_outside_accessor(self):
+    def test_environment_lint_detects_literal_kb_journey_read_outside_accessor(self):
         with tempfile.TemporaryDirectory(prefix="journey-env-state-rail-") as directory:
             root = Path(directory)
             (root / "fixture_steps.py").write_text(
@@ -125,6 +125,40 @@ class DispatchRegistryTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "KB_JOURNEY_PROJECT_ID.*journey_values"):
                 validate_journey_environment_reads({"fixture_steps.py"}, root)
+
+    def test_environment_lint_rejects_computed_environment_key(self):
+        with tempfile.TemporaryDirectory(prefix="journey-dynamic-env-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'import os\n'
+                'def check(key):\n'
+                '    return os.environ.get(key)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "computed environment keys"):
+                validate_journey_environment_reads({"fixture_steps.py"}, root)
+
+    def test_journey_unknown_required_producer_is_runtime_contract_failure(self):
+        journey = Journey("local", "unknown-memory-producer")
+        result = journey.step("project consumer", "test", lambda: None,
+                              cases=("S-042.1",), requires=("step:missing project producer",))
+        self.assertEqual(result.status, "FAIL")
+        self.assertIn("unknown journey prerequisite 'missing project producer'", result.message)
+        self.assertEqual(journey.result().status, "FAIL")
+
+    def test_dependency_lint_rejects_unknown_required_producer(self):
+        with tempfile.TemporaryDirectory(prefix="journey-unknown-producer-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'def check(): return None\n'
+                'journey.step("project consumer", "test", check, '
+                'requires=("step:missing project producer",))\n',
+                encoding="utf-8",
+            )
+            with patch("select_from_cases.RUNNERS", {
+                    "fixture": SimpleNamespace(journey_sources=("fixture_steps.py",))}):
+                with self.assertRaisesRegex(ValueError, "does not resolve to a declared"):
+                    validate_dependency_declarations({"fixture_steps.py"}, root)
 
     def test_full_unselected_plan_matches_checked_in_golden(self):
         root = Path(__file__).resolve().parents[2]
@@ -415,7 +449,7 @@ class DispatchRegistryTests(unittest.TestCase):
                         r"fixture_steps.py:1: dependency declaration is not statically resolvable"):
                     validate_dependency_declarations({"fixture_steps.py"}, root)
 
-    def test_state_dependency_rail_rejects_undeclared_shared_state_read(self):
+    def test_module_global_state_lint_detects_shared_state_read(self):
         with tempfile.TemporaryDirectory(prefix="journey-state-dependency-rail-") as directory:
             root = Path(directory)
             (root / "fixture_steps.py").write_text(
@@ -428,10 +462,10 @@ class DispatchRegistryTests(unittest.TestCase):
                 'journey.step("project consumer", "test", consume)\n',
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, r"registered callbacks share module-global mutable state 'shared_state'"):
-                validate_registered_state_dependencies({"fixture_steps.py"}, root)
+            with self.assertRaisesRegex(ValueError, r"module-global-state lint detected.*'shared_state'"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
 
-    def test_state_dependency_rail_rejects_dynamic_key_read(self):
+    def test_module_global_state_lint_detects_dynamic_key_read(self):
         with tempfile.TemporaryDirectory(prefix="journey-dynamic-state-rail-") as directory:
             root = Path(directory)
             (root / "fixture_steps.py").write_text(
@@ -444,8 +478,8 @@ class DispatchRegistryTests(unittest.TestCase):
                 'journey.step("project consumer", "test", consume)\n',
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, r"registered callbacks share module-global mutable state 'shared_state'"):
-                validate_registered_state_dependencies({"fixture_steps.py"}, root)
+            with self.assertRaisesRegex(ValueError, r"module-global-state lint detected.*'shared_state'"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
 
     def test_runner_condition_rail_rejects_unowned_conditional_registration(self):
         with tempfile.TemporaryDirectory(prefix="journey-runner-condition-rail-") as directory:
