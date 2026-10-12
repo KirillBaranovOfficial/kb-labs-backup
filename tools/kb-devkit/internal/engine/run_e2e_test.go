@@ -73,7 +73,7 @@ func TestRunE2ECachesAndRestoresOutputs(t *testing.T) {
 	}
 
 	summary := second.Summary()
-	if summary.Total != 1 || summary.Cached != 1 || summary.Passed != 0 || summary.Failed != 0 {
+	if summary.Scheduled != 1 || summary.Cached != 1 || summary.Passed != 0 || summary.Failed != 0 || summary.Skipped != 0 {
 		t.Fatalf("unexpected summary: %+v", summary)
 	}
 }
@@ -118,7 +118,7 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	if second.OK || len(second.Results) != 1 || second.Results[0].Cached {
 		t.Fatalf("second run = %+v, want a fresh failed execution", second)
 	}
-	if summary := second.Summary(); summary.Total != 1 || summary.Passed != 0 || summary.Failed != 1 || summary.Cached != 0 {
+	if summary := second.Summary(); summary.Scheduled != 1 || summary.Passed != 0 || summary.Failed != 1 || summary.Cached != 0 || summary.Skipped != 0 {
 		t.Fatalf("second summary = %+v, want total=1 passed=0 failed=1 cached=0", summary)
 	}
 	if err := os.WriteFile(filepath.Join(root, "packages", "dependency.ready"), nil, 0o644); err != nil {
@@ -129,13 +129,65 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	if !third.OK || len(third.Results) != 1 || third.Results[0].Cached {
 		t.Fatalf("third run = %+v, want a fresh successful execution", third)
 	}
-	if summary := third.Summary(); summary.Total != 1 || summary.Passed != 1 || summary.Failed != 0 || summary.Cached != 0 {
+	if summary := third.Summary(); summary.Scheduled != 1 || summary.Passed != 1 || summary.Failed != 0 || summary.Cached != 0 || summary.Skipped != 0 {
 		t.Fatalf("third summary = %+v, want total=1 passed=1 failed=0 cached=0", summary)
 	}
 
 	fourth := run()
 	if !fourth.OK || len(fourth.Results) != 1 || !fourth.Results[0].Cached {
 		t.Fatalf("fourth run = %+v, want the successful task cached", fourth)
+	}
+}
+
+// case: S-179.23
+func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	writePkg(t, filepath.Join(root, "packages", "core"), `{"name":"@fixture/core"}`)
+	writePkg(t, filepath.Join(root, "packages", "middle"), `{"name":"@fixture/middle","dependencies":{"@fixture/core":"workspace:*"}}`)
+	writePkg(t, filepath.Join(root, "packages", "app"), `{"name":"@fixture/app","dependencies":{"@fixture/middle":"workspace:*"}}`)
+	app := filepath.Join(root, "packages", "app")
+
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "core", Category: config.CategoryConfig{Match: []string{"packages/core"}, Preset: "node-lib"}},
+		{Name: "libraries", Category: config.CategoryConfig{Match: []string{"packages/middle", "packages/app"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {
+			{Categories: []string{"core"}, Command: "false"},
+			{Categories: []string{"libraries"}, Command: "true", Deps: []string{"^build"}},
+		},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	var selected []workspace.Package
+	for _, pkg := range ws.Packages {
+		if pkg.Dir == app {
+			selected = append(selected, pkg)
+		}
+	}
+	if len(selected) != 1 {
+		t.Fatalf("selected app packages = %+v; want one", selected)
+	}
+
+	result, err := Run(ws, cfg, RunOptions{
+		Tasks:     []string{"build"},
+		Packages:  selected,
+		WSRoot:    root,
+		CacheRoot: filepath.Join(root, ".kb", "devkit-cache"),
+	})
+	if err != nil || result.OK || len(result.Results) != 1 {
+		t.Fatalf("failed dependency run = %+v, error = %v; want one failed root task", result, err)
+	}
+	summary := result.Summary()
+	if summary.Scheduled != 3 || summary.Passed != 0 || summary.Cached != 0 || summary.Failed != 1 || summary.Skipped != 2 {
+		t.Fatalf("failed dependency summary = %+v; want scheduled=3 failed=1 skipped=2", summary)
+	}
+	if summary.Passed+summary.Cached+summary.Failed+summary.Skipped != summary.Scheduled {
+		t.Fatalf("summary counts do not partition scheduled tasks: %+v", summary)
+	}
+	if len(summary.BlockedTasks) != 1 || summary.BlockedTasks[0].Package != "@fixture/core" ||
+		summary.BlockedTasks[0].Task != "build" || summary.BlockedTasks[0].Dependents != 2 {
+		t.Fatalf("blocked task details = %+v; want @fixture/core:build blocked 2 dependents", summary.BlockedTasks)
 	}
 }
 

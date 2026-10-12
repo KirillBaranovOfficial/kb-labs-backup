@@ -70,6 +70,35 @@ func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
 	}
 }
 
+func TestRenderDiag_JSONKeepsStructuredFailureDataAtResultLevel(t *testing.T) {
+	d := diag.New("KB_RUNTIME_COMMAND_FAILED", "The command could not complete.",
+		diag.WithData(map[string]any{
+			"summary": map[string]int{"scheduled": 3, "failed": 1, "skipped": 2},
+			"results": []map[string]any{{"package": "@fixture/core", "ok": false}},
+		}))
+	var out, herr bytes.Buffer
+	if code := RenderDiag(&out, &herr, d, ModeJSON); code != diag.ExitError {
+		t.Fatalf("exit = %d, want %d", code, diag.ExitError)
+	}
+	var env struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Summary map[string]int `json:"summary"`
+			Results []struct {
+				Package string `json:"package"`
+				OK      bool   `json:"ok"`
+			} `json:"results"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
+		t.Fatalf("decode output %q: %v", out.String(), err)
+	}
+	if env.OK || env.Data.Summary["scheduled"] != 3 || env.Data.Summary["failed"] != 1 ||
+		env.Data.Summary["skipped"] != 2 || len(env.Data.Results) != 1 || env.Data.Results[0].Package != "@fixture/core" {
+		t.Fatalf("failure envelope = %+v", env)
+	}
+}
+
 func TestRenderDiag_AgentOmitsMeta(t *testing.T) {
 	d := diag.New("KB_RUNTIME_UNEXPECTED", "x", diag.WithCorrelationID("corr-test"))
 	var out, herr bytes.Buffer

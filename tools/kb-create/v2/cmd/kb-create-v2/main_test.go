@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	goruntime "runtime"
 	"strings"
 	"testing"
@@ -1392,6 +1393,41 @@ func TestParseProvidersSupportsCommaSeparatedPreferences(t *testing.T) {
 	}
 	if _, err := parseProviders("storage=disk,storage=other"); err == nil {
 		t.Fatal("expected duplicate capability to fail")
+	}
+}
+
+// case: S-179.25
+func TestParseProvidersRejectsEmptyItems(t *testing.T) {
+	if _, err := parseProviders(",storage=disk-io-storage"); err == nil {
+		t.Fatal("expected an empty repeated provider item to fail")
+	}
+	if values, err := parseProviders(""); err != nil || len(values) != 0 {
+		t.Fatalf("no provider input = %#v / %v; want an empty preference set", values, err)
+	}
+}
+
+// case: S-179.25
+func TestExecuteResetsRepeatedProviderFlagBetweenInvocations(t *testing.T) {
+	var observed []string
+	root := newRootCommandWithDependencyFactory(func(command *cobra.Command) commandDependencies {
+		provider := command.Flags().Lookup("provider")
+		if provider == nil {
+			t.Error("actual kb-create command did not register --provider")
+		} else {
+			observed = append(observed, provider.Value.String())
+		}
+		return commandDependencies{}
+	})
+
+	for _, args := range [][]string{
+		{"plan", "--provider", "storage=first", "--json"},
+		{"plan", "--provider", "cache=second", "--json"},
+	} {
+		var stdout, stderr bytes.Buffer
+		clikitcommand.Execute(root, args, &stdout, &stderr)
+	}
+	if !reflect.DeepEqual(observed, []string{"storage=first", "cache=second"}) {
+		t.Fatalf("actual kb-create provider values by invocation = %#v; want only each invocation's non-empty values", observed)
 	}
 }
 
