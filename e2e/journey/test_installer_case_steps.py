@@ -424,7 +424,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                             "First administrator credentials (shown once)\nPassword: x18-journey-first-admin\n"
                             f"Verification: project registered. Next: run `'kb-create' 'status'` and "
                             f"`'kb' 'project' 'show' '{selected_path}'`.\n", "")
-                    result_data = {"operation": "install", "receipt": receipt_data}
+                    result_data = {"operation": "apply" if not first_install else "install", "receipt": receipt_data}
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": result_data}), "")
                 if args[1] == "update":
                     return subprocess.CompletedProcess(args, 0,
@@ -463,7 +463,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         "alreadyExisted": True}}), "")
                 if args[1] == "status":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
-                        "host": {"state": "running"}}}), "")
+                        "host": {"state": "running"}, "running": True, "reachable": True}}), "")
                 if args[1] == "auth":
                     if kwargs.get("input") != "x18-journey-first-admin\n":
                         return subprocess.CompletedProcess(args, 1, "", "missing password stdin")
