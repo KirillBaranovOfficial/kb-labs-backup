@@ -140,11 +140,13 @@ def probe_platform_state(graph: FlowGraph, env: dict[str, str], launcher: str,
 
 
 def record_case(name: str, passed: bool, message: str, *, cases: list[str],
-                requires: tuple[str, ...] = (), details: dict | None = None) -> None:
+                requires: tuple[str, ...] = (), details: dict | None = None,
+                runners: tuple[str, ...] = ()) -> None:
     if CASE_JOURNEY is None:
         return
     CASE_JOURNEY.step(name, "platform.install", lambda: None if passed else message, cases=cases,
-                      requires=requires, details=(lambda: details) if details is not None else None)
+                      requires=requires, details=(lambda: details) if details is not None else None,
+                      runners=runners)
 
 
 def handle_json_install_failure(operation: str, result: subprocess.CompletedProcess) -> bool:
@@ -674,11 +676,11 @@ def run_uninstall_group(env: dict[str, str], launcher: str) -> bool:
                             (str(PLATFORM), "services", "receipt", "snapshots", "Project files are kept"))
             record_case("human uninstall confirmation prompt", prompt_ok,
                        "uninstall prompt omitted its root, artifacts, receipt, snapshots, or project preservation",
-                       cases=["S-050.2"])
+                       cases=["S-050.2"], runners=("human:default", "human:nondefault"))
             human_uninstall_ok = (result.returncode == 0 and "uninstall" in result.stdout.lower())
             record_case("human confirmed uninstall", human_uninstall_ok,
                        "confirmed human uninstall did not show its completion summary",
-                       cases=["S-050.5"])
+                       cases=["S-050.5"], runners=("human:default", "human:nondefault"))
         else:
             try:
                 uninstall_payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
@@ -687,7 +689,8 @@ def run_uninstall_group(env: dict[str, str], launcher: str) -> bool:
             uninstall_ok = (result.returncode == 0 and uninstall_payload.get("operation") == "uninstall"
                             and bool(uninstall_payload.get("snapshot")) and bool(uninstall_payload.get("logPath")))
             record_case("agent confirmed uninstall", uninstall_ok,
-                       "agent uninstall result omitted operation, snapshot, or logPath", cases=["S-050.6"])
+                       "agent uninstall result omitted operation, snapshot, or logPath", cases=["S-050.6"],
+                       runners=("agent:commit", "agent-secured:commit"))
         alive = [p for p in PROCESSES if p.poll() is None]
         listeners, _ = run(["ss", "-H", "-ltnp"], timeout=20)
         platform_pids = set()
@@ -833,6 +836,7 @@ def main():
         append_summary(passed)
         return 0 if passed else failure_exit()
     first_admin_shown_once = False
+    install_plan_summary_ok = False
     if FRONT == "human" and not VARIANT.endswith("secured"):
         PROJECT.mkdir(parents=True, exist_ok=True)
         choice = "commit" if VARIANT == "human-nondefault" else ""
@@ -866,7 +870,9 @@ def main():
         if FRONT == "human" and not VARIANT.endswith("secured"):
             record_case("human interactive install",
                        human_install_ok, "interactive install did not show a plan and success result",
-                       cases=["PC-001.2", "S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3", "S-203.10"])
+                       cases=["S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3", "S-203.10"],
+                       requires=("step:candidate provenance",),
+                       runners=("human:default", "human:nondefault"))
     else:
         operation = "plan" if VARIANT in {"input", "relative-path"} else "install"
         PROJECT.mkdir(parents=True, exist_ok=True)
@@ -913,15 +919,23 @@ def main():
             stream_meta = terminal.get("meta", {}).get("stream", {}) if isinstance(terminal, dict) else {}
             result_records = [record for record in records if isinstance(record, dict)
                               and record.get("meta", {}).get("stream", {}).get("result") is True]
+            install_receipt = result_records[0].get("data", {}).get("receipt", {}) if len(result_records) == 1 else {}
+            install_plan = install_receipt.get("plan", {}) if isinstance(install_receipt, dict) else {}
+            install_plan_summary_ok = (isinstance(install_plan, dict)
+                                       and bool(install_plan.get("serviceGraph", {}).get("platformVersion"))
+                                       and bool(install_plan.get("artifacts")))
             install_ok = (result.returncode == 0 and bool(records)
                           and terminal.get("ok") is True and terminal.get("data", "not-null") is None
                           and stream_meta.get("terminal") is True and stream_meta.get("exitCode") == 0
                           and len(result_records) == 1
                           and result_records[0].get("ok") is True
-                          and isinstance(result_records[0].get("data"), dict))
+                          and isinstance(result_records[0].get("data"), dict)
+                          and install_plan_summary_ok)
             record_case("JSON install progress", install_ok,
                        "install stream omitted progress or its terminal success record",
-                       cases=["S-203.10", "S-203.13"])
+                       cases=["S-203.10", "S-203.13"],
+                       runners=("agent:commit", "agent-secured:commit", "service-local:explore",
+                                "service-secured:explore"))
             if not install_ok:
                 fail("kb-create install --json: stream did not finish successfully")
             if VARIANT.endswith("secured"):
@@ -968,11 +982,13 @@ def main():
                        and bool(plan_payload.get("artifacts")) and bool(plan_payload.get("serviceGraph")))
             record_case("agent plan", plan_ok,
                        "plan omitted the isolated root, resolved artifacts, or service graph", cases=["PC-001.3"],
-                       requires=("step:launcher version",))
+                       requires=("step:launcher version",),
+                       runners=("agent-input:commit", "agent-relative:commit"))
         elif operation == "install":
             if FRONT_DOOR == "agent":
                 record_case("agent JSON install", install_ok,
-                            "agent install stream omitted progress or terminal success", cases=["S-203.10"])
+                            "agent install stream omitted progress or terminal success", cases=["S-203.10"],
+                            runners=("agent:commit", "agent-secured:commit", "service-local:explore"))
         if VARIANT.endswith("secured"):
             env.setdefault("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
         if VARIANT == "input":
@@ -1016,14 +1032,21 @@ def main():
                            and installed_state.get("state") == "running")
     except (json.JSONDecodeError, AttributeError):
         install_running = False
-    install_cases = ["S-039.2"] if FRONT_DOOR == "agent" else ["S-040.3"]
-    record_case("post-install running status", install_running,
-                "successful install did not leave a running, reachable host", cases=install_cases)
-    install_step_passed = install_running and (mode != "secured" or first_admin_shown_once)
-    record_case("clean install leaves a running host and returns secured credentials once",
-                install_step_passed,
-                "install did not leave the host running or return the secured credential exactly once",
-                cases=["PC-001.2"], requires=("step:candidate provenance",))
+    if FRONT_DOOR == "agent":
+        record_case("post-install running status", install_running,
+                    "successful install did not leave a running, reachable host", cases=["S-039.2"],
+                    runners=("agent:commit", "agent-secured:commit"))
+    else:
+        record_case("post-install running status", install_running,
+                    "successful install did not leave a running, reachable host", cases=["S-040.3"],
+                    requires=("step:candidate provenance",),
+                    runners=("human:default", "human:nondefault"))
+    record_case("clean install leaves a running host and reports its resolved plan",
+                install_running and install_plan_summary_ok and (mode != "secured" or first_admin_shown_once),
+                "install did not leave a reachable host, return one result with a resolved plan, or return the secured credential exactly once",
+                cases=["PC-001.2"], requires=("step:candidate provenance",),
+                runners=("agent:commit", "agent-secured:commit", "service-local:explore",
+                         "service-secured:explore"))
     installed_doctor, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"],
                               env=env, timeout=120)
     try:
@@ -1250,10 +1273,12 @@ def main():
                        cases=["PC-001.6", "PC-003.1", "S-039.3"])
             if FRONT_DOOR == "human" and not VARIANT.endswith("secured"):
                 record_case("human install doctor", passed,
-                           "doctor JSON did not report a healthy installation", cases=["S-040.4"])
+                           "doctor JSON did not report a healthy installation", cases=["S-040.4"],
+                           runners=("human:default", "human:nondefault"))
             if mode == "secured":
                 record_case("post-restart doctor", passed,
-                           "doctor JSON did not report a healthy platform after restart", cases=["PC-004.3"])
+                           "doctor JSON did not report a healthy platform after restart", cases=["PC-004.3"],
+                           runners=("agent-secured:commit", "service-secured:explore"))
         elif key and not re.search(key, result.stdout, re.I | re.S):
             write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: {command}-output ==\n{result.stdout[-5000:]}\n", env=env)
             fail(f"kb-create {command}: expected human summary '{key}'")
@@ -1276,13 +1301,17 @@ def main():
                        cases=["PC-001.7", "PC-002.2"])
             if FRONT_DOOR == "agent":
                 record_case("agent status", status_ok,
-                           "status JSON did not match the apply receipt", cases=["S-039.2"])
+                           "status JSON did not match the apply receipt", cases=["S-039.2"],
+                           runners=("agent:commit", "agent-secured:commit", "service-local:explore"))
             if FRONT_DOOR == "human" and not VARIANT.endswith("secured"):
                 record_case("human install status", status_ok,
-                           "status JSON did not report a running installation", cases=["S-040.3"])
+                           "status JSON did not report a running installation", cases=["S-040.3"],
+                           requires=("step:candidate provenance",),
+                           runners=("human:default", "human:nondefault"))
             if mode == "secured":
                 record_case("post-restart status", status_ok,
-                           "status JSON did not report a running host after restart", cases=["PC-004.2"])
+                           "status JSON did not report a running host after restart", cases=["PC-004.2"],
+                           runners=("agent-secured:commit", "service-secured:explore"))
 
     verify_broken_install_doctor(launcher, env)
 
@@ -1443,7 +1472,8 @@ def main():
             return None if lint.returncode == 0 else (
                 f"`kb workflow lint --json` exited {lint.returncode}; {' '.join(lint.stdout.split())[-500:]}")
         outer_graph.flow("workflow fixture lint", "workflow", "workflow", lint_workflow_fixture,
-                         cases=["S-002.1"])
+                         cases=["S-002.1"],
+                         runners=("service-local:explore", "service-secured:explore"))
         capture_case_failure()
         outer_graph.probe_state(
             "workflow-ready", "project", "workflow fixture preparation",
@@ -1451,7 +1481,7 @@ def main():
             else "workflow fixture e2e-hello.yml is missing",
         )
         auth_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-auth-{mode}.json")
-        auth_journey = Journey(mode, f"auth-{mode}")
+        auth_journey = Journey(mode, f"auth-{mode}", parent=CASE_JOURNEY)
         if mode == "secured":
             from secured_connection_steps import register_secured_connection_steps
             register_secured_connection_steps(auth_journey, service_env)
@@ -1471,18 +1501,21 @@ def main():
 
         auth_capability = "auth.local" if mode == "local" else "auth.invite-reset"
         if mode == "local":
-            auth_journey.step("local identity", auth_capability, run_auth_flow, cases=["S-041.1"])
+            auth_journey.step("local identity", auth_capability, run_auth_flow, cases=["S-041.1"],
+                              requires=("flow:start platform host", "flow:verify installed project registration"),
+                              runners=("service-local:explore",))
             auth_journey.step("local CLI status", "auth.local",
                               lambda: run_cli_auth_status(str(BIN / "kb"), env, authenticated=False),
-                              cases=["S-041.5"])
+                              cases=["S-041.5"], runners=("service-local:explore",))
         else:
             auth_journey.step(
                 "corrupt saved CLI session returns the repair envelope", "auth.accounts",
                 lambda: run_cli_corrupt_session_file(str(BIN / "kb"), service_env),
-                cases=["S-041.18"],
+                cases=["S-041.18"], runners=("service-secured:explore",),
             )
             auth_journey.step("admin invite, reset, and restart persistence", auth_capability, run_auth_flow,
-                              cases=["S-041.2", "S-041.3", "S-104.6"])
+                              cases=["S-041.2", "S-041.3", "S-104.6"],
+                              runners=("service-secured:explore",))
 
             def bootstrap_admin_status():
                 if not first_admin_shown_once:
@@ -1495,7 +1528,7 @@ def main():
             auth_journey.step(
                 "bootstrap administrator CLI status", "auth.accounts",
                 bootstrap_admin_status,
-                cases=["S-100.1"],
+                cases=["S-100.1"], runners=("service-secured:explore",),
             )
             recovered_password = "JourneyRecovered123!"
 
@@ -1524,6 +1557,7 @@ def main():
                 "bootstrap administrator recovery", "auth.accounts",
                 bootstrap_admin_recovery,
                 cases=["S-100.2", "S-100.3", "S-100.4"],
+                runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "tenant API token lifecycle",
@@ -1536,6 +1570,7 @@ def main():
                     "JourneyReplacement123!",
                 ),
                 cases=["S-103.1", "S-103.2", "S-103.3", "S-103.4", "S-103.5"],
+                runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "last active administrator cannot be disabled or demoted",
@@ -1545,6 +1580,7 @@ def main():
                     service_env["KB_JOURNEY_ADMIN_PASSWORD"],
                 ),
                 cases=["S-104.7"],
+                runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "revoke pending invites and reject invalid activation tokens",
@@ -1554,6 +1590,7 @@ def main():
                     service_env["KB_JOURNEY_ADMIN_PASSWORD"],
                 ),
                 cases=["S-105.1", "S-105.2", "S-105.3", "S-105.4"],
+                runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "member CLI login and token listing", "auth.accounts",
@@ -1561,23 +1598,24 @@ def main():
                                             email="auth-reset-member@example.test",
                                             password="JourneyReplacement123!",
                                             base_url="http://127.0.0.1:4000"),
-                cases=["S-041.6"],
+                cases=["S-041.6"], runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "member reset-link command returns the shared permission envelope", "auth.accounts",
                 lambda: run_cli_auth_forbidden(str(BIN / "kb"), service_env),
-                cases=["S-041.9"],
+                cases=["S-041.9"], runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "change password and manage browser sessions", "auth.accounts",
                 lambda: run_password_and_session_steps(
                     "http://127.0.0.1:4000", "auth-reset-member@example.test", "JourneyReplacement123!"),
                 cases=["S-101.1", "S-101.2", "S-101.3", "S-102.1", "S-102.2"],
+                runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "CLI logout clears saved session", "auth.accounts",
                 lambda: run_cli_logout_steps(str(BIN / "kb"), service_env),
-                cases=["S-102.3"],
+                cases=["S-102.3"], runners=("service-secured:explore",),
             )
         auth_result = auth_journey.write_json(auth_report)
         if auth_result.status != "PASS":
@@ -1663,6 +1701,7 @@ def main():
                 restart_host=restart_for_workflow_history,
             ),
             cases=workflow_claims, record_empty_success=False,
+            runners=("service-local:explore", "service-secured:explore"),
         )
         project_b_root_value = service_env["KB_JOURNEY_PROJECT_B_ROOT"]
         project_b_id = service_env["KB_JOURNEY_PROJECT_B_ID"]
@@ -1875,7 +1914,8 @@ def main():
             return None if studio_passed else studio_message
 
         outer_graph.flow("Studio browser journey", "studio", "studio",
-                         run_studio_browser_group, cases=studio_claims.split(","))
+                         run_studio_browser_group, cases=studio_claims.split(","),
+                         runners=("service-local:explore", "service-secured:explore"))
         capture_case_failure()
 
     if source_selected(run_platform_update_variant_steps.__code__.co_filename):

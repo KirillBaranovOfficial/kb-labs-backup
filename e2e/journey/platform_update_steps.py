@@ -349,7 +349,8 @@ def run_platform_update_steps(
         _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after update")
 
     journey.step("verify installed version and pending restart while old host serves", "platform.update", verify_updated_install,
-                 cases=["S-023.4", "PC-001.13"])
+                 cases=["S-023.4", "PC-001.13"],
+                 requires=("step:save installed receipt, config, and host status",))
 
     def project_command() -> None:
         nonlocal saved_session_succeeded_after_update
@@ -554,7 +555,9 @@ def run_platform_update_steps(
         _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after rollback")
 
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
-                 cases=["S-024.3", "S-041.4", "PC-001.14"] if verify_user is not None else ["S-024.3", "PC-001.14"], details=checkpoint_details)
+                 cases=["S-024.3", "S-041.4", "PC-001.14"] if verify_user is not None else ["S-024.3", "PC-001.14"],
+                 details=checkpoint_details,
+                 requires=("step:save installed receipt, config, and host status",))
 
     if verify_user is not None:
         def login_after_rollback() -> None:

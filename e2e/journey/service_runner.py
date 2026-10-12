@@ -395,8 +395,8 @@ def expect_project_service_health(path: str, service_id: str, *, token="") -> st
     return None
 
 
-def service_check(name, capability, check, *, cases=(), requires=()):
-    return name, capability, check, list(cases), tuple(requires)
+def service_check(name, capability, check, *, cases=(), requires=(), runners=()):
+    return name, capability, check, list(cases), tuple(requires), tuple(runners)
 
 
 def _checks(mode: str):
@@ -500,10 +500,11 @@ def _checks(mode: str):
                         cases=["S-045.3"])
     if mode == "local":
         yield service_check("project MCP tokenless local access", "mcp", lambda: local_auth(pid),
-                            cases=["S-045.4"])
+                            cases=["S-045.4"], runners=("service-local:explore",))
     else:
         yield service_check("project MCP secured missing and invalid token rejection", "mcp",
-                            lambda: secured_auth(pid), cases=["S-045.5", "S-140.6"])
+                            lambda: secured_auth(pid), cases=["S-045.5", "S-140.6"],
+                            runners=("service-secured:explore",))
     yield service_check("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid, auth_token()),
                         cases=["S-140.1"])
     project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT", "")
@@ -521,11 +522,12 @@ def _checks(mode: str):
     if mode == "secured":
         yield service_check("MCP UX result contract from live registry", "mcp",
                             lambda: mcp_ux_result_contract(pid, auth_token(), secured=True),
-                            cases=["S-203.2", "S-203.6", "S-045.6", "S-140.7"])
+                            cases=["S-203.2", "S-203.6", "S-045.6", "S-140.7"],
+                            runners=("service-secured:explore",))
     else:
         yield service_check("MCP UX result contract from live registry", "mcp",
                             lambda: mcp_ux_result_contract(pid, auth_token(), secured=False),
-                            cases=["S-203.2", "S-203.6"])
+                            cases=["S-203.2", "S-203.6"], runners=("service-local:explore",))
     project_b_id = os.getenv("KB_JOURNEY_PROJECT_B_ID", "")
     project_b_root = os.getenv("KB_JOURNEY_PROJECT_B_ROOT", "")
     if project_b_id and project_b_root:
@@ -541,7 +543,7 @@ def _checks(mode: str):
         if mode == "secured":
             yield service_check("secured project MCP catalog selection", "mcp",
                                 lambda: secured_project_catalog_isolation(pid, project_b_id, auth_token()),
-                                cases=["S-199.5"])
+                                cases=["S-199.5"], runners=("service-secured:explore",))
     else:
         yield service_check("project MCP cross-project isolation", "mcp",
                             lambda: "BLOCKED: register project B and provide KB_JOURNEY_PROJECT_B_ID and KB_JOURNEY_PROJECT_B_ROOT",
@@ -558,7 +560,7 @@ def checks(mode: str):
 
 def declared_capabilities(mode: str) -> set[str]:
     """Return every capability the selected service profile promises to check."""
-    capabilities = {capability for _, capability, _, _, _ in checks(mode)}
+    capabilities = {capability for _, capability, _, _, _, _ in checks(mode)}
     capabilities.add("auth.local" if mode == "local" else "auth.invite-reset")
     capabilities.add("plugin-author")
     return capabilities
@@ -699,7 +701,7 @@ def run_grouped_service_steps(journey: Journey, steps, mode: str = "local", grou
     }
     flow_graph = graph or FlowGraph(
         journey, {name: spec["depends_on"] for name, spec in group_specs.items()}, states=states)
-    for name, capability, check, cases, requires in steps:
+    for name, capability, check, cases, requires, runners in steps:
         group = capability_groups.get(capability, capability)
 
         def prerequisite_failure() -> str | None:
@@ -717,10 +719,10 @@ def run_grouped_service_steps(journey: Journey, steps, mode: str = "local", grou
         if selected or prerequisite:
             failure = prerequisite_failure()
             if failure:
-                journey.step(name, capability, lambda: f"BLOCKED: {failure}", cases=cases)
+                journey.step(name, capability, lambda: f"BLOCKED: {failure}", cases=cases, runners=runners)
                 continue
 
-        flow_graph.step(name, group, capability, check, cases=cases)
+        flow_graph.step(name, group, capability, check, cases=cases, runners=runners)
 
 
 def run_service_steps(journey: Journey, steps, mode: str = "local", states=None,

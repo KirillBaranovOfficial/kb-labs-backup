@@ -54,6 +54,17 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
         prerequisites = keywords.get("requires")
         role = keywords.get("role")
+        runners_node = keywords.get("runners")
+        runners = []
+        if runners_node is not None:
+            if not isinstance(runners_node, (ast.Tuple, ast.List)):
+                raise ValueError(f"runners= in {source}:{call.lineno} must contain literal runner selectors")
+            for item in runners_node.elts:
+                if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+                    raise ValueError(f"runners= in {source}:{call.lineno} must contain literal runner selectors")
+                if item.value not in RUNNERS:
+                    raise ValueError(f"{source}:{call.lineno}: unknown registered journey runner {item.value!r}")
+                runners.append(item.value)
         function = call.func.attr if isinstance(call.func, ast.Attribute) else (
             call.func.id if isinstance(call.func, ast.Name) else "")
         if prerequisites is None:
@@ -71,7 +82,7 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
             raise ValueError(f"step {name!r} in {source} must declare prerequisites as a literal sequence")
         role_name = role.value if isinstance(role, ast.Constant) else None
         declaration = {"name": name, "kind": "flow" if function == "flow" else "step",
-                       "requires": required, "role": role_name}
+                       "requires": required, "role": role_name, "runners": runners}
         for line in range(call.lineno, call.end_lineno + 1):
             declarations.setdefault(line, declaration)
     return declarations
@@ -218,24 +229,27 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
                 forwarding_call_sites[call_name(node)].append((source, node))
 
     def add_declaration(source: str, line: int, kind: str, name: str | None,
-                        required: list[str], role: str | None) -> None:
+                        required: list[str], role: str | None, runners: list[str]) -> None:
         # Dynamic step names can carry checked edges, but are not selector
         # producers. Only a literal name or a statically resolved wrapper
         # call site can enter the producer graph.
         if name is None:
             key = f"@dynamic:{source}:{line}"
             declarations[key] = {"name": None, "kind": kind, "requires": required,
-                                 "sources": {source}, "role": role, "locations": [(source, line, required)],
+                                 "sources": {source}, "role": role, "runners": runners,
+                                 "locations": [(source, line, required)],
                                  "producer": False}
             return
         key = str(Dependency(kind, name))
         declaration = declarations.setdefault(key, {"name": name, "kind": kind, "requires": [],
-                                                    "sources": set(), "role": role, "locations": []})
+                                                    "sources": set(), "role": role, "runners": [],
+                                                    "locations": []})
         declaration["requires"] = sorted(set(declaration["requires"]) | set(required))
         declaration["sources"].add(source)
         declaration["locations"].append((source, line, required))
         if role is not None:
             declaration["role"] = role
+        declaration["runners"] = sorted(set(declaration.get("runners", [])) | set(runners))
 
     for source in sources:
         tree = trees.get(source)
@@ -303,7 +317,7 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
                     if call_name_value is None:
                         raise ValueError(f"{call_source}:{call_site.lineno}: dependency declaration is not statically resolvable")
                     add_declaration(call_source, call_site.lineno, kind, call_name_value,
-                                    call_required, None)
+                                    call_required, None, [])
                 continue
             else:
                 raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
@@ -312,19 +326,163 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
             kind = "flow" if call_name(node) == "flow" else "step"
             role_node = keywords.get("role")
             role = role_node.value if isinstance(role_node, ast.Constant) else None
-            add_declaration(source, node.lineno, kind, name, required, role)
+            runners_node = keywords.get("runners")
+            runners = [item.value for item in runners_node.elts
+                       if isinstance(item, ast.Constant) and isinstance(item.value, str)] \
+                if isinstance(runners_node, (ast.Tuple, ast.List)) else []
+            add_declaration(source, node.lineno, kind, name, required, role, runners)
     return declarations
 
 
 def validate_dependency_declarations(sources: set[str], root: Path) -> dict[str, dict]:
     """Reject unresolved edges against the declarations reachable by either journey runner."""
+    return _validate_dependency_declarations_cached(tuple(sorted(sources)), root)
+
+
+@lru_cache(maxsize=None)
+def _validate_dependency_declarations_cached(sources: tuple[str, ...], root: Path) -> dict[str, dict]:
     entrypoints = sorted({source for runner in RUNNERS.values() for source in runner.journey_sources})
     reachable = {entry: _imported_journey_sources({entry}, root) for entry in entrypoints}
-    declarations = _source_step_declarations(sources, root)
+    declarations = _source_step_declarations(set(sources), root)
     graphs = {entry: _source_step_declarations_cached(tuple(sorted(graph)), root)
               for entry, graph in reachable.items()}
     validate_dependency_edges(declarations, reachable, graphs)
+    reachable_sources = set().union(*reachable.values()) if reachable else set()
+    validate_registered_state_dependencies(reachable_sources, root)
+    validate_runner_conditions(reachable_sources, root)
     return declarations
+
+
+def validate_registered_state_dependencies(sources: set[str], root: Path) -> None:
+    """Require an edge when one registered callback reads mutable state another writes."""
+    _validate_registered_state_dependencies_cached(tuple(sorted(sources)), root)
+
+
+def validate_runner_conditions(sources: set[str], root: Path) -> None:
+    """Require variant ownership on registrations nested under runner-context branches."""
+    dimensions = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
+                  "local_service_journey", "secured_service_journey", "BASE_ENV"}
+    for source in sorted(sources):
+        if not source.endswith(".py"):
+            continue
+        tree = _source_tree(source, root)
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call):
+                continue
+            keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+            cases = keywords.get("cases")
+            if not isinstance(cases, (ast.List, ast.Tuple)) or not any(
+                    isinstance(item, ast.Constant) and isinstance(item.value, str) for item in cases.elts):
+                continue
+            if keywords.get("runners") is not None:
+                continue
+            current = parents.get(call)
+            while current is not None:
+                if isinstance(current, ast.If):
+                    referenced = {node.id for node in ast.walk(current.test) if isinstance(node, ast.Name)}
+                    if referenced.intersection(dimensions):
+                        raise ValueError(
+                            f"{source}:{call.lineno}: claim registration is conditional on runner context; "
+                            "declare its executable runners= variants"
+                        )
+                current = parents.get(current)
+
+
+@lru_cache(maxsize=None)
+def _validate_registered_state_dependencies_cached(sources: tuple[str, ...], root: Path) -> None:
+    registrations: list[tuple[str, str, int, str, set[str], set[str], set[str]]] = []
+    callback_accesses: dict[ast.AST, tuple[set[str], set[str]]] = {}
+    for source in sources:
+        if not source.endswith(".py"):
+            continue
+        tree = _source_tree(source, root)
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        functions = {node.name: node for node in ast.walk(tree)
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call):
+                continue
+            function_name = call.func.attr if isinstance(call.func, ast.Attribute) else (
+                call.func.id if isinstance(call.func, ast.Name) else "")
+            if function_name not in {"step", "flow", "service_check"}:
+                continue
+            callback_index = 3 if function_name == "flow" else 2
+            if len(call.args) <= callback_index:
+                continue
+            callback = call.args[callback_index]
+            if isinstance(callback, ast.Name):
+                callback = functions.get(callback.id)
+            if not isinstance(callback, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            name_node = call.args[0] if call.args else None
+            name = name_node.value if isinstance(name_node, ast.Constant) and isinstance(name_node.value, str) else None
+            if name is None:
+                continue
+            scope_node = parents.get(call)
+            while scope_node is not None and not isinstance(scope_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scope_node = parents.get(scope_node)
+            scope = scope_node.name if scope_node is not None else "<module>"
+            keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+            requires_node = keywords.get("requires")
+            requires = {item.value for item in requires_node.elts
+                        if isinstance(item, ast.Constant) and isinstance(item.value, str)} \
+                if isinstance(requires_node, (ast.Tuple, ast.List)) else set()
+            if callback not in callback_accesses:
+                reads: set[str] = set()
+                writes: set[str] = set()
+                callback_locals = {node.id for node in ast.walk(callback)
+                                   if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+                for node in ast.walk(callback):
+                    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+                        key = (node.slice.value if isinstance(node.slice, ast.Constant)
+                               and isinstance(node.slice.value, str) else "*")
+                        target = writes if isinstance(node.ctx, ast.Store) else reads if isinstance(node.ctx, ast.Load) else None
+                        if target is not None:
+                            target.add(f"{node.value.id}[{key}]")
+                    elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                          and isinstance(node.func.value, ast.Name)):
+                        state_name = node.func.value.id
+                        if node.func.attr in {"get", "pop", "setdefault"}:
+                            key_node = node.args[0] if node.args else None
+                            key = (key_node.value if isinstance(key_node, ast.Constant)
+                                   and isinstance(key_node.value, str) else "*")
+                            reads.add(f"{state_name}[{key}]")
+                            if node.func.attr in {"pop", "setdefault"}:
+                                writes.add(f"{state_name}[{key}]")
+                        elif node.func.attr == "update":
+                            writes.update(f"{state_name}[{keyword.arg}]"
+                                          for keyword in node.keywords if keyword.arg is not None)
+                            if node.args:
+                                writes.add(f"{state_name}[*]")
+                reads = {state for state in reads if state.split("[", 1)[0] not in callback_locals}
+                writes = {state for state in writes if state.split("[", 1)[0] not in callback_locals}
+                callback_accesses[callback] = reads, writes
+            reads, writes = callback_accesses[callback]
+            registrations.append((source, scope, call.lineno, name, requires, reads, writes))
+
+    writers: dict[tuple[str, str, str], list[tuple[str, str]]] = {}
+    for source, scope, _, name, _, _, writes in registrations:
+        for state_name in writes:
+            writers.setdefault((source, scope, state_name), []).append((source, name))
+    for source, scope, line, name, requires, reads, _ in registrations:
+        for state_name in sorted(reads):
+            variable, key = state_name[:-1].split("[", 1)
+            possible_writes = [write for (write_source, write_scope, write_name), values in writers.items()
+                               if write_source == source and write_scope == scope
+                               and write_name.split("[", 1)[0] == variable
+                               and (key == "*" or write_name.endswith("[*]")
+                                    or write_name.endswith(f"[{key}]"))
+                               for write in values]
+            for producer_source, producer_name in possible_writes:
+                if producer_source == source and producer_name == name:
+                    continue
+                dependency = f"step:{producer_name}"
+                if dependency not in requires:
+                    raise ValueError(
+                        f"{source}:{line}: registered step {name!r} reads shared state {state_name!r} "
+                        f"written by {producer_name!r} without requires=(\"{dependency}\",)"
+                    )
 
 
 def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str, set[str]],
@@ -342,7 +500,8 @@ def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str
 
 def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[str]],
                       declarations_by_step: dict[str, list[dict]], declarations_by_name: dict[str, dict],
-                      owners_by_step: dict[str, dict[str, set[str]]], only: str = "") -> dict:
+                      owners_by_step: dict[str, dict[str, set[str]]], only: str = "",
+                      ineligible_by_step: dict[str, set[str]] | None = None) -> dict:
     """Resolve selected claims to their runner and transitive declared prerequisites."""
     selected = set(selected_steps)
     names: set[str] = set()
@@ -370,6 +529,21 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
     for step_id in selected:
         for runner, claims in owners_by_step.get(step_id, {}).items():
             owners.setdefault(runner, set()).update(claims)
+    ineligible_by_step = ineligible_by_step or {}
+    unowned = sorted(step_id for step_id in selected
+                     if not any(step_id in claims for claims in owners.values()))
+    if unowned:
+        routes = []
+        for step_id in unowned:
+            candidates = sorted(ineligible_by_step.get(step_id, set()))
+            if candidates:
+                routes.extend(f"{step_id} is registered on {selector} ({'secured' if RUNNERS[selector].variant.endswith('secured') else 'local'} mode): "
+                              f"KB_JOURNEY_CASES={step_id} KB_JOURNEY_ONLY={selector} e2e/journey/run.sh --no-build"
+                              for selector in candidates)
+            else:
+                routes.append(f"{step_id} has no eligible runner variant; register the claim on its executable step")
+        raise ValueError("selected claims have no executable registration for the requested mode: "
+                         + ", ".join(unowned) + ". Available registrations: " + "; ".join(routes))
     requested_selectors = set(filter(None, only.split(",")))
     requested_runners = {
         runner
@@ -437,6 +611,7 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
     sources_by_step: dict[str, set[str]] = {}
     declarations_by_step: dict[str, dict] = {}
     owners_by_step: dict[str, dict[str, set[str]]] = {}
+    ineligible_by_step: dict[str, set[str]] = {}
     unclaimed_by_case: dict[str, set[str]] = {}
     root = Path(__file__).resolve().parents[2]
     for coverage in results:
@@ -464,9 +639,17 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                         if not source.startswith(("e2e/journey/", "e2e/studio/", "e2e/")):
                             continue
                         sources_by_step.setdefault(step_id, set()).add(source)
-                        for selector in runners_for_source(source, str(coverage.get("mode", ""))):
-                            owners_by_step.setdefault(step_id, {}).setdefault(selector, set()).add(step_id)
                         declaration = _step_declaration(source, int(claim.get("line", 0)), root)
+                        mode = str(coverage.get("mode", ""))
+                        selectors = declaration.get("runners") or runners_for_source(source, mode)
+                        if declaration.get("runners"):
+                            for selector in selectors:
+                                if RUNNERS[selector].variant.endswith("secured") != (mode == "secured"):
+                                    ineligible_by_step.setdefault(step_id, set()).add(selector)
+                            selectors = [selector for selector in selectors
+                                         if RUNNERS[selector].variant.endswith("secured") == (mode == "secured")]
+                        for selector in selectors:
+                            owners_by_step.setdefault(step_id, {}).setdefault(selector, set()).add(step_id)
                         if declaration:
                             declarations = declarations_by_step.setdefault(step_id, [])
                             if declaration not in declarations:
@@ -500,7 +683,7 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)
     resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name,
-                                 owners_by_step, os.environ.get("KB_JOURNEY_ONLY", ""))
+                                 owners_by_step, os.environ.get("KB_JOURNEY_ONLY", ""), ineligible_by_step)
     return {"selection": sorted(set(tokens)), **resolved}
 
 

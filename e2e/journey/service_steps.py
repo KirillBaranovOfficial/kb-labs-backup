@@ -54,16 +54,33 @@ class Journey:
         self.prerequisite_flows = set(filter(None, os.getenv("KB_JOURNEY_PREREQUISITE_FLOWS", "").split(",")))
         self.flows: dict[str, tuple[str, str]] = {}
         self.selection = list(filter(None, os.getenv("KB_JOURNEY_CASES", "").split(",")))
+        self.runner_selector = os.getenv("KB_JOURNEY_RUNNER_SELECTOR", "")
         self.step_guard: Callable[[str, Callable[[], str | None]], str | None] | None = None
 
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
              details: Callable[[], dict[str, Any]] | None = None, *,
-             requires: Iterable[str] = (), role: str = "step") -> StepResult:
+             requires: Iterable[str] = (), role: str = "step",
+             runners: Iterable[str] = ()) -> StepResult:
         if role not in {"step", "lifecycle"}:
             raise ValueError(f"unsupported journey step role: {role}")
         case_ids = list(cases)
         required = {Dependency.parse(item) for item in requires}
         selected = bool(self.selected_steps.intersection(case_ids))
+        eligible_runners = set(runners)
+        if selected and eligible_runners and self.runner_selector not in eligible_runners:
+            message = (f"registered for runner(s) {', '.join(sorted(eligible_runners))}; "
+                       f"this execution used {self.runner_selector or 'no runner selector'}")
+            result = StepResult(name, capability, self.mode, "FAIL", 0.0, message, case_ids,
+                                {"selectionRole": "selected"})
+            self.steps.append(result)
+            return result
+        if not selected and eligible_runners and self.runner_selector not in eligible_runners:
+            result = StepResult(name, capability, self.mode, "SKIPPED", 0.0,
+                                f"registered for runner(s) {', '.join(sorted(eligible_runners))}; "
+                                f"this execution used {self.runner_selector or 'no runner selector'}",
+                                case_ids)
+            self.steps.append(result)
+            return result
         prerequisite = name in self.prerequisite_steps
         lifecycle = role == "lifecycle"
         if self.selected_claims and not selected and not prerequisite and not lifecycle:
@@ -270,10 +287,10 @@ class FlowGraph:
                               append=True)
 
     def step(self, name: str, group: str, capability: str, check: Callable[[], str | None],
-             cases: Iterable[str] = ()) -> StepResult:
+             cases: Iterable[str] = (), *, runners: Iterable[str] = ()) -> StepResult:
         case_ids = list(cases)
         if self.journey.selected_claims and (not case_ids or not self.journey.selected_claims.intersection(case_ids)):
-            return self.journey.step(name, capability, lambda: None, cases=case_ids)
+            return self.journey.step(name, capability, lambda: None, cases=case_ids, runners=runners)
         blocker = self._blocker(group)
         if blocker:
             state, evidence = blocker
@@ -292,12 +309,12 @@ class FlowGraph:
                 self._write_traceback(group, name)
                 raise
 
-        result = self.journey.step(name, capability, checked, cases=case_ids)
+        result = self.journey.step(name, capability, checked, cases=case_ids, runners=runners)
         return result
 
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object],
              cases: Iterable[str] = (), *, role: str = "step",
-             record_empty_success: bool = True) -> str:
+             record_empty_success: bool = True, runners: Iterable[str] = ()) -> str:
         """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
         case_ids = list(cases)
         prerequisite = name in self.journey.prerequisite_flows
@@ -326,9 +343,9 @@ class FlowGraph:
             outcome = None
         emitted = self.journey.steps[start:]
         if isinstance(outcome, str):
-            self.journey.step(name, capability, lambda: outcome, cases=case_ids, role=role)
+            self.journey.step(name, capability, lambda: outcome, cases=case_ids, role=role, runners=runners)
         elif not emitted and record_empty_success:
-            self.journey.step(name, capability, lambda: None, cases=case_ids, role=role)
+            self.journey.step(name, capability, lambda: None, cases=case_ids, role=role, runners=runners)
 
         group_steps = self.journey.steps[start:]
         failed = next((step for step in group_steps if step.status == "FAIL"), None)

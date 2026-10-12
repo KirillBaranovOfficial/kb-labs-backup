@@ -24,10 +24,11 @@ KB_JOURNEY_CASES="S-042,S-005.2" e2e/journey/run.sh --no-build
 
 The selector resolves IDs from `qa cases coverage`, so a case ID expands to its
 journey/e2e-claimed steps and a step ID selects that claim directly. A case with
-any unclaimed step is refused with the step ID before Docker work begins. To
-restrict execution, `KB_JOURNEY_ONLY` filters the resolved runner set; it can
-contain comma-separated registered runner selectors. If the filter omits an
-owner, the refusal names the missing claims and the exact runner command.
+any unclaimed step or a claim with no executable runner variant is refused with
+the step ID before Docker work begins. To restrict execution, `KB_JOURNEY_ONLY`
+filters the resolved runner set; it can contain comma-separated registered
+runner selectors. If the filter omits an owner, the refusal names the missing
+claims and the exact runner command.
 Prerequisite steps declared by a selected step run first and are reported as
 prerequisites; a failed prerequisite blocks the selected claim with its own
 diagnosis. Unselected named steps appear as `SKIPPED (not selected)` in the
@@ -45,15 +46,19 @@ e2e/journey/smoke.sh secured --no-build
 ```
 
 The script selects `PC-001.2`, `PC-002.3`, and `PC-002.8` and sets the matching
-runner filter for each mode. It exits zero only when all three claims pass for
-that mode; any FAIL or BLOCKED claim makes the command nonzero. Preview the
-selected runners and prerequisite steps without building or starting
-containers with:
+runner filter for each mode. Each mode uses its service runner for the install
+and service claims, so the smoke performs one fresh install. It exits zero only
+when all three claims pass; any FAIL or BLOCKED claim makes the command
+nonzero. Preview the selected runner and prerequisite steps without building
+or starting containers with:
 
 ```bash
 e2e/journey/smoke.sh local --resolve-only
 e2e/journey/smoke.sh secured --resolve-only
 ```
+
+`--resolve-only` performs selection before report-directory setup and does not
+write journey reports or start build/container work.
 
 The local run verifies loopback access without login. The secured run creates
 an isolated admin during installation, creates and activates a member through

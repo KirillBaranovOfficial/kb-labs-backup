@@ -330,7 +330,8 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
         if result.returncode or run_id[0] not in result.stdout or "cancellation" not in result.stdout.lower():
             raise AssertionError(f"workflow cancellation was not confirmed: {result.stdout!r}")
 
-    journey.step("request workflow cancellation", "workflow", cancel, cases=["S-008.2"])
+    journey.step("request workflow cancellation", "workflow", cancel, cases=["S-008.2"],
+                 requires=("step:start active workflow for cancellation",))
 
     def verify_cancelled() -> None:
         deadline = clock() + 30
@@ -345,7 +346,8 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
             sleep(1)
         raise AssertionError(f"workflow run did not become cancelled: {detail!r}")
 
-    journey.step("verify cancelled workflow status", "workflow", verify_cancelled, cases=["S-008.3"])
+    journey.step("verify cancelled workflow status", "workflow", verify_cancelled, cases=["S-008.3"],
+                 requires=("step:start active workflow for cancellation",))
 
     def reject_repeat_cancel() -> None:
         result = _case_cli("S-008.4", ["workflow", "runs", "cancel", run_id[0]], env=env, cwd=project)
@@ -358,7 +360,7 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
             raise AssertionError(f"repeat cancellation changed the terminal status: {detail!r}")
 
     journey.step("reject cancellation after workflow finished", "workflow", reject_repeat_cancel,
-                 cases=["S-008.4"])
+                 cases=["S-008.4"], requires=("step:start active workflow for cancellation",))
     marker.touch()
     definition.unlink(missing_ok=True)
 
@@ -557,7 +559,8 @@ def _live_progress_case(journey: Journey, *, env: dict[str, str], project: Path)
                        or f"step.succeeded step:{step_id}" not in result.stdout
                        for step_id in ("first-id", "second-i"))):
             raise AssertionError(f"watch did not observe both active steps: {result.stdout!r}")
-    journey.step("watch live workflow progress", "workflow", watch, cases=["S-027.2"])
+    journey.step("watch live workflow progress", "workflow", watch, cases=["S-027.2"],
+                 requires=("step:start live progress workflow",))
 
     def terminal() -> None:
         result = watched[0]
@@ -566,7 +569,8 @@ def _live_progress_case(journey: Journey, *, env: dict[str, str], project: Path)
         detail = _case_terminal_run("S-027.3", run_id[0], env=env, cwd=project)
         if detail.get("status") != "success":
             raise AssertionError(f"watched workflow ended {detail.get('status')!r}")
-    journey.step("verify live workflow terminal result", "workflow", terminal, cases=["S-027.3"])
+    journey.step("verify live workflow terminal result", "workflow", terminal, cases=["S-027.3"],
+                 requires=("step:start live progress workflow", "step:watch live workflow progress"))
     definition.unlink(missing_ok=True)
 
 
@@ -660,7 +664,8 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
         if new_id == source_id[0] or outcome["status"] not in {"queued", "running"}:
             raise AssertionError(f"rerun did not return a new active run: {data!r}")
         rerun_ids.append(new_id)
-    journey.step("rerun all workflow jobs", "workflow", rerun_all, cases=["S-143.1"])
+    journey.step("rerun all workflow jobs", "workflow", rerun_all, cases=["S-143.1"],
+                 requires=("step:prepare failed workflow run for rerun",))
 
     def inspect() -> None:
         detail = _case_terminal_run("S-143.2", rerun_ids[0], env=env, cwd=project,
@@ -671,7 +676,8 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
                 or not any(step.get("status") == "success" and step.get("spec", {}).get("id") == "succeeds"
                            for step in steps)):
             raise AssertionError(f"rerun did not preserve workflow input and executed jobs: {detail!r}")
-    journey.step("verify rerun result and inputs", "workflow", inspect, cases=["S-143.2"])
+    journey.step("verify rerun result and inputs", "workflow", inspect, cases=["S-143.2"],
+                 requires=("step:rerun all workflow jobs",))
 
     def rerun_failed() -> None:
         data = _case_json_cli("S-143.3", ["workflow", "runs", "rerun", source_id[0], "--failed-only", "--json"],
@@ -689,7 +695,8 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
                 or not any(step.get("spec", {}).get("id") == "succeeds" and step.get("status") == "success"
                            for step in steps)):
             raise AssertionError(f"failed-only rerun did not retain successful outputs and replay failure: {detail!r}")
-    journey.step("rerun failed jobs only", "workflow", rerun_failed, cases=["S-143.3"])
+    journey.step("rerun failed jobs only", "workflow", rerun_failed, cases=["S-143.3"],
+                 requires=("step:prepare failed workflow run for rerun", "step:rerun all workflow jobs"))
 
     def unknown_source() -> None:
         before = _case_json_cli("S-143.4", ["workflow", "runs", "list", "--json"], env=env, cwd=project)

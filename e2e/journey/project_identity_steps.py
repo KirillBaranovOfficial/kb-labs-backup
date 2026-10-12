@@ -87,7 +87,8 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                 return "kb project list omitted one or both registered roots"
             return None
 
-        journey.step("list both registered projects", "projects", list_projects, cases=["S-043.2"])
+        journey.step("list both registered projects", "projects", list_projects, cases=["S-043.2"],
+                     requires=("step:register isolated project A and B",))
 
         def install_scoped_plugins() -> str | None:
             for project, package in ((projects[0], "@kb-labs/workflow-entry"),
@@ -111,7 +112,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("install distinct plugins into project A and B", "marketplace", install_scoped_plugins,
-                     cases=["S-043.3"])
+                     cases=["S-043.3"], requires=("step:register isolated project A and B",))
 
         def mind_plugin_scope() -> str | None:
             package = "@kb-labs/mind-entry"
@@ -133,7 +134,8 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("install Mind into project A and verify plugin lock isolation", "marketplace",
-                     mind_plugin_scope, cases=["S-199.1"])
+                     mind_plugin_scope, cases=["S-199.1"],
+                     requires=("step:register isolated project A and B",))
 
         def adapter_bindings() -> str | None:
             outputs = []
@@ -154,7 +156,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("resolve shared platform adapters in both projects", "adapters", adapter_bindings,
-                     cases=["S-043.4"])
+                     cases=["S-043.4"], requires=("step:register isolated project A and B",))
 
         def show_projects() -> str | None:
             for project in projects:
@@ -171,7 +173,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("resolve project show from each repository", "projects", show_projects,
-                     cases=["S-043.5"])
+                     cases=["S-043.5"], requires=("step:register isolated project A and B",))
 
         def current_project_identity() -> str | None:
             listed = run(fixture_root, "project", "list", "--json", step_id="S-196.2")
@@ -198,7 +200,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("list and select each current project", "projects", current_project_identity,
-                     cases=["S-196.2"])
+                     cases=["S-196.2"], requires=("step:register isolated project A and B",))
 
         def project_plugin_commands() -> str | None:
             commands = ((projects[0], ("workflow", "defs", "list", "--json"), "@kb-labs/workflow-entry"),
@@ -210,7 +212,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("resolve project scoped plugin commands", "plugins", project_plugin_commands,
-                     cases=["S-043.6"])
+                     cases=["S-043.6"], requires=("step:register isolated project A and B",))
 
         def platform_plugin_is_available() -> str | None:
             project_lock_path = projects[0] / ".kb" / "marketplace.lock"
@@ -228,7 +230,8 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("resolve platform plugin alongside project plugins", "plugins",
-                     platform_plugin_is_available, cases=["S-043.7"])
+                     platform_plugin_is_available, cases=["S-043.7"],
+                     requires=("step:register isolated project A and B",))
 
         def project_mcp_config() -> str | None:
             for project in projects:
@@ -247,7 +250,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("render MCP client config for both projects", "mcp", project_mcp_config,
-                     cases=["S-199.6"])
+                     cases=["S-199.6"], requires=("step:register isolated project A and B",))
 
         def current_project_config() -> str | None:
             for project in projects:
@@ -278,7 +281,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("resolve effective config from each project subdirectory", "projects", current_project_config,
-                     cases=["S-196.3"])
+                     cases=["S-196.3"], requires=("step:register isolated project A and B",))
 
         def unknown_project_and_local_command() -> str | None:
             result = run(fixture_root, "config", "show", "--json", step_id="S-196.4")
@@ -297,7 +300,8 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             return None
 
         journey.step("reject unknown project context and keep local CLI commands available", "projects",
-                     unknown_project_and_local_command, cases=["S-196.4"])
+                     unknown_project_and_local_command, cases=["S-196.4"],
+                     requires=("step:register isolated project A and B",))
 
 
 def run_project_identity_steps(journey: Journey, repo_root: Path) -> None:
