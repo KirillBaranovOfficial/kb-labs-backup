@@ -1,6 +1,12 @@
 package contracts
 
-import "github.com/kb-labs/clikit/diag"
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/kb-labs/clikit/diag"
+)
 
 // Diagnostic converts shared request validation into the platform CLI failure
 // contract, including its input exit code and field metadata.
@@ -86,6 +92,9 @@ const (
 // The wrapped cause remains available through Unwrap. Its sanitized text is
 // exposed in both machine and human diagnostics at this shared boundary.
 func NewDiag(code, message, hint string, cause error) *diag.Diag {
+	if causeRequired(code) && (cause == nil || strings.TrimSpace(cause.Error()) == "") {
+		panic(fmt.Sprintf("diagnostic %s requires a non-empty cause", code))
+	}
 	opts := make([]diag.Opt, 0, 2)
 	if hint != "" {
 		opts = append(opts, diag.WithHint(hint))
@@ -95,4 +104,42 @@ func NewDiag(code, message, hint string, cause error) *diag.Diag {
 		return diag.Wrap(cause, code, message, opts...)
 	}
 	return diag.New(code, message, opts...)
+}
+
+func causeRequired(code string) bool {
+	switch code {
+	case CodeProjectRegistrationFailed, CodeReleaseIndexInvalid, CodeReleaseIndexUnreadable, CodeReleaseIndexSealFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// NewProjectRegistrationFailure builds the only supported diagnostic for a
+// failed post-install project registration. Its cause comes from locally
+// observed request context, never remote response text.
+func NewProjectRegistrationFailure(failedStep, causeCode string, httpStatus *int, remoteCorrelationID, hint string) *diag.Diag {
+	if failedStep != "login" && failedStep != "register" {
+		panic("project registration failure requires a login or register step")
+	}
+	if _, ok := diag.LookupCatalog(causeCode); !ok {
+		panic(fmt.Sprintf("project registration failure requires a catalogued cause code, got %q", causeCode))
+	}
+	causeText := fmt.Sprintf("Project registration failed during %s: %s", failedStep, causeCode)
+	meta := map[string]any{"causeCode": causeCode, "requestStage": failedStep}
+	if httpStatus != nil {
+		if *httpStatus < 100 || *httpStatus > 599 {
+			panic("project registration failure HTTP status must be between 100 and 599")
+		}
+		meta["httpStatus"] = *httpStatus
+		causeText += fmt.Sprintf(" (HTTP %d)", *httpStatus)
+	}
+	if diag.IsValidCorrelationID(remoteCorrelationID) {
+		meta["remoteCorrelationId"] = remoteCorrelationID
+		causeText += "; Gateway correlation ID " + remoteCorrelationID
+	}
+	failure := NewDiag(CodeProjectRegistrationFailed,
+		"The platform is installed, but the selected project is not registered.", hint, errors.New(causeText))
+	failure.Meta = meta
+	return failure
 }

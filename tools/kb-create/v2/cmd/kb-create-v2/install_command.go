@@ -14,6 +14,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/preflight"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/kb-labs/create/v2/wizard"
@@ -148,18 +149,22 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		return result, nil
 	}
 	if existingSelection && plan.Request.ProjectRoot != "" {
-		if _, err := fmt.Fprintf(out, "\nThe installation already records project %s.\nNext: run `%s`.\n", plan.Request.ProjectRoot,
-			contracts.ShellCommand("kb", "project", "show", plan.Request.ProjectRoot)); err != nil {
+		if _, err := fmt.Fprintf(out, "\nThe installation already records project %s (%s).\nNext: run `%s`.\n", result.Receipt.ProjectID, result.Receipt.ProjectCanonicalPath,
+			contracts.ShellCommand("kb", "project", "show", result.Receipt.ProjectCanonicalPath)); err != nil {
 			return applyCommandResult{}, progressWriteFailure(err, "install")
 		}
 		return result, nil
 	}
-	projectID, err := deps.ProjectRegistrar(root, plan.Request.ProjectRoot)
+	registered, err := deps.ProjectRegistrar(root, plan.Request.ProjectRoot)
 	if err != nil {
 		return applyCommandResult{}, projectRegistrationFailure(root, plan.Request.ProjectRoot, err)
 	}
-	if _, err := fmt.Fprintf(out, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `%s` and `%s`.\n", root, projectID, plan.Request.ProjectRoot,
-		contracts.ShellCommand("kb-create", "status", "--platform-root", root), contracts.ShellCommand("kb", "project", "show", plan.Request.ProjectRoot)); err != nil {
+	result.Receipt, err = recordProjectIdentity(root, plan.Request.ProjectRoot, registered)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeReceiptUnavailable, "The project is registered, but its identity could not be recorded in the active receipt.", "Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root)+"` and inspect the installation before retrying.", err)
+	}
+	if _, err := fmt.Fprintf(out, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `%s` and `%s`.\n", root, registered.ID, registered.CanonicalPath,
+		contracts.ShellCommand("kb-create", "status", "--platform-root", root), contracts.ShellCommand("kb", "project", "show", registered.CanonicalPath)); err != nil {
 		return applyCommandResult{}, progressWriteFailure(err, "install")
 	}
 	return result, nil
@@ -253,8 +258,21 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 	}
 	request := result.Receipt.Plan.Request
 	if request.ProjectRoot != "" && !existingSelection {
-		if _, err := deps.ProjectRegistrar(request.PlatformRoot, request.ProjectRoot); err != nil {
+		registered, err := deps.ProjectRegistrar(request.PlatformRoot, request.ProjectRoot)
+		if err != nil {
 			failure := projectRegistrationFailure(request.PlatformRoot, request.ProjectRoot, err)
+			failure.ProcessExitCode = diag.ExitError
+			if writeErr := writer.Fail(failure); writeErr != nil {
+				return streamCompletion{}, diag.Wrap(writeErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
+			}
+			if finishErr := writer.Finish(failure.ProcessExitCode); finishErr != nil {
+				return streamCompletion{}, diag.Wrap(finishErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
+			}
+			return streamCompletion{ExitCode: writer.ExitCode()}, nil
+		}
+		result.Receipt, err = recordProjectIdentity(request.PlatformRoot, request.ProjectRoot, registered)
+		if err != nil {
+			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "The project is registered, but its identity could not be recorded in the active receipt.", "Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", request.PlatformRoot)+"` and inspect the installation before retrying.", err)
 			failure.ProcessExitCode = diag.ExitError
 			if writeErr := writer.Fail(failure); writeErr != nil {
 				return streamCompletion{}, diag.Wrap(writeErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
@@ -289,22 +307,37 @@ func executeApplyPlanJSON(ctx context.Context, input installCommandInput, resolv
 		Executable: input.Executable, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent}, deps)
 }
 
-func registerInstalledProject(platformRoot, projectRoot string, registrar func(string) (string, error)) (string, error) {
+func recordProjectIdentity(platformRoot, selectedPath string, registered projectRegistrationResult) (contracts.InstallReceipt, error) {
+	receiptRoot := projectReceiptRoot(platformRoot)
+	active, err := receipt.Read(receiptRoot)
+	if err != nil {
+		return contracts.InstallReceipt{}, err
+	}
+	active.ProjectSelectedPath = selectedPath
+	active.ProjectID = registered.ID
+	active.ProjectCanonicalPath = registered.CanonicalPath
+	if err := receipt.Write(receiptRoot, active); err != nil {
+		return contracts.InstallReceipt{}, err
+	}
+	return active, nil
+}
+
+func registerInstalledProject(platformRoot, projectRoot string, registrar func(string) (projectRegistrationResult, error)) (projectRegistrationResult, error) {
 	if projectRoot == "" {
-		return "", nil
+		return projectRegistrationResult{}, nil
 	}
-	abs, err := filepath.Abs(projectRoot)
+	abs, err := contracts.ValidateProjectSelection(projectRoot)
 	if err != nil {
-		return "", diag.New("KB_RUNTIME_INPUT_INVALID", "The selected project path could not be resolved.", diag.WithCauseAndReason("Check the path and select an existing project directory."))
-	}
-	canonical, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", diag.New("KB_PROJECT_PATH_NOT_FOUND", fmt.Sprintf("The project path %q does not exist.", projectRoot))
+		var validation *contracts.RequestValidationError
+		if errors.As(err, &validation) && errors.Is(err, os.ErrNotExist) {
+			return projectRegistrationResult{}, diag.New("KB_PROJECT_PATH_NOT_FOUND", fmt.Sprintf("The project path %q does not exist.", projectRoot), diag.WithCauseAndReason(validation.Message))
+		}
+		return projectRegistrationResult{}, diag.Wrap(err, "KB_RUNTIME_INPUT_INVALID", "The selected project path could not be resolved.")
 	}
 	if registrar != nil {
-		return registrar(filepath.Clean(canonical))
+		return registrar(abs)
 	}
-	return registerProject(platformRoot, filepath.Clean(canonical))
+	return registerProject(platformRoot, abs)
 }
 
 func renderInstall(value any) string { return renderApply(value) }

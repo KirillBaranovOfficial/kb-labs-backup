@@ -668,3 +668,20 @@ selection is refused before apply so the user can authenticate and register it
 explicitly. Duplicate registration of the same canonical path returns the
 existing record unless a conflicting name was requested. Update never
 registers projects. Cases: S-124.14, S-187.9–S-187.12, S-224.1.
+
+## 2026-10-12
+
+### Project identity is owned by the registry
+
+The installer preserves the selected project path as an absolute lexical
+spelling and sends it to the Gateway project registry. The registry owns the
+project ID and canonical path; the receipt stores the selected spelling and
+both registry values, and success output uses the registry identity. On a
+later install/apply, a non-empty selection matches only when its absolute
+lexical spelling equals the receipt's selected or canonical path. Other
+spellings, including aliases that resolve to the same directory, are refused
+before apply and can be settled through `kb project add` and `kb project show`.
+Receipt schema v3 requires this identity for projects selected by the prior
+install; older receipt schemas are unavailable and must be reinstalled with the
+current launcher rather than guessed or migrated. Cases: S-187.10–S-187.12,
+S-224.3.

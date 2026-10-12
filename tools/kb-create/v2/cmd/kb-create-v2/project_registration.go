@@ -29,29 +29,30 @@ type loginTokens struct {
 }
 
 type projectRegistrationResponse struct {
-	ID   string `json:"id"`
-	Path string `json:"path"`
+	ID             string `json:"id"`
+	Path           string `json:"path"`
+	AlreadyExisted *bool  `json:"alreadyExisted"`
 }
 
-func registerProject(platformRoot, projectRoot string) (string, error) {
-	active, err := receipt.Read(platformRoot)
+func registerProject(platformRoot, projectRoot string) (projectRegistrationResult, error) {
+	active, err := receipt.Read(projectReceiptRoot(platformRoot))
 	if err != nil {
-		return "", registrationBoundaryFailure("KB_INSTALL_RECEIPT_UNAVAILABLE", "The installed receipt could not be read.", "", 0)
+		return projectRegistrationResult{}, registrationBoundaryFailure("KB_INSTALL_RECEIPT_UNAVAILABLE", "The installed receipt could not be read.", "", 0)
 	}
 	origin, err := gateway.OriginFromHealthURL(active.Verification.HostHealthURL)
 	if err != nil {
-		return "", registrationBoundaryFailure("KB_HOST_SPEC_INVALID", "The Gateway address in the receipt is invalid.", "", 0)
+		return projectRegistrationResult{}, registrationBoundaryFailure("KB_HOST_SPEC_INVALID", "The Gateway address in the receipt is invalid.", "", 0)
 	}
 	accessToken := ""
 	if adminEmail, secured := configuredFirstAdmin(active.Plan.Request); secured {
 		password, present, readErr := (secrets.Store{PlatformRoot: platformRoot}).Get("gateway.bootstrap.password")
 		if readErr != nil || !present {
-			return "", registrationBoundaryFailure("KB_INSTALL_SECRET_INPUT_INVALID", "The first administrator password is unavailable.", "login", 0)
+			return projectRegistrationResult{}, registrationBoundaryFailure("KB_INSTALL_SECRET_INPUT_INVALID", "The first administrator password is unavailable.", "login", 0)
 		}
 		tenantID := unquoteRequestValue(active.Plan.Request.Values["gateway.bootstrap.tenantId"])
 		tokens, loginErr := loginForProjectRegistration(origin, adminEmail, password, tenantID)
 		if loginErr != nil {
-			return "", loginErr
+			return projectRegistrationResult{}, loginErr
 		}
 		accessToken = tokens.AccessToken
 	}
@@ -59,31 +60,58 @@ func registerProject(platformRoot, projectRoot string) (string, error) {
 }
 
 func existingProjectSelection(platformRoot, selected string) (bool, *diag.Diag) {
-	if _, err := os.Stat(receipt.Path(platformRoot)); os.IsNotExist(err) {
+	receiptRoot := projectReceiptRoot(platformRoot)
+	if _, err := os.Stat(receipt.Path(receiptRoot)); os.IsNotExist(err) {
 		return false, nil
 	} else if err != nil {
 		return false, contracts.NewDiag(contracts.CodeReceiptUnavailable, "The active install receipt could not be checked.", "Check the platform root permissions, then run `kb-create doctor`.", err)
 	}
-	active, err := receipt.Read(platformRoot)
+	active, err := receipt.Read(receiptRoot)
 	if err != nil {
+		var schemaFailure receipt.UnsupportedSchemaError
+		if errors.As(err, &schemaFailure) {
+			return false, contracts.NewDiag(contracts.CodeReceiptUnavailable,
+				"The active receipt schema does not contain the project identity required by this installer.",
+				"Inspect the installation with `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot)+"`, then reinstall it with the current kb-create launcher.", err)
+		}
 		return false, contracts.NewDiag(contracts.CodeReceiptUnavailable, "The active install receipt could not be read.", "Run `kb-create doctor --platform-root PATH` to inspect the installation.", err)
 	}
 	if selected == "" {
 		return true, nil
 	}
-	selectedPath, err := filepath.Abs(selected)
+	selectedPath, err := contracts.AbsolutePath(selected)
 	if err != nil {
 		return true, contracts.NewDiag(contracts.CodeInputRequired, "The selected project path could not be resolved.", "Pass an existing project directory with `--project-root PATH`.", err)
 	}
-	activePath, err := filepath.Abs(active.Plan.Request.ProjectRoot)
-	if err != nil || filepath.Clean(selectedPath) != filepath.Clean(activePath) {
+	if active.ProjectSelectedPath == "" || !validProjectID(active.ProjectID) || !filepath.IsAbs(active.ProjectCanonicalPath) {
+		if active.Plan.Request.ProjectRoot == "" {
+			return false, nil
+		}
+		return true, missingProjectIdentityFailure(active, platformRoot)
+	}
+	if selectedPath != active.ProjectSelectedPath && selectedPath != active.ProjectCanonicalPath {
 		failure := contracts.NewDiag(contracts.CodeProjectSelectionChanged,
-			"The selected project differs from the project recorded by this installation.",
+			"The selected project path spelling differs from the project selection recorded by this installation.",
 			projectRegistrationHint(active, selected), nil)
 		failure.ProcessExitCode = diag.ExitInput
 		return true, failure
 	}
 	return true, nil
+}
+
+func projectReceiptRoot(platformRoot string) string {
+	current := contracts.CurrentPlatformRoot(platformRoot)
+	if _, err := os.Stat(receipt.Path(current)); err == nil {
+		return current
+	}
+	return platformRoot
+}
+
+func missingProjectIdentityFailure(active contracts.InstallReceipt, platformRoot string) *diag.Diag {
+	return contracts.NewDiag(contracts.CodeReceiptUnavailable,
+		"The active receipt does not contain the project selection and registry identity required by this installer.",
+		"Inspect the installation with `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot)+"`, then reinstall it with the current kb-create launcher.",
+		fmt.Errorf("receipt schema %q is missing project identity fields", active.Schema))
 }
 
 func projectRegistrationHint(active contracts.InstallReceipt, projectRoot string) string {
@@ -129,30 +157,47 @@ func loginForProjectRegistration(origin, email, password, tenantID string) (logi
 		return loginTokens{}, failure
 	}
 	var tokens loginTokens
-	if json.Unmarshal(responseBody, &tokens) != nil || tokens.AccessToken == "" || tokens.RefreshToken == "" || tokens.ExpiresIn <= 0 {
+	if failure, decodeErr := result.DecodeResultWithContext(responseBody, &tokens, result.RemoteFailureContext{RequestStage: "login", HTTPStatus: status}); decodeErr != nil {
+		return loginTokens{}, registrationProtocolFailure("login", status)
+	} else if failure != nil {
+		return loginTokens{}, failure
+	}
+	if tokens.AccessToken == "" || tokens.RefreshToken == "" || tokens.ExpiresIn <= 0 {
 		return loginTokens{}, registrationProtocolFailure("login", status)
 	}
 	return tokens, nil
 }
 
-func addProjectThroughGateway(origin, projectRoot, accessToken string) (string, error) {
+func addProjectThroughGateway(origin, projectRoot, accessToken string) (projectRegistrationResult, error) {
 	body, err := json.Marshal(map[string]string{"path": projectRoot})
 	if err != nil {
-		return "", registrationBoundaryFailure("KB_RUNTIME_UNEXPECTED", "The project registration request could not be encoded.", "register", 0)
+		return projectRegistrationResult{}, registrationBoundaryFailure("KB_RUNTIME_UNEXPECTED", "The project registration request could not be encoded.", "register", 0)
 	}
 	responseBody, status, err := postRegistrationRequest(origin+"/api/v1/projects", body, accessToken)
 	if err != nil {
-		return "", registrationBoundaryFailure("KB_HOST_UNREACHABLE", "The Gateway project registration request could not be completed.", "register", status)
+		return projectRegistrationResult{}, registrationBoundaryFailure("KB_HOST_UNREACHABLE", "The Gateway project registration request could not be completed.", "register", status)
 	}
 	var payload projectRegistrationResponse
 	failure, decodeErr := result.DecodeResultWithContext(responseBody, &payload, result.RemoteFailureContext{RequestStage: "register", HTTPStatus: status})
 	if failure != nil {
-		return "", failure
+		return projectRegistrationResult{}, failure
 	}
-	if decodeErr != nil || status < 200 || status >= 300 || payload.ID == "" || filepath.Clean(payload.Path) != filepath.Clean(projectRoot) {
-		return "", registrationProtocolFailure("register", status)
+	if decodeErr != nil || status < 200 || status >= 300 || !validProjectID(payload.ID) || !filepath.IsAbs(payload.Path) || payload.AlreadyExisted == nil {
+		return projectRegistrationResult{}, registrationProtocolFailure("register", status)
 	}
-	return payload.ID, nil
+	return projectRegistrationResult{ID: payload.ID, CanonicalPath: payload.Path, AlreadyExisted: *payload.AlreadyExisted}, nil
+}
+
+func validProjectID(value string) bool {
+	if len(value) != len("prj_")+16 || value[:len("prj_")] != "prj_" {
+		return false
+	}
+	for _, character := range value[len("prj_"):] {
+		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func postRegistrationRequest(target string, body []byte, accessToken string) ([]byte, int, error) {
@@ -205,6 +250,7 @@ func projectRegistrationFailure(platformRoot, projectRoot string, cause error) *
 	active, _ := receipt.Read(platformRoot)
 	hint := projectRegistrationHint(active, projectRoot)
 	causeCode := contracts.CodeProjectRegistrationFailed
+	requestStage := "register"
 	meta := map[string]any{"platformRoot": platformRoot, "projectRoot": projectRoot}
 	var typed *diag.Diag
 	if errors.As(cause, &typed) {
@@ -215,11 +261,20 @@ func projectRegistrationFailure(platformRoot, projectRoot string, cause error) *
 					meta[key] = value
 				}
 			}
+			if stage, ok := typed.Meta["requestStage"].(string); ok && stage != "" {
+				requestStage = stage
+			}
 		}
 	}
-	failure := contracts.NewDiag(contracts.CodeProjectRegistrationFailed,
-		"The platform is installed, but the selected project is not registered.", hint, nil)
-	meta["causeCode"] = causeCode
+	var httpStatus *int
+	if status, ok := meta["httpStatus"].(int); ok {
+		httpStatus = &status
+	}
+	remoteCorrelationID, _ := meta["remoteCorrelationId"].(string)
+	failure := contracts.NewProjectRegistrationFailure(requestStage, causeCode, httpStatus, remoteCorrelationID, hint)
+	meta = failure.Meta
+	meta["platformRoot"] = platformRoot
+	meta["projectRoot"] = projectRoot
 	failure.Meta = meta
 	return failure
 }

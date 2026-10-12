@@ -31,6 +31,12 @@ var buildCommit = "none"
 
 type repeatedValue []string
 
+type projectRegistrationResult struct {
+	ID             string
+	CanonicalPath  string
+	AlreadyExisted bool
+}
+
 type applyCommandResult struct {
 	OK         bool                     `json:"ok"`
 	Operation  string                   `json:"operation"`
@@ -85,7 +91,7 @@ type commandDependencies struct {
 	NodeCheck        func() error
 	InstallInput     io.Reader
 	InstallOutput    io.Writer
-	ProjectRegistrar func(string, string) (string, error)
+	ProjectRegistrar func(string, string) (projectRegistrationResult, error)
 	Command          *cobra.Command
 	Executable       string
 }
@@ -98,7 +104,7 @@ func productionCommandDependencies(command *cobra.Command) commandDependencies {
 		InstallOutput: clikitcommand.FromCommand(command).ProgressWriter(),
 		Command:       command,
 		Executable:    executablePath(),
-		ProjectRegistrar: func(platformRoot, projectRoot string) (string, error) {
+		ProjectRegistrar: func(platformRoot, projectRoot string) (projectRegistrationResult, error) {
 			return registerInstalledProject(platformRoot, projectRoot, nil)
 		},
 	}

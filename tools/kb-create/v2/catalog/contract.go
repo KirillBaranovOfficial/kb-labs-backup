@@ -110,7 +110,7 @@ func CheckLauncher(platform PlatformBundle, launcherVersion string) error {
 	minimum, err := semrange.ParseVersion(platform.MinLauncherVersion)
 	if err != nil {
 		return contracts.NewDiag(contracts.CodeReleaseIndexInvalid,
-			fmt.Sprintf("Platform %s declares an invalid minLauncherVersion %q.", platform.Version, platform.MinLauncherVersion), indexInvalidHint, nil)
+			fmt.Sprintf("Platform %s declares an invalid minLauncherVersion %q.", platform.Version, platform.MinLauncherVersion), indexInvalidHint, err)
 	}
 	current, err := semrange.ParseVersion(launcherVersion)
 	if err != nil {

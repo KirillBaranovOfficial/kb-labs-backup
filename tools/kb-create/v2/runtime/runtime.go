@@ -193,6 +193,13 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("report apply progress: %w", err), previousProjections.Restore()))
 	}
 	result := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: receiptID(plan.PlanHash, now), InstallationID: installationID, CreatedAt: now, CorrelationID: deps.CorrelationID, Plan: plan, Verification: check}
+	if previous, readErr := receipt.Read(plan.Request.PlatformRoot); readErr == nil {
+		result.ProjectSelectedPath = previous.ProjectSelectedPath
+		result.ProjectID = previous.ProjectID
+		result.ProjectCanonicalPath = previous.ProjectCanonicalPath
+	} else if !os.IsNotExist(readErr) {
+		return contracts.InstallReceipt{}, stopFailedHost(stopHost, fmt.Errorf("read prior project identity from receipt: %w", readErr))
+	}
 	if err := receipt.Write(plan.Request.PlatformRoot, result); err != nil {
 		return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("commit verified receipt: %w", err), previousProjections.Restore()))
 	}
