@@ -417,7 +417,7 @@ func unsupportedPlatformLayout(root string, cause error) *diag.Diag {
 		removeArgs := append([]string{"rm", "--"}, paths...)
 		remove := contracts.ShellCommand(removeArgs...)
 		retry := contracts.ShellCommand("kb-create", "install", "--platform-root", root)
-		hint := fmt.Sprintf("Inspect %s; if these are incomplete ownership staging files, remove them with `%s`, then retry with `%s`.", strings.Join(paths, ", "), remove, retry)
+		hint := fmt.Sprintf("The named staging files cannot prove ownership of this root. Inspect %s; after confirming they are abandoned installer staging files, remove them with `%s`, then retry with %s.", strings.Join(paths, ", "), remove, retry)
 		failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 			"The platform root contains an ownership staging file that cannot be validated.", hint, cause)
 		failure.Meta = map[string]any{"platformRoot": root, "stagingPaths": paths, "nextCommand": remove}

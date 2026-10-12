@@ -27,6 +27,40 @@ type Layout struct{ Root string }
 var ErrPlatformNotInstalled = errors.New("platform is not installed")
 var ErrOwnershipPublicationConflict = errors.New("another initial install published ownership first")
 
+type ownershipFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+type ownershipFileSystem interface {
+	CreateExclusive(string, fs.FileMode) (ownershipFile, error)
+	Link(string, string) error
+	SyncDirectory(string) error
+	Remove(string) error
+}
+
+type osOwnershipFile struct{ file *os.File }
+
+func (f osOwnershipFile) Write(data []byte) (int, error) { return f.file.Write(data) }
+func (f osOwnershipFile) Sync() error                    { return syncOwnershipFile(f.file) }
+func (f osOwnershipFile) Close() error                   { return f.file.Close() }
+
+type osOwnershipFileSystem struct{}
+
+func (osOwnershipFileSystem) CreateExclusive(path string, mode fs.FileMode) (ownershipFile, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	if err != nil {
+		return nil, err
+	}
+	return osOwnershipFile{file: file}, nil
+}
+func (osOwnershipFileSystem) Link(oldPath, newPath string) error { return os.Link(oldPath, newPath) }
+func (osOwnershipFileSystem) SyncDirectory(path string) error    { return syncDirectory(path) }
+func (osOwnershipFileSystem) Remove(path string) error           { return os.Remove(path) }
+
+var ownershipFS ownershipFileSystem = osOwnershipFileSystem{}
+
 type OwnershipStagingArtifactError struct {
 	Path  string
 	Paths []string
@@ -320,23 +354,15 @@ func (l Layout) ValidateInitialTarget() error {
 			return fmt.Errorf("read installation ownership: %w", err)
 		}
 		staging := ownershipStagingPaths(entries)
-		if len(staging) == 0 {
-			return fmt.Errorf("read installation ownership: %w", err)
-		}
-		if len(staging) != 1 {
+		if len(staging) > 0 {
 			paths := make([]string, len(staging))
 			for i, name := range staging {
 				paths[i] = filepath.Join(l.Root, name)
 			}
-			return &OwnershipStagingArtifactError{Path: paths[0], Paths: paths, Cause: fmt.Errorf("multiple ownership staging files prevent unambiguous recovery")}
+			return &OwnershipStagingArtifactError{Path: paths[0], Paths: paths,
+				Cause: fmt.Errorf("unpublished staging files cannot prove install-root ownership; inspect and remove them before retrying")}
 		}
-		owner, err = l.readValidatedOwnershipStaging(staging[0])
-		if err != nil {
-			return &OwnershipStagingArtifactError{Path: filepath.Join(l.Root, staging[0]), Cause: err}
-		}
-		if err := l.publishOwnershipStaging(filepath.Join(l.Root, staging[0])); err != nil {
-			return err
-		}
+		return fmt.Errorf("read installation ownership: %w", err)
 	} else if err := l.cleanupPublishedOwnershipStaging(entries); err != nil {
 		return err
 	}
@@ -475,15 +501,12 @@ func (l Layout) ensureOwnership() (string, error) {
 	if err := l.ownershipWriteCheckpoint(OwnershipBeforeStagingCreate, stagingPath); err != nil {
 		return "", err
 	}
-	file, err := os.OpenFile(stagingPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	file, err := ownershipFS.CreateExclusive(stagingPath, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
 			return "", &OwnershipStagingArtifactError{Path: stagingPath, Cause: fmt.Errorf("staging path already exists")}
 		}
 		return "", err
-	}
-	if err := syncDirectory(l.Root); err != nil {
-		return "", errors.Join(err, file.Close())
 	}
 	if err := l.ownershipWriteCheckpoint(OwnershipAfterStagingCreate, stagingPath); err != nil {
 		return "", errors.Join(err, file.Close())
@@ -597,26 +620,26 @@ func (l Layout) publishOwnershipStaging(stagingPath string) error {
 	if err := l.ownershipWriteCheckpoint(OwnershipBeforePublish, stagingPath); err != nil {
 		return err
 	}
-	if err := os.Link(stagingPath, l.ownershipPath()); err != nil {
+	if err := ownershipFS.Link(stagingPath, l.ownershipPath()); err != nil {
 		if os.IsExist(err) {
-			cleanupErr := os.Remove(stagingPath)
+			cleanupErr := ownershipFS.Remove(stagingPath)
 			if cleanupErr == nil {
-				cleanupErr = syncDirectory(l.Root)
+				cleanupErr = ownershipFS.SyncDirectory(l.Root)
 			}
 			return errors.Join(ErrOwnershipPublicationConflict, cleanupErr)
 		}
 		return err
 	}
-	if err := syncDirectory(l.Root); err != nil {
+	if err := ownershipFS.SyncDirectory(l.Root); err != nil {
 		return err
 	}
 	if err := l.ownershipWriteCheckpoint(OwnershipAfterPublish, stagingPath); err != nil {
 		return err
 	}
-	if err := os.Remove(stagingPath); err != nil {
+	if err := ownershipFS.Remove(stagingPath); err != nil {
 		return err
 	}
-	if err := syncDirectory(l.Root); err != nil {
+	if err := ownershipFS.SyncDirectory(l.Root); err != nil {
 		return err
 	}
 	return l.ownershipWriteCheckpoint(OwnershipAfterStagingCleanup, stagingPath)
@@ -641,17 +664,27 @@ func (l Layout) cleanupPublishedOwnershipStaging(entries []os.DirEntry) error {
 		if err != nil {
 			return err
 		}
-		if !os.SameFile(ownerInfo, stageInfo) {
-			return &OwnershipStagingArtifactError{Path: path, Cause: fmt.Errorf("staging file is not the published ownership record")}
+		if !sameValidatedOwnershipLink(ownerInfo, stageInfo) {
+			return &OwnershipStagingArtifactError{Path: path, Cause: fmt.Errorf("staging file is not the sole additional link to the published ownership record")}
 		}
-		if err := os.Remove(path); err != nil {
+		if err := ownershipFS.Remove(path); err != nil {
 			return err
 		}
-		if err := syncDirectory(l.Root); err != nil {
+		if err := ownershipFS.SyncDirectory(l.Root); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func sameValidatedOwnershipLink(ownerInfo, stageInfo os.FileInfo) bool {
+	if !os.SameFile(ownerInfo, stageInfo) {
+		return false
+	}
+	ownerStat, ownerOK := ownerInfo.Sys().(*syscall.Stat_t)
+	stageStat, stageOK := stageInfo.Sys().(*syscall.Stat_t)
+	return ownerOK && stageOK && ownerStat.Dev == stageStat.Dev && ownerStat.Ino == stageStat.Ino &&
+		ownerStat.Nlink == 2 && stageStat.Nlink == 2
 }
 
 func (l Layout) hasOwnershipMarker() bool {
