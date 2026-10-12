@@ -1492,11 +1492,21 @@ def main():
                                     email=service_env["KB_JOURNEY_ADMIN_EMAIL"],
                                     password=service_env["KB_JOURNEY_ADMIN_PASSWORD"],
                                     base_url="http://127.0.0.1:4000")
+                status, raw, _ = open_http(
+                    urllib.request.urlopen,
+                    urllib.request.Request("http://127.0.0.1:4000/health/auth"),
+                    timeout=30,
+                    env=service_env,
+                )
+                readiness = json.loads(raw)
+                data = readiness.get("data", {})
+                if status != 200 or data.get("ok") is not True or data.get("activeAdmins", 0) < 1:
+                    raise AssertionError("secured install did not prove a usable active administrator")
 
             auth_journey.step(
                 "bootstrap administrator CLI status", "auth.accounts",
                 bootstrap_admin_status,
-                cases=["S-100.1"],
+                cases=["S-100.1", "S-100.5"],
             )
             recovered_password = "JourneyRecovered123!"
 

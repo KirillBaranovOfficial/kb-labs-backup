@@ -16,7 +16,9 @@
 
 import type { UsersStore } from './users-store.js';
 import type { MembershipsStore } from './memberships-store.js';
+import type { CredentialsStore } from './credentials-store.js';
 import type { BootstrapOutcome } from './bootstrap-admin.js';
+import { isUsableActiveAdmin } from './usable-admin.js';
 
 export type AuthIssueCode =
   | 'no_active_admin'
@@ -48,6 +50,7 @@ export interface AuthReadinessInput {
   };
   users: Pick<UsersStore, 'getById'>;
   memberships: Pick<MembershipsStore, 'listByTenant'>;
+  credentials: Pick<CredentialsStore, 'getCredential'>;
 }
 
 export interface AuthReadiness {
@@ -63,11 +66,17 @@ export interface AuthReadiness {
 const countActiveAdmins = async (
   users: AuthReadinessInput['users'],
   memberships: AuthReadinessInput['memberships'],
+  credentials: AuthReadinessInput['credentials'],
   tenantId: string,
 ): Promise<number> => {
   const admins = (await memberships.listByTenant(tenantId)).filter((m) => m.groupId === 'tenant-admin');
-  const found = await Promise.all(admins.map((m) => users.getById(m.userId)));
-  return found.filter((u) => u !== null && u.tenantId === tenantId && u.status === 'active').length;
+  const found = await Promise.all(admins.map(async (membership) => {
+    const user = await users.getById(membership.userId);
+    const credential = user ? await credentials.getCredential(user.userId, 'email-password') : null;
+    const userMemberships = admins.filter((candidate) => candidate.userId === membership.userId);
+    return isUsableActiveAdmin(user, credential, userMemberships, tenantId);
+  }));
+  return found.filter(Boolean).length;
 };
 
 export const evaluateAuthReadiness = async (input: AuthReadinessInput): Promise<AuthReadiness> => {
@@ -77,7 +86,7 @@ export const evaluateAuthReadiness = async (input: AuthReadinessInput): Promise<
   let activeAdmins = 0;
 
   if (authEnabled) {
-    activeAdmins = await countActiveAdmins(input.users, input.memberships, tenantId);
+    activeAdmins = await countActiveAdmins(input.users, input.memberships, input.credentials, tenantId);
     if (activeAdmins === 0) {
       issues.push({
         code: 'no_active_admin',

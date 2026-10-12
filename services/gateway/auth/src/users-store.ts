@@ -33,6 +33,8 @@ export interface User {
   email: string;
   displayName?: string;
   status: UserStatus;
+  /** Identifies records whose pending state is owned by first-admin bootstrap. */
+  bootstrapManaged?: boolean;
   createdAt: number;
   updatedAt?: number;
 }
@@ -44,6 +46,7 @@ interface UserDoc extends BaseDocument {
   email: string;
   displayName?: string;
   status: UserStatus;
+  bootstrapManaged?: boolean;
 }
 
 /**
@@ -61,6 +64,7 @@ const docToUser = (doc: UserDoc): User => ({
   email: doc.email,
   displayName: doc.displayName,
   status: doc.status,
+  bootstrapManaged: doc.bootstrapManaged,
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
 });
@@ -70,6 +74,7 @@ export interface CreateUserInput {
   tenantId: string;
   email: string;
   status: UserStatus;
+  bootstrapManaged?: boolean;
   displayName?: string;
 }
 
@@ -106,6 +111,7 @@ export class UsersStore {
       email,
       displayName: input.displayName,
       status: input.status,
+      bootstrapManaged: input.bootstrapManaged,
     });
     const created = await this.getById(input.userId);
     if (!created) {

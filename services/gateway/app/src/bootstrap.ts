@@ -325,6 +325,7 @@ export async function startGateway(
         bootstrap: { status: bootstrapStatus, email: adminEmail },
         users,
         memberships,
+        credentials,
       });
     await logAuthReadiness(authReadiness, logger);
 

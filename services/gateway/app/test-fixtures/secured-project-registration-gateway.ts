@@ -6,6 +6,8 @@ import {
   ApiTokensStore,
   AuthAuditStore,
   CredentialsStore,
+  ensureBootstrapAdmin,
+  evaluateAuthReadiness,
   createEmailPasswordProvider,
   createPasswordPolicy,
   createStubPDP,
@@ -19,6 +21,7 @@ import {
   UsersStore,
 } from '@kb-labs/gateway-auth';
 import { createAuthMiddleware } from '../src/auth/middleware.js';
+import { registerAuthHealthRoute } from '../src/auth/health-route.js';
 import { registerUserAuthRoutes } from '../src/auth/user-routes.js';
 import { registerGatewayUxBoundary } from '../src/ux-boundary.js';
 import { createProjectsRoutes } from '../../../host/app/src/projects-routes.js';
@@ -77,18 +80,27 @@ async function run(): Promise<void> {
     bcryptCost: 4,
   });
   const tenantResolver = createTenantResolver({ pattern: '{tenant}.kblabs.ru' });
-
-  await users.create({ userId: 'install-admin', tenantId: TENANT_ID, email: EMAIL, status: 'active' });
-  const bcrypt = await import('bcryptjs');
-  await credentials.setCredential({
-    userId: 'install-admin',
-    providerId: 'email-password',
-    hash: await bcrypt.default.hash(PASSWORD, 4),
+  const bootstrapStatus = await ensureBootstrapAdmin({
+    bootstrap: { adminEmail: EMAIL, adminPassword: PASSWORD, tenantId: TENANT_ID },
+    users,
+    credentials,
+    memberships,
+    bcryptCost: 4,
+    logger,
   });
-  await memberships.addMembership({ userId: 'install-admin', tenantId: TENANT_ID, groupId: 'tenant-admin' });
 
   const app = Fastify({ logger: false, trustProxy: true });
   registerGatewayUxBoundary(app, logger);
+  registerAuthHealthRoute(app, () => evaluateAuthReadiness({
+    authEnabled: true,
+    loopbackOnly: true,
+    tenantId: TENANT_ID,
+    jwtSecretIsDefault: false,
+    bootstrap: { status: bootstrapStatus, email: EMAIL },
+    users,
+    credentials,
+    memberships,
+  }));
   await app.register(fastifyCookie);
   app.addHook('onRequest', createAuthMiddleware(cache, jwtConfig, {
     authEnabled: true,
