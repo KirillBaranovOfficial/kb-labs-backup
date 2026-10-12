@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import io
 import ast
+import os
 import subprocess
 import sys
 import tempfile
@@ -100,21 +101,36 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
 
 class PtyInvocationTest(unittest.TestCase):
-    def test_unresolved_state_cannot_reach_command_or_http_boundary(self):
+    def test_template_like_data_passes_through_command_and_http_boundaries(self):
         commands = []
-        with self.assertRaisesRegex(RuntimeError, "projectId"):
-            invocations.run_command(
-                ["kb", "project", "show", "{projectId}"],
-                runner=lambda argv, **kwargs: commands.append(argv),
-            )
-        self.assertEqual(commands, [])
+        result = invocations.run_command(
+            ["kb", "config", "set", "openai.apiKey", "${OPENAI_API_KEY}",
+             "--scenario-answers", '{"a":1}'],
+            runner=lambda argv, **kwargs: commands.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""),
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(commands[0][-3:], ["${OPENAI_API_KEY}", "--scenario-answers", '{"a":1}'])
 
         request = urllib.request.Request(
-            "http://127.0.0.1:4000/api/v1/projects/{projectId}/workflow/health")
+            "http://127.0.0.1:4000/api/v1/config", data=b'{"template":"${OPENAI_API_KEY}","a":1}')
         requests = []
-        with self.assertRaisesRegex(RuntimeError, "projectId"):
-            invocations.open_http(lambda req, **kwargs: requests.append(req), request, timeout=1)
-        self.assertEqual(requests, [])
+        class Response:
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def read(self): return b'{"ok":true,"data":{}}'
+            status = 200
+        invocations.open_http(lambda req, **kwargs: requests.append(req) or Response(), request, timeout=1)
+        self.assertEqual(requests, [request])
+
+    def test_missing_project_state_is_rejected_before_url_is_built(self):
+        from project_service_path import project_service_path
+        from journey_values import MissingJourneyState, journey_state
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(MissingJourneyState, "KB_JOURNEY_PROJECT_ID"):
+                journey_state("KB_JOURNEY_PROJECT_ID")
+            with self.assertRaisesRegex(MissingJourneyState, "KB_JOURNEY_PROJECT_ID"):
+                project_service_path("", "rest", "workflow/health")
 
     def test_pty_timeout_without_output_is_explicit_in_error_and_invocation(self):
         with tempfile.TemporaryDirectory(prefix="journey-pty-empty-timeout-") as temp, \

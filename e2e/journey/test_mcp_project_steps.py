@@ -255,6 +255,13 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].status, "BLOCKED")
         self.assertIn("KB_JOURNEY_PROJECT_ID", journey.steps[0].message)
+        self.assertEqual(journey.steps[0].details["missingStateKey"], "KB_JOURNEY_PROJECT_ID")
+        prerequisite = Journey("local", "missing-project-prerequisite")
+        prerequisite.step("prior", "fixture", lambda: "BLOCKED: failed prerequisite")
+        blocked = prerequisite.step("dependent", "fixture", lambda: None, requires={"step:prior"})
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertIn("prerequisiteFailures", blocked.details)
+        self.assertNotIn("missingStateKey", blocked.details)
         expect_health.assert_not_called()
 
     def test_registered_runtime_identity_checks_canonical_registry_path(self):
