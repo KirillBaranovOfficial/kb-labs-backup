@@ -52,8 +52,8 @@ describe('browser-node-builtins', () => {
       'packages/node-only/dist/index.js': `import { readFile } from 'node:fs/promises';\nexport const value = readFile;\n`,
     });
     const findings = collectBrowserNodeBuiltins(root, [
-      { dir: 'studio/app', relDir: 'studio/app', json: { name: '@fixture/studio-app' } },
-      { dir: 'packages/node-only', relDir: 'packages/node-only', json: { name: '@fixture/node-only' } },
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript', json: { name: '@fixture/studio-app' } },
+      { dir: 'packages/node-only', relDir: 'packages/node-only', language: 'typescript', json: { name: '@fixture/node-only' } },
     ]);
     assert.equal(findings.length, 1);
     assert.equal(findings[0].package, 'studio/app');
@@ -76,8 +76,8 @@ describe('browser-node-builtins', () => {
       'packages/platform/dist/browser.js': `export const value = 'browser-safe';\n`,
     });
     const findings = collectBrowserNodeBuiltins(root, [
-      { dir: 'studio/app', relDir: 'studio/app' },
-      { dir: 'packages/platform', relDir: 'packages/platform' },
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/platform', relDir: 'packages/platform', language: 'typescript' },
     ]);
     assert.deepEqual(findings, []);
   });
@@ -92,8 +92,8 @@ describe('browser-node-builtins', () => {
       },
     });
     const findings = collectBrowserNodeBuiltins(root, [
-      { dir: 'studio/app', relDir: 'studio/app' },
-      { dir: 'packages/unbuilt', relDir: 'packages/unbuilt' },
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/unbuilt', relDir: 'packages/unbuilt', language: 'typescript' },
     ]);
     assert.equal(findings.length, 1);
     assert.equal(findings[0].kind, 'unbuilt-package-entry');
@@ -111,8 +111,8 @@ describe('browser-node-builtins', () => {
       'packages/package/dist/index.js': `export const value = true;\n`,
     });
     const findings = collectBrowserNodeBuiltins(root, [
-      { dir: 'studio/app', relDir: 'studio/app' },
-      { dir: 'packages/package', relDir: 'packages/package' },
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/package', relDir: 'packages/package', language: 'typescript' },
     ]);
     assert.equal(findings.length, 1);
     assert.equal(findings[0].kind, 'unexported-package-subpath');
@@ -134,9 +134,9 @@ describe('browser-node-builtins', () => {
       },
     });
     const findings = collectBrowserNodeBuiltins(root, [
-      { dir: 'studio/app', relDir: 'studio/app' },
-      { dir: 'packages/outer', relDir: 'packages/outer' },
-      { dir: 'packages/inner', relDir: 'packages/inner' },
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/outer', relDir: 'packages/outer', language: 'typescript' },
+      { dir: 'packages/inner', relDir: 'packages/inner', language: 'typescript' },
     ]);
     assert.deepEqual(findings.map((finding) => finding.kind).sort(), [
       'unbuilt-package-entry',
@@ -155,7 +155,7 @@ describe('browser-node-builtins', () => {
       ].join('\n'),
     });
     const findings = collectBrowserNodeBuiltins(root, [
-      { dir: 'studio/app', relDir: 'studio/app' },
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
     ]);
     assert.equal(findings.length, 2);
     assert.deepEqual(findings.map((finding) => finding.builtin).sort(), ['node:fs', 'node:fs/promises']);
@@ -177,8 +177,8 @@ describe('browser-node-builtins', () => {
       'packages/node-only/dist/index.js': `import 'node:fs';\nexport const value = true;\n`,
     });
     const findings = collectBrowserNodeBuiltins(root, [
-      { dir: 'studio/app', relDir: 'studio/app' },
-      { dir: 'packages/node-only', relDir: 'packages/node-only' },
+      { dir: 'studio/app', relDir: 'studio/app', language: 'typescript' },
+      { dir: 'packages/node-only', relDir: 'packages/node-only', language: 'typescript' },
     ]);
     assert.deepEqual(findings, []);
   });

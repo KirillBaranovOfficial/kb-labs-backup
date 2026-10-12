@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
 
+vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+  GatewayApiError: class GatewayApiError extends Error {},
+  gatewayApiFetch: (input: string | URL, init?: RequestInit) => fetch(input, init),
+}));
+
 // Mock fs/promises to control workspace path validation and config writing
 vi.mock('node:fs/promises', () => ({
   stat: vi.fn().mockResolvedValue({ isDirectory: () => true }),

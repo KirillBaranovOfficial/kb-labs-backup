@@ -14,6 +14,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
+import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import { DiscoveryManager } from '../discovery-manager.js';
 import {
   writeMarketplaceLock,
@@ -130,7 +131,7 @@ describe('Discovery Integration: install → discover → available', () => {
     const lock = createEmptyLock();
     lock.plugins['@vendor/marketplace'] = createMarketplaceEntry({
       version: '1.0.0', integrity: marketplace.integrity, resolvedPath: marketplace.relPath,
-      package: '@vendor/marketplace', source: 'platform', primaryKind: 'plugin', provides: ['plugin'],
+      package: '@vendor/marketplace', source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'],
     });
     lock.plugins['@vendor/linked'] = createMarketplaceEntry({
       version: '1.0.0', integrity: linked.integrity, resolvedPath: linked.relPath,
@@ -138,7 +139,26 @@ describe('Discovery Integration: install → discover → available', () => {
     });
     await writeMarketplaceLock(tmpDir, lock);
 
-    const result = await new DiscoveryManager({ root: tmpDir, scope: 'project' }).discover();
+    const extensionStore: IExtensionStore = {
+      root: path.join(tmpDir, 'store'),
+      casDir: path.join(tmpDir, 'store', 'cas'),
+      entriesDir: path.join(tmpDir, 'store', 'entries'),
+      lookup: async () => ({
+        packageRoot: marketplace.dir,
+        entryDir: path.join(tmpDir, 'store', 'entries', 'marketplace'),
+        entry: {
+          schema: 'kb.store-entry/1',
+          name: '@vendor/marketplace',
+          version: '1.0.0',
+          kind: 'plugin',
+          integrity: marketplace.integrity,
+          installedAt: '2026-10-12T00:00:00.000Z',
+        },
+      }),
+      resolve: async () => { throw new Error('resolve must not run during discovery'); },
+      listEntries: async () => [],
+    };
+    const result = await new DiscoveryManager({ root: tmpDir, scope: 'project', extensionStore }).discover();
 
     expect(result.plugins.map(plugin => plugin.id).sort()).toEqual(['@vendor/linked', '@vendor/platform-shipped']);
     expect(result.failures.map(failure => failure.id)).toContain('@vendor/marketplace');

@@ -12,6 +12,7 @@ import { writeMarketplaceLock, createEmptyLock, createMarketplaceEntry } from '.
 import { computePackageIntegrity } from '../integrity.js';
 import { findWorkspaceCandidates, findWorkspacePackages } from '../workspace-source.js';
 import { loadAdapterManifest } from '@kb-labs/core-platform';
+import type { StoreEntry } from '@kb-labs/core-extension-store';
 
 interface PluginFixture {
   dir: string;
@@ -110,7 +111,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
       '@x/plat': await lockEntry(platform, platformPlugin, 'platform'),
       '@x/linked': await lockEntry(platform, linkedPlugin, 'local'),
     });
-    await writeLock(project, { '@x/proj': await lockEntry(project, projectPlugin, 'platform') });
+    await writeLock(project, { '@x/proj': await lockEntry(project, projectPlugin, 'local') });
 
     const result = await new DiscoveryManager({ root: project, platformRoot: platform }).discover();
     const byId = new Map(result.plugins.map(p => [p.id, p]));
@@ -118,7 +119,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
     expect([...byId.keys()].sort()).toEqual(['@x/linked', '@x/plat', '@x/proj', '@x/ws']);
     expect(byId.get('@x/plat')).toMatchObject({ scope: 'platform', origin: 'node_modules', manifestKind: 'static' });
     expect(byId.get('@x/linked')).toMatchObject({ scope: 'platform', origin: 'linked' });
-    expect(byId.get('@x/proj')).toMatchObject({ scope: 'project', origin: 'node_modules' });
+    expect(byId.get('@x/proj')).toMatchObject({ scope: 'project', origin: 'linked' });
     expect(byId.get('@x/ws')).toMatchObject({ scope: 'platform', origin: 'workspace', packageName: '@x/ws' });
     expect(result.manifests.size).toBe(4);
   });
@@ -159,7 +160,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
     await makePlugin({ dir: path.join(platform, 'packages', 'dup'), id: '@x/dup', version: '3.0.0' });
     await fs.writeFile(path.join(platform, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
     await writeLock(platform, { '@x/dup': await lockEntry(platform, platformCopy, 'platform') });
-    await writeLock(project, { '@x/dup': await lockEntry(project, projectCopy, 'platform') });
+    await writeLock(project, { '@x/dup': await lockEntry(project, projectCopy, 'local') });
 
     const result = await new DiscoveryManager({ root: project, platformRoot: platform }).discover();
 
@@ -239,16 +240,59 @@ describe('plugins.allow / plugins.block / plugins.linked gate', () => {
 
   async function install(ids: string[], plugins: Record<string, unknown>): Promise<void> {
     const entries: Record<string, ReturnType<typeof createMarketplaceEntry>> = {};
+    const packageRoots = new Map<string, { packageRoot: string; entryDir: string; entry: StoreEntry }>();
     for (const id of ids) {
       const dir = await makePlugin({ dir: path.join(root, 'node_modules', id.replace('/', '__')), id });
-      entries[id] = await lockEntry(root, dir, 'platform');
+      const integrity = await computePackageIntegrity(dir);
+      packageRoots.set(id, {
+        packageRoot: dir,
+        entryDir: '/mock/store/entries/test',
+        entry: { schema: 'kb.store-entry/1', name: id, version: '1.0.0', kind: 'plugin', integrity, installedAt: '2026-10-12T00:00:00.000Z' },
+      });
+      entries[id] = createMarketplaceEntry({
+        version: '1.0.0',
+        integrity,
+        package: id,
+        source: 'marketplace',
+        primaryKind: 'plugin',
+        provides: ['plugin'],
+      });
     }
     await writeLock(root, entries);
     await fs.writeFile(path.join(root, '.kb', 'kb.config.json'), JSON.stringify({ plugins }));
+    store = packageRoots;
+  }
+
+  let store = new Map<string, { packageRoot: string; entryDir: string; entry: StoreEntry }>();
+
+  async function stored(name: string, packageRoot: string): Promise<{ packageRoot: string; entryDir: string; entry: StoreEntry }> {
+    return {
+      packageRoot,
+      entryDir: '/mock/store/entries/test',
+      entry: {
+        schema: 'kb.store-entry/1',
+        name,
+        version: '1.0.0',
+        kind: 'plugin',
+        integrity: await computePackageIntegrity(packageRoot),
+        installedAt: '2026-10-12T00:00:00.000Z',
+      },
+    };
   }
 
   async function ids(): Promise<{ found: string[]; codes: string[] }> {
-    const result = await new DiscoveryManager({ root, scope: 'project' }).discover();
+    const result = await new DiscoveryManager({
+      root,
+      scope: 'project',
+      extensionStore: {
+        root: '/mock/store',
+        casDir: '/mock/store/cas',
+        entriesDir: '/mock/store/entries',
+        lookup: async ({ name }) => store.get(name),
+        resolve: async () => { throw new Error('resolve must not run in lock discovery'); },
+        listEntries: async () => [],
+      },
+    }).discover();
     return { found: result.plugins.map(p => p.id).sort(), codes: result.diagnostics.map(d => d.code) };
   }
 
@@ -258,9 +302,19 @@ describe('plugins.allow / plugins.block / plugins.linked gate', () => {
     const shipped = await makePlugin({ dir: path.join(root, 'packages', 'shipped'), id: '@vendor/shipped' });
     await fs.writeFile(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
     await writeLock(root, {
-      '@kb-labs/name-only': await lockEntry(root, thirdParty, 'platform'),
-      '@x/bad': await lockEntry(root, bad, 'platform'),
+      '@kb-labs/name-only': createMarketplaceEntry({
+        version: '1.0.0', integrity: await computePackageIntegrity(thirdParty), package: '@kb-labs/name-only',
+        source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'],
+      }),
+      '@x/bad': createMarketplaceEntry({
+        version: '1.0.0', integrity: await computePackageIntegrity(bad), package: '@x/bad',
+        source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'],
+      }),
     });
+    store = new Map([
+      ['@kb-labs/name-only', await stored('@kb-labs/name-only', thirdParty)],
+      ['@x/bad', await stored('@x/bad', bad)],
+    ]);
     await fs.writeFile(path.join(root, '.kb', 'kb.config.json'), JSON.stringify({ plugins: { block: ['@x/bad', '@vendor/shipped', '@kb-labs/name-only'] } }));
 
     const { found, codes } = await ids();

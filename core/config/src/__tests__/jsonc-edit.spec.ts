@@ -35,6 +35,12 @@ describe('parseJsonc', () => {
     });
   });
 
+  it('preserves slash-star sequences inside quoted glob strings', () => {
+    expect(parseJsonc('{ "include": ["plugins/*/entry"] }')).toEqual({
+      include: ['plugins/*/entry'],
+    });
+  });
+
   it('reports syntax errors with a position', () => {
     expect(() => parseJsonc('{\n  "a": }')).toThrow(JsoncSyntaxError);
     expect(() => parseJsonc('{ "a": 1 } x')).toThrow(/Unexpected content/);

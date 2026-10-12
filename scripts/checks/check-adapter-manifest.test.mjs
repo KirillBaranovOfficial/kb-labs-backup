@@ -16,8 +16,8 @@ test('adapter-manifest uses devkit categories and validates built manifests', as
     await writeFixturePackage(adapterRoot, '@fixture/adapter', adapterManifest({ implements: 'IFixture' }));
     await writeFixturePackage(extraRoot, '@fixture/extra', adapterManifest({ implements: 'IFixture', configSchema: {} }));
 
-    const adapterPackage = { name: '@fixture/adapter', dir: adapterRoot, relPath: 'adapters/adapter', category: 'adapter' };
-    const extraPackage = { name: '@fixture/extra', dir: extraRoot, relPath: 'packages/extra', category: 'ts-lib' };
+    const adapterPackage = { name: '@fixture/adapter', dir: adapterRoot, relPath: 'adapters/adapter', category: 'adapter', language: 'typescript' };
+    const extraPackage = { name: '@fixture/extra', dir: extraRoot, relPath: 'packages/extra', category: 'ts-lib', language: 'typescript' };
     const payload = {
       workspaceRoot: root,
       check: 'adapter-manifest',
@@ -51,7 +51,7 @@ test('manifest declaration check rejects a default-only manifest module', async 
     const packageRoot = path.join(root, 'packages', 'default-only');
     await writeFixturePackage(packageRoot, '@fixture/default-only', adapterManifest({ implements: 'IFixture', configSchema: {} }));
     await writeFile(path.join(packageRoot, 'dist', 'manifest.js'), 'export default { schema: "kb.plugin/3" };\n');
-    const pkg = { name: '@fixture/default-only', dir: packageRoot, relPath: 'packages/default-only', category: 'ts-lib' };
+    const pkg = { name: '@fixture/default-only', dir: packageRoot, relPath: 'packages/default-only', category: 'ts-lib', language: 'typescript' };
     const issues = await runCheck({
       workspaceRoot: root, check: 'adapter-manifest',
       package: { Name: pkg.name, Dir: packageRoot, RelPath: pkg.relPath, Category: pkg.category },

@@ -215,3 +215,19 @@ func TestExternalCheckUsesCallerToolPath(t *testing.T) {
 		t.Fatalf("issues = %#v, want the fake node issue", issues)
 	}
 }
+
+func TestExternalCheckCrashIsNotReportedAsAStandardsFinding(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'node:fs:441 raw stack details' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	rule := &externalRule{name: "adapter-manifest", run: script, phase: "check", workspaceRoot: root}
+	issues := rule.Check(workspace.Package{Name: "@acme/demo", Dir: root}, config.Preset{Language: "typescript"})
+	if len(issues) != 1 || !issues[0].CheckFailure || issues[0].Check != "adapter-manifest" {
+		t.Fatalf("issues = %#v, want a typed external-check failure", issues)
+	}
+	if issues[0].Cause != "external command exited with status 1" || issues[0].Message == "node:fs:441 raw stack details" {
+		t.Fatalf("failure exposed raw process output: %#v", issues[0])
+	}
+}
