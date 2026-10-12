@@ -228,6 +228,10 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		if input.ScenarioID != "" {
 			request, requestErr = compileScenario(input.ScenarioID, input.Answers, input.Resume, request)
 			if requestErr != nil {
+				var staging *versionroot.OwnershipStagingArtifactError
+				if errors.Is(requestErr, versionroot.ErrOwnershipPublicationConflict) || errors.As(requestErr, &staging) {
+					return resolvedPlan{}, unsupportedPlatformLayout(request.PlatformRoot, requestErr)
+				}
 				return resolvedPlan{}, failure("KB_INSTALL_SCENARIO_INVALID", "scenario could not be compiled", "inspect scenario answers and manifest requirements", requestErr)
 			}
 		}
