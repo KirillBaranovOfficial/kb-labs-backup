@@ -100,7 +100,9 @@ jobs:
         run: e2e/journey/run.sh --no-build
       - name: Stop journey containers
         if: always()
-        run: docker compose -f e2e/docker-compose.yml -f e2e/docker-compose.ci.yml -f e2e/journey/docker-compose.yml down --volumes --remove-orphans || true
+        env:
+          KB_JOURNEY_CI: '1'
+        run: e2e/journey/run.sh --down
       - name: Add journey report to job summary
         if: always()
         run: if [ -f .journey/reports/journey-summary.md ]; then cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"; fi

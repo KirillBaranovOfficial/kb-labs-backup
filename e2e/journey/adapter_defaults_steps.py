@@ -16,6 +16,7 @@ from typing import Callable
 from journey_resources import active_platform_root
 from service_steps import Journey
 from marketplace_steps import _platform_snapshot
+from platform_update_steps import _changed_paths
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
                          read_ux_cli_result, read_ux_http_result, run_command, run_with_runner)
 
@@ -141,14 +142,32 @@ def _restore_platform_adapter_fixture(
         result = _run(runner, restart, project_root, env)
         if _json(result, restart).get("ok") is not True:
             return "platform host did not restart after restoring its original adapter config"
+        restored_config = config_path.read_bytes() if config_path.exists() else None
+        changed_keys = _config_difference_keys(original_config, restored_config)
+        if changed_keys:
+            return "platform adapter config differs from its snapshot at keys: " + ", ".join(changed_keys)
         return None
     except Exception as error:
         return f"platform adapter config could not be restored: {error}"
 
 
+def _config_difference_keys(original: bytes | None, current: bytes | None) -> list[str]:
+    """Return changed JSON key paths without exposing config values."""
+    if original is None or current is None:
+        return [] if original == current else ["<config file>"]
+    try:
+        before = json.loads(original)
+        after = json.loads(current)
+    except json.JSONDecodeError:
+        return ["<invalid JSON>"]
+
+    return [path.removeprefix("config.") for path in _changed_paths(before, after, "config")]
+
+
 def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                               env: dict[str, str] | None = None,
-                              runner: CommandRunner = run_command) -> None:
+                              runner: CommandRunner = run_command,
+                              snapshot: dict[str, object] | None = None) -> None:
     """Run S-054 and S-048 using installed `kb` commands in both auth modes."""
     project_a = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
@@ -199,6 +218,9 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     if not platform_config_path.exists():
         platform_config_path = platform_root / ".kb" / "kb.config.json"
     original_platform_config = platform_config_path.read_bytes() if platform_config_path.exists() else None
+    if snapshot is not None:
+        snapshot["path"] = platform_config_path
+        snapshot["contents"] = original_platform_config
 
     def cli(args: list[str], cwd: Path = project_a) -> subprocess.CompletedProcess[str]:
         return _run(runner, ["kb", *args], cwd, base_env)
@@ -854,9 +876,8 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 shutil.rmtree(project_b)
             except OSError as error:
                 cleanup_errors.append(f"adapter project B fixture could not be removed: {error}")
-        if cleanup_errors:
-            message = "; ".join(cleanup_errors)
-            journey.step("restore adapter journey fixture state", "adapter", lambda: message)
+        message = "; ".join(cleanup_errors) if cleanup_errors else None
+        journey.step("restore adapter journey fixture state", "adapter", lambda: message, role="lifecycle")
 
 
 def _save_run(run_workflow, project):
