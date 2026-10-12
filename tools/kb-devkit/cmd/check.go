@@ -44,15 +44,16 @@ Use --package to check a single package.`,
 			ws.Packages = ws.FilterByName([]string{checkPackage})
 		}
 		results := checks.RunAll(ws, cfg, registry, checkOnly)
+		packagesChecked := checkedPackageCount(results)
 		if failures := checkExecutionFailures(results); len(failures) > 0 {
 			return externalCheckFailureError(failures, results)
 		}
 
 		if jsonMode {
-			return outputCheckJSON(results, cfg, checksByCategory, len(ws.Packages))
+			return outputCheckJSON(results, cfg, checksByCategory, packagesChecked)
 		}
 
-		return outputCheckHuman(results, cfg, checksByCategory, len(ws.Packages))
+		return outputCheckHuman(results, cfg, checksByCategory, packagesChecked)
 	},
 }
 
@@ -188,6 +189,7 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 	totalErrors := 0
 	totalWarnings := 0
 	totalPassed := 0
+	packagesWithFindings := 0
 
 	for _, r := range results {
 		if r.Skipped {
@@ -205,9 +207,14 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 		}
 		totalErrors += errCount
 		totalWarnings += warnCount
+		if (errCount > 0 || warnCount > 0) && r.Package.Name != "workspace" {
+			packagesWithFindings++
+		}
 
 		if errCount == 0 && warnCount == 0 {
-			totalPassed++
+			if r.Package.Name != "workspace" {
+				totalPassed++
+			}
 			continue
 		}
 
@@ -238,7 +245,7 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 		return nil
 	}
 
-	o.Err(fmt.Sprintf("%d error(s), %d warning(s) across %d packages", totalErrors, totalWarnings, len(results)-totalPassed))
+	o.Err(fmt.Sprintf("%d error(s), %d warning(s) across %d packages", totalErrors, totalWarnings, packagesWithFindings))
 	return diag.New("KB_DEVKIT_STANDARDS_VIOLATIONS", "Workspace standards violations were found.",
 		diag.WithHint("Review the findings, correct them, then rerun `kb-devkit check`."))
 }
@@ -319,31 +326,26 @@ func validateCheckSelection(ws *workspace.Workspace, cfg *config.DevkitConfig, r
 				diag.WithHint("Run `kb-devkit deps` to list discovered packages, then rerun with one of those package names."))
 		}
 	}
-	selected := make(map[string]bool, len(only))
-	for _, name := range only {
-		selected[name] = true
-	}
 	count := 0
 	for _, pkg := range pkgs {
 		preset, err := config.ResolvePreset(pkg.Preset, cfg)
 		if err != nil {
 			continue
 		}
-		for _, rule := range registry.RulesFor(preset) {
-			if scoped, ok := rule.(interface{ Scope() string }); ok && scoped.Scope() == "workspace" {
-				continue
-			}
-			if len(selected) == 0 || selected[rule.Name()] {
-				count++
+		count += len(registry.ApplicableRulesFor(pkg, preset, only))
+	}
+	count += len(registry.WorkspaceRules(only))
+	if count == 0 {
+		if packageName != "" && len(pkgs) == 1 {
+			pkg := pkgs[0]
+			if preset, err := config.ResolvePreset(pkg.Preset, cfg); err == nil {
+				if checkName, categories := registry.PackageApplicabilityMismatch(pkg, preset, only); checkName != "" {
+					return diag.New("KB_RUNTIME_INPUT_INVALID",
+						fmt.Sprintf("Check %q does not apply to package %q because its category is %q.", checkName, pkg.Name, pkg.Category),
+						diag.WithHint(fmt.Sprintf("%s applies to these categories: %s. Select a package in one of those categories, or run `kb-devkit check` without --package.", checkName, strings.Join(categories, ", "))))
+				}
 			}
 		}
-	}
-	for _, rule := range registry.All() {
-		if scoped, ok := rule.(interface{ Scope() string }); ok && scoped.Scope() == "workspace" && (len(selected) == 0 || selected[rule.Name()]) {
-			count++
-		}
-	}
-	if len(pkgs) == 0 || count == 0 {
 		return diag.New("KB_RUNTIME_INPUT_INVALID", "The check selection matched no workspace packages or checks.",
 			diag.WithHint("Run `kb-devkit check --help` to review filters, then select a package and check that exist in this workspace."))
 	}
@@ -352,10 +354,6 @@ func validateCheckSelection(ws *workspace.Workspace, cfg *config.DevkitConfig, r
 
 func selectedCheckCounts(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *checks.Registry, only []string, packageName string) map[string]int {
 	counts := make(map[string]int)
-	selected := make(map[string]bool, len(only))
-	for _, name := range only {
-		selected[name] = true
-	}
 	pkgs := ws.Packages
 	if packageName != "" {
 		pkgs = ws.FilterByName([]string{packageName})
@@ -365,21 +363,25 @@ func selectedCheckCounts(ws *workspace.Workspace, cfg *config.DevkitConfig, regi
 		if err != nil {
 			continue
 		}
-		for _, rule := range registry.RulesFor(preset) {
-			if scoped, ok := rule.(interface{ Scope() string }); ok && scoped.Scope() == "workspace" {
-				continue
-			}
-			if len(selected) == 0 || selected[rule.Name()] {
-				counts[pkg.Category]++
-			}
+		applicableCount := len(registry.ApplicableRulesFor(pkg, preset, only))
+		if applicableCount > 0 {
+			counts[pkg.Category] += applicableCount
 		}
 	}
-	for _, rule := range registry.All() {
-		if scoped, ok := rule.(interface{ Scope() string }); ok && scoped.Scope() == "workspace" && (len(selected) == 0 || selected[rule.Name()]) {
-			counts["workspace"]++
-		}
+	if workspaceRules := len(registry.WorkspaceRules(only)); workspaceRules > 0 {
+		counts["workspace"] = workspaceRules
 	}
 	return counts
+}
+
+func checkedPackageCount(results map[string]checks.PackageResult) int {
+	count := 0
+	for _, result := range results {
+		if result.Package.Name != "workspace" && !result.Skipped && result.ChecksRun > 0 {
+			count++
+		}
+	}
+	return count
 }
 
 func sumCheckCounts(counts map[string]int) int {

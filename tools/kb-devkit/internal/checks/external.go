@@ -74,11 +74,19 @@ func (r *externalRule) appliesToCategory(category string) bool {
 	return false
 }
 
+// AppliesToPackage is the package-level category predicate used by execution,
+// selection validation, and reporting through Registry.ApplicableRulesFor.
+func (r *externalRule) AppliesToPackage(pkg workspace.Package) bool {
+	return r.scope == "workspace" || r.appliesToCategory(pkg.Category)
+}
+
+// ApplicableCategories describes a package-scoped external check's category filter.
+func (r *externalRule) ApplicableCategories() []string {
+	return append([]string(nil), r.categories...)
+}
+
 func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issue {
 	if r.scope == "workspace" {
-		return nil
-	}
-	if !r.appliesToCategory(pkg.Category) {
 		return nil
 	}
 	out, err := r.runCommand(r.run, pkg, preset, nil, false)
