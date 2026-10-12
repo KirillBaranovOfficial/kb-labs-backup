@@ -277,7 +277,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                          {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.10", "S-203.11",
                          "PC-001.13", "PC-001.14", "PC-001.15"})
         self.assertEqual([command[1] for command in self.commands], [
-            "status", "project", "plan", "update", "status", "update", "status", "doctor", "status", "doctor", "adapter", "project", "plan", "update", "restart", "status",
+            "status", "project", "plan", "update", "status", "update", "status", "status", "status", "status", "doctor", "status", "doctor", "adapter", "project", "plan", "update", "restart", "status",
             "rollback", "rollback", "rollback", "status", "project", "adapter", "doctor", "restart", "adapter", "update", "update",
             "stop", "apply", "status", "doctor", "update",
         ])

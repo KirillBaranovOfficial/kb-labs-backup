@@ -2,7 +2,6 @@ package v2cli
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
@@ -25,7 +24,7 @@ func installedVersion(platformRoot string) string {
 // supervised host: it would fail on the host's port with a misleading message.
 // An installed platform is changed with update, which stops and restarts the host.
 func refuseRunningHost(platformRoot string) *diag.Diag {
-	layout, err := versionroot.New(platformRoot)
+	layout, err := versionroot.ForPlatformPath(platformRoot)
 	if err != nil {
 		return contracts.NewDiag(contracts.CodeInputRequired, "The installation path is invalid.", "Pass the install root used by this installation, then rerun the command.", err)
 	}
@@ -38,7 +37,8 @@ func refuseRunningHost(platformRoot string) *diag.Diag {
 	if !alive {
 		return nil
 	}
-	if record.PlatformRoot != filepath.Clean(platformRoot) {
+	installationID, identityErr := versionroot.InstallationIDForPath(platformRoot)
+	if identityErr != nil || record.InstallationID != installationID {
 		return supervisor.Refusal(record, platformRoot)
 	}
 	failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create update\" to change an installed platform, or \"kb-create stop\" before a fresh apply.", nil)
@@ -54,7 +54,7 @@ func refuseApplyBesideRunningHost(plan contracts.ResolvedInstallPlan, platformRo
 }
 
 func refuseForeignHost(platformRoot string) *diag.Diag {
-	layout, err := versionroot.New(platformRoot)
+	layout, err := versionroot.ForPlatformPath(platformRoot)
 	if err != nil {
 		return contracts.NewDiag(contracts.CodeInputRequired, "The installation path is invalid.", "Pass the install root used by this installation, then rerun the command.", err)
 	}
@@ -67,7 +67,8 @@ func refuseForeignHost(platformRoot string) *diag.Diag {
 	if !alive {
 		return nil
 	}
-	if record.PlatformRoot == filepath.Clean(platformRoot) {
+	installationID, identityErr := versionroot.InstallationIDForPath(platformRoot)
+	if identityErr == nil && record.InstallationID == installationID {
 		return nil
 	}
 	return supervisor.Refusal(record, platformRoot)
@@ -75,7 +76,7 @@ func refuseForeignHost(platformRoot string) *diag.Diag {
 
 func activeLauncher(state host.State) (supervisor.Record, bool) {
 	if active, ok := host.ActiveHost(state); ok {
-		return supervisor.Record{PID: active.PID, PlatformRoot: active.PlatformRoot}, true
+		return supervisor.Record{PID: active.PID, InstallationID: active.InstallationID, PlatformRoot: active.PlatformRoot}, true
 	}
 	return supervisor.ReadRecord(state)
 }

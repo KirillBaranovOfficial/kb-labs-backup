@@ -64,7 +64,7 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 		hint, input.Command); failure != nil {
 		return recoveryCommandResult{}, failure
 	}
-	layout, layoutErr := versionroot.New(root)
+	layout, layoutErr := versionroot.ForPlatformPath(root)
 	if layoutErr == nil {
 		layoutErr = layout.ValidateStructure()
 	}
@@ -137,7 +137,7 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	if err != nil {
 		return recoveryCommandResult{}, asDiag(err)
 	}
-	layout, layoutErr := versionroot.New(root)
+	layout, layoutErr := versionroot.ForPlatformPath(root)
 	if layoutErr == nil {
 		layoutErr = layout.Validate()
 	}
@@ -218,7 +218,7 @@ func restoreReceiptArtifacts(installer interface {
 
 func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root string, state host.State, operation string, target string, keepStopped bool,
 	change func(context.Context, runtime.Dependencies) (contracts.Snapshot, error)) (recoveryMutationResult, *diag.Diag) {
-	layout, err := versionroot.New(root)
+	layout, err := versionroot.ForPlatformPath(root)
 	if err != nil {
 		return recoveryMutationResult{}, unsupportedPlatformLayout(root, err)
 	}

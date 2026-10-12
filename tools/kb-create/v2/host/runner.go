@@ -84,6 +84,12 @@ func NewRunner(platformRoot string) (*ProcessRunner, error) {
 			"The active install receipt has no installation ID.",
 			"Run `"+contracts.ShellCommand("kb-create", "update", "--platform-root", platformRoot)+"` or reinstall the platform, then retry.", nil)
 	}
+	installationID, err := versionroot.InstallationIDForPath(layout.InstallRoot())
+	if err != nil || active.InstallationID != installationID {
+		return nil, contracts.NewDiag(contracts.CodeReceiptUnavailable,
+			"The active receipt does not match the install-root ownership identity.",
+			"Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", layout.InstallRoot())+"` and repair or reinstall the platform.", err)
+	}
 	spec, err := LoadSpec(platformRoot)
 	if err != nil {
 		return nil, err
@@ -110,7 +116,7 @@ func NewRunner(platformRoot string) (*ProcessRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessRunner{Spec: spec, State: state, InstallRoot: layout.InstallRoot(), PlatformRoot: root, TreeRoot: filepath.Clean(treeRoot),
+	return &ProcessRunner{Spec: spec, State: state, InstallRoot: layout.InstallRoot(), InstallationID: installationID, PlatformRoot: root, TreeRoot: filepath.Clean(treeRoot),
 		Identity: identity, SecretEnv: store.Environment}, nil
 }
 
@@ -127,7 +133,11 @@ func NewRecordedRunner(installRoot string) (*ProcessRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessRunner{InstallRoot: layout.InstallRoot(), PlatformRoot: filepath.Clean(root), State: state, Spec: Spec{StopGrace: defaultStopGrace}}, nil
+	installationID, err := versionroot.InstallationIDForPath(layout.InstallRoot())
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessRunner{InstallRoot: layout.InstallRoot(), InstallationID: installationID, PlatformRoot: filepath.Clean(root), State: state, Spec: Spec{StopGrace: defaultStopGrace}}, nil
 }
 
 // Prober starts the plan's host under its installation-owned state directory.

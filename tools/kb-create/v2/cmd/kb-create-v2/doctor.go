@@ -152,7 +152,7 @@ func (d doctorCommandResult) human() string {
 }
 
 func (i doctorCommandInput) inspectPlatform() doctor.Section {
-	layout, layoutErr := versionroot.New(i.PlatformRoot)
+	layout, layoutErr := versionroot.ForPlatformPath(i.PlatformRoot)
 	if layoutErr != nil {
 		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The installation layout cannot be resolved: " + layoutErr.Error()}})
 	}
@@ -191,7 +191,7 @@ func (i doctorCommandInput) inspectPlatform() doctor.Section {
 // back like a failed update.
 func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult, *diag.Diag) {
 	root := i.PlatformRoot
-	layout, err := versionroot.New(root)
+	layout, err := versionroot.ForPlatformPath(root)
 	if err != nil {
 		return doctorFixResult{}, unsupportedPlatformLayout(root, err)
 	}

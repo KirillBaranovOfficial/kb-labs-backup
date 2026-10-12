@@ -186,6 +186,11 @@ func TestEmittedKbCreateDiagnosticsMatchPlatformErrorSchema(t *testing.T) {
 	})
 
 	t.Run("control protocol errors and specific hints", func(t *testing.T) {
+		identity, err := host.NewProcessIdentityToken()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(host.ProcessIdentityEnv, identity)
 		server := &control.Server{State: host.State{Dir: t.TempDir()}, Version: "schema-test"}
 		if err := server.Start(); err != nil {
 			t.Fatal(err)

@@ -1099,7 +1099,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 elif args[1] == "stop":
                     primary_running = False
                     output = {"ok": True, "data": {"operation": "stop"}}
-                elif args[1] == "status" and str(source) in args:
+                elif args[1] == "status" and Path(args[args.index("--platform-root") + 1]) in {
+                        source, source / "current", (source / "current").resolve()}:
                     output = {"ok": True, "data": {"host": {"state": "running" if primary_running else "stopped"}}}
                 elif args[1] == "status":
                     output = {"ok": True, "data": {"host": {"state": "stopped"}}}
@@ -1114,7 +1115,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[0].status, "PASS")
         self.assertEqual(journey.steps[1].cases, ["S-025.8"])
         self.assertEqual(journey.steps[1].status, "PASS")
-        self.assertEqual(len(calls), 9)
+        self.assertEqual(len(calls), 12)
         self.assertEqual(calls[-1][1], "start")
 
     def test_doctor_fixture_requirement_matches_receipt_and_manifest_projection(self):
