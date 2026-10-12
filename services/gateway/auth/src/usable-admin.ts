@@ -10,6 +10,11 @@ export interface UsableAdminOptions {
   requireBootstrapOwnership?: boolean;
 }
 
+export interface UsableAdminResult {
+  usable: boolean;
+  unavailableProviders: ProviderInfo[];
+}
+
 /**
  * The shared login predicate used by readiness and bootstrap completion.
  * Redirect providers authenticate the email and then resolve an active local
@@ -20,18 +25,26 @@ export const isUsableAdmin = (
   credentials: Credential[],
   memberships: Membership[],
   options: UsableAdminOptions,
-): boolean => Boolean(
-  user !== null
-  && user.tenantId === options.tenantId
-  && (options.allowedStatuses ?? ['active']).includes(user.status)
-  && (!options.requireBootstrapOwnership || user.bootstrapManaged === true)
-  && memberships.some((membership) =>
-    membership.userId === user.userId
-    && membership.tenantId === options.tenantId
-    && membership.groupId === 'tenant-admin')
-  && options.providers.some((provider) =>
+): UsableAdminResult => {
+  const accountIsAdmin = user !== null
+    && user.tenantId === options.tenantId
+    && (options.allowedStatuses ?? ['active']).includes(user.status)
+    && (!options.requireBootstrapOwnership || user.bootstrapManaged === true)
+    && memberships.some((membership) =>
+      membership.userId === user.userId
+      && membership.tenantId === options.tenantId
+      && membership.groupId === 'tenant-admin');
+  if (!accountIsAdmin || user === null) {
+    return { usable: false, unavailableProviders: [] };
+  }
+  const operationalProviders = options.providers.filter((provider) => provider.operational.state === 'operational');
+  const usable = operationalProviders.some((provider) =>
     provider.kind === 'redirect'
     || (provider.kind === 'password'
       && credentials.some((credential) =>
-        credential.userId === user.userId && credential.providerId === provider.id))),
-);
+        credential.userId === user.userId && credential.providerId === provider.id)));
+  return {
+    usable,
+    unavailableProviders: usable ? [] : options.providers.filter((provider) => provider.operational.state === 'unavailable'),
+  };
+};

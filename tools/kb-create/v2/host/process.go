@@ -23,6 +23,7 @@ import (
 	"github.com/kb-labs/create/v2/diagnostics"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
@@ -153,9 +154,9 @@ type ProcessRunner struct {
 	// HTTP and PollInterval exist for tests; zero values use sane defaults.
 	HTTP         *http.Client
 	PollInterval time.Duration
-	// SecretEnv supplies the secret environment variables of the host process
-	// (the platform's private store). It is read on every Start.
-	SecretEnv func() (map[string]string, error)
+	// SecretEnv supplies the host's stored values and any environment entries
+	// that must be suppressed on every Start.
+	SecretEnv func() (secrets.Environment, error)
 
 	mu              sync.Mutex
 	pid             int
@@ -325,22 +326,37 @@ func (r *ProcessRunner) RunTool(ctx context.Context, tool Tool, extra []string, 
 // platform's secrets, then the spec's explicit values (the release wins).
 func (r *ProcessRunner) environment() ([]string, error) {
 	values := map[string]string{}
+	suppressed := map[string]struct{}{}
 	if r.SecretEnv != nil {
-		secretValues, err := r.SecretEnv()
+		environment, err := r.SecretEnv()
 		if err != nil {
 			return nil, fmt.Errorf("read the platform secrets: %w", err)
 		}
-		for key, value := range secretValues {
+		for key, value := range environment.Values {
 			values[key] = value
+		}
+		for _, key := range environment.Suppressed {
+			suppressed[key] = struct{}{}
+			delete(values, key)
 		}
 	}
 	for key, value := range r.Spec.Env {
+		if _, omit := suppressed[key]; omit {
+			continue
+		}
 		values[key] = value
 	}
 	if r.Identity.InstallationID != "" {
 		values["KB_INSTALLATION_ID"] = r.Identity.InstallationID
 	}
-	env := os.Environ()
+	env := make([]string, 0, len(os.Environ())+len(values))
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, omit := suppressed[key]; omit {
+			continue
+		}
+		env = append(env, entry)
+	}
 	for key, value := range values {
 		env = append(env, key+"="+value)
 	}

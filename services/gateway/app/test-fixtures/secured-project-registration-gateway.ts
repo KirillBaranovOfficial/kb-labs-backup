@@ -85,14 +85,14 @@ async function run(): Promise<void> {
     users,
     credentials,
     memberships,
-    providers: providers.list(),
+    providers: await providers.operationalList(),
     bcryptCost: 4,
     logger,
   });
 
   const app = Fastify({ logger: false, trustProxy: true });
   registerGatewayUxBoundary(app, logger);
-  registerAuthHealthRoute(app, () => evaluateAuthReadiness({
+  registerAuthHealthRoute(app, async () => evaluateAuthReadiness({
     authEnabled: true,
     loopbackOnly: true,
     tenantId: TENANT_ID,
@@ -101,7 +101,7 @@ async function run(): Promise<void> {
     users,
     credentials,
     memberships,
-    providers: providers.list(),
+    providers: await providers.operationalList(),
   }));
   await app.register(fastifyCookie);
   app.addHook('onRequest', createAuthMiddleware(cache, jwtConfig, {

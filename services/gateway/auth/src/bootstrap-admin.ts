@@ -97,11 +97,7 @@ export const ensureBootstrapAdmin = async (
     if (isUsableAdmin(existing, existingCredential ? [existingCredential] : [], existingMemberships, {
       tenantId: bootstrap.tenantId,
       providers,
-    })) {
-      if (providers.some((provider) => provider.id === 'email-password' && provider.kind === 'password')
-        && (!existingCredential || !await bcrypt.compare(bootstrap.adminPassword, existingCredential.hash))) {
-        throw new BootstrapCredentialConflictError();
-      }
+    }).usable) {
       logger.info('bootstrap-admin: admin already exists and is active, skipping');
       return 'exists-active';
     }
@@ -132,7 +128,7 @@ export const ensureBootstrapAdmin = async (
     if (isUsableAdmin(existing, credential ? [credential] : [], existingMemberships, {
       tenantId: bootstrap.tenantId,
       providers,
-    })) { return 'exists-active'; }
+    }).usable) { return 'exists-active'; }
     return 'exists-non-active';
   }
   return completeBootstrap(existing.userId, bootstrap, users, credentials, memberships, providers, bcryptCost);
@@ -193,10 +189,10 @@ const completeBootstrap = async (
   const allMemberships = await memberships.listByUser(userId);
   if (!isUsableAdmin(user, [credential], allMemberships, {
     tenantId: bootstrap.tenantId,
-    providers: [{ id: 'email-password', kind: 'password' }],
+    providers,
     allowedStatuses: ['pending'],
     requireBootstrapOwnership: true,
-  })) {
+  }).usable) {
     throw new Error('bootstrap-admin: persisted administrator credentials or membership are incomplete');
   }
   // This compare-and-set is the one commit point. No retry writes a new hash.
@@ -221,7 +217,7 @@ const bootstrapWinnerOutcome = async (
   if (isUsableAdmin(winner, winnerCredential ? [winnerCredential] : [], winnerMemberships, {
     tenantId: bootstrap.tenantId,
     providers,
-  })) {
+  }).usable) {
     if (winnerCredential && await bcrypt.compare(bootstrap.adminPassword, winnerCredential.hash)) {
       return 'exists-active';
     }
@@ -246,10 +242,10 @@ const bootstrapWinnerOutcome = async (
       && currentRevision === currentCredential.bootstrapRevision
       && isUsableAdmin(current, [currentCredential], allMemberships, {
         tenantId: bootstrap.tenantId,
-        providers: [{ id: 'email-password', kind: 'password' }],
+        providers,
         allowedStatuses: ['pending'],
         requireBootstrapOwnership: true,
-      })) {
+      }).usable) {
       const activated = await users.activateBootstrapAdmin(userId, currentRevision);
       if (activated) { return 'provisioned'; }
       const finalUser = await users.getById(userId);
@@ -258,7 +254,7 @@ const bootstrapWinnerOutcome = async (
       if (isUsableAdmin(finalUser, finalCredential ? [finalCredential] : [], finalMemberships, {
         tenantId: bootstrap.tenantId,
         providers,
-      })) {
+      }).usable) {
         if (finalCredential && await bcrypt.compare(bootstrap.adminPassword, finalCredential.hash)) {
           return 'exists-active';
         }

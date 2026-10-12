@@ -323,21 +323,10 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		applied.Plan.Request.PlatformRoot = platformRoot
 	}
 	if securedAdmin {
-		bootstrapState, present, readErr := store.Get(secrets.BootstrapCompleted)
-		generated, generatedErr := store.Exists(secrets.BootstrapGenerated)
-		disclosed, disclosedErr := store.Exists(secrets.BootstrapDisclosed)
-		if readErr != nil || generatedErr != nil || disclosedErr != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator bootstrap state could not be read", "check that the platform root is writable, then rerun `kb-create install`", errors.Join(readErr, generatedErr, disclosedErr))
-		}
-		if present && bootstrapState == "provisioned" && generated && !disclosed {
-			password, passwordPresent, passwordErr := store.Get("gateway.bootstrap.password")
-			if passwordErr != nil || !passwordPresent {
-				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the generated first administrator password could not be read", "check that the platform root is writable, then rerun `kb-create install`", passwordErr)
-			}
-			if err := store.Put(secrets.BootstrapDisclosed, "true"); err != nil {
-				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator credential disclosure could not be recorded", "check that the platform root is writable, then rerun `kb-create install`", err)
-			}
-			firstAdmin = &firstAdminCredential{Email: adminEmail, Password: password, ShownOnce: true}
+		var failure *diag.Diag
+		firstAdmin, failure = firstAdminDisclosure(store, adminEmail, bootstrapCompleted, platformRoot)
+		if failure != nil {
+			return applyCommandResult{}, failure
 		}
 	}
 	if planned.Host != nil {

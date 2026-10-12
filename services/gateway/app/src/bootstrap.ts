@@ -259,7 +259,7 @@ export async function startGateway(
       users,
       credentials,
       memberships,
-      providers: providers.list(),
+      providers: await providers.operationalList(),
       bcryptCost,
       logger,
     }).catch((err): BootstrapStatus => {
@@ -317,7 +317,7 @@ export async function startGateway(
       );
     }
 
-    const authReadiness = () =>
+    const authReadiness = async () =>
       evaluateAuthReadiness({
         authEnabled: access.authEnabled,
         loopbackOnly: isLoopbackHost(access.bindHost),
@@ -327,7 +327,7 @@ export async function startGateway(
         users,
         memberships,
         credentials,
-        providers: providers.list(),
+        providers: await providers.operationalList(),
       });
     await logAuthReadiness(authReadiness, logger);
 

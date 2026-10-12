@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,10 +20,12 @@ import (
 //go:generate go run ../gen-gateway-bootstrap ../../../../../services/gateway/contracts/src/auth-health-response.schema.json gateway_bootstrap_gen.go
 
 type gatewayAuthHealthIssue struct {
-	Code     *string                         `json:"code"`
-	Severity *GatewayAuthHealthIssueSeverity `json:"severity"`
-	Message  *string                         `json:"message"`
-	Hint     *string                         `json:"hint"`
+	Code       *string                         `json:"code"`
+	Severity   *GatewayAuthHealthIssueSeverity `json:"severity"`
+	Message    *string                         `json:"message"`
+	Hint       *string                         `json:"hint"`
+	ProviderID *string                         `json:"providerId,omitempty"`
+	Failure    *string                         `json:"failure,omitempty"`
 }
 
 type gatewayAuthHealthResponse struct {
@@ -148,6 +151,32 @@ func bootstrapContractFailure(message, cause, platformRoot string) *diag.Diag {
 func bootstrapOutcomeFailure(platformRoot, cause string) *diag.Diag {
 	return contracts.NewDiag(contracts.CodeApplyFailed, "Gateway did not prove first-administrator bootstrap and secured authentication are ready with a usable active administrator.",
 		"Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot)+"` to inspect Gateway authentication readiness and resolve the issue, then rerun `kb-create install`.", fmt.Errorf("%s", cause))
+}
+
+func firstAdminDisclosure(store secrets.Store, adminEmail string, completed bool, platformRoot string) (*firstAdminCredential, *diag.Diag) {
+	bootstrapState, present, readErr := store.Get(secrets.BootstrapCompleted)
+	generated, generatedErr := store.Exists(secrets.BootstrapGenerated)
+	disclosed, disclosedErr := store.Exists(secrets.BootstrapDisclosed)
+	if readErr != nil || generatedErr != nil || disclosedErr != nil {
+		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator bootstrap state could not be read", "check that the platform root is writable, then rerun `kb-create install`", errors.Join(readErr, generatedErr, disclosedErr))
+	}
+	if !present || bootstrapState != "provisioned" || !generated || disclosed {
+		return nil, nil
+	}
+	if completed {
+		return nil, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the first administrator credential was not disclosed during the original install and cannot be disclosed after bootstrap completion",
+			"Sign in with the administrator's current password. If no administrator can sign in, run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot, "--recover", "--email", adminEmail, "--generate", "--yes")+"` to recover access.",
+			fmt.Errorf("bootstrap completion predates the undisclosed credential state"))
+	}
+	password, passwordPresent, passwordErr := store.Get("gateway.bootstrap.password")
+	if passwordErr != nil || !passwordPresent {
+		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the generated first administrator password could not be read", "check that the platform root is writable, then rerun `kb-create install`", passwordErr)
+	}
+	if err := store.Put(secrets.BootstrapDisclosed, "true"); err != nil {
+		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator credential disclosure could not be recorded", "check that the platform root is writable, then rerun `kb-create install`", err)
+	}
+	return &firstAdminCredential{Email: adminEmail, Password: password, ShownOnce: true}, nil
 }
 
 func errorsJoinStop(cause error, stop func() error) error {

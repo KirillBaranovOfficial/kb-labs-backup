@@ -54,6 +54,35 @@ interface Counter extends BaseDocument {
   value: number;
 }
 
+interface ConditionalUpdateRecord extends BaseDocument {
+  key: string;
+  status: string;
+  revision: number;
+  winner?: number;
+}
+
+export async function assertConditionalSingleDocumentUpdate(db: IDocumentDatabase): Promise<void> {
+  const collection = 'conditional_update_contract';
+  await db.ensureCollection(collection);
+  const pending = await db.insertOne<ConditionalUpdateRecord>(collection, {
+    key: 'bootstrap-record',
+    status: 'pending',
+    revision: 1,
+  });
+  const transition = (revision: number) => db.updateOne<ConditionalUpdateRecord>(
+    collection,
+    { id: { $eq: pending.id }, status: { $eq: 'pending' }, revision: { $eq: 1 } },
+    { $set: { status: 'active', revision, winner: revision } },
+  );
+
+  const outcomes = await Promise.all([transition(2), transition(3)]);
+  expect(outcomes.filter(Boolean)).toHaveLength(1);
+  expect(outcomes.filter((result) => result === null)).toHaveLength(1);
+  const stored = await db.findById<ConditionalUpdateRecord>(collection, pending.id);
+  expect(stored?.status).toBe('active');
+  expect([2, 3]).toContain(stored?.winner);
+}
+
 const seedUsers = async (db: IDocumentDatabase, count = 5): Promise<User[]> => {
   return db.insertMany<User>('users', Array.from({ length: count }, (_, i) => ({
     email: `user${i}@example.com`,
@@ -171,21 +200,7 @@ export function runDocumentDatabaseContract(factory: ContractFactory): void {
 
     describe('updateById / updateOne', () => {
       it('matches and updates conditionally as one atomic single-document operation', async () => {
-        const pending = await db.insertOne<User>('users', {
-          email: 'bootstrap@example.com', name: 'Bootstrap', age: 1, active: false,
-        });
-        const transition = (name: string) => db.updateOne<User>(
-          'users',
-          { id: { $eq: pending.id }, active: { $eq: false } },
-          { $set: { name, active: true } },
-        );
-
-        const outcomes = await Promise.all([transition('first'), transition('second')]);
-        expect(outcomes.filter(Boolean)).toHaveLength(1);
-        expect(outcomes.filter((result) => result === null)).toHaveLength(1);
-        const stored = await db.findById<User>('users', pending.id);
-        expect(stored?.active).toBe(true);
-        expect(['first', 'second']).toContain(stored?.name);
+        await assertConditionalSingleDocumentUpdate(db);
       });
 
       it('applies $set and bumps updatedAt', async () => {

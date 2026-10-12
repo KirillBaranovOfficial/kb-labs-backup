@@ -47,6 +47,7 @@ import type {
   IRedirectIdentityProvider,
   IdentityResult,
   IdentityProviderDeps,
+  IdentityProviderOperationalState,
   RedirectStartContext,
   RedirectStartResult,
 } from '@kb-labs/core-contracts';
@@ -81,10 +82,21 @@ export type OidcProviderConfig = z.infer<typeof OidcConfigSchema>;
 // ── Discovery / JWKS ──────────────────────────────────────────────────────────
 
 interface Discovery {
+  issuer: string;
   authorization_endpoint: string;
   token_endpoint: string;
   jwks_uri: string;
 }
+
+const DiscoverySchema = z.object({
+  issuer: z.string().url(),
+  authorization_endpoint: z.string().url(),
+  token_endpoint: z.string().url(),
+  jwks_uri: z.string().url(),
+}).passthrough();
+
+const OPERATIONAL_REFRESH_INTERVAL_MS = 60_000;
+const DISCOVERY_TIMEOUT_MS = 3_000;
 
 const VERIFY_ALGS = ['RS256', 'ES256'];
 
@@ -137,20 +149,68 @@ export function createOidcProvider(
   const doFetch = deps.fetch ?? globalThis.fetch;
 
   let discoveryCache: Discovery | null = null;
+  let operationalCache: IdentityProviderOperationalState | null = null;
+  let discoveryRefresh: Promise<IdentityProviderOperationalState> | null = null;
   let jwksCache: ReturnType<typeof createLocalJWKSet> | null = null;
 
-  async function discover(): Promise<Discovery> {
-    if (discoveryCache) {
-      return discoveryCache;
-    }
+  async function refreshDiscovery(): Promise<IdentityProviderOperationalState> {
+    const checkedAt = Date.now();
     const url = `${config.issuer.replace(/\/$/, '')}/.well-known/openid-configuration`;
-    const res = await doFetch(url);
-    if (!res.ok) {
-      throw new Error(`oidc "${config.id}": discovery failed (${res.status})`);
+    let response: Response;
+    try {
+      response = await doFetch(url, { signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS) });
+    } catch {
+      discoveryCache = null;
+      operationalCache = { state: 'unavailable', checkedAt, failure: 'unreachable' };
+      return operationalCache;
     }
-    const json = (await res.json()) as Discovery;
-    discoveryCache = json;
-    return json;
+    if (!response.ok) {
+      discoveryCache = null;
+      operationalCache = { state: 'unavailable', checkedAt, failure: 'unreachable' };
+      return operationalCache;
+    }
+    let json: unknown;
+    try {
+      json = await response.json();
+    } catch {
+      discoveryCache = null;
+      operationalCache = { state: 'unavailable', checkedAt, failure: 'invalid-discovery' };
+      return operationalCache;
+    }
+    const parsed = DiscoverySchema.safeParse(json);
+    if (!parsed.success || parsed.data.issuer !== config.issuer ||
+      [parsed.data.authorization_endpoint, parsed.data.token_endpoint, parsed.data.jwks_uri]
+        .some((endpoint) => new URL(endpoint).protocol !== 'https:')) {
+      discoveryCache = null;
+      operationalCache = { state: 'unavailable', checkedAt, failure: 'invalid-discovery' };
+      return operationalCache;
+    }
+    discoveryCache = parsed.data;
+    operationalCache = { state: 'operational', checkedAt };
+    return operationalCache;
+  }
+
+  async function getOperationalState(): Promise<IdentityProviderOperationalState> {
+    if (operationalCache && Date.now() - operationalCache.checkedAt < OPERATIONAL_REFRESH_INTERVAL_MS) {
+      return operationalCache;
+    }
+    if (!discoveryRefresh) {
+      discoveryRefresh = refreshDiscovery();
+    }
+    const pending = discoveryRefresh;
+    try {
+      return await pending;
+    } finally {
+      if (discoveryRefresh === pending) { discoveryRefresh = null; }
+    }
+  }
+
+  async function discover(): Promise<Discovery> {
+    const operational = await getOperationalState();
+    if (operational.state !== 'operational' || !discoveryCache) {
+      throw new Error(`oidc "${config.id}": discovery ${operational.state === 'unavailable' ? operational.failure : 'unavailable'}`);
+    }
+    return discoveryCache;
   }
 
   async function getJwks(force = false): Promise<ReturnType<typeof createLocalJWKSet>> {
@@ -187,6 +247,8 @@ export function createOidcProvider(
   const provider: IRedirectIdentityProvider = {
     id: config.id,
     kind: 'redirect',
+
+    getOperationalState,
 
     async startAuthorization(ctx: RedirectStartContext): Promise<RedirectStartResult> {
       const { authorization_endpoint } = await discover();

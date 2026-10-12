@@ -6,6 +6,10 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ## 2026-10-12
 
+### Bootstrap credentials stop being startup credentials after first-admin completion
+
+The bootstrap password only creates an unfinished first-admin account. Once the account is active, later user-driven password changes are independent of bootstrap configuration; the Gateway does not compare the stored bootstrap secret against an active user's credential. After the installer records completion, the host receives no bootstrap-password environment variable. Readiness counts an admin only through an operational configured identity provider. Cases: S-222.
+
 ### Gateway readiness follows configured identity methods
 
 An active tenant administrator is usable when a configured login method can authenticate that user: the configured email-password provider needs its credential, while a configured redirect provider resolves an authenticated provider email to an active user in the tenant. A secured install with no bootstrap email does not require a bootstrap-completion marker; Gateway readiness and `kb-create doctor` report the configured sign-in path. Cases: S-100, S-222.
