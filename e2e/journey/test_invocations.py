@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,6 +100,22 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
 
 class PtyInvocationTest(unittest.TestCase):
+    def test_unresolved_state_cannot_reach_command_or_http_boundary(self):
+        commands = []
+        with self.assertRaisesRegex(RuntimeError, "projectId"):
+            invocations.run_command(
+                ["kb", "project", "show", "{projectId}"],
+                runner=lambda argv, **kwargs: commands.append(argv),
+            )
+        self.assertEqual(commands, [])
+
+        request = urllib.request.Request(
+            "http://127.0.0.1:4000/api/v1/projects/{projectId}/workflow/health")
+        requests = []
+        with self.assertRaisesRegex(RuntimeError, "projectId"):
+            invocations.open_http(lambda req, **kwargs: requests.append(req), request, timeout=1)
+        self.assertEqual(requests, [])
+
     def test_pty_timeout_without_output_is_explicit_in_error_and_invocation(self):
         with tempfile.TemporaryDirectory(prefix="journey-pty-empty-timeout-") as temp, \
                 invocations.invocation_context(report_root=temp):

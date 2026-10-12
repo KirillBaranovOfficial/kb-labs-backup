@@ -412,6 +412,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {"S-054.21", "S-054.22"} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
+            cleanup = next(step for step in journey.steps if step.name == "restore adapter journey fixture state")
+            self.assertEqual(cleanup.status, "PASS")
             self.assertEqual(claims, expected)
             workflow_rows = [
                 json.loads(line)
