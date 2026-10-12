@@ -1,6 +1,7 @@
 """Keep selected-case routing complete for every active journey claim."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -16,13 +17,126 @@ from select_from_cases import (read_coverage_result, selection_from_coverage,
                                _imported_journey_sources, selectors_from_coverage,
                                validate_dependency_declarations,
                                validate_registered_state_dependencies,
-                               validate_runner_conditions)
+                               validate_runner_conditions, validate_journey_environment_reads,
+                               full_runner_plans)
 from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
 from service_steps import FlowGraph, Journey, source_selected
 
 
+def helper_read(memory, key):
+    return memory.get(key)
+
+
 class DispatchRegistryTests(unittest.TestCase):
+    def test_registered_memory_rejects_helper_read_without_prerequisite(self):
+        from service_steps import JourneyMemory, JourneyContractError
+        memory = JourneyMemory({"setup": ((), ("project",))})
+        with memory.activate("consumer", (), ()):
+            with self.assertRaisesRegex(JourneyContractError, "undeclared dependency.*consumer.*project.*setup"):
+                helper_read(memory, "project")
+
+    def test_registered_memory_rejects_attribute_held_state_without_prerequisite(self):
+        from service_steps import JourneyMemory, JourneyContractError
+        holder = type("Holder", (), {})()
+        holder.memory = JourneyMemory({"setup": ((), ("project",))})
+        with holder.memory.activate("consumer", (), ()):
+            with self.assertRaisesRegex(JourneyContractError, "undeclared dependency.*consumer.*project.*setup"):
+                holder.memory.get("project")
+
+    def test_registered_memory_rejects_undeclared_write(self):
+        from service_steps import JourneyMemory, JourneyContractError
+        memory = JourneyMemory({})
+        with memory.activate("writer", (), ()):
+            with self.assertRaisesRegex(JourneyContractError, "undeclared write.*writer.*project"):
+                memory.set("project", "registered")
+
+    def test_journey_records_undeclared_memory_read_as_harness_failure(self):
+        journey = Journey("local", "memory-contract")
+        journey.step("project setup", "test",
+                     lambda: journey.memory.set("project", "registered"),
+                     provides=("project",))
+        result = journey.step("project consumer", "test",
+                              lambda: helper_read(journey.memory, "project"))
+        self.assertEqual(result.status, "FAIL")
+        self.assertRegex(result.message,
+                         r"harness defect: undeclared dependency: reader 'project consumer' "
+                         r"reads key 'project' from producer 'project setup'")
+
+    def test_state_rail_rejects_module_global_capture(self):
+        with tempfile.TemporaryDirectory(prefix="journey-global-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'shared = {}\n'
+                'def produce():\n'
+                '    shared["project"] = "registered"\n'
+                'def check():\n'
+                '    return shared.get("project")\n'
+                'journey.step("project setup", "test", produce)\n'
+                'journey.step("consumer", "test", check)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "registered callbacks share module-global mutable state"):
+                validate_registered_state_dependencies({"fixture_steps.py"}, root)
+
+    def test_state_rail_rejects_attribute_held_state(self):
+        with tempfile.TemporaryDirectory(prefix="journey-attribute-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'class Holder: pass\n'
+                'state = Holder()\n'
+                'state.values = {}\n'
+                'def produce():\n'
+                '    state.values["project"] = "registered"\n'
+                'def check():\n'
+                '    return state.values.get("project")\n'
+                'journey.step("project setup", "test", produce)\n'
+                'journey.step("consumer", "test", check)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "registered callbacks share module-global mutable state"):
+                validate_registered_state_dependencies({"fixture_steps.py"}, root)
+
+    def test_state_rail_rejects_helper_mediated_global_read(self):
+        with tempfile.TemporaryDirectory(prefix="journey-helper-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'shared = {}\n'
+                'def produce():\n'
+                '    shared["project"] = "registered"\n'
+                'def helper():\n'
+                '    return shared.get("project")\n'
+                'def check():\n'
+                '    return helper()\n'
+                'journey.step("project setup", "test", produce)\n'
+                'journey.step("consumer", "test", check)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "registered callbacks share module-global mutable state"):
+                validate_registered_state_dependencies({"fixture_steps.py"}, root)
+
+    def test_environment_rail_rejects_kb_journey_read_outside_accessor(self):
+        with tempfile.TemporaryDirectory(prefix="journey-env-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'import os\n'
+                'value = os.environ.get("KB_JOURNEY_PROJECT_ID")\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "KB_JOURNEY_PROJECT_ID.*journey_values"):
+                validate_journey_environment_reads({"fixture_steps.py"}, root)
+
+    def test_full_unselected_plan_matches_checked_in_golden(self):
+        root = Path(__file__).resolve().parents[2]
+        baseline_path = root / "e2e/journey/full-plan-baseline.json"
+        expected = json.loads(baseline_path.read_text(encoding="utf-8"))
+        actual = full_runner_plans(root)
+        self.assertEqual(
+            actual, expected,
+            "full journey plan drifted; run python3 e2e/journey/select_from_cases.py "
+            "--write-plan-baseline, then review the ordered plan diff before updating the golden",
+        )
+
     def test_service_readiness_claim_resolves_registered_project_setup(self):
         resolved = selection_from_coverage(self._coverage(), "PC-002.3")
         self.assertEqual(resolved["prerequisiteSteps"], ["registered project setup"])
@@ -314,7 +428,7 @@ class DispatchRegistryTests(unittest.TestCase):
                 'journey.step("project consumer", "test", consume)\n',
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, r"project consumer.*reads shared state.*project setup"):
+            with self.assertRaisesRegex(ValueError, r"registered callbacks share module-global mutable state 'shared_state'"):
                 validate_registered_state_dependencies({"fixture_steps.py"}, root)
 
     def test_state_dependency_rail_rejects_dynamic_key_read(self):
@@ -330,7 +444,7 @@ class DispatchRegistryTests(unittest.TestCase):
                 'journey.step("project consumer", "test", consume)\n',
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, r"project consumer.*reads shared state.*project setup"):
+            with self.assertRaisesRegex(ValueError, r"registered callbacks share module-global mutable state 'shared_state'"):
                 validate_registered_state_dependencies({"fixture_steps.py"}, root)
 
     def test_runner_condition_rail_rejects_unowned_conditional_registration(self):
