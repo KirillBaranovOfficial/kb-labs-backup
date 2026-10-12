@@ -1,12 +1,8 @@
 """Validation for state-derived values sent to journey commands and services."""
 from __future__ import annotations
 
-from collections.abc import Iterable
-import re
-from typing import overload
-
-
-_UNRESOLVED = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+from collections.abc import Mapping
+import os
 
 
 class MissingJourneyState(RuntimeError):
@@ -15,21 +11,10 @@ class MissingJourneyState(RuntimeError):
         super().__init__(f"missing journey state key {key}")
 
 
-@overload
-def require_journey_value(value: str, *, state_key: str | None = None) -> str: ...
-
-
-@overload
-def require_journey_value(value: Iterable[str], *, state_key: str | None = None) -> Iterable[str]: ...
-
-
-def require_journey_value(value: str | Iterable[str], *, state_key: str | None = None) -> str | Iterable[str]:
-    values = (value,) if isinstance(value, str) else value
-    for item in values:
-        if not item and state_key:
-            raise MissingJourneyState(state_key)
-        unresolved = _UNRESOLVED.search(item)
-        if unresolved:
-            key = state_key or unresolved.group(1)
-            raise MissingJourneyState(key)
+def journey_state(key: str, state: Mapping[str, str] | None = None) -> str:
+    """Read required journey state at the point where it is substituted into a request."""
+    source = os.environ if state is None else state
+    value = source.get(key)
+    if not value:
+        raise MissingJourneyState(key)
     return value

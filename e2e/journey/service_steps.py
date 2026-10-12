@@ -93,6 +93,7 @@ class Journey:
                 self.steps.append(result)
                 return result
         started = time.monotonic()
+        missing_state_key: str | None = None
         try:
             with invocation_context(step_id=",".join(case_ids) or name):
                 message = self.step_guard(name, check) if self.step_guard else check()
@@ -104,10 +105,14 @@ class Journey:
         except MissingJourneyState as error:
             status = "BLOCKED"
             message = str(error)
+            missing_state_key = error.key
         except Exception as error:  # Include a concise error, not a raw traceback.
             status = "FAIL"
             message = str(error) or error.__class__.__name__
         step_details = details() if details is not None else None
+        if missing_state_key:
+            step_details = dict(step_details or {})
+            step_details["missingStateKey"] = missing_state_key
         if prerequisite or lifecycle:
             step_details = dict(step_details or {})
             step_details["selectionRole"] = "prerequisite" if prerequisite else "lifecycle"

@@ -29,7 +29,7 @@ from invocations import (decode_ux_error_result, decode_ux_success_result, open_
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import prepare_commit_project_fixture, run_marketplace_steps
 from marketplace_steps import _registry_version, _output
-from adapter_defaults_steps import run_adapter_default_steps
+from adapter_defaults_steps import _config_difference_keys, run_adapter_default_steps
 from analytics_steps import run_analytics_steps
 from gateway_steps import run_adapter_catalog_step, run_gateway_steps
 from worktree_steps import run_worktree_steps
@@ -69,6 +69,39 @@ def repository_git_status(project: Path) -> str | None:
     if result.returncode != 0:
         return None
     return result.stdout
+
+
+def _adapter_defaults_probe_error(journey: Journey, snapshot: dict[str, object],
+                                  platform_root: Path) -> str | None:
+    cleanup = next((step for step in reversed(journey.steps)
+                    if step.name == "restore adapter journey fixture state"), None)
+    if cleanup is None:
+        flow = next((step for step in reversed(journey.steps)
+                     if step.name == "adapter defaults flow"), None)
+        if flow is not None and flow.status != "PASS":
+            return f"BLOCKED: adapter defaults cleanup did not run because {flow.name} ended {flow.status}: {flow.message}"
+        return "BLOCKED: adapter defaults flow did not run; platform fixture state was not changed"
+    if cleanup.status != "PASS":
+        return f"adapter fixture cleanup ended {cleanup.status}: {cleanup.message}"
+    snapshot_path = snapshot.get("path")
+    original_contents = snapshot.get("contents")
+    if not isinstance(snapshot_path, Path) or (original_contents is not None and not isinstance(original_contents, bytes)):
+        return "adapter defaults flow did not capture the original platform config"
+    restored_contents = snapshot_path.read_bytes() if snapshot_path.is_file() else None
+    changed_keys = _config_difference_keys(original_contents, restored_contents)
+    if changed_keys:
+        return "platform adapter config differs from its snapshot at keys: " + ", ".join(changed_keys)
+    config_path = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
+    if not config_path.is_file():
+        config_path = active_platform_root(platform_root) / ".kb" / "kb.config.json"
+    try:
+        value = json.loads(config_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        return f"platform adapter config is missing or unreadable after the adapter journey: {error}"
+    platform_config = value.get("platform", {})
+    if not isinstance(platform_config, dict):
+        return "restored platform adapter config has no platform object"
+    return None
 
 
 def project_plugin_settings_isolation() -> str | None:
@@ -761,30 +794,14 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                    lambda: run_project_plugin_availability_steps(
                        journey, str(cli_path), Path(project_root), Path(project_b_root), env),
                    cases=["S-197.3", "S-197.5"], record_empty_success=False)
+    adapter_fixture_snapshot: dict[str, object] = {}
     graph.flow("adapter defaults flow", "adapters", "adapter",
-               lambda: run_adapter_default_steps(journey, project_root, env),
+               lambda: run_adapter_default_steps(journey, project_root, env,
+                                                 snapshot=adapter_fixture_snapshot),
                cases=["S-054.1", "S-048.1"], record_empty_success=False)
     platform_root = Path(env.get("KB_JOURNEY_PLATFORM_ROOT", project_root))
-    def adapter_defaults_probe() -> str | None:
-        cleanup = next((step for step in reversed(journey.steps)
-                        if step.name == "restore adapter journey fixture state"), None)
-        if cleanup is None:
-            return "BLOCKED: adapter defaults flow did not run; platform fixture state was not changed"
-        if cleanup.status != "PASS":
-            return f"adapter fixture cleanup ended {cleanup.status}: {cleanup.message}"
-        config_path = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
-        if not config_path.is_file():
-            config_path = active_platform_root(platform_root) / ".kb" / "kb.config.json"
-        try:
-            value = json.loads(config_path.read_text())
-        except (OSError, json.JSONDecodeError) as error:
-            return f"platform adapter config is missing or unreadable after the adapter journey: {error}"
-        platform_config = value.get("platform", {})
-        if not isinstance(platform_config, dict):
-            return "restored platform adapter config has no platform object"
-        return None
     graph.probe_state("adapter-defaults", "adapters", "restore original platform adapter fixture state",
-                      adapter_defaults_probe)
+                      lambda: _adapter_defaults_probe_error(journey, adapter_fixture_snapshot, platform_root))
     graph.flow("plugin author flow", "plugin-author", "plugin-author",
                lambda: run_plugin_author_flow(journey, Path(project_root),
                                               Path.home() / ".local/bin/kb", registry,

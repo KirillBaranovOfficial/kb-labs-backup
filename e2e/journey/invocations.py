@@ -17,7 +17,6 @@ import threading
 import time
 from typing import Any, Callable, Mapping, MutableMapping, NoReturn
 from urllib.error import HTTPError, URLError
-from journey_values import require_journey_value
 
 from platform_state_dump import _redact_json, _redact_text
 
@@ -347,7 +346,6 @@ def run_command(argv: list[str], *, cwd: str | Path | None = None,
                 monitor_process: Callable[[int], None] | None = None,
                 **kwargs: Any) -> subprocess.CompletedProcess[str]:
     started = time.monotonic()
-    require_journey_value(argv)
     if runner is None and monitor_process is not None:
         return _run_monitored_command(argv, cwd=cwd, env=env, timeout=timeout,
                                       monitor_process=monitor_process, started=started, **kwargs)
@@ -457,7 +455,6 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
                     start_new_session: bool = False,
                     raise_on_timeout: bool = True) -> tuple[subprocess.CompletedProcess[str], float]:
     """Run a command on a PTY and record its complete transcript and case step."""
-    require_journey_value(argv)
     started = time.monotonic()
     master, slave = pty.openpty()
     process = None
@@ -549,7 +546,6 @@ def run_streaming_command(argv: list[str], *, cwd: str | Path | None = None,
                           on_output_line: Callable[[str], None] | None = None,
                           start_new_session: bool = False) -> tuple[subprocess.CompletedProcess[str], float]:
     """Stream combined subprocess output while retaining the full transcript as evidence."""
-    require_journey_value(argv)
     started = time.monotonic()
     transcript_parts: list[str] = []
     output_thread: threading.Thread | None = None
@@ -668,7 +664,6 @@ class BackgroundCommand:
 def start_background_command(argv: list[str], *, cwd: str | Path | None = None,
                              env: Mapping[str, str] | None = None) -> BackgroundCommand:
     """Start a background command and capture its full output until it exits."""
-    require_journey_value(argv)
     started = time.monotonic()
     try:
         process = subprocess.Popen(argv, cwd=str(cwd) if cwd else None,
@@ -686,7 +681,6 @@ def start_background_command(argv: list[str], *, cwd: str | Path | None = None,
 def open_http(opener: Callable[..., Any], request: Any, *, timeout: float,
               env: Mapping[str, str] | None = None) -> tuple[int, bytes, Mapping[str, str]]:
     """Perform and record an HTTP request, including non-2xx responses."""
-    require_journey_value(getattr(request, "full_url", str(request)))
     started = time.monotonic()
     method = getattr(request, "method", None) or "GET"
     url = getattr(request, "full_url", str(request))

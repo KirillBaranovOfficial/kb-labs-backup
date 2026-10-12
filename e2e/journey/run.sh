@@ -5,24 +5,46 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export KB_JOURNEY_WORKSPACE_SOURCE="$ROOT"
 export KB_JOURNEY_GIT_REVISION="$(git rev-parse HEAD)"
-docker() {
-  if [[ "${1:-}" == "compose" ]]; then
-    shift
-    if command docker compose version >/dev/null 2>&1; then
-      command docker compose "$@"
-    else
-      command docker-compose "$@"
-    fi
-  else
-    command docker "$@"
-  fi
-}
-if [[ "${KB_JOURNEY_CI:-0}" == "1" ]]; then
-  COMPOSE=(docker compose -f e2e/docker-compose.yml -f e2e/docker-compose.ci.yml -f e2e/journey/docker-compose.yml)
-else
-  COMPOSE=(docker compose -f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
+COMPOSE=()
+COMPOSE_AVAILABLE=0
+if command docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose)
+  COMPOSE_AVAILABLE=1
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE=(docker-compose)
+  COMPOSE_AVAILABLE=1
 fi
-cleanup() { "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true; }
+if [[ "${KB_JOURNEY_CI:-0}" == "1" ]]; then
+  COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/docker-compose.ci.yml -f e2e/journey/docker-compose.yml)
+else
+  COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
+fi
+if (( COMPOSE_AVAILABLE )); then
+  COMPOSE+=("${COMPOSE_FILES[@]}")
+fi
+
+if [[ "${1:-}" == "--down" || "${1:-}" == "--render-compose-config" ]]; then
+  if (( ! COMPOSE_AVAILABLE )); then
+    echo "Docker Compose is required for journey stack operations; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
+    exit 127
+  fi
+  if [[ "$1" == "--down" ]]; then
+    "${COMPOSE[@]}" down --volumes --remove-orphans
+  else
+    "${COMPOSE[@]}" config --format json
+  fi
+  exit $?
+fi
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if (( COMPOSE_AVAILABLE )) && ! "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null; then
+    echo "Journey Compose cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
+    (( status != 0 )) || status=1
+  fi
+  exit "$status"
+}
 
 mkdir -p .journey/reports
 export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
@@ -30,6 +52,11 @@ export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
 if [[ "${1:-}" == "--prepare-only" ]]; then
   e2e/journey/prepare-candidate.sh
   exit
+fi
+
+if (( ! COMPOSE_AVAILABLE )); then
+  echo "Docker Compose is required for journey runs; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
+  exit 127
 fi
 
 if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
