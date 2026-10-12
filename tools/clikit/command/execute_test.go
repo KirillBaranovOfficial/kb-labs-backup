@@ -2,12 +2,14 @@ package command
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func TestExecuteResetsUnsetStringSliceToItsEmptyDefault(t *testing.T) {
@@ -153,4 +155,86 @@ func TestExecuteRejectsCustomFlagsWithoutResetContract(t *testing.T) {
 		!strings.Contains(stdout.String(), "FlagValueResetter") {
 		t.Fatalf("unsupported custom flag outcome: exit=%d executed=%t stdout=%s stderr=%s", code, executed, stdout.String(), stderr.String())
 	}
+}
+
+func TestExecuteKeepsSliceFlagValuesStableAcrossRepeatedInvocations(t *testing.T) {
+	var localItems, inheritedItems []string
+	var observed [][]string
+	var inheritedExecutionValues []pflag.Value
+	root := &cobra.Command{Use: "tool"}
+	root.PersistentFlags().StringSliceVar(&inheritedItems, "inherited-items", []string{"parent-default"}, "inherited items")
+	run := &cobra.Command{
+		Use: "run",
+		RunE: func(command *cobra.Command, _ []string) error {
+			inheritedExecutionValues = append(inheritedExecutionValues, command.Flags().Lookup("inherited-items").Value)
+			inherited, err := command.Flags().GetStringSlice("inherited-items")
+			if err != nil {
+				return err
+			}
+			observed = append(observed, []string{
+				strings.Join(localItems, ","),
+				strings.Join(inherited, ","),
+				fmt.Sprintf("local changed=%t inherited changed=%t", command.Flags().Lookup("items").Changed, command.Flags().Lookup("inherited-items").Changed),
+			})
+			return nil
+		},
+	}
+	run.Flags().StringSliceVar(&localItems, "items", []string{"local-default"}, "local items")
+	root.AddCommand(run)
+
+	var stdout, stderr bytes.Buffer
+	var localValue, inheritedValue any
+	for call := 0; call < 300; call++ {
+		args := []string{"run"}
+		if call%2 == 0 {
+			args = append(args, "--items", fmt.Sprintf("local-%d", call), "--inherited-items", fmt.Sprintf("parent-%d", call))
+		}
+		if code := Execute(root, args, &stdout, &stderr); code != 0 {
+			t.Fatalf("Execute call %d exit code = %d; stdout=%s stderr=%s", call, code, stdout.String(), stderr.String())
+		}
+		localFlag := run.Flags().Lookup("items")
+		inheritedFlag := root.PersistentFlags().Lookup("inherited-items")
+		if call == 0 {
+			localValue, inheritedValue = localFlag.Value, inheritedFlag.Value
+		} else if localFlag.Value != localValue || inheritedFlag.Value != inheritedValue {
+			t.Fatalf("flag value identity changed at call %d: local %T -> %T; inherited %T -> %T", call,
+				localValue, localFlag.Value, inheritedValue, inheritedFlag.Value)
+		}
+		if depth := sliceResetWrapperDepth(localFlag.Value); depth > 1 {
+			t.Fatalf("local slice reset wrapper depth at call %d = %d, want at most one", call, depth)
+		}
+		if depth := sliceResetWrapperDepth(inheritedFlag.Value); depth > 1 {
+			t.Fatalf("inherited slice reset wrapper depth at call %d = %d, want at most one", call, depth)
+		}
+		stdout.Reset()
+		stderr.Reset()
+	}
+	if len(observed) != 300 {
+		t.Fatalf("observed invocations = %d, want 300", len(observed))
+	}
+	for call, value := range inheritedExecutionValues {
+		if call > 0 && value != inheritedExecutionValues[0] {
+			t.Fatalf("inherited effective flag value identity changed at call %d: %T -> %T", call, inheritedExecutionValues[0], value)
+		}
+	}
+	for call, values := range observed {
+		wantLocal, wantInherited := "local-default", "parent-default"
+		changed := "local changed=false inherited changed=false"
+		if call%2 == 0 {
+			wantLocal, wantInherited = fmt.Sprintf("local-%d", call), fmt.Sprintf("parent-%d", call)
+			changed = "local changed=true inherited changed=true"
+		}
+		want := []string{wantLocal, wantInherited, changed}
+		if !reflect.DeepEqual(values, want) {
+			t.Fatalf("invocation %d values = %#v, want %#v", call, values, want)
+		}
+	}
+}
+
+func sliceResetWrapperDepth(value pflag.Value) int {
+	wrapped, ok := value.(*resettableSliceValue)
+	if !ok {
+		return 0
+	}
+	return 1 + sliceResetWrapperDepth(wrapped.value.(pflag.Value))
 }

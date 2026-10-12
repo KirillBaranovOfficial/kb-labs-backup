@@ -1387,21 +1387,21 @@ func testReleaseCatalog(t *testing.T, platformVersion string) catalog.Catalog {
 }
 
 func TestParseProvidersSupportsCommaSeparatedPreferences(t *testing.T) {
-	got, err := parseProviders("storage=disk-io-storage, cache=state-broker")
+	got, err := parseProviders([]string{"storage=disk-io-storage, cache=state-broker"})
 	if err != nil || got["storage"] != "disk-io-storage" || got["cache"] != "state-broker" {
 		t.Fatalf("providers/error = %#v / %v", got, err)
 	}
-	if _, err := parseProviders("storage=disk,storage=other"); err == nil {
+	if _, err := parseProviders([]string{"storage=disk,storage=other"}); err == nil {
 		t.Fatal("expected duplicate capability to fail")
 	}
 }
 
 // case: S-179.25
 func TestParseProvidersRejectsEmptyItems(t *testing.T) {
-	if _, err := parseProviders(",storage=disk-io-storage"); err == nil {
+	if _, err := parseProviders([]string{"", "storage=disk-io-storage"}); err == nil {
 		t.Fatal("expected an empty repeated provider item to fail")
 	}
-	if values, err := parseProviders(""); err != nil || len(values) != 0 {
+	if values, err := parseProviders(nil); err != nil || len(values) != 0 {
 		t.Fatalf("no provider input = %#v / %v; want an empty preference set", values, err)
 	}
 }
