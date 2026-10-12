@@ -2,13 +2,14 @@ package cmd
 
 import (
 	"fmt"
-	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/devkit/internal/engine"
 	"github.com/kb-labs/devkit/internal/workspace"
 	"github.com/spf13/cobra"
@@ -50,6 +51,12 @@ Examples:
 		if len(cfg.Tasks) == 0 {
 			return fmt.Errorf("no tasks defined in devkit.yaml\n\n  Add a tasks: section or run `kb-devkit init` to generate a starter config")
 		}
+		for _, task := range args {
+			if _, ok := cfg.Tasks[task]; !ok {
+				return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("Task %q is not declared in devkit.yaml.", task),
+					diag.WithHint("Add the task under tasks: in devkit.yaml, or run `kb-devkit run build` for the standard build task."))
+			}
+		}
 
 		cacheRoot := filepath.Join(ws.Root, ".kb", "devkit")
 
@@ -73,7 +80,8 @@ Examples:
 		case len(runPackages) > 0:
 			pkgs = ws.FilterByName(runPackages)
 			if len(pkgs) == 0 {
-				return fmt.Errorf("no packages matched: %s", strings.Join(runPackages, ", "))
+				return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("No workspace packages match --packages %q.", strings.Join(runPackages, ", ")),
+					diag.WithHint("Run `kb-devkit deps` to list discovered packages, then rerun with one of those package names."))
 			}
 		}
 

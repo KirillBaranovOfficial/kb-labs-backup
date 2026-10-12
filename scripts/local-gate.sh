@@ -22,6 +22,25 @@ done
 [[ "$MODE" == quick || "$MODE" == batch ]] || { echo "Usage: scripts/local-gate.sh quick [--packages a,b] [--dry-run] | batch [--full] [--dry-run] [--keep-going]" >&2; exit 2; }
 if [[ "$MODE" == quick && "$FULL" == 1 ]]; then echo "local-gate: --full is only available with batch" >&2; exit 2; fi
 
+DEVKIT_DIR=""
+DEVKIT_BIN=""
+build_devkit() {
+  DEVKIT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kb-devkit-local-gate.XXXXXX")"
+  if ! (cd "$ROOT/tools/kb-devkit" && go build -o "$DEVKIT_DIR/kb-devkit" .); then
+    echo "local-gate: could not build kb-devkit from this checkout; next run: make -C tools/kb-devkit build" >&2
+    return 1
+  fi
+  chmod +x "$DEVKIT_DIR/kb-devkit"
+  DEVKIT_BIN="$DEVKIT_DIR/kb-devkit"
+}
+cleanup_devkit() {
+  if [[ -n "$DEVKIT_DIR" ]]; then
+    chmod -R u+w "$DEVKIT_DIR" 2>/dev/null || true
+    rm -rf "$DEVKIT_DIR"
+  fi
+}
+trap cleanup_devkit EXIT
+
 if [[ "$MODE" == quick ]]; then
   if [[ -z "$PACKAGES" ]]; then
     git rev-parse --verify local/main >/dev/null 2>&1 || { echo "local-gate: local/main is required; update the local main ref, then rerun this command" >&2; exit 2; }
@@ -55,8 +74,9 @@ PY
     echo "go test changed tools/kb-create packages with an isolated HOME"
     exit 0
   fi
+  build_devkit
   for package in "${package_list[@]}"; do
-    kb-devkit run type-check test --packages "$package"
+    "$DEVKIT_BIN" run type-check test --packages "$package"
   done
   go_packages="$(python3 - <<'PY'
 import pathlib, subprocess
@@ -68,7 +88,7 @@ PY
 )"
   if [[ -n "$go_packages" ]]; then
     isolated_home="$(mktemp -d)"
-    trap 'chmod -R u+w "$isolated_home" 2>/dev/null || true; rm -rf "$isolated_home"' EXIT
+    trap 'chmod -R u+w "$isolated_home" 2>/dev/null || true; rm -rf "$isolated_home"; cleanup_devkit' EXIT
     while IFS= read -r package; do (cd "$ROOT/tools/kb-create" && env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET HOME="$isolated_home" go test "$package"); done <<< "$go_packages"
   fi
   exit 0
@@ -124,6 +144,7 @@ if ((DRY_RUN)); then
   if ((KEEP_GOING)); then echo 'keep-going: continue after failed stages; final status remains non-zero'; fi
   exit 0
 fi
+build_devkit
 mkdir -p "$OUT"
 REPORT="$OUT/report.md"; JSON="$OUT/report.json"
 START="$(date -u +%FT%TZ)"; FIRST_FAILURE=""; STATUS=0; STAGES=()
@@ -138,6 +159,7 @@ cleanup() {
   fi
   if [[ -n "${COLIMA_STARTED:-}" ]]; then colima stop || STATUS=1; fi
   if [[ -n "${TEMP_HOME:-}" ]]; then chmod -R u+w "$TEMP_HOME" 2>/dev/null || true; rm -rf "$TEMP_HOME"; fi
+  cleanup_devkit
   python3 - "$JSON" "$START" "$FIRST_FAILURE" "$STATUS" "$OUT/capabilities.json" "${STAGES[@]}" <<'PY'
 import json,os,sys
 path,start,first,status,*stages=sys.argv[1:]
@@ -195,12 +217,12 @@ if [[ "${INSTALL_FAILED:-0}" == 1 ]]; then
   if ((!FULL)); then block_stage "${STAGE_NAMES[$((JOURNEY_STAGE + 1))]}" 'blocked because frozen install failed'; fi
   block_stage "${STAGE_NAMES[$AGGREGATION_STAGE]}" 'blocked because frozen install failed'
 else
-stage "${STAGE_NAMES[1]}" env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run build --affected || exit 1
+stage "${STAGE_NAMES[1]}" env KB_DEVKIT_BASE_REF=local/main...HEAD "$DEVKIT_BIN" run build --affected || exit 1
 stage "${STAGE_NAMES[2]}" pnpm kb qa cases validate || exit 1
 # The release plugin (Commit) suites always run: a change elsewhere must not
 # leave the only release-contour plugin untested (they were red unnoticed).
 RELEASE_PLUGIN_PACKAGES='@kb-labs/commit-entry,@kb-labs/commit-core'
-stage "${STAGE_NAMES[3]}" bash -c 'env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run lint type-check test --affected && kb-devkit run test --packages "$1"' _ "$RELEASE_PLUGIN_PACKAGES" || exit 1
+stage "${STAGE_NAMES[3]}" bash -c 'env KB_DEVKIT_BASE_REF=local/main...HEAD "$1" run lint type-check test --affected && "$1" run test --packages "$2"' _ "$DEVKIT_BIN" "$RELEASE_PLUGIN_PACKAGES" || exit 1
 TEMP_HOME="$(mktemp -d)"
 go_index=0
 while IFS= read -r package; do stage "${STAGE_NAMES[$((GO_STAGE_START + go_index))]}" bash -c 'cd tools/kb-create && env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET HOME="$1" go test "$2"' _ "$TEMP_HOME" "$package" || exit 1; go_index=$((go_index + 1)); done <<< "$go_packages"

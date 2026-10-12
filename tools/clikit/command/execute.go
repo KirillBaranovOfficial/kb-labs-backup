@@ -3,6 +3,7 @@ package command
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -89,7 +90,9 @@ func StreamWriter(command *cobra.Command) io.Writer {
 // Execute runs a Cobra tree and renders its outcome exactly once.
 func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
 	InstallInputBoundary(root)
-	resetFlags(root)
+	if err := resetFlags(root); err != nil {
+		return result.RenderDiag(stdout, stderr, diag.FromError(err), modeForArgs(args))
+	}
 	captured := &captureBuffer{}
 	restoreOutput := SetOutputWriter(captured)
 	defer restoreOutput()
@@ -162,19 +165,50 @@ func modeForArgs(args []string) result.Mode {
 	return result.ResolveMode(jsonMode, agentMode, output)
 }
 
-func resetFlags(root *cobra.Command) {
+func resetFlags(root *cobra.Command) error {
 	var visit func(*cobra.Command)
+	var resetErr error
 	visit = func(command *cobra.Command) {
-		command.Flags().VisitAll(resetFlag)
-		command.PersistentFlags().VisitAll(resetFlag)
+		command.Flags().VisitAll(func(flag *pflag.Flag) {
+			if err := resetFlag(flag); err != nil && resetErr == nil {
+				resetErr = err
+			}
+		})
+		command.PersistentFlags().VisitAll(func(flag *pflag.Flag) {
+			if err := resetFlag(flag); err != nil && resetErr == nil {
+				resetErr = err
+			}
+		})
 		for _, child := range command.Commands() {
 			visit(child)
 		}
 	}
 	visit(root)
+	return resetErr
 }
 
-func resetFlag(flag *pflag.Flag) {
-	_ = flag.Value.Set(flag.DefValue)
+func resetFlag(flag *pflag.Flag) error {
+	if values, ok := flag.Value.(pflag.SliceValue); ok {
+		defaultValue := strings.TrimSuffix(strings.TrimPrefix(flag.DefValue, "["), "]")
+		var defaults []string
+		if defaultValue == "" {
+			defaults = []string{}
+		} else {
+			reader := csv.NewReader(strings.NewReader(defaultValue))
+			var err error
+			defaults, err = reader.Read()
+			if err != nil {
+				return fmt.Errorf("reset slice flag %q to its default: %w", flag.Name, err)
+			}
+		}
+		if err := values.Replace(defaults); err != nil {
+			return fmt.Errorf("reset slice flag %q to its default: %w", flag.Name, err)
+		}
+	} else {
+		if err := flag.Value.Set(flag.DefValue); err != nil {
+			return fmt.Errorf("reset flag %q to its default: %w", flag.Name, err)
+		}
+	}
 	flag.Changed = false
+	return nil
 }
