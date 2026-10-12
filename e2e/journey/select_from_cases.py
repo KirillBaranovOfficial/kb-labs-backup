@@ -100,6 +100,13 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         declaration = {"name": name, "kind": "flow" if function == "flow" else "step",
                        "requires": required, "provides": provides,
                        "role": role_name, "runners": runners}
+        cases_node = keywords.get("cases")
+        if isinstance(cases_node, (ast.Tuple, ast.List)) and all(
+                isinstance(item, ast.Constant) and isinstance(item.value, str)
+                for item in cases_node.elts):
+            declaration["cases"] = [item.value for item in cases_node.elts]
+        else:
+            declaration["cases"] = None
         for line in range(call.lineno, call.end_lineno + 1):
             declarations.setdefault(line, declaration)
     return declarations

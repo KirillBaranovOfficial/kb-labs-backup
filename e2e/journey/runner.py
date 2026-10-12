@@ -62,6 +62,7 @@ MAX_PNPM_RSS_MIB = 0.0
 PLATFORM_SIZE_MIB: float | None = None
 FIRST_FAILURE = ""
 CASE_JOURNEY: Journey | None = None
+SELECTED_CLAIM_COMPLETION_CHECKED = False
 ACTIVE_OUTER_GRAPH: FlowGraph | None = None
 ACTIVE_MAIN_ENV: dict[str, str] | None = None
 ACTIVE_LAUNCHER: str | None = None
@@ -322,6 +323,25 @@ def capture_case_failure() -> None:
     fail(f"{first.get('name', 'journey step')}: {first.get('message', 'reported FAIL')}")
 
 
+def check_selected_claim_completion(journey_results: list[dict], selection: str | None = None) -> list[str]:
+    """Fail the run if selected claims were not recorded by any of its journeys."""
+    raw_selection = (selection if selection is not None
+                     else journey_value("KB_JOURNEY_SELECTED_STEPS", ""))
+    selected = set(filter(None, raw_selection.split(",")))
+    executed = {
+        case_id
+        for journey_result in journey_results
+        for step in journey_result.get("steps", [])
+        if step.get("status") in {"PASS", "FAIL", "BLOCKED"}
+        for case_id in step.get("cases", [])
+    }
+    missing = sorted(selected - executed)
+    if missing:
+        fail("selected claim steps did not execute: " + ", ".join(missing)
+             + "; the selected runner did not call their registered step functions")
+    return missing
+
+
 def require(result, expected=0, step="command"):
     if result.returncode != expected:
         excerpt = " ".join(result.stdout.split())[-700:]
@@ -452,6 +472,20 @@ def human_text_is_clean(output: str):
 
 
 def append_summary(passed: bool):
+    global SELECTED_CLAIM_COMPLETION_CHECKED
+    report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
+    if CASE_JOURNEY is not None and not SELECTED_CLAIM_COMPLETION_CHECKED:
+        SELECTED_CLAIM_COMPLETION_CHECKED = True
+        journey_results = [journey.result().__dict__ for journey in Journey.run_instances()]
+        mode = CASE_JOURNEY.mode
+        service_report = report.with_name(f"service-{mode}.json")
+        if service_report.is_file():
+            try:
+                journey_results.append(json.loads(service_report.read_text(encoding="utf-8")))
+            except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                fail(f"service runner result could not be read for selected claim completion: {error}")
+        missing_selected = check_selected_claim_completion(journey_results)
+        passed = passed and not missing_selected and not FIRST_FAILURE
     root_size = PLATFORM_SIZE_MIB
     if root_size is None:
         root_size = 0.0
@@ -463,7 +497,6 @@ def append_summary(passed: bool):
              f"{TIMES.get('apply', 0):.1f}s | {TIMES.get('start', 0):.1f}s | "
              f"{TIMES.get('first command', 0):.1f}s | "
              f"{sum(TIMES.values()):.1f}s | {root_size:.1f} MiB | {MAX_PNPM_RSS_MIB:.1f} MiB |"]
-    report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
     report.parent.mkdir(parents=True, exist_ok=True)
     if CASE_JOURNEY is not None:
         CASE_JOURNEY.write_json(report.with_name(
@@ -726,8 +759,11 @@ def _run_final_uninstall(graph: FlowGraph, env: dict[str, str], launcher: str) -
     return status == "PASS" and not FIRST_FAILURE
 
 def main():
-    global FIRST_FAILURE, CASE_JOURNEY, ACTIVE_OUTER_GRAPH, ACTIVE_MAIN_ENV, ACTIVE_LAUNCHER
+    global FIRST_FAILURE, CASE_JOURNEY, SELECTED_CLAIM_COMPLETION_CHECKED
+    global ACTIVE_OUTER_GRAPH, ACTIVE_MAIN_ENV, ACTIVE_LAUNCHER
     STATE_DUMP_GUARD.reset()
+    Journey.reset_run_registry()
+    SELECTED_CLAIM_COMPLETION_CHECKED = False
     env = dict(BASE_ENV)
     env["HOME"] = str(HOME)
     env["KB_JOURNEY_HOME_LABEL"] = "main"
