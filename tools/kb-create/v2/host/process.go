@@ -185,6 +185,7 @@ type ProcessRunner struct {
 	stderr          *tailBuffer
 	secrets         []string
 	processIdentity string
+	startupDeadline time.Time
 }
 
 const startupStderrLimit = 8 * 1024
@@ -279,6 +280,12 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	cmd.Dir = r.Spec.WorkingDir
 	startupStarted := time.Now()
 	startupDeadline := startupStarted.Add(r.Spec.ReadyTimeout)
+	r.mu.Lock()
+	if !r.startupDeadline.IsZero() {
+		startupDeadline = r.startupDeadline
+		r.startupDeadline = time.Time{}
+	}
+	r.mu.Unlock()
 	processIdentity, err := NewProcessIdentityToken()
 	if err != nil {
 		_ = logFile.Close()
@@ -689,6 +696,17 @@ func (r *ProcessRunner) stderrTail() string {
 		return ""
 	}
 	return redactHostOutput(r.stderr.String(), r.secrets)
+}
+
+// StartupStderrTail reads a bounded, redacted tail from a startup log file.
+func StartupStderrTail(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	tail := &tailBuffer{limit: startupStderrLimit}
+	_, _ = tail.Write(data)
+	return redactHostOutput(tail.String(), nil)
 }
 
 func redactHostOutput(value string, secrets []string) string {
