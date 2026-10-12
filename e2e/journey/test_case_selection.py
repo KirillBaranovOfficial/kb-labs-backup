@@ -83,8 +83,10 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 self.assertNotIn("KB_NET_OFFSET", child_env)
             self.assertEqual(json.loads(output.getvalue()), {
                 "selection": ["S-042"], "steps": ["S-042.1"],
+                "owners": {"service-local:explore": ["S-042.1"],
+                           "service-secured:explore": ["S-042.1"]},
                 "runners": ["service-local:explore", "service-secured:explore"],
-                "prerequisiteSteps": [], "prerequisiteFlows": [],
+                "prerequisiteSteps": ["registered project setup"], "prerequisiteFlows": [],
                 "stepSources": ["e2e/journey/service_runner.py"],
             })
 
@@ -132,14 +134,45 @@ class CaseJourneySelectionTests(unittest.TestCase):
         ], "S-042,S-042.1")
         self.assertEqual(result, {
             "selection": ["S-042", "S-042.1"], "steps": ["S-042.1"],
+            "owners": {"service-local:explore": ["S-042.1"],
+                       "service-secured:explore": ["S-042.1"]},
             "runners": ["service-local:explore", "service-secured:explore"],
-            "prerequisiteSteps": [], "prerequisiteFlows": [],
+            "prerequisiteSteps": ["registered project setup"], "prerequisiteFlows": [],
             "stepSources": ["e2e/journey/service_runner.py"],
         })
 
     def test_rejects_unknown_case_or_step_id_by_name(self):
         with self.assertRaisesRegex(ValueError, "S-999"):
             selection_from_coverage([coverage("local", source="e2e/journey/service_runner.py")], "S-999")
+
+    def test_case_selection_refuses_unclaimed_steps_before_runner_start(self):
+        result = coverage("local", source="e2e/journey/service_runner.py")
+        result["cases"][0]["id"] = "PC-002"
+        result["cases"][0]["steps"].append({"stepId": "PC-002.4", "claims": []})
+        with self.assertRaisesRegex(ValueError, r"PC-002.*unclaimed.*PC-002.4"):
+            selection_from_coverage([result], "PC-002")
+
+    def test_only_filters_resolved_runners_and_reports_omitted_owners(self):
+        results = [
+            coverage("local", source="e2e/journey/runner.py"),
+            coverage("secured", source="e2e/journey/runner.py"),
+        ]
+        with patch.dict(os.environ, {"KB_JOURNEY_ONLY": "agent:commit,agent-secured:commit"}):
+            resolved = selection_from_coverage(results, "S-042.1")
+        self.assertEqual(resolved["runners"], ["agent-secured:commit", "agent:commit"])
+        with patch.dict(os.environ, {"KB_JOURNEY_ONLY": "agent:commit"}):
+            local = selection_from_coverage(results, "S-042.1")
+        self.assertEqual(local["runners"], ["agent:commit"])
+        with patch.dict(os.environ, {"KB_JOURNEY_ONLY": "service-local:explore"}):
+            with self.assertRaisesRegex(ValueError, r"agent:commit owns S-042.1: KB_JOURNEY_CASES=S-042.1 KB_JOURNEY_ONLY=agent:commit"):
+                selection_from_coverage(results, "S-042.1")
+
+    def test_full_run_runner_plan_still_uses_all_active_claim_owners(self):
+        results = [
+            coverage("local", source="e2e/journey/runner.py"),
+            coverage("secured", source="e2e/journey/runner.py"),
+        ]
+        self.assertEqual(selectors_from_coverage(results), ["agent-secured:commit", "agent:commit"])
 
     def test_every_registry_claim_is_reachable_by_step_selection(self):
         result = coverage("local", source="e2e/journey/service_runner.py")

@@ -544,8 +544,8 @@ raise SystemExit(1)
             raise RuntimeError("marketplace CLI is unavailable")
 
         run_service_steps(journey, [
-            ("marketplace registry", "marketplace", broken_check, []),
-            ("gateway readiness", "gateway", lambda: None, []),
+            ("marketplace registry", "marketplace", broken_check, [], ()),
+            ("gateway readiness", "gateway", lambda: None, [], ()),
         ], states={
             "host-running": {"passed": True, "evidence": "healthy", "group": "install", "step": "start", "claim": "PC-002.1"},
             "project-registered": {"passed": True, "evidence": "registered", "group": "project", "step": "add", "claim": "no case claim"},
@@ -563,10 +563,27 @@ raise SystemExit(1)
     def test_service_step_preserves_blocked_result_without_case_claim(self):
         journey = Journey("local", "blocked-step")
         run_service_steps(journey, [
-            ("gateway readiness", "gateway", lambda: "BLOCKED: gateway fixture is missing", []),
+            ("gateway readiness", "gateway", lambda: "BLOCKED: gateway fixture is missing", [], ()),
         ])
         self.assertEqual(journey.steps[0].status, "BLOCKED")
         self.assertEqual(journey.result().case_run["claims"], [])
+
+    def test_failed_registered_setup_blocks_selected_service_claim(self):
+        with patch.dict(os.environ, {
+                "KB_JOURNEY_SELECTED_STEPS": "PC-002.3",
+                "KB_JOURNEY_PREREQUISITE_STEPS": "registered project setup",
+        }, clear=False):
+            journey = Journey("local", "service-setup-prerequisite")
+            journey.step("registered project setup", "journey.setup",
+                         lambda: "project registration handoff is missing", role="lifecycle")
+            run_service_steps(journey, [
+                ("platform readiness", "gateway", lambda: self.fail("claim must be blocked"),
+                 ["PC-002.3"], ("step:registered project setup",)),
+            ])
+
+        self.assertEqual([step.status for step in journey.steps], ["FAIL", "BLOCKED"])
+        self.assertEqual(journey.steps[0].details["selectionRole"], "prerequisite")
+        self.assertIn("project registration handoff is missing", journey.steps[1].message)
 
     def test_product_failure_with_healthy_state_probes_does_not_block_later_groups(self):
         journey = Journey("local", "product-failure-healthy-state")
@@ -636,8 +653,8 @@ raise SystemExit(1)
         graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in groups.items()})
         graph.probe_state("host-running", "install", "gateway readiness", lambda: "host is down")
         run_grouped_service_steps(journey, [
-            ("local identity", "auth.local", lambda: calls.append("auth"), []),
-            ("project registration", "projects", lambda: calls.append("projects"), []),
+            ("local identity", "auth.local", lambda: calls.append("auth"), [], ()),
+            ("project registration", "projects", lambda: calls.append("projects"), [], ()),
         ], groups=groups, graph=graph)
 
         self.assertEqual(calls, [])
@@ -1216,7 +1233,7 @@ raise SystemExit(1)
     def test_declared_profile_capabilities_match_service_checks(self):
         for mode, auth_capability in (("local", "auth.local"), ("secured", "auth.invite-reset")):
             self.assertEqual(declared_capabilities(mode),
-                             {capability for _, capability, _, _ in checks(mode)}
+                             {capability for _, capability, _, _, _ in checks(mode)}
                              | {auth_capability, "plugin-author"})
 
     def test_issue_sync_is_idempotent_updates_existing_and_closes_fixed(self):
@@ -1246,8 +1263,8 @@ raise SystemExit(1)
         self.assertEqual(changes, {"created": [], "updated": [], "closed": []})
 
     def test_required_mode_steps_and_workflow_fixture_are_explicit(self):
-        local = {capability for _, capability, _, _ in checks("local")}
-        secured = {capability for _, capability, _, _ in checks("secured")}
+        local = {capability for _, capability, _, _, _ in checks("local")}
+        secured = {capability for _, capability, _, _, _ in checks("secured")}
         self.assertNotIn("auth.invites", local | secured)
         self.assertNotIn("scaffold", local | secured)
         with patch("service_runner.request", return_value=(200, {"data": {"workflows": []}}, {})):

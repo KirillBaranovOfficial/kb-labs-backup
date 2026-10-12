@@ -20,6 +20,15 @@ from service_steps import FlowGraph, Journey, source_selected
 
 
 class DispatchRegistryTests(unittest.TestCase):
+    def test_service_readiness_claim_resolves_registered_project_setup(self):
+        resolved = selection_from_coverage(self._coverage(), "PC-002.3")
+        self.assertEqual(resolved["prerequisiteSteps"], ["registered project setup"])
+        self.assertIn("e2e/journey/service_runner.py", resolved["stepSources"])
+
+    def test_fresh_install_claim_resolves_candidate_provenance(self):
+        resolved = selection_from_coverage(self._coverage(), "PC-001.2")
+        self.assertEqual(resolved["prerequisiteSteps"], ["candidate provenance"])
+
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         results = []
         root = Path(__file__).resolve().parents[2]
