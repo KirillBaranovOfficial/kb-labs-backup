@@ -24,6 +24,7 @@ func main() {
 	startupError := flag.Bool("startup-error", false, "emit a typed startup error before exiting")
 	delay := flag.Duration("delay", 0, "wait before listening")
 	dumpEnv := flag.String("dump-env", "", "write the process environment to this file at start")
+	stderrLine := flag.String("stderr-line", "", "write one line to stderr before listening")
 	flag.Parse()
 	if *startupError {
 		if token := os.Getenv("API_TOKEN"); token != "" {
@@ -35,6 +36,9 @@ func main() {
 	if *exitCode >= 0 {
 		fmt.Fprintln(os.Stderr, "fakehost: exiting early")
 		os.Exit(*exitCode)
+	}
+	if *stderrLine != "" {
+		fmt.Fprintln(os.Stderr, *stderrLine)
 	}
 	if *dumpEnv != "" {
 		if err := os.WriteFile(*dumpEnv, []byte(strings.Join(os.Environ(), "\n")+"\n"), 0o600); err != nil {

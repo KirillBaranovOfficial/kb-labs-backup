@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// The deadline crosses a process boundary, so only wall-clock Unix time is
+// shared; the outer monotonic deadline and cleanup backstop bound clock-step effects.
 const startupDeadlineEnvironment = "KB_CREATE_INTERNAL_STARTUP_DEADLINE_UNIX_NANO"
 
 // ProcessEnvironmentWithStartupDeadline extends the private supervise launch
