@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Probe fresh-install service capabilities and emit machine-readable results."""
 from __future__ import annotations
+from journey_values import journey_value
 
 from project_service_path import project_service_path
 
@@ -21,7 +22,8 @@ import uuid
 from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
-from service_steps import FlowGraph, Journey
+from service_steps import FlowGraph, Journey, JourneyResult
+from journey_dependencies import Dependency
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
                          print_report_text, read_ux_cli_result, read_ux_http_result, run_command,
                          store_report_secret,
@@ -54,10 +56,10 @@ from platform_state_dump import archive_service_logs
 from journey_resources import journey_module, active_platform_root
 
 
-BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
-PROJECT_ID = os.getenv("KB_JOURNEY_PROJECT_ID", "")
-ADMIN_EMAIL = os.getenv("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
-ADMIN_PASSWORD = os.getenv("KB_JOURNEY_ADMIN_PASSWORD", "")
+BASE_URL = journey_value("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
+PROJECT_ID = journey_value("KB_JOURNEY_PROJECT_ID", "")
+ADMIN_EMAIL = journey_value("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
+ADMIN_PASSWORD = journey_value("KB_JOURNEY_ADMIN_PASSWORD", "")
 HTTP = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
 
@@ -106,7 +108,7 @@ def _adapter_defaults_probe_error(journey: Journey, snapshot: dict[str, object],
 
 def project_plugin_settings_isolation() -> str | None:
     """Prove a CLI project override changes only its registered project."""
-    cli = os.getenv("KB_JOURNEY_CLI_PATH", "")
+    cli = journey_value("KB_JOURNEY_CLI_PATH", "")
     if not cli or not Path(cli).is_file():
         return "BLOCKED: provide KB_JOURNEY_CLI_PATH for project settings checks"
 
@@ -297,11 +299,11 @@ def project_plugin_settings_isolation() -> str | None:
 
         a_status, a_body, _ = request(
             project_service_path(ids[0], "rest", "plugins/commit/scopes"),
-            token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
+            token=journey_value("KB_JOURNEY_SERVICE_TOKEN", ""),
         )
         b_status, b_body, _ = request(
             project_service_path(ids[1], "rest", "plugins/commit/scopes"),
-            token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
+            token=journey_value("KB_JOURNEY_SERVICE_TOKEN", ""),
         )
 
         def scope_ids(status: int, body: object, project_name: str) -> tuple[set[str], str | None]:
@@ -427,14 +429,14 @@ def expect_project_service_health(path: str, service_id: str, *, token="") -> st
     return None
 
 
-def service_check(name, capability, check, *, cases=()):
-    return name, capability, check, list(cases)
+def service_check(name, capability, check, *, cases=(), requires=(), runners=()):
+    return name, capability, check, list(cases), tuple(requires), tuple(runners)
 
 
 def _checks(mode: str):
     pid = PROJECT_ID
-    token = os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")
-    auth_token = lambda: os.getenv("KB_JOURNEY_SERVICE_TOKEN", token)
+    token = journey_value("KB_JOURNEY_SERVICE_TOKEN", "")
+    auth_token = lambda: journey_value("KB_JOURNEY_SERVICE_TOKEN", token)
 
     if mode == "secured":
         def admin_login():
@@ -467,23 +469,23 @@ def _checks(mode: str):
         return "; ".join(errors) if errors else None
 
     yield service_check("platform readiness (gateway + project workflow)", "gateway", platform_readiness,
-                        cases=["PC-002.3"])
+                        cases=["PC-002.3"], requires=("step:registered project setup",))
 
     if not PROJECT_ID:
         project = lambda: "BLOCKED: no project is registered; run `kb project add <path> --json` and set KB_JOURNEY_PROJECT_ID"
     else:
-        project = lambda: expect(f"/api/v1/projects/{PROJECT_ID}", {200}, "project registry lookup", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+        project = lambda: expect(f"/api/v1/projects/{PROJECT_ID}", {200}, "project registry lookup", token=journey_value("KB_JOURNEY_SERVICE_TOKEN", token))
     yield service_check("project registration", "projects", project)
     def project_runtime_identity() -> str | None:
         if not PROJECT_ID:
             return "BLOCKED: project runtime identity needs KB_JOURNEY_PROJECT_ID from project registration"
-        project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT", "")
+        project_root = journey_value("KB_JOURNEY_PROJECT_ROOT", "")
         if not project_root:
             return "BLOCKED: project runtime identity needs KB_JOURNEY_PROJECT_ROOT from project registration"
         expected_root = str(Path(project_root).resolve())
         try:
             registry_status, registered_project, _ = request_ux_success(
-                f"/api/v1/projects/{PROJECT_ID}", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+                f"/api/v1/projects/{PROJECT_ID}", token=journey_value("KB_JOURNEY_SERVICE_TOKEN", token))
         except ValueError as error:
             return f"project registry returned an invalid UX result envelope: {error}"
         if registry_status != 200 or not isinstance(registered_project, dict):
@@ -491,7 +493,7 @@ def _checks(mode: str):
         if registered_project.get("path") != expected_root:
             return f"project registry path for {PROJECT_ID} did not match canonical root {expected_root}"
         try:
-            health_status, health_body, _ = request_ux_success("/health", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+            health_status, health_body, _ = request_ux_success("/health", token=journey_value("KB_JOURNEY_SERVICE_TOKEN", token))
         except ValueError as error:
             return f"host health returned an invalid UX result envelope: {error}"
         runtimes = health_body.get("projectRuntimes", {}).get("runtimes", []) if isinstance(health_body, dict) else []
@@ -504,7 +506,7 @@ def _checks(mode: str):
             return f"host health did not list registered project {PROJECT_ID} as a ready runtime"
         path = project_service_path(PROJECT_ID, "rest", "health")
         try:
-            status, body, _ = request_ux_success(path, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+            status, body, _ = request_ux_success(path, token=journey_value("KB_JOURNEY_SERVICE_TOKEN", token))
         except ValueError as error:
             return f"registered project runtime REST health returned an invalid UX result envelope: {error}"
         if status != 200:
@@ -515,7 +517,8 @@ def _checks(mode: str):
             return "registered project runtime REST health payload has no recognized status"
         return None
     yield service_check("registered project runtime identity", "projects", project_runtime_identity,
-                        cases=["PC-002.8", "S-124.11", "S-124.13"])
+                        cases=["PC-002.8", "S-124.11", "S-124.13"],
+                        requires=("step:registered project setup",))
     yield service_check("project plugin settings isolation and clean repositories", "projects",
                         project_plugin_settings_isolation,
                         cases=["S-204.1", "S-204.2", "S-204.8", "S-204.9", "S-204.10", "S-204.11"])
@@ -531,13 +534,14 @@ def _checks(mode: str):
                         cases=["S-045.3"])
     if mode == "local":
         yield service_check("project MCP tokenless local access", "mcp", lambda: local_auth(pid),
-                            cases=["S-045.4"])
+                            cases=["S-045.4"], runners=("service-local:explore",))
     else:
         yield service_check("project MCP secured missing and invalid token rejection", "mcp",
-                            lambda: secured_auth(pid), cases=["S-045.5", "S-140.6"])
+                            lambda: secured_auth(pid), cases=["S-045.5", "S-140.6"],
+                            runners=("service-secured:explore",))
     yield service_check("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid, auth_token()),
                         cases=["S-140.1"])
-    project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT", "")
+    project_root = journey_value("KB_JOURNEY_PROJECT_ROOT", "")
     if project_root:
         yield service_check("project MCP commit mutation", "mcp",
                             lambda: apply_commit_plan(pid, auth_token(), project_root), cases=["S-140.2"])
@@ -552,13 +556,14 @@ def _checks(mode: str):
     if mode == "secured":
         yield service_check("MCP UX result contract from live registry", "mcp",
                             lambda: mcp_ux_result_contract(pid, auth_token(), secured=True),
-                            cases=["S-203.2", "S-203.6", "S-045.6", "S-140.7"])
+                            cases=["S-203.2", "S-203.6", "S-045.6", "S-140.7"],
+                            runners=("service-secured:explore",))
     else:
         yield service_check("MCP UX result contract from live registry", "mcp",
                             lambda: mcp_ux_result_contract(pid, auth_token(), secured=False),
-                            cases=["S-203.2", "S-203.6"])
-    project_b_id = os.getenv("KB_JOURNEY_PROJECT_B_ID", "")
-    project_b_root = os.getenv("KB_JOURNEY_PROJECT_B_ROOT", "")
+                            cases=["S-203.2", "S-203.6"], runners=("service-local:explore",))
+    project_b_id = journey_value("KB_JOURNEY_PROJECT_B_ID", "")
+    project_b_root = journey_value("KB_JOURNEY_PROJECT_B_ROOT", "")
     if project_b_id and project_b_root:
         yield service_check("project MCP cross-project isolation", "mcp",
                             lambda: project_isolation(pid, project_b_id, project_b_root, auth_token()),
@@ -572,7 +577,7 @@ def _checks(mode: str):
         if mode == "secured":
             yield service_check("secured project MCP catalog selection", "mcp",
                                 lambda: secured_project_catalog_isolation(pid, project_b_id, auth_token()),
-                                cases=["S-199.5"])
+                                cases=["S-199.5"], runners=("service-secured:explore",))
     else:
         yield service_check("project MCP cross-project isolation", "mcp",
                             lambda: "BLOCKED: register project B and provide KB_JOURNEY_PROJECT_B_ID and KB_JOURNEY_PROJECT_B_ROOT",
@@ -589,7 +594,7 @@ def checks(mode: str):
 
 def declared_capabilities(mode: str) -> set[str]:
     """Return every capability the selected service profile promises to check."""
-    capabilities = {capability for _, capability, _, _ in checks(mode)}
+    capabilities = {capability for _, capability, _, _, _, _ in checks(mode)}
     capabilities.add("auth.local" if mode == "local" else "auth.invite-reset")
     capabilities.add("plugin-author")
     return capabilities
@@ -724,9 +729,28 @@ def run_grouped_service_steps(journey: Journey, steps, mode: str = "local", grou
     }
     flow_graph = graph or FlowGraph(
         journey, {name: spec["depends_on"] for name, spec in group_specs.items()}, states=states)
-    for name, capability, check, cases in steps:
+    for name, capability, check, cases, requires, runners in steps:
         group = capability_groups.get(capability, capability)
-        flow_graph.step(name, group, capability, check, cases=cases)
+
+        def prerequisite_failure() -> str | None:
+            for reference in requires:
+                dependency = Dependency.parse(reference)
+                outcome = journey.find_outcome(dependency)
+                if outcome is None:
+                    return f"prerequisite {dependency} did not run before {name}"
+                if outcome[0] != "PASS":
+                    return f"prerequisite {dependency} ended {outcome[0]}: {outcome[1]}"
+            return None
+
+        selected = bool(journey.selected_claims.intersection(cases))
+        prerequisite = name in journey.prerequisite_steps
+        if selected or prerequisite:
+            failure = prerequisite_failure()
+            if failure:
+                journey.step(name, capability, lambda: f"BLOCKED: {failure}", cases=cases, runners=runners)
+                continue
+
+        flow_graph.step(name, group, capability, check, cases=cases, runners=runners)
 
 
 def run_service_steps(journey: Journey, steps, mode: str = "local", states=None,
@@ -766,7 +790,7 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
     graph.flow("project registry and current-project flows", "project-registry", "projects",
                lambda: run_project_registry_steps(journey, str(cli_path), env, registry),
                cases=["S-043.1", "S-196.1"], record_empty_success=False)
-    workspace_root = Path(os.environ.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+    workspace_root = Path(journey_value("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
 
     def run_workspace_flows() -> None:
         problem = workspace_checkout_problem(workspace_root)
@@ -788,7 +812,7 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                run_workspace_flows,
                cases=["S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
                       "S-142.5", "S-203.1", "S-203.19", "S-204.7"], record_empty_success=False)
-    project_b_root = os.environ.get("KB_JOURNEY_PROJECT_B_ROOT", "")
+    project_b_root = journey_value("KB_JOURNEY_PROJECT_B_ROOT", "")
     if project_b_root:
         graph.flow("project plugin availability", "plugin-availability", "plugins",
                    lambda: run_project_plugin_availability_steps(
@@ -1010,7 +1034,7 @@ def main() -> int:
     args = parser.parse_args()
     os.environ.setdefault("KB_JOURNEY_INVOCATIONS", str(Path(args.output).resolve().parent))
     journey = Journey(args.mode, args.run_id or str(uuid.uuid4()))
-    inherited_states = json.loads(os.getenv("KB_JOURNEY_STATES", "{}"))
+    inherited_states = json.loads(journey_value("KB_JOURNEY_STATES", "{}"))
     graph = FlowGraph(
         journey, {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
         diagnostics_path=Path(args.output).resolve().with_name("journey-diagnostics.log"),
@@ -1019,12 +1043,21 @@ def main() -> int:
     try:
         declared_steps = list(checks(args.mode))
         configure_installed_cli_path()
+        def registered_project_setup() -> str | None:
+            if not PROJECT_ID:
+                return "installed project registration was not handed to the service runner; verify the registration setup in the runner"
+            if not journey_value("KB_JOURNEY_PROJECT_ROOT", ""):
+                return "registered project root was not handed to the service runner; verify the registration setup in the runner"
+            return None
+
+        if "registered project setup" in journey.prerequisite_steps:
+            journey.step("registered project setup", "journey.setup", registered_project_setup, role="lifecycle")
         if args.mode == "secured":
             graph.probe_state("session", "auth", "fresh secured CLI login",
                               lambda: restore_secured_cli_login(
                                   Path.home() / ".local/bin/kb", os.environ.copy()))
-        project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")
-        registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
+        project_root = journey_value("KB_JOURNEY_PROJECT_ROOT")
+        registry = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
         if project_root:
             env = os.environ.copy()
             fixture_entry: dict | None = None
@@ -1078,21 +1111,21 @@ def main() -> int:
                 )
             graph.flow("project agent session flows", "agent-session", "agent-session",
                        lambda: run_agent_session_steps(
-                           journey, PROJECT_ID, os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
-                           os.getenv("KB_JOURNEY_AGENT_ID", "orchestrator")),
+                           journey, PROJECT_ID, journey_value("KB_JOURNEY_SERVICE_TOKEN", ""),
+                           journey_value("KB_JOURNEY_AGENT_ID", "orchestrator")),
                        cases=["S-141.1", "S-141.2"], record_empty_success=False)
         graph.flow("analytics extras", "analytics", "analytics",
-                   lambda: run_analytics_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")),
+                   lambda: run_analytics_steps(journey, token=journey_value("KB_JOURNEY_SERVICE_TOKEN", "")),
                    cases=["S-191.1", "S-201.3"], record_empty_success=False)
         graph.flow("gateway extras", "gateway-extra", "gateway-extra",
-                   lambda: run_gateway_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")),
+                   lambda: run_gateway_steps(journey, token=journey_value("KB_JOURNEY_SERVICE_TOKEN", "")),
                    cases=["S-017.1", "S-017.2", "S-017.3", "S-017.4", "S-017.5",
                           "S-018.1", "S-018.2", "S-018.3", "S-189.2",
                           "S-189.3", "S-189.4", "S-189.5", "S-189.6", "S-189.7", "S-190.1", "S-190.2"],
                    record_empty_success=False)
         graph.step("discover platform adapter method catalog", "gateway-extra", "gateway-extra",
                    lambda: run_adapter_catalog_step(
-                       journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")),
+                       journey, token=journey_value("KB_JOURNEY_SERVICE_TOKEN", "")),
                    cases=["S-189.1"])
         if project_root:
             _run_installed_flows(journey, project_root, registry, graph)
@@ -1114,7 +1147,7 @@ def main() -> int:
         def archive_logs() -> None:
             archive_service_logs(
                 kb_home, Path(args.output).resolve().parent,
-                platform_root=os.environ["KB_JOURNEY_PLATFORM_ROOT"],
+                platform_root=journey_value("KB_JOURNEY_PLATFORM_ROOT", required=True),
                 mode=args.mode, run_id=journey.run_id,
             )
 
@@ -1128,6 +1161,10 @@ def main() -> int:
         output_payload = {**result.__dict__, "states": graph.states}
         output_payload = write_report_json(args.output, output_payload, env=os.environ)
     print_report_text(json.dumps(output_payload, indent=2), env=os.environ)
+    return journey_result_exit_code(result)
+
+
+def journey_result_exit_code(result: JourneyResult) -> int:
     return 0 if result.status == "PASS" else 1
 
 

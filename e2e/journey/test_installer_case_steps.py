@@ -460,7 +460,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{}}', "")
 
             isolated_home = root / "home"
-            with patch.dict(os.environ, {"HOME": str(isolated_home)}):
+            with patch.dict(os.environ, {"HOME": str(isolated_home),
+                                        "KB_JOURNEY_RUNNER_SELECTOR": "agent:commit"}):
                 journey = run_json_install_project_step(mode="local", launcher="kb-create", stable_index=index,
                                                         platform_root=platform, project_root=project,
                                                         run_command=run_command)
@@ -483,7 +484,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(update_args[1], "update")
             self.assertEqual(update_args[update_args.index("--input") + 1], str(platform.parent / "s187-receipt-request.json"))
             with patch.dict(os.environ, {"HOME": str(isolated_home),
-                                         "KB_JOURNEY_ADMIN_PASSWORD": "x18-journey-first-admin"}), \
+                                         "KB_JOURNEY_ADMIN_PASSWORD": "x18-journey-first-admin",
+                                         "KB_JOURNEY_RUNNER_SELECTOR": "agent-secured:commit"}), \
                     patch.object(installer_case_steps, "evidence_run_command", run_command):
                 secured_journey = run_json_install_project_step(mode="secured", launcher="kb-create", stable_index=index,
                                                                 platform_root=platform, project_root=project,
@@ -1211,8 +1213,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
             def fail_every_command(args):
                 return subprocess.CompletedProcess(args, 2, '{"ok":false,"error":{"code":"FAKE_FAILURE"}}', "")
 
-            with patch("installer_case_steps.installer_scenario_resources",
-                       return_value=[case_catalog_root()]):
+            with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "agent:commit"}), \
+                    patch("installer_case_steps.installer_scenario_resources",
+                          return_value=[case_catalog_root()]):
                 journey = run_installer_case_steps(mode="local", launcher="kb-create", stable_index=stable,
                                                    update_index=update, jump_index=jump, canary_index=canary,
                                                    platform_root=installed,
@@ -1226,7 +1229,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
                         "S-187.4", "S-187.5", "S-187.6", "S-187.9", "S-187.11", "S-187.12", "S-124.14"}
             self.assertEqual(set(claims), expected)
-            self.assertTrue(all(claims[claim] == "FAIL" for claim in expected))
+            blocked = {"PC-001.5", "S-023.16", "S-223.3"}
+            self.assertTrue(all(claims[claim] == "BLOCKED" for claim in blocked))
+            self.assertTrue(all(claims[claim] == "FAIL" for claim in expected - blocked))
 
 
 if __name__ == "__main__":

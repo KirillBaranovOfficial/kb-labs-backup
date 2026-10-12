@@ -1,6 +1,7 @@
 """Keep selected-case routing complete for every active journey claim."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -13,13 +14,182 @@ from dispatch_registry import RUNNERS, runners_for_source
 from hermetic_cli import run_hermetic_cli
 from select_from_cases import (read_coverage_result, selection_from_coverage,
                                _step_declaration, _source_step_declarations,
-                               validate_dependency_declarations)
+                               _imported_journey_sources, selectors_from_coverage,
+                               validate_dependency_declarations,
+                               lint_direct_module_global_state_handoffs,
+                               validate_runner_conditions, validate_journey_environment_reads,
+                               full_runner_plans)
 from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
 from service_steps import FlowGraph, Journey, source_selected
 
 
+def helper_read(memory, key):
+    return memory.get(key)
+
+
 class DispatchRegistryTests(unittest.TestCase):
+    def test_registered_memory_rejects_helper_read_without_prerequisite(self):
+        from service_steps import JourneyMemory, JourneyContractError
+        memory = JourneyMemory({"setup": ((), ("project",))})
+        with memory.activate("consumer", (), ()):
+            with self.assertRaisesRegex(JourneyContractError, "undeclared dependency.*consumer.*project.*setup"):
+                helper_read(memory, "project")
+
+    def test_registered_memory_rejects_attribute_held_state_without_prerequisite(self):
+        from service_steps import JourneyMemory, JourneyContractError
+        holder = type("Holder", (), {})()
+        holder.memory = JourneyMemory({"setup": ((), ("project",))})
+        with holder.memory.activate("consumer", (), ()):
+            with self.assertRaisesRegex(JourneyContractError, "undeclared dependency.*consumer.*project.*setup"):
+                holder.memory.get("project")
+
+    def test_registered_memory_rejects_undeclared_write(self):
+        from service_steps import JourneyMemory, JourneyContractError
+        memory = JourneyMemory({})
+        with memory.activate("writer", (), ()):
+            with self.assertRaisesRegex(JourneyContractError, "undeclared write.*writer.*project"):
+                memory.set("project", "registered")
+
+    def test_journey_records_undeclared_memory_read_as_harness_failure(self):
+        journey = Journey("local", "memory-contract")
+        journey.step("project setup", "test",
+                     lambda: journey.memory.set("project", "registered"),
+                     provides=("project",))
+        result = journey.step("project consumer", "test",
+                              lambda: helper_read(journey.memory, "project"))
+        self.assertEqual(result.status, "FAIL")
+        self.assertRegex(result.message,
+                         r"harness defect: undeclared dependency: reader 'project consumer' "
+                         r"reads key 'project' from producer 'project setup'")
+
+    def test_module_global_state_lint_detects_shared_mutable_global(self):
+        with tempfile.TemporaryDirectory(prefix="journey-global-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'shared = {}\n'
+                'def produce():\n'
+                '    shared["project"] = "registered"\n'
+                'def check():\n'
+                '    return shared.get("project")\n'
+                'journey.step("project setup", "test", produce)\n'
+                'journey.step("consumer", "test", check)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
+
+    def test_module_global_state_lint_detects_attribute_held_global(self):
+        with tempfile.TemporaryDirectory(prefix="journey-attribute-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'class Holder: pass\n'
+                'state = Holder()\n'
+                'state.values = {}\n'
+                'def produce():\n'
+                '    state.values["project"] = "registered"\n'
+                'def check():\n'
+                '    return state.values.get("project")\n'
+                'journey.step("project setup", "test", produce)\n'
+                'journey.step("consumer", "test", check)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
+
+    def test_module_global_state_lint_detects_helper_mediated_global_read(self):
+        with tempfile.TemporaryDirectory(prefix="journey-helper-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'shared = {}\n'
+                'def produce():\n'
+                '    shared["project"] = "registered"\n'
+                'def helper():\n'
+                '    return shared.get("project")\n'
+                'def check():\n'
+                '    return helper()\n'
+                'journey.step("project setup", "test", produce)\n'
+                'journey.step("consumer", "test", check)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "module-global-state lint detected"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
+
+    def test_environment_lint_detects_literal_kb_journey_read_outside_accessor(self):
+        with tempfile.TemporaryDirectory(prefix="journey-env-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'import os\n'
+                'value = os.environ.get("KB_JOURNEY_PROJECT_ID")\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "KB_JOURNEY_PROJECT_ID.*journey_values"):
+                validate_journey_environment_reads({"fixture_steps.py"}, root)
+
+    def test_environment_lint_rejects_computed_environment_key(self):
+        with tempfile.TemporaryDirectory(prefix="journey-dynamic-env-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'import os\n'
+                'def check(key):\n'
+                '    return os.environ.get(key)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "computed environment keys"):
+                validate_journey_environment_reads({"fixture_steps.py"}, root)
+
+    def test_journey_unknown_required_producer_is_runtime_contract_failure(self):
+        journey = Journey("local", "unknown-memory-producer")
+        result = journey.step("project consumer", "test", lambda: None,
+                              cases=("S-042.1",), requires=("step:missing project producer",))
+        self.assertEqual(result.status, "FAIL")
+        self.assertIn("unknown journey prerequisite 'missing project producer'", result.message)
+        self.assertEqual(journey.result().status, "FAIL")
+
+    def test_dependency_lint_rejects_unknown_required_producer(self):
+        with tempfile.TemporaryDirectory(prefix="journey-unknown-producer-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'def check(): return None\n'
+                'journey.step("project consumer", "test", check, '
+                'requires=("step:missing project producer",))\n',
+                encoding="utf-8",
+            )
+            with patch("select_from_cases.RUNNERS", {
+                    "fixture": SimpleNamespace(journey_sources=("fixture_steps.py",))}):
+                with self.assertRaisesRegex(ValueError, "does not resolve to a declared"):
+                    validate_dependency_declarations({"fixture_steps.py"}, root)
+
+    def test_full_unselected_plan_matches_checked_in_golden(self):
+        root = Path(__file__).resolve().parents[2]
+        baseline_path = root / "e2e/journey/full-plan-baseline.json"
+        expected = json.loads(baseline_path.read_text(encoding="utf-8"))
+        actual = full_runner_plans(root)
+        self.assertEqual(
+            actual, expected,
+            "full journey plan drifted; run python3 e2e/journey/select_from_cases.py "
+            "--write-plan-baseline, then review the ordered plan diff before updating the golden",
+        )
+
+    def test_service_readiness_claim_resolves_registered_project_setup(self):
+        resolved = selection_from_coverage(self._coverage(), "PC-002.3")
+        self.assertEqual(resolved["prerequisiteSteps"], ["registered project setup"])
+        self.assertIn("e2e/journey/service_runner.py", resolved["stepSources"])
+
+    def test_fresh_install_claim_resolves_candidate_provenance(self):
+        resolved = selection_from_coverage(self._coverage(), "PC-001.2")
+        self.assertEqual(resolved["prerequisiteSteps"], ["candidate provenance"])
+
+    def test_installed_smoke_claims_resolve_to_one_service_runner_per_mode(self):
+        coverage = self._coverage()
+        for mode, selector in (("local", "service-local:explore"),
+                               ("secured", "service-secured:explore")):
+            with self.subTest(mode=mode), patch.dict(os.environ, {"KB_JOURNEY_ONLY": selector}):
+                resolved = selection_from_coverage(coverage, "PC-001.2,PC-002.3,PC-002.8")
+            self.assertEqual(resolved["runners"], [selector])
+            self.assertEqual(resolved["prerequisiteSteps"],
+                             ["candidate provenance", "registered project setup"])
+
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         results = []
         root = Path(__file__).resolve().parents[2]
@@ -32,7 +202,7 @@ class DispatchRegistryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             results.append(read_coverage_result(result.stdout, result.returncode))
 
-        registered: dict[str, set[tuple[str, str, int]]] = {}
+        registered: dict[str, dict[str, set[tuple[str, int]]]] = {}
         root = Path(__file__).resolve().parents[2]
         for coverage in results:
             mode = coverage["mode"]
@@ -46,35 +216,79 @@ class DispatchRegistryTests(unittest.TestCase):
                             continue
                         source = str(claim.get("source", ""))
                         if source:
-                            registered.setdefault(step_id, set()).add((mode, source, int(claim.get("line", 0))))
+                            registered.setdefault(mode, {}).setdefault(step_id, set()).add(
+                                (source, int(claim.get("line", 0))))
 
         self.assertTrue(registered, "QA claim registry returned no active journey claims")
-        for step_id, claims in registered.items():
-            with self.subTest(step_id=step_id):
-                resolved = selection_from_coverage(results, step_id)
-                self.assertIn(step_id, resolved["steps"])
-                self.assertTrue(resolved["runners"])
-                self.assertTrue(all(selector in RUNNERS for selector in resolved["runners"]))
-                expected_routes = {
-                    selector
-                    for mode, source, _ in claims
-                    for selector in runners_for_source(source, mode)
-                }
-                self.assertTrue(expected_routes, f"no route registered for {step_id}: {claims}")
-                self.assertTrue(expected_routes.intersection(resolved["runners"]))
-                declarations = [_step_declaration(source, line, root)
-                                for _, source, line in claims if source.startswith("e2e/")]
-                direct_prerequisites = set().union(*(set(item.get("requires", [])) for item in declarations))
-                prerequisites = {f"step:{name}" for name in resolved["prerequisiteSteps"]}
-                prerequisites.update(f"flow:{name}" for name in resolved["prerequisiteFlows"])
-                self.assertTrue(direct_prerequisites.issubset(prerequisites))
-                graph = _source_step_declarations(set(resolved["stepSources"]), root)
-                for name in prerequisites:
-                    with self.subTest(step_id=step_id, prerequisite=name):
-                        self.assertIn(name, graph, f"declared prerequisite {name!r} has no step declaration")
-                        self.assertTrue(graph[name]["sources"].intersection(resolved["stepSources"]))
-                        self.assertTrue(set(graph[name]["requires"]).issubset(prerequisites),
-                                        f"prerequisite closure omitted a dependency of {name!r}")
+        resolved_counts = {mode: 0 for mode in registered}
+        refused_claims: dict[str, dict[str, str]] = {mode: {} for mode in registered}
+        for mode, claims_by_step in registered.items():
+            coverage = next(item for item in results if item["mode"] == mode)
+            for step_id, claims in claims_by_step.items():
+                with self.subTest(mode=mode, step_id=step_id):
+                    declarations = [_step_declaration(source, line, root)
+                                    for source, line in claims if source.endswith(".py")]
+                    expected_routes = set()
+                    for source, line in claims:
+                        declaration = _step_declaration(source, line, root) if source.endswith(".py") else {}
+                        routes = declaration.get("runners") or runners_for_source(source, mode)
+                        expected_routes.update(selector for selector in routes
+                                               if selector in RUNNERS and
+                                               RUNNERS[selector].variant.endswith("secured") == (mode == "secured"))
+                    try:
+                        resolved = selection_from_coverage([coverage], step_id)
+                    except ValueError as error:
+                        self.assertFalse(expected_routes, f"{step_id} has executable routes but was refused: {error}")
+                        self.assertIn("no executable registration", str(error),
+                                      f"{step_id} was refused for an unrelated reason: {error}")
+                        refused_claims[mode][step_id] = str(error)
+                        continue
+                    resolved_counts[mode] += 1
+                    self.assertTrue(expected_routes, f"{step_id} resolved without an eligible registration")
+                    self.assertIn(step_id, resolved["steps"])
+                    self.assertEqual(set(resolved["runners"]), expected_routes)
+                    self.assertTrue(all(selector in RUNNERS for selector in resolved["runners"]))
+                    for selector in resolved["runners"]:
+                        self.assertIn(step_id, resolved["owners"].get(selector, []),
+                                      f"plan routed {step_id} to {selector} without its emitter")
+                    direct_prerequisites = set().union(*(set(item.get("requires", [])) for item in declarations))
+                    prerequisites = {f"step:{name}" for name in resolved["prerequisiteSteps"]}
+                    prerequisites.update(f"flow:{name}" for name in resolved["prerequisiteFlows"])
+                    self.assertTrue(direct_prerequisites.issubset(prerequisites))
+                    graph = _source_step_declarations(set(resolved["stepSources"]), root)
+                    for name in prerequisites:
+                        with self.subTest(mode=mode, step_id=step_id, prerequisite=name):
+                            self.assertIn(name, graph, f"declared prerequisite {name!r} has no step declaration")
+                            self.assertTrue(graph[name]["sources"].intersection(resolved["stepSources"]))
+                            self.assertTrue(set(graph[name]["requires"]).issubset(prerequisites),
+                                            f"prerequisite closure omitted a dependency of {name!r}")
+
+        for mode, claims_by_step in registered.items():
+            print(f"whole-coverage resolution {mode}: {len(claims_by_step)} claims, "
+                  f"{resolved_counts[mode]} routed, {len(refused_claims[mode])} refused")
+            for step_id, reason in sorted(refused_claims[mode].items()):
+                print(f"refused {mode} {step_id}: {reason}")
+
+        default_matrix = selectors_from_coverage(results)
+        for selector in default_matrix:
+            runner = RUNNERS[selector]
+            reachable = set().union(*(_imported_journey_sources({source}, root)
+                                      for source in runner.journey_sources))
+            registrations = _source_step_declarations(reachable, root)
+            full_plan = [(key, declaration) for key, declaration in registrations.items()
+                         if declaration.get("name") is not None
+                         and (not declaration.get("runners") or selector in declaration["runners"])]
+            with self.subTest(full_run=selector), patch.dict(os.environ, {
+                    "KB_JOURNEY_CASES": "", "KB_JOURNEY_SELECTED_STEPS": "",
+                    "KB_JOURNEY_RUNNER_SELECTOR": selector,
+            }, clear=False):
+                journey = Journey("secured" if runner.variant.endswith("secured") else "local",
+                                  f"full-plan-{selector}")
+                for _, declaration in full_plan:
+                    journey.step(declaration["name"], "journey.registry", lambda: None)
+                self.assertEqual([step.name for step in journey.steps],
+                                 [declaration["name"] for _, declaration in full_plan])
+                self.assertTrue(all(step.status == "PASS" for step in journey.steps))
 
     def test_base_update_and_variant_claims_dispatch_both_step_modules(self):
         resolved = selection_from_coverage(self._coverage(), "S-023.2,S-023.9")
@@ -234,6 +448,49 @@ class DispatchRegistryTests(unittest.TestCase):
                         ValueError,
                         r"fixture_steps.py:1: dependency declaration is not statically resolvable"):
                     validate_dependency_declarations({"fixture_steps.py"}, root)
+
+    def test_module_global_state_lint_detects_shared_state_read(self):
+        with tempfile.TemporaryDirectory(prefix="journey-state-dependency-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'shared_state = {}\n'
+                'def produce():\n'
+                '    shared_state["project"] = "registered"\n'
+                'def consume():\n'
+                '    return shared_state.get("project")\n'
+                'journey.step("project setup", "test", produce)\n'
+                'journey.step("project consumer", "test", consume)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, r"module-global-state lint detected.*'shared_state'"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
+
+    def test_module_global_state_lint_detects_dynamic_key_read(self):
+        with tempfile.TemporaryDirectory(prefix="journey-dynamic-state-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'shared_state = {}\n'
+                'def produce():\n'
+                '    shared_state["project"] = "registered"\n'
+                'def consume():\n'
+                '    return shared_state[key]\n'
+                'journey.step("project setup", "test", produce)\n'
+                'journey.step("project consumer", "test", consume)\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, r"module-global-state lint detected.*'shared_state'"):
+                lint_direct_module_global_state_handoffs({"fixture_steps.py"}, root)
+
+    def test_runner_condition_rail_rejects_unowned_conditional_registration(self):
+        with tempfile.TemporaryDirectory(prefix="journey-runner-condition-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'if VARIANT == "interactive":\n'
+                '    journey.step("conditional claim", "test", check, cases=["S-900.1"])\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, r"fixture_steps.py:2: claim registration is conditional"):
+                validate_runner_conditions({"fixture_steps.py"}, root)
 
     def test_static_dependency_rail_rejects_partial_recorder(self):
         with tempfile.TemporaryDirectory(prefix="journey-partial-recorder-rail-") as directory:
