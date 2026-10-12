@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 from invocations import invocation_context, invocation_link, write_report_json, write_report_text
 from journey_dependencies import Dependency
+from journey_values import MissingJourneyState
 
 
 @dataclass
@@ -100,6 +101,9 @@ class Journey:
                 message = message.removeprefix("BLOCKED:").strip()
             else:
                 status = "PASS" if message is None else "FAIL"
+        except MissingJourneyState as error:
+            status = "BLOCKED"
+            message = str(error)
         except Exception as error:  # Include a concise error, not a raw traceback.
             status = "FAIL"
             message = str(error) or error.__class__.__name__

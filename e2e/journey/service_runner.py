@@ -399,7 +399,7 @@ def service_check(name, capability, check, *, cases=()):
 
 
 def _checks(mode: str):
-    pid = PROJECT_ID or "{projectId}"
+    pid = PROJECT_ID
     token = os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")
     auth_token = lambda: os.getenv("KB_JOURNEY_SERVICE_TOKEN", token)
 
@@ -590,8 +590,6 @@ def _mcp_response(project_id: str, token: str, payload: dict) -> tuple[int, obje
 
 
 def mcp_initialize(project_id: str, token: str) -> str | None:
-    if project_id == "{projectId}":
-        return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
     route = project_service_path(project_id, "mcp")
     status, body = _mcp_response(project_id, token, {
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -607,8 +605,6 @@ def mcp_initialize(project_id: str, token: str) -> str | None:
 
 
 def mcp_probe(project_id: str, token: str) -> str | None:
-    if project_id == "{projectId}":
-        return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
     route = project_service_path(project_id, "mcp")
     status, body = _mcp_response(project_id, token, {
         "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {},
@@ -631,8 +627,6 @@ def mcp_probe(project_id: str, token: str) -> str | None:
 
 
 def mcp_diagnostics(project_id: str, token: str) -> str | None:
-    if project_id == "{projectId}":
-        return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
     status, body = _mcp_response(project_id, token, {
         "jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": {"name": "kb-labs__mcp_diagnostics", "arguments": {}},
@@ -772,6 +766,12 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                cases=["S-054.1", "S-048.1"], record_empty_success=False)
     platform_root = Path(env.get("KB_JOURNEY_PLATFORM_ROOT", project_root))
     def adapter_defaults_probe() -> str | None:
+        cleanup = next((step for step in reversed(journey.steps)
+                        if step.name == "restore adapter journey fixture state"), None)
+        if cleanup is None:
+            return "BLOCKED: adapter defaults flow did not run; platform fixture state was not changed"
+        if cleanup.status != "PASS":
+            return f"adapter fixture cleanup ended {cleanup.status}: {cleanup.message}"
         config_path = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
         if not config_path.is_file():
             config_path = active_platform_root(platform_root) / ".kb" / "kb.config.json"
@@ -780,11 +780,10 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
         except (OSError, json.JSONDecodeError) as error:
             return f"platform adapter config is missing or unreadable after the adapter journey: {error}"
         platform_config = value.get("platform", {})
-        if ("storage" in platform_config.get("adapters", {})
-                or "storage" in platform_config.get("adapterOptions", {})):
-            return "adapter journey left its platform storage binding or options configured"
+        if not isinstance(platform_config, dict):
+            return "restored platform adapter config has no platform object"
         return None
-    graph.probe_state("adapter-defaults", "adapters", "unbind platform storage and restore built-in default",
+    graph.probe_state("adapter-defaults", "adapters", "restore original platform adapter fixture state",
                       adapter_defaults_probe)
     graph.flow("plugin author flow", "plugin-author", "plugin-author",
                lambda: run_plugin_author_flow(journey, Path(project_root),

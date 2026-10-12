@@ -854,9 +854,8 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 shutil.rmtree(project_b)
             except OSError as error:
                 cleanup_errors.append(f"adapter project B fixture could not be removed: {error}")
-        if cleanup_errors:
-            message = "; ".join(cleanup_errors)
-            journey.step("restore adapter journey fixture state", "adapter", lambda: message)
+        message = "; ".join(cleanup_errors) if cleanup_errors else None
+        journey.step("restore adapter journey fixture state", "adapter", lambda: message, role="lifecycle")
 
 
 def _save_run(run_workflow, project):
