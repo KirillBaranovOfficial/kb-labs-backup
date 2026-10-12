@@ -337,6 +337,126 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 			t.Fatalf("repeat install changed recorded project identity: selected=%q id=%q canonical=%q", updated.ProjectSelectedPath, updated.ProjectID, updated.ProjectCanonicalPath)
 		}
 	}
+
+	activeLayout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logsBefore, err := os.ReadDir(activeLayout.OperationLogsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logNamesBefore := make(map[string]struct{}, len(logsBefore))
+	for _, entry := range logsBefore {
+		logNamesBefore[entry.Name()] = struct{}{}
+	}
+	commitPackage := filepath.Join(activeRoot, "node_modules", "@kb", "commit")
+	if err := os.MkdirAll(commitPackage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commitPackage, "package.json"), []byte(`{"name":"@kb/commit","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hostListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatewayListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		_ = hostListener.Close()
+		t.Fatal(err)
+	}
+	hostPort := hostListener.Addr().(*net.TCPAddr).Port
+	gatewayPort := gatewayListener.Addr().(*net.TCPAddr).Port
+	if err := hostListener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gatewayListener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	humanSource := testReleaseCatalog(t, "2.0.0")
+	humanSource.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", hostPort)}
+	humanSource.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {
+		PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: gatewayPort, Required: true}},
+	}}
+	humanSource.Platforms[0].Config = []catalog.ConfigRequirement{
+		{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`},
+		{ID: "gateway.bootstrap.adminEmail", Path: "/gateway/bootstrap/adminEmail", Default: `"admin@example.test"`},
+		{ID: "gateway.bootstrap.tenantId", Path: "/gateway/bootstrap/tenantId", Default: `"workspace"`},
+		{ID: "gateway.bootstrap.password", Path: "/gateway/bootstrap/password", Secret: true, Generate: true, Env: secrets.BootstrapPasswordEnvironment, Services: []string{"gateway"}},
+		{ID: "gateway.jwtSecret", Path: "/gateway/jwtSecret", Secret: true, Generate: true, Env: "GATEWAY_JWT_SECRET", Services: []string{"gateway"}},
+		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, gatewayPort)},
+	}
+	humanSource.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
+	humanRelease, err := catalog.Seal(humanSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	humanIndexPath := filepath.Join(t.TempDir(), "human-release-index.json")
+	humanIndexBytes, err := json.Marshal(humanRelease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(humanIndexPath, humanIndexBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testHost.stop()
+	var humanStdout, humanStderr bytes.Buffer
+	humanRegistrarCallsBefore := registrarCalls
+	humanJWTSecret := strings.Repeat("j", 32)
+	humanCommand := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
+		deps := productionCommandDependencies(cmd)
+		deps.NodeCheck = func() error { return nil }
+		deps.Executable = launcher
+		answers := []string{"", "", "secured", "admin@example.test", "workspace", password, password, humanJWTSecret, humanJWTSecret, ""}
+		deps.InstallInput = strings.NewReader(strings.Join(answers, "\n"))
+		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: testHost, Clock: clock}
+		deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
+			registrarCalls++
+			return registerInstalledProject(platformRoot, selectedProject, nil)
+		}
+		return deps
+	})
+	humanCode := clikitcommand.Execute(humanCommand,
+		[]string{"install", "--index", humanIndexPath, "--platform-root", root, "--project-root", selected,
+			"--gateway-url", fmt.Sprintf("http://127.0.0.1:%d", gatewayPort)},
+		&humanStdout, &humanStderr)
+	if humanCode != 0 {
+		redact := func(value string) string {
+			value = strings.ReplaceAll(value, password, "[redacted]")
+			return strings.ReplaceAll(value, humanJWTSecret, "[redacted]")
+		}
+		t.Fatalf("human secured repeat install exit=%d; stdout=%s stderr=%s", humanCode, redact(humanStdout.String()), redact(humanStderr.String()))
+	}
+	if registrarCalls != humanRegistrarCallsBefore || requestCounts["login"] != 0 || requestCounts["register"] != 0 {
+		t.Fatalf("human repeat install made registration calls: registrar %d, Gateway login %d, registration %d",
+			registrarCalls-humanRegistrarCallsBefore, requestCounts["login"], requestCounts["register"])
+	}
+	for label, output := range map[string][]byte{"human stdout": humanStdout.Bytes(), "human stderr": humanStderr.Bytes()} {
+		if strings.Contains(string(output), "Password:") || strings.Contains(string(output), `"password"`) || strings.Contains(string(output), `"Password"`) {
+			t.Fatalf("secured human repeat install %s contains a password label or field", label)
+		}
+		assertSecretAbsent(t, label+" from human repeat install", output, password)
+	}
+	logsAfter, err := os.ReadDir(activeLayout.OperationLogsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newLogCount := 0
+	for _, entry := range logsAfter {
+		if _, existed := logNamesBefore[entry.Name()]; existed || entry.IsDir() {
+			continue
+		}
+		newLogCount++
+		logBytes, readErr := os.ReadFile(filepath.Join(activeLayout.OperationLogsDir(), entry.Name()))
+		if readErr != nil {
+			t.Fatalf("read human repeat-install transcript: %v", readErr)
+		}
+		assertSecretAbsent(t, "human repeat-install transcript", logBytes, password)
+	}
+	if newLogCount == 0 {
+		t.Fatal("human repeat install did not create an inspectable operation transcript")
+	}
 	requestsMu.Lock()
 	loginCalls, registrationCalls := requestCounts["login"], requestCounts["register"]
 	requestsDuringRepeats := append([]string(nil), gatewayRequests...)

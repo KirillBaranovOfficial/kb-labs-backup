@@ -879,15 +879,18 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
-	listener := testListenerWithPortHeadroom(t, 100)
-	port := listener.Addr().(*net.TCPAddr).Port
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	_, fakehost := binaries(t)
+	port := freeLoopbackPort(t)
 	root := filepath.Join(home, "kb-platform")
 	index := filepath.Join(home, "release-index.json")
+	testExecutable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	source := testReleaseCatalog(t, "2.0.0")
-	source.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)}
+	source.Platforms[0].Host = &contracts.HostSpec{Command: testExecutable, Args: []string{"-test.run=^TestHostExecLauncher$"},
+		Env:       map[string]string{"KB_TEST_FAKEHOST": fakehost, "KB_TEST_FAKEHOST_PORT": fmt.Sprint(port)},
+		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}}
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
 		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}
@@ -912,7 +915,20 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 	_, outputPath := installOutput(t)
 	var screen bytes.Buffer
-	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}}, NodePreflight: func() error { return nil }})
+	t.Cleanup(func() {
+		runner, runnerErr := host.NewRunner(root)
+		if runnerErr != nil {
+			if _, statErr := os.Stat(filepath.Join(root, "current")); os.IsNotExist(statErr) {
+				return
+			}
+			t.Errorf("load interactive-install test host runner: %v", runnerErr)
+			return
+		}
+		if _, runnerErr = runner.Stop(context.Background()); runnerErr != nil {
+			t.Errorf("stop interactive-install test host: %v", runnerErr)
+		}
+	})
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}, NodePreflight: func() error { return nil }})
 	if code != 0 {
 		t.Fatalf("exit code %d, failure=%v, screen:\n%s", code, failure, screen.String())
 	}
@@ -944,7 +960,12 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 		t.Fatal("sealed install fixture did not resolve the shipped kb-create binary")
 	}
 	var doctorOutput, doctorError bytes.Buffer
-	doctorCode := clikitcommand.Execute(newRootCommand(), []string{"doctor", "--platform-root", root, "--json"}, &doctorOutput, &doctorError)
+	doctorCommand := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
+		deps := productionCommandDependencies(cmd)
+		deps.Executable = launcher
+		return deps
+	})
+	doctorCode := clikitcommand.Execute(doctorCommand, []string{"doctor", "--platform-root", root, "--json"}, &doctorOutput, &doctorError)
 	if doctorCode != 0 {
 		t.Fatalf("automatic doctor after sealed install exited %d: stdout=%s stderr=%s", doctorCode, doctorOutput.String(), doctorError.String())
 	}
