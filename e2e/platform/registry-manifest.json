@@ -3,6 +3,7 @@
   "registryUrl": "http://verdaccio:4873",
   "core": [
     { "name": "@kb-labs/cli-bin" },
+    { "name": "@kb-labs/cli-runtime" },
     { "name": "@kb-labs/host-app" },
     { "name": "@kb-labs/platform-client" },
     { "name": "@kb-labs/project-runtime-app" },

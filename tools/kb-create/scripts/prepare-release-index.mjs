@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { builtinModules } from 'node:module';
+import { isPlatformPackage } from '../../../core/plugin-runtime/src/platform-resolve/platform-package.js';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -406,6 +407,7 @@ const dependencyClosureFor = packageName => {
 // tree. Derive peer availability from that exact sealed package graph; mere
 // presence in the release stage does not make a peer available to consumers.
 const platformProvidedPackages = new Set();
+platformProvidedPackages.add(platformPackage);
 for (const packageName of platformMemberRoots) {
   for (const dependency of dependencyClosureFor(packageName)) {
     if (byName.has(dependency)) platformProvidedPackages.add(dependency);
@@ -413,6 +415,20 @@ for (const packageName of platformMemberRoots) {
 }
 const packagesToValidate = [...platformProvidedPackages];
 const runtimeImportViolations = [];
+const packagesWithPlatformPeers = new Set([...packagesToValidate, ...stage.map(item => item.name)]);
+for (const packageName of packagesWithPlatformPeers) {
+  const item = byName.get(packageName);
+  if (!item) continue;
+  const packageJSON = packageJSONFor(item);
+  const peers = new Set(Object.keys(packageJSON.peerDependencies ?? {}));
+  const optionalPeers = new Set(Object.entries(packageJSON.peerDependenciesMeta ?? {})
+    .filter(([, metadata]) => metadata?.optional === true)
+    .map(([name]) => name));
+  for (const peer of peers) {
+    if (!isPlatformPackage(peer) || optionalPeers.has(peer) || platformProvidedPackages.has(peer)) continue;
+    runtimeImportViolations.push(`${packageName} declares platform peer ${peer}, which the platform package graph does not provide`);
+  }
+}
 for (let index = 0; index < packagesToValidate.length; index += 1) {
   const packageName = packagesToValidate[index];
   const item = byName.get(packageName);
