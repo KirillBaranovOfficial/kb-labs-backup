@@ -33,7 +33,13 @@ func Connect(state host.State) (*Client, error) {
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, unavailable(err)
 	}
-	if !host.ProcessIdentityMatches(file.PID, file.ProcessIdentity) {
+	switch host.ProcessIdentityOf(file.PID, file.ProcessIdentity) {
+	case host.ProcessIdentityMatch:
+	case host.ProcessIdentityMismatch:
+		return nil, unavailable(fmt.Errorf("launcher process identity for PID %d does not match its control record", file.PID))
+	case host.ProcessIdentityUndetermined:
+		return nil, unavailable(fmt.Errorf("launcher process identity for PID %d cannot be determined", file.PID))
+	default:
 		return nil, unavailable(fmt.Errorf("launcher process identity for PID %d is missing or stale", file.PID))
 	}
 	return &Client{File: file, HTTP: &http.Client{Timeout: 60 * time.Second}}, nil

@@ -34,10 +34,20 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	if record, exists := readRecordFile(s.State); exists && host.ProcessAlive(record.PID) {
-		if record.InstallationID == "" || !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+		identityStatus := host.ProcessIdentityOf(record.PID, record.ProcessIdentity)
+		switch identityStatus {
+		case host.ProcessIdentityMatch:
+			if record.InstallationID == "" {
+				return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+			}
+			return Refusal(record, s.PlatformRoot)
+		case host.ProcessIdentityMismatch:
+			return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+		case host.ProcessIdentityUndetermined:
+			return host.UndeterminedProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+		default:
 			return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
 		}
-		return Refusal(record, s.PlatformRoot)
 	}
 	if record, ok := ReadRecord(s.State); ok {
 		e := Refusal(record, s.PlatformRoot)
@@ -114,15 +124,36 @@ func ReadRecord(state host.State) (Record, bool) {
 		_ = os.Remove(state.SupervisorPID())
 		return Record{}, false
 	}
-	if record.InstallationID == "" || !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+	switch host.ProcessIdentityOf(record.PID, record.ProcessIdentity) {
+	case host.ProcessIdentityMatch:
+		if record.InstallationID != "" {
+			return record, true
+		}
+	case host.ProcessIdentityMismatch:
+	case host.ProcessIdentityUndetermined:
+	default:
 		return Record{}, false
 	}
-	return record, true
+	return Record{}, false
 }
 
-func StaleRecord(state host.State) (Record, bool) {
+func StaleRecord(state host.State) (Record, host.ProcessIdentityStatus, bool) {
 	record, ok := readRecordFile(state)
-	return record, ok && host.ProcessAlive(record.PID) && (record.InstallationID == "" || !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity))
+	if !ok || !host.ProcessAlive(record.PID) {
+		return record, host.ProcessIdentityUndetermined, false
+	}
+	if record.InstallationID == "" {
+		return record, host.ProcessIdentityUndetermined, true
+	}
+	identityStatus := host.ProcessIdentityOf(record.PID, record.ProcessIdentity)
+	switch identityStatus {
+	case host.ProcessIdentityMatch:
+		return Record{}, identityStatus, false
+	case host.ProcessIdentityMismatch, host.ProcessIdentityUndetermined:
+		return record, identityStatus, true
+	default:
+		return record, host.ProcessIdentityUndetermined, true
+	}
 }
 
 func readRecordFile(state host.State) (Record, bool) {

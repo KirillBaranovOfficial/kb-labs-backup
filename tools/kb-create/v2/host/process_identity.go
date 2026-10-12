@@ -7,9 +7,26 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"time"
 )
 
 const ProcessIdentityEnv = "KB_CREATE_PROCESS_IDENTITY"
+
+// ProcessIdentityStatus records whether a live PID's per-launch token was verified.
+type ProcessIdentityStatus uint8
+
+const (
+	// ProcessIdentityUndetermined means the process is gone or its environment is not readable yet.
+	ProcessIdentityUndetermined ProcessIdentityStatus = iota
+	// ProcessIdentityMismatch means the readable process environment lacks the recorded token.
+	ProcessIdentityMismatch
+	// ProcessIdentityMatch means the live process carries the recorded token.
+	ProcessIdentityMatch
+)
+
+const processIdentityPollInterval = time.Millisecond
+
+var errProcessEnvironmentNotReady = errors.New("process environment is empty or not available yet")
 
 func NewProcessIdentityToken() (string, error) {
 	var raw [32]byte
@@ -43,8 +60,19 @@ func ProcessEnvironmentWithoutIdentity(env []string) []string {
 }
 
 func processIdentityFromEnvironment(data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", errProcessEnvironmentNotReady
+	}
+	if data[len(data)-1] != 0 {
+		return "", errProcessEnvironmentNotReady
+	}
 	prefix := []byte(ProcessIdentityEnv + "=")
+	hasEntry := false
 	for _, entry := range bytes.Split(data, []byte{0}) {
+		if len(entry) == 0 {
+			continue
+		}
+		hasEntry = true
 		if bytes.HasPrefix(entry, prefix) {
 			token := string(entry[len(prefix):])
 			if token != "" {
@@ -52,28 +80,83 @@ func processIdentityFromEnvironment(data []byte) (string, error) {
 			}
 		}
 	}
-	return "", errors.New("process identity token is absent from process environment")
+	if !hasEntry {
+		return "", errProcessEnvironmentNotReady
+	}
+	return "", nil
 }
 
-func processIdentityMatchesWithReader(pid int, expected string, readIdentity func(int) (string, error)) bool {
-	if pid <= 0 || expected == "" || !processAlive(pid) {
-		return false
+func processIdentityStatusWithReader(pid int, expected string, readIdentity func(int) (string, error), alive func(int) bool) ProcessIdentityStatus {
+	if pid <= 0 || expected == "" || !alive(pid) {
+		return ProcessIdentityUndetermined
 	}
 	actual, err := readIdentity(pid)
-	return err == nil && actual == expected
+	if err != nil {
+		return ProcessIdentityUndetermined
+	}
+	if actual != expected {
+		return ProcessIdentityMismatch
+	}
+	return ProcessIdentityMatch
 }
 
 func signalWithProcessIdentity(pid int, expected string, signal func() error) bool {
-	return signalWithIdentityReader(pid, expected, ProcessIdentityForPID, signal)
+	return signalWithIdentityReader(pid, expected, ProcessIdentityForPID, processAlive, signal)
 }
 
-func signalWithIdentityReader(pid int, expected string, readIdentity func(int) (string, error), signal func() error) bool {
-	if !processIdentityMatchesWithReader(pid, expected, readIdentity) {
+func signalWithIdentityReader(pid int, expected string, readIdentity func(int) (string, error), alive func(int) bool, signal func() error) bool {
+	switch processIdentityStatusWithReader(pid, expected, readIdentity, alive) {
+	case ProcessIdentityMatch:
+		return signal() == nil
+	case ProcessIdentityMismatch:
+		return false
+	case ProcessIdentityUndetermined:
+		return false
+	default:
 		return false
 	}
-	return signal() == nil
 }
 
-func ProcessIdentityMatches(pid int, expected string) bool {
-	return processIdentityMatchesWithReader(pid, expected, ProcessIdentityForPID)
+// ProcessIdentityOf checks the token recorded for pid and returns its three-way status.
+func ProcessIdentityOf(pid int, expected string) ProcessIdentityStatus {
+	return processIdentityStatusWithReader(pid, expected, ProcessIdentityForPID, processAlive)
+}
+
+// WaitForProcessIdentity retries undetermined reads while the launched process is alive.
+func WaitForProcessIdentity(pid int, expected string, exited <-chan struct{}, timeout time.Duration) ProcessIdentityStatus {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(processIdentityPollInterval)
+	defer ticker.Stop()
+	return waitForProcessIdentityWith(pid, expected, ProcessIdentityOf, processAlive, func() bool {
+		select {
+		case <-exited:
+			return false
+		case <-deadline.C:
+			return false
+		case <-ticker.C:
+			return true
+		}
+	})
+}
+
+func waitForProcessIdentityWith(
+	pid int,
+	expected string,
+	identify func(int, string) ProcessIdentityStatus,
+	alive func(int) bool,
+	waitNext func() bool,
+) ProcessIdentityStatus {
+	for {
+		status := identify(pid, expected)
+		if status != ProcessIdentityUndetermined {
+			return status
+		}
+		if !alive(pid) {
+			return ProcessIdentityUndetermined
+		}
+		if !waitNext() {
+			return ProcessIdentityUndetermined
+		}
+	}
 }

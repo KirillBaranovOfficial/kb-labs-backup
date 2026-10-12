@@ -160,6 +160,38 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	waitErr := make(chan error, 1)
 	go func() { waitErr <- cmd.Wait(); close(exited) }()
 	started := time.Now()
+	identityStatus := host.WaitForProcessIdentity(cmd.Process.Pid, identityToken, exited, time.Second)
+	switch identityStatus {
+	case host.ProcessIdentityMatch:
+	case host.ProcessIdentityMismatch:
+		select {
+		case <-exited:
+			return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
+		default:
+		}
+		killErr := cmd.Process.Kill()
+		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			return host.Info{}, host.StartFailure(state, fmt.Errorf("started supervisor process identity did not match its launch token, and the child could not be stopped: %w", killErr), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
+		}
+		<-exited
+		if errors.Is(killErr, os.ErrProcessDone) {
+			return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
+		}
+		return host.Info{}, host.StartFailure(state, errors.New("started supervisor process identity does not match the token assigned by this launcher"), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
+	case host.ProcessIdentityUndetermined:
+		select {
+		case <-exited:
+			return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
+		default:
+			if !host.ProcessAlive(cmd.Process.Pid) {
+				<-exited
+				return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
+			}
+			return host.Info{}, host.StartFailure(state, errors.New("started supervisor process identity could not be determined while it remained alive"), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
+		}
+	default:
+		return host.Info{}, host.StartFailure(state, errors.New("started supervisor process identity result is invalid"), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
+	}
 	deadline := time.After(process.Spec.ReadyTimeout + 10*time.Second)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -239,7 +271,10 @@ func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopR
 	if process, ok := runner.(*host.ProcessRunner); ok {
 		platformRoot = process.InstallRoot
 	}
-	if record, stale := supervisor.StaleRecord(state); stale {
+	if record, identityStatus, stale := supervisor.StaleRecord(state); stale {
+		if identityStatus == host.ProcessIdentityUndetermined && record.InstallationID != "" {
+			return host.StopResult{Runner: runner.Name()}, host.UndeterminedProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
+		}
 		return host.StopResult{Runner: runner.Name()}, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
 	}
 	installationID, identityErr := versionroot.InstallationIDForPath(platformRoot)
@@ -270,16 +305,38 @@ func stopBudget(runner host.Runner) time.Duration {
 func waitExit(pid int, processIdentity string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !host.ProcessIdentityMatches(pid, processIdentity) {
+		switch host.ProcessIdentityOf(pid, processIdentity) {
+		case host.ProcessIdentityMatch:
+		case host.ProcessIdentityMismatch:
 			return true
+		case host.ProcessIdentityUndetermined:
+			if !host.ProcessAlive(pid) {
+				return true
+			}
+		default:
+			if !host.ProcessAlive(pid) {
+				return true
+			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return !host.ProcessIdentityMatches(pid, processIdentity)
+	switch host.ProcessIdentityOf(pid, processIdentity) {
+	case host.ProcessIdentityMatch:
+		return false
+	case host.ProcessIdentityMismatch:
+		return true
+	case host.ProcessIdentityUndetermined:
+		return !host.ProcessAlive(pid)
+	default:
+		return !host.ProcessAlive(pid)
+	}
 }
 
 func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {
-	if record, stale := supervisor.StaleRecord(state); stale {
+	if record, identityStatus, stale := supervisor.StaleRecord(state); stale {
+		if identityStatus == host.ProcessIdentityUndetermined && record.InstallationID != "" {
+			return nil, host.UndeterminedProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot, host.GatewayURLForState(state))
+		}
 		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot, host.GatewayURLForState(state))
 	}
 	// A live supervisor owns the host: restart through its channel so its view

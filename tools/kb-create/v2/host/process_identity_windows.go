@@ -47,7 +47,7 @@ func ProcessIdentityForPID(pid int) (string, error) {
 			return entry[len(prefix):], nil
 		}
 	}
-	return "", fmt.Errorf("process identity token is absent from process %d environment", pid)
+	return "", nil
 }
 
 func readProcessMemory(handle windows.Handle, address uintptr, destination unsafe.Pointer, size uintptr) error {
