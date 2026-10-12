@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the journey while recording a result if Python startup itself fails."""
 from __future__ import annotations
+from journey_values import journey_value
 
 import json
 import os
@@ -59,11 +60,11 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
         try:
             dump_platform_state(
                 Path.home() / "kb-platform", Path(summary_path).parent, mode=mode,
-                front=os.getenv("KB_JOURNEY_FRONT_DOOR", "agent"),
-                scenario=os.getenv("KB_JOURNEY_SCENARIO", "commit"),
-                variant=os.getenv("KB_JOURNEY_VARIANT", "default"),
+                front=journey_value("KB_JOURNEY_FRONT_DOOR", "agent"),
+                scenario=journey_value("KB_JOURNEY_SCENARIO", "commit"),
+                variant=journey_value("KB_JOURNEY_VARIANT", "default"),
                 first_failure=f"runner startup: {error.__class__.__name__}: {error}",
-                env=os.environ, admin_password=os.getenv("KB_JOURNEY_ADMIN_PASSWORD", ""),
+                env=os.environ, admin_password=journey_value("KB_JOURNEY_ADMIN_PASSWORD", ""),
             )
         except Exception as dump_error:
             print_report_text(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}",
@@ -95,9 +96,9 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
             write_dump = dump.dump if dump is not None else dump_platform_state
             write_dump(
                 namespace.get("PLATFORM", Path.home() / "kb-platform"), report.parent,
-                mode=mode, front=os.getenv("KB_JOURNEY_FRONT_DOOR", "agent"),
-                scenario=os.getenv("KB_JOURNEY_SCENARIO", "commit"),
-                variant=os.getenv("KB_JOURNEY_VARIANT", "default"),
+                mode=mode, front=journey_value("KB_JOURNEY_FRONT_DOOR", "agent"),
+                scenario=journey_value("KB_JOURNEY_SCENARIO", "commit"),
+                variant=journey_value("KB_JOURNEY_VARIANT", "default"),
                 first_failure=f"{error.__class__.__name__}: {error}",
                 env=failure_dump_environment(
                     namespace.get("ACTIVE_MAIN_ENV"), namespace.get("LAST_COMMAND_ENV"),
@@ -125,10 +126,10 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
 
 
 def main() -> int:
-    variant = os.getenv("KB_JOURNEY_VARIANT", "default")
+    variant = journey_value("KB_JOURNEY_VARIANT", "default")
     mode = "secured" if variant.endswith("secured") else "local"
     runner_path = journey_module("runner.py")
-    summary_path = os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")
+    summary_path = journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")
     return run_runner(runner_path, summary_path, mode)
 
 

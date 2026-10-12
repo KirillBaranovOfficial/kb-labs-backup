@@ -1,5 +1,6 @@
 """Shared, redacted invocation evidence for journey commands and HTTP calls."""
 from __future__ import annotations
+from journey_values import journey_value
 
 from contextvars import ContextVar
 import json
@@ -283,7 +284,7 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
                       error: str | None = None) -> dict[str, Any] | None:
     root = _REPORT_ROOT.get()
     if root is None:
-        path = os.getenv("KB_JOURNEY_INVOCATIONS")
+        path = journey_value("KB_JOURNEY_INVOCATIONS")
         root = Path(path) if path else None
     if root is None:
         return None
@@ -327,7 +328,7 @@ class PtyCommandTimeout(subprocess.TimeoutExpired):
 def invocation_link(step_id: str) -> str | None:
     root = _REPORT_ROOT.get()
     if root is None:
-        path = os.getenv("KB_JOURNEY_INVOCATIONS")
+        path = journey_value("KB_JOURNEY_INVOCATIONS")
         root = Path(path) if path else None
     if root is None:
         return None

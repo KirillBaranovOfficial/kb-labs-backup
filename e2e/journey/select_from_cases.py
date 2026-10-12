@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Select journey entry points from release cases claimed by executable flows.
 
-The static dependency rail requires every `.step`/`.flow` recorder attribute in
-runner-reachable modules to be the direct callee of a call. Reflection such as
-`getattr(journey, name)` and `eval` is outside this AST rail. Runtime
-`Journey.step` checks every declared step or flow outcome in all run modes;
-`FlowGraph.flow` records flow outcomes for those checks. Thus a dependency the
-selector cannot see still produces a BLOCKED row for a selected claim, never a
-PASS.
+The declaration parser and the module-global-state lint inspect specific AST
+forms. They do not prove that all callback state is declared; closure-held
+state and FlowGraph state remain outside this lint. Runtime JourneyMemory
+checks apply to the keys explicitly routed through that container.
 """
 from __future__ import annotations
+from journey_values import journey_value
 
 import json
 import os
@@ -21,8 +19,16 @@ from pathlib import Path
 from hermetic_cli import run_hermetic_cli
 from invocations import (decode_ux_success_result, describe_cli_failure, invocation_context,
                          print_report_text, read_ux_cli_result)
-from dispatch_registry import RUNNERS, runners_for_source
+from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
 from journey_dependencies import Dependency
+
+
+def _call_name(call: ast.Call) -> str:
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    return ""
 
 
 @lru_cache(maxsize=None)
@@ -54,6 +60,17 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
         prerequisites = keywords.get("requires")
         role = keywords.get("role")
+        runners_node = keywords.get("runners")
+        runners = []
+        if runners_node is not None:
+            if not isinstance(runners_node, (ast.Tuple, ast.List)):
+                raise ValueError(f"runners= in {source}:{call.lineno} must contain literal runner selectors")
+            for item in runners_node.elts:
+                if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+                    raise ValueError(f"runners= in {source}:{call.lineno} must contain literal runner selectors")
+                if item.value not in RUNNERS:
+                    raise ValueError(f"{source}:{call.lineno}: unknown registered journey runner {item.value!r}")
+                runners.append(item.value)
         function = call.func.attr if isinstance(call.func, ast.Attribute) else (
             call.func.id if isinstance(call.func, ast.Name) else "")
         if prerequisites is None:
@@ -70,8 +87,19 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         else:
             raise ValueError(f"step {name!r} in {source} must declare prerequisites as a literal sequence")
         role_name = role.value if isinstance(role, ast.Constant) else None
+        provides_node = keywords.get("provides")
+        if provides_node is None:
+            provides = []
+        elif isinstance(provides_node, (ast.Tuple, ast.List)):
+            if any(not isinstance(item, ast.Constant) or not isinstance(item.value, str)
+                   for item in provides_node.elts):
+                raise ValueError(f"provides= in {source}:{call.lineno} must contain literal state keys")
+            provides = [item.value for item in provides_node.elts]
+        else:
+            raise ValueError(f"provides= in {source}:{call.lineno} must contain a literal sequence")
         declaration = {"name": name, "kind": "flow" if function == "flow" else "step",
-                       "requires": required, "role": role_name}
+                       "requires": required, "provides": provides,
+                       "role": role_name, "runners": runners}
         for line in range(call.lineno, call.end_lineno + 1):
             declarations.setdefault(line, declaration)
     return declarations
@@ -218,31 +246,34 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
                 forwarding_call_sites[call_name(node)].append((source, node))
 
     def add_declaration(source: str, line: int, kind: str, name: str | None,
-                        required: list[str], role: str | None) -> None:
+                        required: list[str], role: str | None, runners: list[str]) -> None:
         # Dynamic step names can carry checked edges, but are not selector
         # producers. Only a literal name or a statically resolved wrapper
         # call site can enter the producer graph.
         if name is None:
             key = f"@dynamic:{source}:{line}"
             declarations[key] = {"name": None, "kind": kind, "requires": required,
-                                 "sources": {source}, "role": role, "locations": [(source, line, required)],
+                                 "sources": {source}, "role": role, "runners": runners,
+                                 "locations": [(source, line, required)],
                                  "producer": False}
             return
         key = str(Dependency(kind, name))
         declaration = declarations.setdefault(key, {"name": name, "kind": kind, "requires": [],
-                                                    "sources": set(), "role": role, "locations": []})
+                                                    "sources": set(), "role": role, "runners": [],
+                                                    "locations": []})
         declaration["requires"] = sorted(set(declaration["requires"]) | set(required))
         declaration["sources"].add(source)
         declaration["locations"].append((source, line, required))
         if role is not None:
             declaration["role"] = role
+        declaration["runners"] = sorted(set(declaration.get("runners", [])) | set(runners))
 
     for source in sources:
         tree = trees.get(source)
         if tree is None:
             continue
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or call_name(node) not in {"step", "flow"}:
+            if not isinstance(node, ast.Call) or call_name(node) not in {"step", "flow", "service_check"}:
                 continue
             if any(keyword.arg is None for keyword in node.keywords):
                 raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
@@ -303,7 +334,7 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
                     if call_name_value is None:
                         raise ValueError(f"{call_source}:{call_site.lineno}: dependency declaration is not statically resolvable")
                     add_declaration(call_source, call_site.lineno, kind, call_name_value,
-                                    call_required, None)
+                                    call_required, None, [])
                 continue
             else:
                 raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
@@ -312,19 +343,308 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
             kind = "flow" if call_name(node) == "flow" else "step"
             role_node = keywords.get("role")
             role = role_node.value if isinstance(role_node, ast.Constant) else None
-            add_declaration(source, node.lineno, kind, name, required, role)
+            runners_node = keywords.get("runners")
+            runners = [item.value for item in runners_node.elts
+                       if isinstance(item, ast.Constant) and isinstance(item.value, str)] \
+                if isinstance(runners_node, (ast.Tuple, ast.List)) else []
+            add_declaration(source, node.lineno, kind, name, required, role, runners)
     return declarations
 
 
 def validate_dependency_declarations(sources: set[str], root: Path) -> dict[str, dict]:
     """Reject unresolved edges against the declarations reachable by either journey runner."""
+    return _validate_dependency_declarations_cached(tuple(sorted(sources)), root)
+
+
+@lru_cache(maxsize=None)
+def _validate_dependency_declarations_cached(sources: tuple[str, ...], root: Path) -> dict[str, dict]:
     entrypoints = sorted({source for runner in RUNNERS.values() for source in runner.journey_sources})
     reachable = {entry: _imported_journey_sources({entry}, root) for entry in entrypoints}
-    declarations = _source_step_declarations(sources, root)
+    declarations = _source_step_declarations(set(sources), root)
     graphs = {entry: _source_step_declarations_cached(tuple(sorted(graph)), root)
               for entry, graph in reachable.items()}
     validate_dependency_edges(declarations, reachable, graphs)
+    reachable_sources = set().union(*reachable.values()) if reachable else set()
+    lint_direct_module_global_state_handoffs(reachable_sources, root)
+    validate_journey_environment_reads(reachable_sources, root)
+    validate_runner_conditions(reachable_sources, root)
     return declarations
+
+
+def lint_direct_module_global_state_handoffs(sources: set[str], root: Path) -> None:
+    """Lint recognized direct callback/helper handoffs through mutable module globals.
+
+    This AST lint recognizes module-level dict/list/set/comprehension values and
+    non-whitelisted constructor calls, then follows direct callback references
+    and statically named helpers. It is not a complete state ownership check.
+    """
+    for source in sorted(sources):
+        if not source.endswith(".py"):
+            continue
+        tree = _source_tree(source, root)
+        functions = {node.name: node for node in ast.walk(tree)
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        mutable_globals: set[str] = set()
+        for node in tree.body:
+            value = None
+            targets = []
+            annotation = ""
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                value = node.value
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if isinstance(node, ast.AnnAssign) and node.annotation is not None:
+                    annotation = ast.unparse(node.annotation).replace(" ", "")
+            if annotation in {"dict[str,str]", "dict[str,float]", "dict[str,str]|None"}:
+                continue
+            if value is None:
+                continue
+            mutable = (isinstance(value, (ast.Dict, ast.List, ast.Set, ast.ListComp,
+                                          ast.DictComp, ast.SetComp))
+                       or isinstance(value, ast.Call)
+                       and not (isinstance(value.func, ast.Name)
+                                and value.func.id in {"journey_value", "str", "int", "float", "bool",
+                                                      "tuple", "frozenset", "Path", "MappingProxyType"}
+                                or isinstance(value.func, ast.Attribute)
+                                and value.func.attr in {"rstrip", "strip", "lower", "upper", "casefold"})
+                       and (not isinstance(value.func, ast.Name)
+                            or value.func.id not in {"bytes"}))
+            if mutable:
+                mutable_globals.update(target.id for target in targets if isinstance(target, ast.Name))
+
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        state_accesses: dict[str, dict[int, bool]] = {}
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or _call_name(call) not in {"step", "flow", "service_check"}:
+                continue
+            case_declaration = next((keyword.value for keyword in call.keywords if keyword.arg == "cases"), None)
+            if case_declaration is not None and not isinstance(case_declaration, (ast.List, ast.Tuple)):
+                continue
+            callback_index = (3 if _call_name(call) == "flow" or len(call.args) >= 4 else 2)
+            if len(call.args) <= callback_index:
+                continue
+            callback_node = call.args[callback_index]
+            if isinstance(callback_node, ast.Name):
+                callback_node = functions.get(callback_node.id)
+                if callback_node is None:
+                    owner = parents.get(call)
+                    while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        owner = parents.get(owner)
+                    if owner is not None:
+                        local_values = []
+                        for local_node in ast.walk(owner):
+                            if isinstance(local_node, ast.Assign):
+                                assigned = [target.id for target in local_node.targets if isinstance(target, ast.Name)]
+                                if call.args[callback_index].id in assigned:
+                                    local_values.append(local_node.value)
+                            elif (isinstance(local_node, ast.AnnAssign)
+                                  and isinstance(local_node.target, ast.Name)
+                                  and local_node.target.id == call.args[callback_index].id):
+                                local_values.append(local_node.value)
+                        if local_values:
+                            forwarded_callbacks = []
+                            for value in local_values:
+                                if isinstance(value, ast.Name):
+                                    value = functions.get(value.id, value)
+                                if isinstance(value, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+                                    forwarded_callbacks.append(value)
+                                else:
+                                    raise ValueError(
+                                        f"{source}:{call.lineno}: registered callback capture is not statically resolvable")
+                            callback_node = forwarded_callbacks[0]
+                            forwarded_callbacks = forwarded_callbacks[1:]
+                        else:
+                            forwarded_callbacks = []
+                        parameters = [argument.arg for argument in
+                                      [*owner.args.posonlyargs, *owner.args.args, *owner.args.kwonlyargs]]
+                        if not local_values and call.args[callback_index].id in parameters:
+                            parameter = call.args[callback_index].id
+                            parameter_index = parameters.index(parameter)
+                            forwarded = []
+                            for site in ast.walk(tree):
+                                if not isinstance(site, ast.Call) or _call_name(site) != owner.name:
+                                    continue
+                                site_keywords = {keyword.arg: keyword.value for keyword in site.keywords}
+                                value = site_keywords.get(parameter)
+                                if value is None and parameter_index < len(site.args):
+                                    value = site.args[parameter_index]
+                                if value is None:
+                                    raise ValueError(
+                                        f"{source}:{site.lineno}: registered callback capture is not statically resolvable")
+                                if isinstance(value, ast.Name):
+                                    value = functions.get(value.id, value)
+                                if isinstance(value, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+                                    forwarded.append(value)
+                                else:
+                                    raise ValueError(
+                                        f"{source}:{site.lineno}: registered callback capture is not statically resolvable")
+                            if not forwarded:
+                                raise ValueError(
+                                    f"{source}:{call.lineno}: registered callback capture is not statically resolvable")
+                            callback_node = forwarded[0]
+                            forwarded_callbacks = forwarded[1:]
+                        elif not local_values:
+                            forwarded_callbacks = []
+                    else:
+                        forwarded_callbacks = []
+                else:
+                    forwarded_callbacks = []
+            else:
+                forwarded_callbacks = []
+            if not isinstance(callback_node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+                raise ValueError(f"{source}:{call.lineno}: registered callback capture is not statically resolvable")
+            callback_name = callback_node.name if isinstance(callback_node, (ast.FunctionDef, ast.AsyncFunctionDef)) else "<lambda>"
+            pending = [callback_node, *forwarded_callbacks]
+            visited: set[ast.AST] = set()
+            while pending:
+                callback = pending.pop()
+                if callback in visited:
+                    continue
+                visited.add(callback)
+                for item in ast.walk(callback):
+                    if isinstance(item, ast.Name):
+                        if item.id in mutable_globals:
+                            writes = isinstance(item.ctx, (ast.Store, ast.Del))
+                            parent = parents.get(item)
+                            cursor = parent
+                            while cursor is not None and cursor is not callback:
+                                if (isinstance(cursor, (ast.Subscript, ast.Attribute))
+                                        and isinstance(cursor.ctx, (ast.Store, ast.Del))):
+                                    writes = True
+                                    break
+                                cursor = parents.get(cursor)
+                            if isinstance(parent, ast.Call) and isinstance(parent.func, ast.Attribute):
+                                writes = writes or parent.func.attr in {
+                                    "append", "extend", "insert", "pop", "remove", "clear",
+                                    "update", "setdefault", "add", "discard",
+                                }
+                            accesses = state_accesses.setdefault(item.id, {})
+                            accesses[call.lineno] = accesses.get(call.lineno, False) or writes
+                        helper = functions.get(item.id)
+                        if isinstance(item.ctx, ast.Load) and helper is not None and helper is not callback:
+                            pending.append(helper)
+        for state_name, registrations in state_accesses.items():
+            if len(registrations) > 1 and any(registrations.values()):
+                lines = ", ".join(str(line) for line in sorted(registrations))
+                raise ValueError(
+                    f"{source}:{lines}: module-global-state lint detected registered callbacks "
+                    f"sharing recognized mutable global {state_name!r}; route shared state "
+                    "through journey memory with provides= and requires= when applicable")
+
+
+def validate_journey_environment_reads(sources: set[str], root: Path) -> None:
+    """Lint direct os environment lookups; journey inputs must use the accessor."""
+    for source in sorted(sources):
+        if not source.endswith(".py") or source == "e2e/journey/journey_values.py":
+            continue
+        tree = _source_tree(source, root)
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+        def literal_key(expression: ast.expr) -> str | None:
+            if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+                return expression.value
+            if isinstance(expression, ast.Name):
+                owner = parents.get(expression)
+                while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    owner = parents.get(owner)
+                if owner is not None:
+                    values = []
+                    for candidate in ast.walk(owner):
+                        if isinstance(candidate, ast.Assign) and any(
+                                isinstance(target, ast.Name) and target.id == expression.id
+                                for target in candidate.targets):
+                            values.append(candidate.value)
+                        elif (isinstance(candidate, ast.AnnAssign)
+                              and isinstance(candidate.target, ast.Name)
+                              and candidate.target.id == expression.id and candidate.value is not None):
+                            values.append(candidate.value)
+                    if values and all(isinstance(value, ast.Constant) and isinstance(value.value, str)
+                                      for value in values):
+                        keys = {value.value for value in values if isinstance(value, ast.Constant)}
+                        return next(iter(keys)) if len(keys) == 1 else None
+            return None
+
+        def check_key(expression: ast.expr, node: ast.AST) -> None:
+            key = literal_key(expression)
+            if key is None:
+                raise ValueError(
+                    f"{source}:{node.lineno}: computed environment keys are outside the journey input "
+                    "lint; use journey_values.journey_value for harness inputs or a literal process key")
+            if key.startswith("KB_JOURNEY_"):
+                raise ValueError(
+                    f"{source}:{node.lineno}: {key} must be read through journey_values.journey_value")
+
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
+                    and node.value.attr == "environ" and isinstance(node.value.value, ast.Name)
+                    and node.value.value.id == "os" and isinstance(node.ctx, ast.Load)):
+                check_key(node.slice, node)
+            if not isinstance(node, ast.Call):
+                continue
+            function = _call_name(node)
+            if function not in {"get", "getenv"}:
+                continue
+            is_os_getenv = (isinstance(node.func, ast.Attribute) and node.func.attr == "getenv"
+                            and isinstance(node.func.value, ast.Name) and node.func.value.id == "os")
+            is_os_environ_get = (isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+                                 and isinstance(node.func.value, ast.Attribute)
+                                 and node.func.value.attr == "environ"
+                                 and isinstance(node.func.value.value, ast.Name)
+                                 and node.func.value.value.id == "os")
+            if is_os_getenv or is_os_environ_get:
+                if not node.args:
+                    raise ValueError(f"{source}:{node.lineno}: environment read has no literal key")
+                check_key(node.args[0], node)
+
+
+def full_runner_plans(root: Path) -> dict[str, list[str]]:
+    plans = {}
+    for selector, runner in RUNNERS.items():
+        sources = set().union(*(_imported_journey_sources({source}, root)
+                                for source in runner.journey_sources))
+        registrations = _source_step_declarations(sources, root)
+        plans[selector] = [
+            declaration["name"] for declaration in registrations.values()
+            if declaration.get("name") is not None
+            and (not declaration.get("runners") or selector in declaration["runners"])
+        ]
+    return plans
+
+
+def write_full_runner_plan_baseline(root: Path) -> Path:
+    path = root / "e2e/journey/full-plan-baseline.json"
+    path.write_text(json.dumps(full_runner_plans(root), indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def validate_runner_conditions(sources: set[str], root: Path) -> None:
+    """Require variant ownership on registrations nested under runner-context branches."""
+    dimensions = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
+                  "local_service_journey", "secured_service_journey", "BASE_ENV"}
+    for source in sorted(sources):
+        if not source.endswith(".py"):
+            continue
+        tree = _source_tree(source, root)
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call):
+                continue
+            keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+            cases = keywords.get("cases")
+            if not isinstance(cases, (ast.List, ast.Tuple)) or not any(
+                    isinstance(item, ast.Constant) and isinstance(item.value, str) for item in cases.elts):
+                continue
+            if keywords.get("runners") is not None:
+                continue
+            current = parents.get(call)
+            while current is not None:
+                if isinstance(current, ast.If):
+                    referenced = {node.id for node in ast.walk(current.test) if isinstance(node, ast.Name)}
+                    if referenced.intersection(dimensions):
+                        raise ValueError(
+                            f"{source}:{call.lineno}: claim registration is conditional on runner context; "
+                            "declare its executable runners= variants"
+                        )
+                current = parents.get(current)
 
 
 def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str, set[str]],
@@ -341,7 +661,9 @@ def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str
 
 
 def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[str]],
-                      declarations_by_step: dict[str, list[dict]], declarations_by_name: dict[str, dict]) -> dict:
+                      declarations_by_step: dict[str, list[dict]], declarations_by_name: dict[str, dict],
+                      owners_by_step: dict[str, dict[str, set[str]]], only: str = "",
+                      ineligible_by_step: dict[str, set[str]] | None = None) -> dict:
     """Resolve selected claims to their runner and transitive declared prerequisites."""
     selected = set(selected_steps)
     names: set[str] = set()
@@ -365,13 +687,58 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
         declaration = declarations_by_name.get(key, {})
         sources.update(declaration.get("sources", set()))
         pending.extend(declaration.get("requires", []))
-    runners = {selector for source in sources for mode in ("local", "secured")
-               for selector in runners_for_source(source, mode)}
+    owners: dict[str, set[str]] = {}
+    for step_id in selected:
+        for runner, claims in owners_by_step.get(step_id, {}).items():
+            owners.setdefault(runner, set()).update(claims)
+    ineligible_by_step = ineligible_by_step or {}
+    unowned = sorted(step_id for step_id in selected
+                     if not any(step_id in claims for claims in owners.values()))
+    if unowned:
+        routes = []
+        for step_id in unowned:
+            candidates = sorted(ineligible_by_step.get(step_id, set()))
+            if candidates:
+                routes.extend(f"{step_id} is registered on {selector} ({'secured' if RUNNERS[selector].variant.endswith('secured') else 'local'} mode): "
+                              f"KB_JOURNEY_CASES={step_id} KB_JOURNEY_ONLY={selector} e2e/journey/run.sh --no-build"
+                              for selector in candidates)
+            else:
+                routes.append(f"{step_id} has no eligible runner variant; register the claim on its executable step")
+        raise ValueError("selected claims have no executable registration for the requested mode: "
+                         + ", ".join(unowned) + ". Available registrations: " + "; ".join(routes))
+    requested_selectors = set(filter(None, only.split(",")))
+    requested_runners = {
+        runner
+        for selector in requested_selectors
+        for runner in RUNNER_GROUPS.get(selector, (selector,))
+    }
+    unknown_runners = requested_runners - RUNNERS.keys()
+    if unknown_runners:
+        unknown_selectors = requested_selectors - RUNNERS.keys() - RUNNER_GROUPS.keys()
+        raise ValueError(f"unknown KB_JOURNEY_ONLY runner(s): {', '.join(sorted(unknown_selectors))}")
+    runners = set(owners)
+    if requested_runners:
+        runners.intersection_update(requested_runners)
+        covered = {claim for runner in runners for claim in owners[runner]}
+        uncovered = set(selected) - covered
+        if uncovered:
+            routes = "; ".join(
+                f"{runner} owns {', '.join(sorted(uncovered.intersection(claims)))}: "
+                f"KB_JOURNEY_CASES={','.join(sorted(uncovered.intersection(claims)))} "
+                f"KB_JOURNEY_ONLY={runner} e2e/journey/run.sh --no-build"
+                for runner, claims in sorted(owners.items())
+                if runner not in runners and uncovered.intersection(claims)
+            )
+            raise ValueError(
+                "KB_JOURNEY_ONLY leaves selected claims without a runner: "
+                + ", ".join(sorted(uncovered)) + ". Run the owning selectors: " + routes
+            )
     step_prerequisites = sorted(Dependency.parse(item).name for item in prerequisites
                                 if Dependency.parse(item).kind == "step")
     flow_prerequisites = sorted(Dependency.parse(item).name for item in prerequisites
                                 if Dependency.parse(item).kind == "flow")
-    return {"runners": sorted(runners), "steps": sorted(selected),
+    return {"runners": sorted(runners), "owners": {key: sorted(value) for key, value in sorted(owners.items())},
+            "steps": sorted(selected),
             "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
             "stepSources": sorted(sources)}
 
@@ -405,6 +772,9 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
     registry: dict[str, set[str]] = {}
     sources_by_step: dict[str, set[str]] = {}
     declarations_by_step: dict[str, dict] = {}
+    owners_by_step: dict[str, dict[str, set[str]]] = {}
+    ineligible_by_step: dict[str, set[str]] = {}
+    unclaimed_by_case: dict[str, set[str]] = {}
     root = Path(__file__).resolve().parents[2]
     for coverage in results:
         for case in coverage.get("cases", []):
@@ -420,6 +790,8 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                     and str(claim.get("source", "")).startswith(("e2e/journey/", "e2e/studio/", "e2e/"))
                     for claim in step.get("claims", [])
                 )
+                if isinstance(step_id, str) and not journey_claimed:
+                    unclaimed_by_case.setdefault(case_id, set()).add(step_id)
                 if journey_claimed and isinstance(step_id, str):
                     registry.setdefault(case_id, set()).add(step_id)
                     for claim in step.get("claims", []):
@@ -430,6 +802,16 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                             continue
                         sources_by_step.setdefault(step_id, set()).add(source)
                         declaration = _step_declaration(source, int(claim.get("line", 0)), root)
+                        mode = str(coverage.get("mode", ""))
+                        selectors = declaration.get("runners") or runners_for_source(source, mode)
+                        if declaration.get("runners"):
+                            for selector in selectors:
+                                if RUNNERS[selector].variant.endswith("secured") != (mode == "secured"):
+                                    ineligible_by_step.setdefault(step_id, set()).add(selector)
+                            selectors = [selector for selector in selectors
+                                         if RUNNERS[selector].variant.endswith("secured") == (mode == "secured")]
+                        for selector in selectors:
+                            owners_by_step.setdefault(step_id, {}).setdefault(selector, set()).add(step_id)
                         if declaration:
                             declarations = declarations_by_step.setdefault(step_id, [])
                             if declaration not in declarations:
@@ -443,6 +825,15 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
     selected: set[str] = set()
     for token in tokens:
         if token in case_ids:
+            unclaimed = sorted(unclaimed_by_case.get(token, set()))
+            if unclaimed:
+                claimed = ",".join(sorted(registry[token]))
+                raise ValueError(
+                    f"case {token} includes unclaimed steps that no journey runner can prove: "
+                    + ", ".join(unclaimed)
+                    + f". To resolve its claimed rows only, run `KB_JOURNEY_CASES={claimed} e2e/journey/run.sh --resolve-only`; "
+                    + "to prove the full case, add a journey claim for each unclaimed step."
+                )
             selected.update(registry[token])
         elif token in step_ids:
             selected.add(token)
@@ -453,11 +844,16 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
             )
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)
-    resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name)
+    resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name,
+                                 owners_by_step, journey_value("KB_JOURNEY_ONLY", ""), ineligible_by_step)
     return {"selection": sorted(set(tokens)), **resolved}
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--write-plan-baseline"]:
+        root = Path(__file__).resolve().parents[2]
+        print_report_text(str(write_full_runner_plan_baseline(root)), flush=True)
+        return 0
     results = []
     for mode in ("local", "secured"):
         command = ["pnpm", "-s", "kb", "qa", "cases", "coverage", "--level", "all", "--mode", mode, "--json"]
@@ -466,7 +862,7 @@ def main() -> int:
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
         results.append(read_coverage_result(result.stdout, result.returncode))
-    requested = os.environ.get("KB_JOURNEY_CASES", "")
+    requested = journey_value("KB_JOURNEY_CASES", "")
     if requested:
         print_report_text(json.dumps(selection_from_coverage(results, requested)), flush=True)
     else:

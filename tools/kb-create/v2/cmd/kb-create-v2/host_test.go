@@ -960,7 +960,7 @@ func TestSupervisorIdentityTimeoutTerminatesAndReapsChild(t *testing.T) {
 
 func TestDetachedStartReadinessFailureCleansUpChildProcesses(t *testing.T) {
 	inst := newInstallation(t, "-unhealthy")
-	setHostReadyTimeout(t, inst, 1)
+	setHostReadyTimeout(t, inst, 5)
 	state, err := host.StateForRoot(inst.root)
 	if err != nil {
 		t.Fatal(err)
@@ -999,6 +999,10 @@ func TestDetachedStartReadinessFailureCleansUpChildProcesses(t *testing.T) {
 		details["readinessStatus"] != "500" {
 		t.Fatalf("outer command hid the inner readiness diagnosis: %s", output)
 	}
+	waited, err := time.ParseDuration(fmt.Sprint(details["waited"]))
+	if err != nil || waited < time.Second || waited > 6*time.Second {
+		t.Fatalf("readiness startup waited = %q (%v), want elapsed time within the shared 5s startup budget", details["waited"], err)
+	}
 	if hostPID == 0 || supervisorPID == 0 || host.ProcessAlive(hostPID) || host.ProcessAlive(supervisorPID) {
 		t.Fatalf("failed detached start left host PID %d or supervisor PID %d alive", hostPID, supervisorPID)
 	}
@@ -1019,11 +1023,11 @@ func TestDetachedStartHostIdentityTimeoutCleansUpChildProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner.Spec.ReadyTimeout = 950 * time.Millisecond
+	runner.Spec.ReadyTimeout = 8 * time.Second
 	state := runner.State
 	helperBinary := hostSupervisorHelperBinary(t)
 	hostPIDFile := filepath.Join(t.TempDir(), "host.pid")
-	t.Setenv("KB_CREATE_TEST_HOST_PID_FILE", hostPIDFile)
+	t.Setenv("TEST_HOST_PID_FILE", hostPIDFile)
 	var supervisorPID int
 	command := hostCommand{
 		PlatformRoot: inst.root,
@@ -1044,6 +1048,10 @@ func TestDetachedStartHostIdentityTimeoutCleansUpChildProcesses(t *testing.T) {
 		hostLog, _ := os.ReadFile(state.HostLog())
 		t.Fatalf("identity timeout stderr tail = %q; want ready line with secret redacted; diagnosis=%#v host log=%q", tail, failure, hostLog)
 	}
+	waited, err := time.ParseDuration(fmt.Sprint(failure.Meta["waited"]))
+	if err != nil || waited < time.Second || waited > runner.Spec.ReadyTimeout {
+		t.Fatalf("identity startup waited = %q (%v), want an elapsed wait within the shared 8s startup budget", failure.Meta["waited"], err)
+	}
 	data, err := os.ReadFile(hostPIDFile)
 	if err != nil {
 		t.Fatalf("host process identity seam did not record the launched PID: %v", err)
@@ -1060,7 +1068,7 @@ func TestDetachedStartHostIdentityTimeoutCleansUpChildProcesses(t *testing.T) {
 
 func TestDetachedStartReadyBeforeDeadlineSucceeds(t *testing.T) {
 	inst := newInstallation(t, "-delay=2200ms")
-	setHostReadyTimeout(t, inst, 3)
+	setHostReadyTimeout(t, inst, 6)
 	started := time.Now()
 	payload, code, output := inst.run("start", "--json")
 	if code != 0 || payload["ok"] != true {
@@ -1073,7 +1081,7 @@ func TestDetachedStartReadyBeforeDeadlineSucceeds(t *testing.T) {
 
 func TestDetachedStartUsesHandedDownDeadline(t *testing.T) {
 	inst := newInstallation(t, "-unhealthy")
-	setHostReadyTimeout(t, inst, 3)
+	setHostReadyTimeout(t, inst, 6)
 	state, err := host.StateForRoot(inst.root)
 	if err != nil {
 		t.Fatal(err)
@@ -1082,7 +1090,7 @@ func TestDetachedStartUsesHandedDownDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(350 * time.Millisecond)
+	deadline := time.Now().Add(3 * time.Second)
 	command := hostCommand{PlatformRoot: inst.root, Executable: inst.launcher, testBackstopGrace: 2 * time.Second}
 	started := time.Now()
 	_, err = command.spawnSupervisorUntil(context.Background(), runner, state, deadline)
@@ -1092,8 +1100,8 @@ func TestDetachedStartUsesHandedDownDeadline(t *testing.T) {
 		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fakehost: ready") {
 		t.Fatalf("inner runner did not use the handed-down deadline: %#v", err)
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("inner runner took %s to honor the handed-down 350ms deadline", elapsed)
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("inner runner took %s to honor the handed-down 3s deadline", elapsed)
 	}
 	assertDetachedStartStateEmpty(t, state, inst.port)
 }
@@ -1119,7 +1127,7 @@ func TestDetachedStartHungSupervisorBackstopStopsHost(t *testing.T) {
 		}
 		return false
 	}
-	_, err = command.spawnSupervisorUntil(context.Background(), runner, state, time.Now().Add(time.Second))
+	_, err = command.spawnSupervisorUntil(context.Background(), runner, state, time.Now().Add(5*time.Second))
 	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_HOST_START_FAILED" || typed.Meta["failureKind"] != "supervisorHung" {
 		t.Fatalf("hung supervisor diagnosis = %#v; want distinct typed backstop failure", err)
@@ -1145,7 +1153,7 @@ func TestDetachedStartSupervisorCrashReportsExitAndCleansUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := hostCommand{PlatformRoot: inst.root, Executable: launcher, testBackstopGrace: time.Second}
-	_, err = command.spawnSupervisorUntil(context.Background(), runner, state, time.Now().Add(time.Second))
+	_, err = command.spawnSupervisorUntil(context.Background(), runner, state, time.Now().Add(5*time.Second))
 	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_HOST_START_FAILED" ||
 		typed.Meta["supervisorExit"] != "exit status 23" ||

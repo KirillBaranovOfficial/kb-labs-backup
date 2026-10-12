@@ -1,7 +1,6 @@
 """Validation for state-derived values sent to journey commands and services."""
 from __future__ import annotations
 
-from collections.abc import Mapping
 import os
 
 
@@ -11,10 +10,14 @@ class MissingJourneyState(RuntimeError):
         super().__init__(f"missing journey state key {key}")
 
 
-def journey_state(key: str, state: Mapping[str, str] | None = None) -> str:
-    """Read required journey state at the point where it is substituted into a request."""
+def journey_value(key: str, default: str | None = None, *, required: bool = False,
+                  state: dict[str, str] | None = None) -> str | None:
+    """Read a harness input, preserving optional values and typing required omissions."""
     source = os.environ if state is None else state
-    value = source.get(key)
-    if not value:
+    if key in source:
+        value = source[key]
+        if value or not required:
+            return value
+    if required:
         raise MissingJourneyState(key)
-    return value
+    return default

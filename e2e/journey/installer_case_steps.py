@@ -1,5 +1,6 @@
 """Additional install, repair, and request-selection case claims."""
 from __future__ import annotations
+from journey_values import journey_value
 
 import json
 import hashlib
@@ -846,7 +847,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
         root = platform_root.parent / "s187-secured"
         project = platform_root.parent / "s187-secured-project"
         project_alias = platform_root.parent / "s187-secured-project-alias"
-        admin_password = os.environ.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyInstallSecret1!")
+        admin_password = journey_value("KB_JOURNEY_ADMIN_PASSWORD", "JourneyInstallSecret1!")
         root.mkdir(parents=True, exist_ok=True)
         project.mkdir(parents=True, exist_ok=True)
         project_alias.symlink_to(project, target_is_directory=True)
@@ -954,14 +955,17 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                  "platform.install", install_and_show, cases=["S-124.14"])
     if mode == "local":
         journey.step("refuse a changed project selection before applying an existing installation",
-                     "platform.install", reject_changed_project_selection, cases=["S-187.11"])
+                     "platform.install", reject_changed_project_selection, cases=["S-187.11"],
+                     runners=("agent:commit", "service-local:explore"))
     if mode == "local":
         journey.step("accept the recorded or omitted project selection without registering again",
-                     "platform.install", accept_existing_project_selections, cases=["S-187.12"])
+                     "platform.install", accept_existing_project_selections, cases=["S-187.12"],
+                     runners=("agent:commit", "service-local:explore"))
     if mode == "secured":
         journey.step("register the selected project during secured first install without saving a session",
                      "platform.install", install_secured_project_without_session,
-                     cases=["S-187.10", "S-187.11", "S-187.12"])
+                     cases=["S-187.10", "S-187.11", "S-187.12"],
+                     runners=("agent-secured:commit", "service-secured:explore"))
     journey.step("update after the registered project directory was removed",
                  "platform.update", update_after_project_removed, cases=["S-187.9"])
     return journey
@@ -1415,7 +1419,8 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                     raise RuntimeError(f"{operation} did not refuse the unversioned root unchanged with a reinstall command")
 
     journey.step("inspect generated runtime config and service declarations", "platform.install",
-                 inspect_generated_config, cases=["PC-001.5", "S-023.16", "S-223.3"])
+                 inspect_generated_config, cases=["PC-001.5", "S-023.16", "S-223.3"],
+                 requires=("step:apply the resolved default service profile",))
 
     run_fixture_group(journey, "analytics retention validation", lambda: run_analytics_invalid_retention_step(
         mode=mode, launcher=launcher, platform_root=apply_root, run_command=run_command))
