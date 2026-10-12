@@ -364,7 +364,7 @@ raise SystemExit(1)
         self.assertEqual(journey.steps[2].details["selectionRole"], "prerequisite")
         self.assertEqual(journey.result().case_run["claims"][-1]["claimId"], journey.steps[-1].cases[0])
 
-    def test_selected_claim_that_never_runs_fails_with_its_step_id(self):
+    def test_journey_result_does_not_fail_for_unexecuted_selected_claim(self):
         def selection_environment(*, cases):
             return {"KB_JOURNEY_SELECTED_STEPS": cases[0]}
 
@@ -373,9 +373,29 @@ raise SystemExit(1)
             journey.step("unrelated check", "auth", lambda: None, cases=["S-042.2"])
 
         result = journey.result()
-        self.assertEqual(result.status, "FAIL")
-        self.assertIn("S-042.1", result.first_failure["message"])
-        self.assertIn("registered step functions", result.first_failure["message"])
+        self.assertEqual(result.status, "PASS")
+        self.assertIsNone(result.first_failure)
+
+    def test_selection_is_not_a_journey_local_failure_during_split_run(self):
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": "PC-001.2,PC-002.3"}, clear=False):
+            installer_journey = Journey("local", "installer-local-service-explore")
+            installer_journey.step("candidate provenance", "journey.setup", lambda: None, role="lifecycle")
+            intermediate = installer_journey.result()
+            installer_journey.step("install", "platform.install", lambda: None, cases=["PC-001.2"])
+
+            service_journey = Journey("local", "service-local")
+            service_journey.step("readiness", "gateway", lambda: None, cases=["PC-002.3"])
+            final = service_journey.result()
+
+        self.assertEqual(intermediate.status, "PASS")
+        self.assertEqual(intermediate.case_run["claims"], [])
+        self.assertEqual(installer_journey.result().case_run["claims"], [
+            {"claimId": "PC-001.2", "kind": "journey", "status": "PASS"},
+        ])
+        self.assertEqual(final.status, "PASS")
+        self.assertEqual(final.case_run["claims"], [
+            {"claimId": "PC-002.3", "kind": "journey", "status": "PASS"},
+        ])
 
     def test_lifecycle_step_runs_outside_the_selected_claim_set(self):
         with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": "S-042.1"}, clear=False):

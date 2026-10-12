@@ -134,6 +134,26 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertEqual(case["status"], "Unclaimed")
         self.assertIn("Partial run", render_markdown(scoreboard))
 
+    def test_split_partial_journey_records_keep_selection_without_claiming_missing_rows(self):
+        selection = ["S-001.1", "S-001.2"]
+        self.write_json("installer-case-local-agent-explore-default.json", {
+            "case_run": {"mode": "local", "partial": True, "selection": selection,
+                         "claims": [{"claimId": "S-001.1", "status": "PASS"}]},
+            "steps": [],
+        })
+        self.write_json("service-local.json", {
+            "case_run": {"mode": "local", "partial": True, "selection": selection,
+                         "claims": [{"claimId": "S-001.2", "status": "PASS"}]},
+            "steps": [],
+        })
+
+        scoreboard = build_scoreboard(self.reports, self.catalog, ["local"])
+        case = next(item for item in scoreboard["cases"] if item["id"] == "S-001")
+        self.assertTrue(scoreboard["partial"])
+        self.assertEqual(scoreboard["selection"], selection)
+        self.assertEqual(case["status"], "Unclaimed")
+        self.assertEqual(case["claimedCount"], 0)
+
     def test_delta_reports_new_and_regressed_fully_green_cases(self):
         before, after = self.root / "before", self.root / "after"
         before.mkdir()
