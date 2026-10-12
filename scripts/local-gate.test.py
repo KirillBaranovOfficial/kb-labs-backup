@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import shutil
 import tempfile
 import unittest
 
@@ -26,6 +27,7 @@ class LocalGateExecutionTests(unittest.TestCase):
         package_dir.mkdir(parents=True)
         (package_dir / "package.json").write_text('{"name":"@test/gate"}\n')
         (self.root / "tools/kb-create").mkdir(parents=True)
+        (self.root / "tools/kb-devkit").mkdir(parents=True)
         journey = self.root / "e2e/journey"
         journey.mkdir(parents=True)
         (journey / "prepare-candidate.sh").write_text(
@@ -56,6 +58,23 @@ class LocalGateExecutionTests(unittest.TestCase):
                 + 'exit 0\n'
             )
             stub.chmod(0o755)
+        (self.bin / "go").write_text(
+            '#!/usr/bin/env bash\n'
+            'if [[ "$1" == build ]]; then\n'
+            '  while (($#)); do\n'
+            '    if [[ "$1" == -o ]]; then output="$2"; shift 2; else shift; fi\n'
+            '  done\n'
+            '  cat > "$output" <<\'KBDEVKIT\'\n'
+            '#!/usr/bin/env bash\n'
+            'printf "%s|%s|%s\\n" "kb-devkit" "$*" "${CI:-}" >> "$GATE_LOG"\n'
+            'exit 0\n'
+            'KBDEVKIT\n'
+            '  chmod +x "$output"\n'
+            '  exit 0\n'
+            'fi\n'
+            'exit 0\n'
+        )
+        (self.bin / "go").chmod(0o755)
         subprocess.run(["git", "init", "-q", "-b", "local/main"], cwd=self.root, check=True)
         subprocess.run(["git", "config", "user.email", "gate-test@example.invalid"], cwd=self.root, check=True)
         subprocess.run(["git", "config", "user.name", "Gate Test"], cwd=self.root, check=True)
@@ -127,6 +146,26 @@ class LocalGateExecutionTests(unittest.TestCase):
         dry, _, _ = self.run_gate("--full", "--dry-run")
         self.assertEqual(dry.returncode, 0, dry.stderr)
         self.assertIn("full release case journey matrix", dry.stdout)
+
+    def test_missing_go_reports_a_working_install_step(self):
+        no_go_bin = Path(self.temp.name) / "no-go-bin"
+        no_go_bin.mkdir()
+        dirname = shutil.which("dirname")
+        bash = shutil.which("bash")
+        self.assertIsNotNone(dirname)
+        self.assertIsNotNone(bash)
+        (no_go_bin / "dirname").symlink_to(dirname)
+        env = os.environ.copy()
+        env["PATH"] = str(no_go_bin)
+        result = subprocess.run(
+            [bash, "scripts/local-gate.sh", "quick", "--packages", "@test/gate"],
+            cwd=self.root, env=env, text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 127)
+        self.assertIn("Go 1.26 is required", result.stderr)
+        self.assertIn("brew install go", result.stderr)
+        self.assertIn("scripts/local-gate.sh quick", result.stderr)
+        self.assertNotIn("make -C tools/kb-devkit build", result.stderr)
 
     def test_quick_mode_rejects_full_matrix_flag(self):
         result = subprocess.run(

@@ -74,7 +74,11 @@ func errorEnvelope(d *diag.Diag) diag.Envelope {
 
 // FailureEnvelope returns the shared machine error envelope for result streams.
 func FailureEnvelope(d *diag.Diag) map[string]any {
-	return map[string]any{"ok": false, "error": errorEnvelope(d)}
+	envelope := map[string]any{"ok": false, "error": errorEnvelope(d)}
+	if d != nil && d.Data != nil {
+		envelope["data"] = d.Data
+	}
+	return envelope
 }
 
 func writeJSON(w io.Writer, v any) {

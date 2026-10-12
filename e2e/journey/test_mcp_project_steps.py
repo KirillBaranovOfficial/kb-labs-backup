@@ -192,20 +192,22 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         self.assertEqual(secured[step], ["S-203.2", "S-203.6", "S-045.6", "S-140.7"])
 
     def test_platform_readiness_claims_both_gateway_and_project_workflow_checks(self):
-        name, capability, check, cases, requires, runners = next(
-            row for row in checks("local") if row[0] == "platform readiness (gateway + project workflow)")
+        with patch("service_runner.PROJECT_ID", "prj_registered"):
+            name, capability, check, cases, requires, runners = next(
+                row for row in checks("local") if row[0] == "platform readiness (gateway + project workflow)")
         self.assertEqual((name, capability, cases), (
             "platform readiness (gateway + project workflow)", "gateway", ["PC-002.3"]))
         self.assertEqual(requires, ("step:registered project setup",))
         self.assertEqual(runners, ())
         with patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": "test-token"}), \
+                patch("service_runner.PROJECT_ID", "prj_registered"), \
                 patch("service_runner.expect_json", return_value=None) as expect_json, \
                 patch("service_runner.expect_project_service_health", return_value=None) as expect_health:
             self.assertIsNone(check())
 
         expect_json.assert_called_once_with("/ready", "gateway readiness")
         expect_health.assert_called_once_with(
-            f"/api/v1/projects/{service_runner.PROJECT_ID or '%7BprojectId%7D'}/workflow/health",
+            "/api/v1/projects/prj_registered/workflow/health",
             "workflow",
             token="test-token",
         )
@@ -223,6 +225,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         with patch("service_runner.ADMIN_PASSWORD", "synthetic-admin-password"), \
                 patch("service_runner.ADMIN_EMAIL", "admin@example.test"), \
+                patch("service_runner.PROJECT_ID", "prj_registered"), \
                 patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": ""}), \
                 patch("service_runner.request", side_effect=request), \
                 patch("service_runner.expect_json", return_value=None) as expect_json, \
@@ -240,8 +243,28 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         self.assertEqual(calls[1], ("/auth/me", "session-token"))
         self.assertEqual(expect_json.call_count, 1)
         self.assertEqual(expect_health.call_args_list[0].args,
-                         (f"/api/v1/projects/{service_runner.PROJECT_ID or '%7BprojectId%7D'}/workflow/health", "workflow"))
+                         ("/api/v1/projects/prj_registered/workflow/health", "workflow"))
         self.assertEqual(expect_health.call_args_list[0].kwargs["token"], "session-token")
+
+    def test_missing_project_id_blocks_readiness_before_building_a_request(self):
+        journey = Journey("local", "missing-project-id")
+        with patch("service_runner.PROJECT_ID", ""), \
+                patch("service_runner.expect_json", return_value=None), \
+                patch("service_runner.expect_project_service_health") as expect_health:
+            name, capability, check, cases, _requires, _runners = next(
+                row for row in checks("local") if row[0] == "platform readiness (gateway + project workflow)")
+            journey.step(name, capability, check, cases)
+
+        self.assertEqual(journey.steps[0].status, "BLOCKED")
+        self.assertIn("KB_JOURNEY_PROJECT_ID", journey.steps[0].message)
+        self.assertEqual(journey.steps[0].details["missingStateKey"], "KB_JOURNEY_PROJECT_ID")
+        prerequisite = Journey("local", "missing-project-prerequisite")
+        prerequisite.step("prior", "fixture", lambda: "BLOCKED: failed prerequisite")
+        blocked = prerequisite.step("dependent", "fixture", lambda: None, requires={"step:prior"})
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertIn("prerequisiteFailures", blocked.details)
+        self.assertNotIn("missingStateKey", blocked.details)
+        expect_health.assert_not_called()
 
     def test_registered_runtime_identity_checks_canonical_registry_path(self):
         project_root = "/tmp/journey-project"
