@@ -858,6 +858,21 @@ func TestInstallAndApplyArgvRefuseUnattributedRootsUnchanged(t *testing.T) {
 	}
 }
 
+func TestOwnershipPublicationErrorsHaveActionableEnvelopes(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "kb-platform")
+	conflict := unsupportedPlatformLayout(root, versionroot.ErrOwnershipPublicationConflict)
+	installCommand := contracts.ShellCommand("kb-create", "install")
+	if conflict.Code != contracts.CodeOperationInProgress || !strings.Contains(conflict.Hint, "Wait for the other install to finish") || !strings.Contains(conflict.Hint, installCommand) {
+		t.Fatalf("publication conflict envelope = %#v", conflict)
+	}
+	stagingPath := filepath.Join(root, contracts.OwnershipRecordStagingPrefix()+"00112233445566778899aabbccddeeff")
+	staging := unsupportedPlatformLayout(root, &versionroot.OwnershipStagingArtifactError{Path: stagingPath, Cause: errors.New("truncated record")})
+	cleanupCommand := contracts.ShellCommand("rm", "--", stagingPath)
+	if staging.Code != contracts.CodeInstallLayoutUnsupported || !strings.Contains(staging.Hint, stagingPath) || !strings.Contains(staging.Hint, cleanupCommand) {
+		t.Fatalf("staging artifact envelope = %#v", staging)
+	}
+}
+
 // case: PC-001.16, S-054.2
 func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	home := t.TempDir()

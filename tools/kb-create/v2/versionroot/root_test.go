@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
@@ -560,8 +563,12 @@ func TestInitialTargetRefusesVersionLinksThatEscapeTheContainer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rootBefore := snapshotLayoutTarget(t, layout.Root)
 	if err := layout.ValidateInitialTarget(); err == nil {
 		t.Fatal("version projection escaping the install root was accepted")
+	}
+	if after := snapshotLayoutTarget(t, layout.Root); !bytes.Equal(after, rootBefore) {
+		t.Fatalf("refused version-link target changed: before=%q after=%q", rootBefore, after)
 	}
 	if after, err := os.ReadFile(marker); err != nil || string(after) != string(before) {
 		t.Fatalf("external version state changed: before=%q after=%q error=%v", before, after, err)
@@ -592,8 +599,12 @@ func TestInstalledStructureRefusesSymlinkedContainerDirectories(t *testing.T) {
 			if _, err := os.Stat(active); err != nil {
 				t.Fatalf("test fixture active root disappeared: %v", err)
 			}
+			rootBefore := snapshotLayoutTarget(t, root)
 			if err := layout.Validate(); err == nil {
 				t.Fatalf("Validate accepted symlinked %s container directory", name)
+			}
+			if after := snapshotLayoutTarget(t, root); !bytes.Equal(after, rootBefore) {
+				t.Fatalf("refused symlinked %s root changed: before=%q after=%q", name, rootBefore, after)
 			}
 		})
 	}
@@ -643,24 +654,355 @@ func TestInitialProvenanceWriteHasOneRecoverableBoundary(t *testing.T) {
 	}
 }
 
-func TestEmptyOwnershipFileIsRecoverableAsAnUnwrittenTarget(t *testing.T) {
+func TestInitialTargetRefusesEmptyAndTruncatedOwnershipUnchanged(t *testing.T) {
+	for name, contents := range map[string][]byte{"empty": {}, "truncated": []byte(`{"schema":"kb.create.installation-owner/v1"}`)} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "ownership.json"), contents, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			layout, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotLayoutTarget(t, root)
+			if err := layout.ValidateInitialTarget(); err == nil {
+				t.Fatal("unverifiable ownership record was accepted")
+			}
+			if after := snapshotLayoutTarget(t, root); !bytes.Equal(after, before) {
+				t.Fatalf("unverifiable ownership record changed: before=%q after=%q", before, after)
+			}
+		})
+	}
+}
+
+func TestOwnershipStagingCrashBoundaries(t *testing.T) {
+	points := []OwnershipWritePoint{OwnershipBeforeStagingCreate, OwnershipAfterStagingCreate,
+		OwnershipDuringStagingWrite, OwnershipAfterStagingSync, OwnershipAfterPublish, OwnershipAfterStagingCleanup}
+	for _, point := range points {
+		t.Run(string(point), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			layout, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			crash := fmt.Errorf("simulated process termination at %s", point)
+			previous := ownershipWriteFaultHook
+			ownershipWriteFaultHook = func(actual OwnershipWritePoint, _ string) error {
+				if actual == point {
+					return crash
+				}
+				return nil
+			}
+			writeErr := layout.PrepareInitialTarget()
+			ownershipWriteFaultHook = previous
+			if !errors.Is(writeErr, crash) {
+				t.Fatalf("write error = %v, want injected termination at %s", writeErr, point)
+			}
+			if point == OwnershipBeforeStagingCreate {
+				if err := layout.ValidateInitialTarget(); err != nil {
+					t.Fatalf("pre-create crash did not leave a fresh target: %v", err)
+				}
+				if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+					t.Fatalf("pre-create crash left entries %v, %v", entries, err)
+				}
+				return
+			}
+			if point == OwnershipAfterStagingCreate || point == OwnershipDuringStagingWrite || point == OwnershipAfterStagingSync {
+				before := snapshotLayoutTarget(t, root)
+				var stagingErr *OwnershipStagingArtifactError
+				if err := layout.ValidateInitialTarget(); !errors.As(err, &stagingErr) {
+					t.Fatalf("unpublished staging was not diagnosed specifically: %v", err)
+				}
+				if !strings.Contains(stagingErr.Error(), stagingErr.Path) {
+					t.Fatalf("diagnosis does not name staging path: %v", stagingErr)
+				}
+				if after := snapshotLayoutTarget(t, root); !bytes.Equal(after, before) {
+					t.Fatalf("unpublished staging changed during diagnosis: before=%q after=%q", before, after)
+				}
+				return
+			}
+			if err := layout.ValidateInitialTarget(); err != nil {
+				t.Fatalf("published canonical ownership did not recover: %v", err)
+			}
+			if _, err := layout.readOwnership(); err != nil {
+				t.Fatalf("complete ownership record unavailable after %s: %v", point, err)
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(layout.ownershipPath()) {
+				t.Fatalf("ownership recovery left staging artifacts: entries=%v error=%v", entries, err)
+			}
+		})
+	}
+}
+
+func TestInitialTargetRefusesForgedAndCompleteUnpublishedOwnershipStagingUnchanged(t *testing.T) {
+	for _, name := range []string{"forged", "complete"} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			layout, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := Ownership{Schema: OwnershipSchema, InstallationID: "00112233445566778899aabbccddeeff", InitialInstallState: "in-progress"}
+			data, err := json.Marshal(owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "complete" {
+				data = append(data, '\n')
+			} else {
+				data = []byte(`{"schema":"kb.create.installation-owner/v1","installationId":"00112233445566778899aabbccddeeff","initialInstallState":"in-progress"}`)
+			}
+			stage := contracts.OwnershipRecordStagingPath(root, owner.InstallationID)
+			if err := os.WriteFile(stage, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotLayoutTarget(t, root)
+			var stagingErr *OwnershipStagingArtifactError
+			if err := layout.ValidateInitialTarget(); !errors.As(err, &stagingErr) {
+				t.Fatalf("unpublished ownership staging was not refused specifically: %v", err)
+			}
+			if _, err := os.Lstat(layout.ownershipPath()); !os.IsNotExist(err) {
+				t.Fatalf("unpublished staging created canonical ownership: %v", err)
+			}
+			if after := snapshotLayoutTarget(t, root); !bytes.Equal(after, before) {
+				t.Fatalf("unpublished staging changed: before=%q after=%q", before, after)
+			}
+		})
+	}
+}
+
+func TestInitialTargetCleansOnlyValidatedSameInodeOwnershipStaging(t *testing.T) {
+	for _, mode := range []string{"same-inode", "different-inode", "extra-hardlink"} {
+		t.Run(mode, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			layout, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := Ownership{Schema: OwnershipSchema, InstallationID: "00112233445566778899aabbccddeeff", InitialInstallState: "in-progress"}
+			data, err := json.Marshal(owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, '\n')
+			if err := os.WriteFile(layout.ownershipPath(), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			stage := contracts.OwnershipRecordStagingPath(root, owner.InstallationID)
+			if mode == "same-inode" || mode == "extra-hardlink" {
+				if err := os.Link(layout.ownershipPath(), stage); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "extra-hardlink" {
+					if err := os.Link(layout.ownershipPath(), filepath.Join(t.TempDir(), "extra-link")); err != nil {
+						t.Fatal(err)
+					}
+				}
+			} else if err := os.WriteFile(stage, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotLayoutTarget(t, root)
+			err = layout.ValidateInitialTarget()
+			if mode == "same-inode" {
+				if err != nil {
+					t.Fatalf("validated same-inode staging was not cleaned: %v", err)
+				}
+				if _, err := os.Lstat(stage); !os.IsNotExist(err) {
+					t.Fatalf("same-inode staging remains: %v", err)
+				}
+				return
+			}
+			var stagingErr *OwnershipStagingArtifactError
+			if !errors.As(err, &stagingErr) {
+				t.Fatalf("unproven staging was not refused: %v", err)
+			}
+			if after := snapshotLayoutTarget(t, root); !bytes.Equal(after, before) {
+				t.Fatalf("unproven staging changed: before=%q after=%q", before, after)
+			}
+		})
+	}
+}
+
+type recordingOwnershipFile struct {
+	file  ownershipFile
+	steps *[]string
+}
+
+func (f recordingOwnershipFile) Write(data []byte) (int, error) {
+	*f.steps = append(*f.steps, "write")
+	return f.file.Write(data)
+}
+
+func (f recordingOwnershipFile) Sync() error {
+	*f.steps = append(*f.steps, "sync")
+	return f.file.Sync()
+}
+
+func (f recordingOwnershipFile) Close() error { return f.file.Close() }
+
+type recordingOwnershipFilesystem struct {
+	base  ownershipFileSystem
+	steps []string
+}
+
+func (f *recordingOwnershipFilesystem) CreateExclusive(path string, mode fs.FileMode) (ownershipFile, error) {
+	f.steps = append(f.steps, "create")
+	file, err := f.base.CreateExclusive(path, mode)
+	if err != nil {
+		return nil, err
+	}
+	return recordingOwnershipFile{file: file, steps: &f.steps}, nil
+}
+
+func (f *recordingOwnershipFilesystem) Link(oldPath, newPath string) error {
+	f.steps = append(f.steps, "link")
+	return f.base.Link(oldPath, newPath)
+}
+
+func (f *recordingOwnershipFilesystem) SyncDirectory(path string) error {
+	f.steps = append(f.steps, "dir-sync")
+	return f.base.SyncDirectory(path)
+}
+
+func (f *recordingOwnershipFilesystem) Remove(path string) error {
+	f.steps = append(f.steps, "unlink")
+	return f.base.Remove(path)
+}
+
+func TestOwnershipPublicationSyncsInDurableOrder(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "platform")
 	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "ownership.json"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	layout, err := New(root)
 	if err != nil {
 		t.Fatal(err)
 	}
+	previous := ownershipFS
+	recorder := &recordingOwnershipFilesystem{base: previous}
+	ownershipFS = recorder
+	t.Cleanup(func() { ownershipFS = previous })
 	if err := layout.PrepareInitialTarget(); err != nil {
-		t.Fatalf("empty ownership write boundary was not recoverable: %v", err)
+		t.Fatal(err)
 	}
-	owner, err := layout.readOwnership()
-	if err != nil || owner.InitialInstallState != "in-progress" {
-		t.Fatalf("repaired owner = %#v, %v", owner, err)
+	want := []string{"create", "write", "write", "sync", "link", "dir-sync", "unlink", "dir-sync"}
+	if !reflect.DeepEqual(recorder.steps, want) {
+		t.Fatalf("ownership filesystem operation order = %v, want %v", recorder.steps, want)
+	}
+}
+
+func withOwnershipWriteHook(t *testing.T, hook func(OwnershipWritePoint, string) error) {
+	t.Helper()
+	previous := ownershipWriteFaultHook
+	ownershipWriteFaultHook = hook
+	t.Cleanup(func() { ownershipWriteFaultHook = previous })
+}
+
+func TestConcurrentFirstOwnershipPublicationHasOneWinner(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyToPublish := make(chan struct{}, 2)
+	releasePublish := make(chan struct{})
+	withOwnershipWriteHook(t, func(point OwnershipWritePoint, _ string) error {
+		if point == OwnershipBeforePublish {
+			readyToPublish <- struct{}{}
+			<-releasePublish
+		}
+		return nil
+	})
+	results := make(chan error, 2)
+	var workers sync.WaitGroup
+	for _, id := range []string{"00112233445566778899aabbccddeeff", "ffeeddccbbaa99887766554433221100"} {
+		owner := Ownership{Schema: OwnershipSchema, InstallationID: id, InitialInstallState: "in-progress"}
+		data, err := json.Marshal(owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = append(data, '\n')
+		stagingPath := contracts.OwnershipRecordStagingPath(root, id)
+		if err := os.WriteFile(stagingPath, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		workers.Add(1)
+		go func(stagingPath string) {
+			defer workers.Done()
+			results <- first.publishOwnershipStaging(stagingPath)
+		}(stagingPath)
+	}
+	<-readyToPublish
+	<-readyToPublish
+	close(releasePublish)
+	workers.Wait()
+	close(results)
+	successes, conflicts := 0, 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if errors.Is(err, ErrOwnershipPublicationConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("concurrent publication returned unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("publication results: %d winners, %d conflicts", successes, conflicts)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(first.ownershipPath()) {
+		t.Fatalf("loser left a staging file: entries=%v error=%v", entries, err)
+	}
+	if _, err := first.readOwnership(); err != nil {
+		t.Fatalf("winning complete record is invalid: %v", err)
+	}
+}
+
+func TestConcurrentInstallDoesNotDiagnoseLiveStagingAsAbandoned(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enteredWrite := make(chan struct{})
+	releaseWrite := make(chan struct{})
+	withOwnershipWriteHook(t, func(point OwnershipWritePoint, _ string) error {
+		if point == OwnershipAfterStagingCreate {
+			close(enteredWrite)
+			<-releaseWrite
+		}
+		return nil
+	})
+	installResult := make(chan error, 1)
+	go func() { installResult <- layout.PrepareInitialTarget() }()
+	<-enteredWrite
+	if err := layout.ValidateInitialTarget(); !errors.Is(err, ErrOwnershipPublicationConflict) {
+		t.Fatalf("active staging was not reported as an operation conflict: %v", err)
+	}
+	close(releaseWrite)
+	if err := <-installResult; err != nil {
+		t.Fatalf("first install failed after releasing the staging barrier: %v", err)
 	}
 }
 
