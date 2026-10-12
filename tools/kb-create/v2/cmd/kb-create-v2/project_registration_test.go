@@ -299,8 +299,8 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		if code != 0 {
 			t.Fatalf("secured repeat install for %q exit=%d output:\n%s", projectPath, code, output)
 		}
-		if strings.Contains(strings.ToLower(output), "password") || strings.Contains(strings.ToLower(output), "credential") {
-			t.Fatalf("secured repeat install prompted for credentials: %s", output)
+		if strings.Contains(output, `"password":`) || strings.Contains(output, `"Password":`) {
+			t.Fatalf("secured repeat install disclosed a password: %s", output)
 		}
 		if !strings.Contains(output, `"operation":"apply"`) || !strings.Contains(output, `"projectId":"`+registered.ID+`"`) {
 			t.Fatalf("repeat install did not apply and return the recorded project identity: %s", output)

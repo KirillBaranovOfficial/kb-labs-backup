@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -29,7 +30,7 @@ import (
 // case: S-100.1
 func TestFirstAdminCredentialIsShownOnceAndNeverPersisted(t *testing.T) {
 	const password = "generated-password-that-must-not-leak"
-	credential := firstAdminCredential{Email: "admin@example.test", Password: password, ShownOnce: true}
+	credential := firstAdminCredential{State: firstAdminDisclosed, Email: "admin@example.test", Password: password}
 	result := applyCommandResult{
 		OK: true, Operation: "install", Receipt: contracts.InstallReceipt{
 			Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{Values: map[string]string{
@@ -46,7 +47,7 @@ func TestFirstAdminCredentialIsShownOnceAndNeverPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	admin, ok := decoded["firstAdmin"].(map[string]any)
-	if !ok || admin["email"] != credential.Email || admin["password"] != password || admin["shownOnce"] != true {
+	if !ok || admin["state"] != string(firstAdminDisclosed) || admin["email"] != credential.Email || admin["password"] != password {
 		t.Fatalf("explicit one-time credential result = %#v", decoded["firstAdmin"])
 	}
 
@@ -73,12 +74,112 @@ func TestFirstAdminDisclosureRefusesToRediscloseAfterCompletion(t *testing.T) {
 	if credential != nil || failure == nil || failure.Code != contracts.CodeApplyFailed {
 		t.Fatalf("completed bootstrap disclosure = (%#v, %#v), want typed refusal", credential, failure)
 	}
+	if !strings.Contains(failure.Hint, firstAdminRecoveryCommand("<platform-root>", "admin@example.test")) {
+		t.Fatalf("undisclosed-completion refusal omitted canonical recovery command: %s", failure.Hint)
+	}
 	if strings.Contains(failure.Error(), "stored-bootstrap-password") {
 		t.Fatalf("diagnostic leaked stored credential: %v", failure)
 	}
 	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
 		t.Fatalf("refusal recorded disclosure marker = %v, err %v; want unchanged", disclosed, err)
 	}
+}
+
+// case: S-222.11
+func TestPreviouslyDisclosedFirstAdminProducesRecoveryNotice(t *testing.T) {
+	root := t.TempDir()
+	store := secrets.Store{PlatformRoot: root}
+	for key, value := range map[string]string{
+		secrets.BootstrapCompleted:   "provisioned",
+		secrets.BootstrapGenerated:   "true",
+		secrets.BootstrapDisclosed:   "true",
+		"gateway.bootstrap.password": "prior-run-secret-marker",
+	} {
+		if err := store.Put(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	admin, failure := firstAdminDisclosure(store, "admin@example.test", true, root)
+	if failure != nil || admin == nil {
+		t.Fatalf("previous disclosure = (%#v, %v), want a successful notice result", admin, failure)
+	}
+	if admin.State != firstAdminPreviouslyDisclosed || admin.Email != "admin@example.test" || admin.Password != "" || admin.RecoveryCommand == "" || admin.StopCommand == "" || admin.StartCommand == "" {
+		t.Fatalf("previously disclosed result = %#v", admin)
+	}
+	recovery := buildFirstAdminRecoveryCommands(root, "admin@example.test")
+	recoveryCommand := recovery.Doctor
+	if admin.RecoveryCommand != recoveryCommand {
+		t.Fatalf("recovery command = %q, want %q", admin.RecoveryCommand, recoveryCommand)
+	}
+	if admin.StopCommand != recovery.Stop || admin.StartCommand != recovery.Start {
+		t.Fatalf("host recovery commands = (%q, %q), want (%q, %q)", admin.StopCommand, admin.StartCommand, recovery.Stop, recovery.Start)
+	}
+	result := applyCommandResult{OK: true, Operation: "apply", FirstAdmin: admin}
+	jsonOutput, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	humanOutput := renderApply(result)
+	for label, output := range map[string]string{"human": humanOutput, "JSON": string(jsonOutput)} {
+		if !strings.Contains(output, "issued by an earlier run") || !strings.Contains(output, "not shown again") || !strings.Contains(output, "admin@example.test") || !strings.Contains(output, recovery.Stop) || !strings.Contains(output, recoveryCommand) || !strings.Contains(output, recovery.Start) {
+			t.Errorf("%s result omitted prior-disclosure notice or recovery command: %s", label, output)
+		}
+		if strings.Contains(output, "prior-run-secret-marker") {
+			t.Errorf("%s result exposed the stored bootstrap password", label)
+		}
+	}
+	if err := assertDoctorRecoveryCommandAccepted(recoveryCommand, "admin@example.test"); err != nil {
+		t.Fatalf("recovery command is not accepted by doctor: %v", err)
+	}
+	var payload struct {
+		FirstAdmin map[string]any `json:"firstAdmin"`
+	}
+	if err := json.Unmarshal(jsonOutput, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.FirstAdmin["state"] != string(firstAdminPreviouslyDisclosed) || payload.FirstAdmin["email"] != "admin@example.test" || payload.FirstAdmin["recoveryCommand"] != recoveryCommand {
+		t.Fatalf("JSON firstAdmin notice = %#v", payload.FirstAdmin)
+	}
+	if _, hasPassword := payload.FirstAdmin["password"]; hasPassword {
+		t.Fatalf("previously disclosed JSON result included a password: %#v", payload.FirstAdmin)
+	}
+}
+
+func assertDoctorRecoveryCommandAccepted(recoveryCommand, adminEmail string) error {
+	shell := exec.Command("sh", "-c", "set -- "+recoveryCommand+"; printf '%s\\000' \"$@\"")
+	output, err := shell.Output()
+	if err != nil {
+		return fmt.Errorf("shell could not parse recovery command: %w", err)
+	}
+	fields := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+	if len(fields) < 3 || fields[0] != "kb-create" {
+		return fmt.Errorf("unexpected parsed command arguments %q", fields)
+	}
+	args := fields[1:]
+	root := newRootCommand()
+	command, args, err := root.Find(args)
+	if err != nil {
+		return err
+	}
+	if command.Name() != "doctor" {
+		return fmt.Errorf("command name = %q, want doctor", command.Name())
+	}
+	if err := command.ParseFlags(args); err != nil {
+		return err
+	}
+	if got, err := command.Flags().GetString("platform-root"); err != nil || got == "" {
+		return fmt.Errorf("doctor platform-root = %q, err=%v", got, err)
+	}
+	for _, name := range []string{"recover", "generate", "yes"} {
+		if got, err := command.Flags().GetBool(name); err != nil || !got {
+			return fmt.Errorf("doctor --%s = %v, err=%v", name, got, err)
+		}
+	}
+	if got, err := command.Flags().GetString("email"); err != nil || got != adminEmail {
+		return fmt.Errorf("doctor email = %q, err=%v", got, err)
+	}
+	return nil
 }
 
 type bootstrapTestHost struct {
@@ -481,20 +582,17 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 	starter := &bootstrapTestHost{address: address}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
-	firstOutput := runApplyStreamForTest(t, resolved, deps)
 	t.Cleanup(func() {
 		if starter.stop != nil {
 			_ = starter.stop()
 		}
 	})
+	firstOutput := runApplyStreamForTest(t, resolved, deps)
 	password, present, err := store.Get("gateway.bootstrap.password")
 	if err != nil || !present || strings.Count(firstOutput, password) != 1 {
 		t.Fatalf("stored password = %q, present=%v, error=%v", password, present, err)
 	}
 	assertSingleAdminResultRecord(t, firstOutput, "admin@example.test", password)
-	if strings.Count(firstOutput, password) != 1 {
-		t.Errorf("credential must appear only in its result record")
-	}
 	firstResult := applyResultFromStream(t, firstOutput)
 	logBytes, err := os.ReadFile(firstResult.LogPath)
 	if err != nil {
@@ -512,8 +610,7 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 		t.Fatal("apply receipt is empty")
 	}
 	assertSecretAbsent(t, "receipt file", receiptBytes, password)
-	planBytes := mustJSON(t, firstResult.Receipt.Plan)
-	assertSecretAbsent(t, "plan output", planBytes, password)
+	assertSecretAbsent(t, "plan output", mustJSON(t, firstResult.Receipt.Plan), password)
 	if err := starter.stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -522,9 +619,68 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 	if err != nil || !present || unchanged != password {
 		t.Fatalf("repeat apply changed stored password: %q, present=%v, error=%v", unchanged, present, err)
 	}
-	assertSingleAdminResultRecord(t, secondOutput, "", "")
-	if strings.Contains(secondOutput, password) {
-		t.Fatalf("repeat apply disclosed password in JSONL: %s", secondOutput)
+	assertSingleAdminResultRecord(t, secondOutput, "admin@example.test", "")
+	if strings.Contains(secondOutput, password) || !strings.Contains(secondOutput, "issued by an earlier run") || !strings.Contains(secondOutput, firstAdminRecoveryCommand(platformRoot, "admin@example.test")) {
+		t.Fatalf("repeat apply omitted prior-disclosure notice or leaked password: %s", secondOutput)
+	}
+}
+
+func TestApplyFailureBeforeDisclosureMarkerLeavesTypedRecoveryDiagnosis(t *testing.T) {
+	root := t.TempDir()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	state := host.State{Dir: t.TempDir()}
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
+		Values:       map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.test"`},
+		SecretInputs: []string{"gateway.bootstrap.password", "gateway.jwtSecret"}}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "admin-bootstrap-repeat",
+		Request: request, Host: &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "default"},
+		Artifacts: []contracts.Artifact{{ID: "gateway", Package: "@kb-labs/gateway", Version: "2.0.0", Config: []contracts.ConfigRequirement{
+			{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true},
+		}}}}
+	resolved := resolvedPlan{Plan: plan, State: state}
+	platformRoot := platformRootForTest(t, root)
+	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
+	starter := &bootstrapTestHost{address: address}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
+	t.Cleanup(func() {
+		if starter.stop != nil {
+			_ = starter.stop()
+		}
+	})
+	failedAttemptInput := applyCommandInput{Resolved: &resolved, Executable: filepath.Join(t.TempDir(), "kb-create")}
+	if _, failure := executeApply(context.Background(), failedAttemptInput, deps); failure == nil {
+		t.Fatal("apply without the installed CLI entry unexpectedly created the kb shim")
+	}
+	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
+		t.Fatalf("apply failure before result output consumed the disclosure marker: disclosed=%v err=%v", disclosed, err)
+	}
+	if starter.stop != nil {
+		if err := starter.stop(); err != nil {
+			t.Fatal(err)
+		}
+		starter.stop = nil
+	}
+	password, present, err := store.Get("gateway.bootstrap.password")
+	if err != nil || !present {
+		t.Fatalf("stored password = %q, present=%v, error=%v", password, present, err)
+	}
+	_, retryFailure := executeApply(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
+	if retryFailure == nil || retryFailure.Code != contracts.CodeApplyFailed {
+		t.Fatalf("retry after completed bootstrap without disclosure = %v, want typed recovery diagnosis", retryFailure)
+	}
+	recoveryCommand := firstAdminRecoveryCommand(platformRoot, "admin@example.test")
+	if !strings.Contains(retryFailure.Hint, recoveryCommand) || strings.Contains(retryFailure.Error(), password) {
+		t.Fatalf("retry diagnosis lacks recovery command %q or exposes password: diagnostic=%v hint=%q", recoveryCommand, retryFailure, retryFailure.Hint)
+	}
+	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
+		t.Fatalf("failed handoff persisted disclosure marker: disclosed=%v err=%v", disclosed, err)
 	}
 }
 
@@ -533,6 +689,20 @@ type operationLogTestRunner struct{}
 func (operationLogTestRunner) Run(_ context.Context, output io.Writer, _ string, _ ...string) error {
 	_, err := io.WriteString(output, "fake package manager operation completed\n")
 	return err
+}
+
+func runApplyStreamForTest(t *testing.T, resolved resolvedPlan, deps commandDependencies) string {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	command := &cobra.Command{Use: "kb-create apply"}
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	deps.Command = command
+	completion, failure := executeApplyStream(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
+	if failure != nil || completion.ExitCode != 0 {
+		t.Fatalf("apply stream failed: completion=%#v failure=%v stdout=%s stderr=%s", completion, failure, stdout.String(), stderr.String())
+	}
+	return stdout.String()
 }
 
 func applyResultFromStream(t *testing.T, output string) applyCommandResult {
@@ -571,56 +741,34 @@ func assertSecretAbsent(t *testing.T, label string, output []byte, password stri
 	}
 }
 
-func runApplyStreamForTest(t *testing.T, resolved resolvedPlan, deps commandDependencies) string {
-	t.Helper()
-	var stdout, stderr bytes.Buffer
-	command := &cobra.Command{Use: "kb-create apply"}
-	command.SetOut(&stdout)
-	command.SetErr(&stderr)
-	deps.Command = command
-	completion, failure := executeApplyStream(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
-	if failure != nil || completion.ExitCode != 0 {
-		t.Fatalf("apply stream failed: completion=%#v failure=%v stdout=%s stderr=%s", completion, failure, stdout.String(), stderr.String())
-	}
-	return stdout.String()
-}
-
 func assertSingleAdminResultRecord(t *testing.T, output, email, password string) {
 	t.Helper()
-	resultCount := 0
-	credentialCount := 0
+	var resultRecords int
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		var record map[string]any
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("invalid JSONL record %q: %v", line, err)
+		var record struct {
+			Meta struct {
+				Stream struct {
+					Result bool `json:"result"`
+				} `json:"stream"`
+			} `json:"meta"`
+			Data applyCommandResult `json:"data"`
 		}
-		meta, _ := record["meta"].(map[string]any)
-		streamMeta, _ := meta["stream"].(map[string]any)
-		if streamMeta["result"] != true {
-			if password != "" && strings.Contains(line, password) {
-				t.Errorf("password leaked in a non-result event: %s", line)
-			}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("decode apply stream record: %v", err)
+		}
+		if !record.Meta.Stream.Result {
 			continue
 		}
-		resultCount++
-		data, _ := record["data"].(map[string]any)
-		credential, exists := data["firstAdmin"].(map[string]any)
-		if exists {
-			credentialCount++
-			if credential["email"] != email || credential["password"] != password || credential["shownOnce"] != true {
-				t.Errorf("firstAdmin result = %#v", credential)
-			}
+		resultRecords++
+		if record.Data.FirstAdmin == nil || record.Data.FirstAdmin.Email != email || record.Data.FirstAdmin.Password != password {
+			t.Fatalf("first-administrator result = %#v; want email %q and password %q", record.Data.FirstAdmin, email, password)
+		}
+		if password == "" && record.Data.FirstAdmin.State != firstAdminPreviouslyDisclosed {
+			t.Fatalf("repeat first-administrator state = %q, want %q", record.Data.FirstAdmin.State, firstAdminPreviouslyDisclosed)
 		}
 	}
-	if resultCount != 1 {
-		t.Errorf("stream result record count = %d, want 1", resultCount)
-	}
-	wantCredentials := 0
-	if password != "" {
-		wantCredentials = 1
-	}
-	if credentialCount != wantCredentials {
-		t.Errorf("firstAdmin result count = %d, want %d", credentialCount, wantCredentials)
+	if resultRecords != 1 {
+		t.Fatalf("apply stream has %d result records; want exactly one", resultRecords)
 	}
 }
 
