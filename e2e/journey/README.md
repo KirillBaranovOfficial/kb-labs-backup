@@ -14,22 +14,46 @@ KB_JOURNEY_ONLY=service-local:explore e2e/journey/run.sh --no-build
 KB_JOURNEY_ONLY=service-secured:explore e2e/journey/run.sh --no-build
 ```
 
-To confirm only the journey claims for selected case IDs or step IDs, add
-`KB_JOURNEY_CASES` to a single-mode run:
+To run a selected claim, set `KB_JOURNEY_CASES`. The harness resolves every
+runner that owns those claims for local and secured modes before it builds an
+image or starts a container:
 
 ```bash
-KB_JOURNEY_ONLY=service-secured:explore \
-  KB_JOURNEY_CASES="S-042,S-005.2" \
-  e2e/journey/run.sh --no-build
+KB_JOURNEY_CASES="S-042,S-005.2" e2e/journey/run.sh --no-build
 ```
 
 The selector resolves IDs from `qa cases coverage`, so a case ID expands to its
-journey/e2e-claimed steps and a step ID selects that claim directly. Unknown or
-unclaimed IDs stop the run with a usage error. Unselected named steps appear as
-`SKIPPED (not selected)` in the result. A filtered scoreboard lists the
-selection and marks itself partial; partial evidence does not count toward case
-status or full-run deltas. Run the normal mode without `KB_JOURNEY_CASES` to
-produce full scoreboard evidence.
+journey/e2e-claimed steps and a step ID selects that claim directly. A case with
+any unclaimed step is refused with the step ID before Docker work begins. To
+restrict execution, `KB_JOURNEY_ONLY` filters the resolved runner set; it can
+contain comma-separated registered runner selectors. If the filter omits an
+owner, the refusal names the missing claims and the exact runner command.
+Prerequisite steps declared by a selected step run first and are reported as
+prerequisites; a failed prerequisite blocks the selected claim with its own
+diagnosis. Unselected named steps appear as `SKIPPED (not selected)` in the
+result. A filtered scoreboard lists the selection and marks itself partial;
+partial evidence does not count toward case status or full-run deltas. Run the
+normal mode without `KB_JOURNEY_CASES` to produce full scoreboard evidence.
+
+The installed smoke covers successful fresh installation and the registered
+project workflow and REST runtime health claims. Run these two commands to
+prove both access modes:
+
+```bash
+e2e/journey/smoke.sh local --no-build
+e2e/journey/smoke.sh secured --no-build
+```
+
+The script selects `PC-001.2`, `PC-002.3`, and `PC-002.8` and sets the matching
+runner filter for each mode. It exits zero only when all three claims pass for
+that mode; any FAIL or BLOCKED claim makes the command nonzero. Preview the
+selected runners and prerequisite steps without building or starting
+containers with:
+
+```bash
+e2e/journey/smoke.sh local --resolve-only
+e2e/journey/smoke.sh secured --resolve-only
+```
 
 The local run verifies loopback access without login. The secured run creates
 an isolated admin during installation, creates and activates a member through

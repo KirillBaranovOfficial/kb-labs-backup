@@ -36,21 +36,12 @@ if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
 fi
 
 if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
-  if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
-    echo "KB_JOURNEY_CASES requires KB_JOURNEY_ONLY to select a journey mode." >&2
-    exit 2
-  fi
   selection_json="$(python3 e2e/journey/select_from_cases.py)"
   export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
   export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
   export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
   export KB_JOURNEY_SELECTED_SOURCES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["stepSources"]))' <<< "$selection_json")"
-  if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
-    python3 e2e/journey/dispatch_registry.py --supports "$KB_JOURNEY_ONLY" <<< "$selection_json" || {
-        echo "Selected runner $KB_JOURNEY_ONLY is not registered for the selected claim sources." >&2
-        exit 2
-      }
-  fi
+  selected_selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["runners"]))' <<< "$selection_json")"
 else
   unset KB_JOURNEY_SELECTED_STEPS
   unset KB_JOURNEY_PREREQUISITE_STEPS
@@ -64,21 +55,23 @@ dispatch_selector() {
 }
 
 run_selector() {
-  local selector="$1"
-  local runner_json had_profile=0 saved_profile="${KB_JOURNEY_SERVICE_PROFILE:-}"
+  local selectors="$1" selector runner_json had_profile=0 saved_profile="${KB_JOURNEY_SERVICE_PROFILE:-}"
   [[ "${KB_JOURNEY_SERVICE_PROFILE+x}" == "x" ]] && had_profile=1
-  runner_json="$(dispatch_selector "$selector")"
-  while IFS=$'\t' read -r front scenario variant profile; do
-    unset KB_JOURNEY_SERVICE_PROFILE
-    if [[ -n "$profile" ]]; then export KB_JOURNEY_SERVICE_PROFILE="$profile"; fi
-    run_journey "$front" "$scenario" "$variant"
-  done < <(python3 -c 'import json,sys; print("\n".join("\t".join((d["front_door"],d["scenario"],d["variant"],d["service_profile"])) for d in json.load(sys.stdin)))' <<< "$runner_json")
+  while IFS= read -r selector; do
+    [[ -z "$selector" ]] && continue
+    runner_json="$(dispatch_selector "$selector")"
+    while IFS=$'\t' read -r front scenario variant profile; do
+      unset KB_JOURNEY_SERVICE_PROFILE
+      if [[ -n "$profile" ]]; then export KB_JOURNEY_SERVICE_PROFILE="$profile"; fi
+      run_journey "$front" "$scenario" "$variant"
+    done < <(python3 -c 'import json,sys; print("\n".join("\t".join((d["front_door"],d["scenario"],d["variant"],d["service_profile"])) for d in json.load(sys.stdin)))' <<< "$runner_json")
+  done <<< "$(printf '%s' "$selectors" | tr ',' '\n')"
   if (( had_profile )); then export KB_JOURNEY_SERVICE_PROFILE="$saved_profile"; else unset KB_JOURNEY_SERVICE_PROFILE; fi
 }
 
 if [[ "${1:-}" == "--resolve-only" ]]; then
   if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
-    python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({"runners":d["runners"],"steps":d["steps"],"prerequisiteSteps":d["prerequisiteSteps"],"prerequisiteFlows":d["prerequisiteFlows"],"stepSources":d["stepSources"]},indent=2))' <<< "$selection_json"
+    python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin),indent=2))' <<< "$selection_json"
   elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
     dispatch_selector "$KB_JOURNEY_ONLY"
   else
@@ -119,7 +112,9 @@ run_journey() {
 }
 
 status=0
-if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
+if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
+  run_selector "$selected_selectors"
+elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
   run_selector "$KB_JOURNEY_ONLY"
 else
   selectors_json="$(python3 e2e/journey/select_from_cases.py)"

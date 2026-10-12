@@ -1019,12 +1019,11 @@ def main():
     install_cases = ["S-039.2"] if FRONT_DOOR == "agent" else ["S-040.3"]
     record_case("post-install running status", install_running,
                 "successful install did not leave a running, reachable host", cases=install_cases)
-    if FRONT_DOOR == "human" or mode == "secured":
-        install_step_passed = install_running and (mode != "secured" or first_admin_shown_once)
-        record_case("clean install leaves a running host and returns secured credentials once",
-                    install_step_passed,
-                    "install did not leave the host running or return the secured credential exactly once",
-                    cases=["PC-001.2"])
+    install_step_passed = install_running and (mode != "secured" or first_admin_shown_once)
+    record_case("clean install leaves a running host and returns secured credentials once",
+                install_step_passed,
+                "install did not leave the host running or return the secured credential exactly once",
+                cases=["PC-001.2"], requires=("step:candidate provenance",))
     installed_doctor, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"],
                               env=env, timeout=120)
     try:

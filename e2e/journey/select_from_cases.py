@@ -21,7 +21,7 @@ from pathlib import Path
 from hermetic_cli import run_hermetic_cli
 from invocations import (decode_ux_success_result, describe_cli_failure, invocation_context,
                          print_report_text, read_ux_cli_result)
-from dispatch_registry import RUNNERS, runners_for_source
+from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
 from journey_dependencies import Dependency
 
 
@@ -242,7 +242,7 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
         if tree is None:
             continue
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or call_name(node) not in {"step", "flow"}:
+            if not isinstance(node, ast.Call) or call_name(node) not in {"step", "flow", "service_check"}:
                 continue
             if any(keyword.arg is None for keyword in node.keywords):
                 raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
@@ -341,7 +341,8 @@ def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str
 
 
 def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[str]],
-                      declarations_by_step: dict[str, list[dict]], declarations_by_name: dict[str, dict]) -> dict:
+                      declarations_by_step: dict[str, list[dict]], declarations_by_name: dict[str, dict],
+                      owners_by_step: dict[str, dict[str, set[str]]], only: str = "") -> dict:
     """Resolve selected claims to their runner and transitive declared prerequisites."""
     selected = set(selected_steps)
     names: set[str] = set()
@@ -365,13 +366,43 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
         declaration = declarations_by_name.get(key, {})
         sources.update(declaration.get("sources", set()))
         pending.extend(declaration.get("requires", []))
-    runners = {selector for source in sources for mode in ("local", "secured")
-               for selector in runners_for_source(source, mode)}
+    owners: dict[str, set[str]] = {}
+    for step_id in selected:
+        for runner, claims in owners_by_step.get(step_id, {}).items():
+            owners.setdefault(runner, set()).update(claims)
+    requested_selectors = set(filter(None, only.split(",")))
+    requested_runners = {
+        runner
+        for selector in requested_selectors
+        for runner in RUNNER_GROUPS.get(selector, (selector,))
+    }
+    unknown_runners = requested_runners - RUNNERS.keys()
+    if unknown_runners:
+        unknown_selectors = requested_selectors - RUNNERS.keys() - RUNNER_GROUPS.keys()
+        raise ValueError(f"unknown KB_JOURNEY_ONLY runner(s): {', '.join(sorted(unknown_selectors))}")
+    runners = set(owners)
+    if requested_runners:
+        runners.intersection_update(requested_runners)
+        covered = {claim for runner in runners for claim in owners[runner]}
+        uncovered = set(selected) - covered
+        if uncovered:
+            routes = "; ".join(
+                f"{runner} owns {', '.join(sorted(uncovered.intersection(claims)))}: "
+                f"KB_JOURNEY_CASES={','.join(sorted(uncovered.intersection(claims)))} "
+                f"KB_JOURNEY_ONLY={runner} e2e/journey/run.sh --no-build"
+                for runner, claims in sorted(owners.items())
+                if runner not in runners and uncovered.intersection(claims)
+            )
+            raise ValueError(
+                "KB_JOURNEY_ONLY leaves selected claims without a runner: "
+                + ", ".join(sorted(uncovered)) + ". Run the owning selectors: " + routes
+            )
     step_prerequisites = sorted(Dependency.parse(item).name for item in prerequisites
                                 if Dependency.parse(item).kind == "step")
     flow_prerequisites = sorted(Dependency.parse(item).name for item in prerequisites
                                 if Dependency.parse(item).kind == "flow")
-    return {"runners": sorted(runners), "steps": sorted(selected),
+    return {"runners": sorted(runners), "owners": {key: sorted(value) for key, value in sorted(owners.items())},
+            "steps": sorted(selected),
             "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
             "stepSources": sorted(sources)}
 
@@ -405,6 +436,8 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
     registry: dict[str, set[str]] = {}
     sources_by_step: dict[str, set[str]] = {}
     declarations_by_step: dict[str, dict] = {}
+    owners_by_step: dict[str, dict[str, set[str]]] = {}
+    unclaimed_by_case: dict[str, set[str]] = {}
     root = Path(__file__).resolve().parents[2]
     for coverage in results:
         for case in coverage.get("cases", []):
@@ -420,6 +453,8 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                     and str(claim.get("source", "")).startswith(("e2e/journey/", "e2e/studio/", "e2e/"))
                     for claim in step.get("claims", [])
                 )
+                if isinstance(step_id, str) and not journey_claimed:
+                    unclaimed_by_case.setdefault(case_id, set()).add(step_id)
                 if journey_claimed and isinstance(step_id, str):
                     registry.setdefault(case_id, set()).add(step_id)
                     for claim in step.get("claims", []):
@@ -429,6 +464,8 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                         if not source.startswith(("e2e/journey/", "e2e/studio/", "e2e/")):
                             continue
                         sources_by_step.setdefault(step_id, set()).add(source)
+                        for selector in runners_for_source(source, str(coverage.get("mode", ""))):
+                            owners_by_step.setdefault(step_id, {}).setdefault(selector, set()).add(step_id)
                         declaration = _step_declaration(source, int(claim.get("line", 0)), root)
                         if declaration:
                             declarations = declarations_by_step.setdefault(step_id, [])
@@ -443,6 +480,15 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
     selected: set[str] = set()
     for token in tokens:
         if token in case_ids:
+            unclaimed = sorted(unclaimed_by_case.get(token, set()))
+            if unclaimed:
+                claimed = ",".join(sorted(registry[token]))
+                raise ValueError(
+                    f"case {token} includes unclaimed steps that no journey runner can prove: "
+                    + ", ".join(unclaimed)
+                    + f". To resolve its claimed rows only, run `KB_JOURNEY_CASES={claimed} e2e/journey/run.sh --resolve-only`; "
+                    + "to prove the full case, add a journey claim for each unclaimed step."
+                )
             selected.update(registry[token])
         elif token in step_ids:
             selected.add(token)
@@ -453,7 +499,8 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
             )
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)
-    resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name)
+    resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name,
+                                 owners_by_step, os.environ.get("KB_JOURNEY_ONLY", ""))
     return {"selection": sorted(set(tokens)), **resolved}
 
 

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import FlowGraph, Journey
+from journey_dependencies import Dependency
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
                          print_report_text, read_ux_cli_result, read_ux_http_result, run_command,
                          store_report_secret,
@@ -394,8 +395,8 @@ def expect_project_service_health(path: str, service_id: str, *, token="") -> st
     return None
 
 
-def service_check(name, capability, check, *, cases=()):
-    return name, capability, check, list(cases)
+def service_check(name, capability, check, *, cases=(), requires=()):
+    return name, capability, check, list(cases), tuple(requires)
 
 
 def _checks(mode: str):
@@ -434,7 +435,7 @@ def _checks(mode: str):
         return "; ".join(errors) if errors else None
 
     yield service_check("platform readiness (gateway + project workflow)", "gateway", platform_readiness,
-                        cases=["PC-002.3"])
+                        cases=["PC-002.3"], requires=("step:registered project setup",))
 
     if not PROJECT_ID:
         project = lambda: "BLOCKED: no project is registered; run `kb project add <path> --json` and set KB_JOURNEY_PROJECT_ID"
@@ -482,7 +483,8 @@ def _checks(mode: str):
             return "registered project runtime REST health payload has no recognized status"
         return None
     yield service_check("registered project runtime identity", "projects", project_runtime_identity,
-                        cases=["PC-002.8", "S-124.11", "S-124.13"])
+                        cases=["PC-002.8", "S-124.11", "S-124.13"],
+                        requires=("step:registered project setup",))
     yield service_check("project plugin settings isolation and clean repositories", "projects",
                         project_plugin_settings_isolation,
                         cases=["S-204.1", "S-204.2", "S-204.8", "S-204.9", "S-204.10", "S-204.11"])
@@ -556,7 +558,7 @@ def checks(mode: str):
 
 def declared_capabilities(mode: str) -> set[str]:
     """Return every capability the selected service profile promises to check."""
-    capabilities = {capability for _, capability, _, _ in checks(mode)}
+    capabilities = {capability for _, capability, _, _, _ in checks(mode)}
     capabilities.add("auth.local" if mode == "local" else "auth.invite-reset")
     capabilities.add("plugin-author")
     return capabilities
@@ -697,8 +699,27 @@ def run_grouped_service_steps(journey: Journey, steps, mode: str = "local", grou
     }
     flow_graph = graph or FlowGraph(
         journey, {name: spec["depends_on"] for name, spec in group_specs.items()}, states=states)
-    for name, capability, check, cases in steps:
+    for name, capability, check, cases, requires in steps:
         group = capability_groups.get(capability, capability)
+
+        def prerequisite_failure() -> str | None:
+            for reference in requires:
+                dependency = Dependency.parse(reference)
+                outcome = journey.find_outcome(dependency)
+                if outcome is None:
+                    return f"prerequisite {dependency} did not run before {name}"
+                if outcome[0] != "PASS":
+                    return f"prerequisite {dependency} ended {outcome[0]}: {outcome[1]}"
+            return None
+
+        selected = bool(journey.selected_claims.intersection(cases))
+        prerequisite = name in journey.prerequisite_steps
+        if selected or prerequisite:
+            failure = prerequisite_failure()
+            if failure:
+                journey.step(name, capability, lambda: f"BLOCKED: {failure}", cases=cases)
+                continue
+
         flow_graph.step(name, group, capability, check, cases=cases)
 
 
@@ -1003,6 +1024,15 @@ def main() -> int:
     try:
         declared_steps = list(checks(args.mode))
         configure_installed_cli_path()
+        def registered_project_setup() -> str | None:
+            if not PROJECT_ID:
+                return "installed project registration was not handed to the service runner; verify the registration setup in the runner"
+            if not os.getenv("KB_JOURNEY_PROJECT_ROOT", ""):
+                return "registered project root was not handed to the service runner; verify the registration setup in the runner"
+            return None
+
+        if "registered project setup" in journey.prerequisite_steps:
+            journey.step("registered project setup", "journey.setup", registered_project_setup, role="lifecycle")
         if args.mode == "secured":
             graph.probe_state("session", "auth", "fresh secured CLI login",
                               lambda: restore_secured_cli_login(
