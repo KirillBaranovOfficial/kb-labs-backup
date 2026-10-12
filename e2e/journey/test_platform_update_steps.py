@@ -315,8 +315,9 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         )
         steps = {step["name"]: step for step in result.result().steps}
         self.assertEqual(steps["save installed receipt, config, and host status"]["status"], "FAIL")
-        self.assertEqual(steps["verify restored receipt, config, host, and project command"]["status"], "FAIL")
-        self.assertIn("saved user session was not established", steps["verify restored receipt, config, host, and project command"]["message"])
+        self.assertEqual(steps["verify restored receipt, config, host, and project command"]["status"], "BLOCKED")
+        self.assertIn("step:save installed receipt, config, and host status ended FAIL",
+                      steps["verify restored receipt, config, host, and project command"]["message"])
         self.assertEqual(
             steps["save installed receipt, config, and host status"]["details"]["configSha256"]["beforeUpdate"],
             hashlib.sha256(b'{"stable":true}\n').hexdigest(),
@@ -343,8 +344,8 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         steps = {step["name"]: step for step in result.result().steps}
         verification = steps["verify restored receipt, config, host, and project command"]
         self.assertEqual(verification["status"], "BLOCKED")
-        self.assertIn("before-update config SHA-256 is unavailable", verification["message"])
-        self.assertNotIn("beforeUpdate", verification["details"]["configSha256"])
+        self.assertIn("step:save installed receipt, config, and host status ended FAIL", verification["message"])
+        self.assertIn("KB_HOST_UNHEALTHY", verification["message"])
 
     def test_s024_3_names_first_unexpected_checkpoint_change_and_both_hashes(self):
         def mutate_after_rollback(args: list[str]) -> subprocess.CompletedProcess:

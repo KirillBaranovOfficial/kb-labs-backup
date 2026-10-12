@@ -115,10 +115,19 @@ class WorkflowJourneyTests(unittest.TestCase):
                     elif helper in {workflow_steps._real_work_case, workflow_steps._rerun_case}:
                         kwargs.update(clock=lambda: 0.0, sleep=lambda _seconds: None)
                     helper(journey, **kwargs)
-                    result = journey.result()
-                    claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
-                    self.assertEqual(set(claims), expected_claims)
-                    self.assertEqual(set(claims.values()), {"FAIL"})
+                    statuses = {claim: step.status for step in journey.steps for claim in step.cases}
+                    self.assertEqual(set(statuses), expected_claims)
+                    if helper is workflow_steps._cancellation_case:
+                        expected_statuses = {"S-008.1": "FAIL", "S-008.2": "BLOCKED",
+                                             "S-008.3": "BLOCKED", "S-008.4": "BLOCKED"}
+                    elif helper is workflow_steps._live_progress_case:
+                        expected_statuses = {"S-027.1": "FAIL", "S-027.2": "BLOCKED", "S-027.3": "BLOCKED"}
+                    elif helper is workflow_steps._rerun_case:
+                        expected_statuses = {"S-143.1": "BLOCKED", "S-143.2": "BLOCKED",
+                                             "S-143.3": "BLOCKED", "S-143.4": "FAIL"}
+                    else:
+                        expected_statuses = {claim: "FAIL" for claim in expected_claims}
+                    self.assertEqual(statuses, expected_statuses)
         finally:
             workflow_steps.run_cli = old_run_cli
             workflow_steps.run_pty_command = old_pty

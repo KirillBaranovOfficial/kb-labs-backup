@@ -186,17 +186,18 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def test_live_registry_ux_step_is_registered_as_s203_claim(self):
         step = "MCP UX result contract from live registry"
-        local = {name: cases for name, _, _, cases, _ in checks("local")}
-        secured = {name: cases for name, _, _, cases, _ in checks("secured")}
+        local = {name: cases for name, _, _, cases, _, _ in checks("local")}
+        secured = {name: cases for name, _, _, cases, _, _ in checks("secured")}
         self.assertEqual(local[step], ["S-203.2", "S-203.6"])
         self.assertEqual(secured[step], ["S-203.2", "S-203.6", "S-045.6", "S-140.7"])
 
     def test_platform_readiness_claims_both_gateway_and_project_workflow_checks(self):
-        name, capability, check, cases, requires = next(
+        name, capability, check, cases, requires, runners = next(
             row for row in checks("local") if row[0] == "platform readiness (gateway + project workflow)")
         self.assertEqual((name, capability, cases), (
             "platform readiness (gateway + project workflow)", "gateway", ["PC-002.3"]))
         self.assertEqual(requires, ("step:registered project setup",))
+        self.assertEqual(runners, ())
         with patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": "test-token"}), \
                 patch("service_runner.expect_json", return_value=None) as expect_json, \
                 patch("service_runner.expect_project_service_health", return_value=None) as expect_health:
@@ -227,8 +228,8 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 patch("service_runner.expect_json", return_value=None) as expect_json, \
                 patch("service_runner.expect_project_service_health", return_value=None) as expect_health:
             rows = list(checks("secured"))
-            login_name, _, login_check, _, _ = rows[0]
-            readiness_name, _, readiness_check, _, _ = next(
+            login_name, _, login_check, _, _, _ = rows[0]
+            readiness_name, _, readiness_check, _, _, _ = next(
                 row for row in rows if row[0] == "platform readiness (gateway + project workflow)")
             self.assertEqual(login_name, "secured admin CLI login")
             self.assertIsNone(login_check())
@@ -250,7 +251,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (200, {"projectRuntimes": {"runtimes": [{"projectId": "prj_a", "state": "ready"}]}}, {}),
             (200, {"status": "healthy"}, {}),
         ]
-        checks_by_name = {name: check for name, _, check, _, _ in checks("local")}
+        checks_by_name = {name: check for name, _, check, _, _, _ in checks("local")}
         with patch("service_runner.PROJECT_ID", "prj_a"), \
                 patch.dict(os.environ, {"KB_JOURNEY_PROJECT_ROOT": project_root}), \
                 patch("service_runner.request_ux_success", side_effect=responses) as request:
