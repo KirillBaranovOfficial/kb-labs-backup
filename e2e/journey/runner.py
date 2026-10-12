@@ -471,7 +471,7 @@ def human_text_is_clean(output: str):
         fail("human output contains a stack trace")
 
 
-def append_summary(passed: bool):
+def finalize_run(passed: bool) -> int:
     global SELECTED_CLAIM_COMPLETION_CHECKED
     report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
     if CASE_JOURNEY is not None and not SELECTED_CLAIM_COMPLETION_CHECKED:
@@ -535,6 +535,7 @@ def append_summary(passed: bool):
                                           env=BASE_ENV)
     write_scoreboards(report.parent, case_catalog_root())
     print_report_text("\n".join(lines), env=BASE_ENV, flush=True)
+    return 0 if passed else failure_exit()
 
 
 def extract_request(payload):
@@ -809,8 +810,7 @@ def main():
         passed = "KB_INSTALL_NODE_VERSION" in launcher.stdout and "Node.js 24" in launcher.stdout
         if not passed:
             fail(f"wrong Node major: expected KB_INSTALL_NODE_VERSION and Node 24 hint; {launcher.stdout.strip()[:300]}")
-        append_summary(passed)
-        return 0 if passed else failure_exit()
+        return finalize_run(passed)
 
     if VARIANT == "occupied-port":
         listener_command = ["python3", "-u", "-c", "import http.server; s=http.server.HTTPServer(('0.0.0.0',4000),http.server.SimpleHTTPRequestHandler); print('ready', flush=True); s.serve_forever()"]
@@ -827,12 +827,10 @@ def main():
     result, elapsed = run([INSTALLER, "--version", "journey-candidate"], env=env, timeout=90)
     TIMES["install.sh"] = elapsed
     if not require(result, step="install.sh"):
-        append_summary(False)
-        return failure_exit()
+        return finalize_run(False)
     if not (BIN / "kb-create").exists():
         fail("install.sh: kb-create binary was not installed")
-        append_summary(False)
-        return failure_exit()
+        return finalize_run(False)
 
     launcher = str(BIN / "kb-create")
     ACTIVE_LAUNCHER = launcher
@@ -857,8 +855,7 @@ def main():
         CASE_JOURNEY, journey_value("KB_JOURNEY_GIT_REVISION", ""), candidate)
     if provenance.status != "PASS":
         fail(provenance.message or "candidate provenance check failed")
-        append_summary(False)
-        return failure_exit()
+        return finalize_run(False)
     record_case("launcher version", version_ok,
                "kb-create --version did not print the launcher version", cases=["PC-001.1"])
     if VARIANT == "occupied-port":
@@ -869,8 +866,7 @@ def main():
         passed = result.returncode != 0 and "KB_INSTALL_PORT_IN_USE" in result.stdout and "4000" in result.stdout
         if not passed:
             fail(f"port conflict: expected KB_INSTALL_PORT_IN_USE for port 4000; {' '.join(result.stdout.split())[-500:]}")
-        append_summary(passed)
-        return 0 if passed else failure_exit()
+        return finalize_run(passed)
     first_admin_shown_once = False
     install_plan_summary_ok = False
     if FRONT == "human" and not VARIANT.endswith("secured"):
@@ -936,15 +932,12 @@ def main():
             passed = result.returncode == 0 and Path(root).is_absolute() and root == str(PLATFORM.resolve())
             if not passed:
                 fail(f"relative platform root: expected a successful plan with an absolute normalized root; {' '.join(result.stdout.split())[-500:]}")
-            append_summary(passed)
-            return 0 if passed else failure_exit()
+            return finalize_run(passed)
         if handle_json_install_failure(operation, result):
-            append_summary(False)
-            return failure_exit()
+            return finalize_run(False)
         if not require(result, step=f"kb-create {operation} --json"):
             cleanup_partial_install(outer_graph, env, launcher)
-            append_summary(False)
-            return failure_exit()
+            return finalize_run(False)
         if operation == "install":
             try:
                 records = [read_ux_cli_result(line, result.returncode)
@@ -1003,14 +996,12 @@ def main():
             except json.JSONDecodeError:
                 fail(f"kb-create {operation} --json: output was not valid JSON")
                 cleanup_partial_install(outer_graph, env, launcher)
-                append_summary(False)
-                return failure_exit()
+                return finalize_run(False)
             payload = envelope.get("data") if isinstance(envelope, dict) else None
             if envelope.get("ok") is not True or not isinstance(payload, dict):
                 fail(f"kb-create {operation} --json: result did not contain a success data object")
                 cleanup_partial_install(outer_graph, env, launcher)
-                append_summary(False)
-                return failure_exit()
+                return finalize_run(False)
         if operation == "plan":
             plan_payload = payload.get("plan", {})
             plan_ok = (result.returncode == 0
@@ -1040,8 +1031,7 @@ def main():
                 TIMES["apply"] += elapsed
                 if not require(result, step="kb-create apply --input launcher request"):
                     cleanup_partial_install(outer_graph, env, launcher)
-                    append_summary(False)
-                    return failure_exit()
+                    return finalize_run(False)
                 try:
                     read_ux_cli_result(result.stdout, result.returncode)
                     if result.returncode != 0:
@@ -1055,8 +1045,7 @@ def main():
         first = CASE_JOURNEY.result().first_failure or {}
         if (PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json").is_file():
             _run_final_uninstall(outer_graph, env, launcher)
-        append_summary(False)
-        return failure_exit()
+        return finalize_run(False)
 
     installed_status, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"],
                               env=env, timeout=120)
@@ -1117,8 +1106,7 @@ def main():
                                              "marketplace-fixtures", "adapters", "plugin-author",
                                              "workflow", "analytics", "studio"])
         _run_final_uninstall(outer_graph, env, launcher)
-        append_summary(False)
-        return failure_exit()
+        return finalize_run(False)
 
     verify_listener_ownership()
 
@@ -1285,8 +1273,7 @@ def main():
         block_outer_dependents(outer_graph, ["auth", "project", "marketplace", "marketplace-fixtures",
                                              "adapters", "plugin-author", "workflow", "analytics", "studio"])
         _run_final_uninstall(outer_graph, env, launcher)
-        append_summary(False)
-        return failure_exit()
+        return finalize_run(False)
 
     for command, key in (("status", ""), ("doctor", "")):
         result, _ = run([launcher, command, "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
@@ -1721,16 +1708,14 @@ def main():
             block_outer_dependents(outer_graph, ["marketplace", "marketplace-fixtures", "adapters",
                                                  "plugin-author", "workflow", "analytics", "studio"])
             _run_final_uninstall(outer_graph, env, launcher)
-            append_summary(False)
-            return failure_exit()
+            return finalize_run(False)
         handoff = project_fixture_handoff(project_fixture_file)
         if isinstance(handoff, str):
             fail(f"project B fixture handoff failed: {handoff}")
             block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
                                                  "workflow", "analytics", "studio"])
             _run_final_uninstall(outer_graph, env, launcher)
-            append_summary(False)
-            return failure_exit()
+            return finalize_run(False)
         project_b_id, project_b_root_value = handoff
         service_env["KB_JOURNEY_PROJECT_B_ID"] = project_b_id
         service_env["KB_JOURNEY_PROJECT_B_ROOT"] = project_b_root_value
@@ -2035,8 +2020,7 @@ def main():
             log_group_exception("platform update variants")
             fail(f"platform update variants: {error}")
     passed = _run_final_uninstall(outer_graph, env, launcher)
-    append_summary(passed)
-    return 0 if passed else failure_exit()
+    return finalize_run(passed)
 
 
 def cleanup() -> None:
@@ -2063,8 +2047,7 @@ if __name__ == "__main__":
         if (ACTIVE_OUTER_GRAPH is not None and ACTIVE_MAIN_ENV is not None and ACTIVE_LAUNCHER
                 and (PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json").is_file()):
             _run_final_uninstall(ACTIVE_OUTER_GRAPH, ACTIVE_MAIN_ENV, ACTIVE_LAUNCHER)
-        append_summary(False)
-        exit_code = 1
+        exit_code = finalize_run(False)
     finally:
         cleanup()
     raise SystemExit(exit_code)
