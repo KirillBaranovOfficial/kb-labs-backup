@@ -11,6 +11,74 @@ from service_steps import Journey
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
+    def _run_node_guard_terminal_path(self, *, execute_selected: bool) -> tuple[int, str, str, bool]:
+        with tempfile.TemporaryDirectory(prefix="journey-final-outcome-") as temporary:
+            root = Path(temporary)
+            report = root / "summary" / "journey-summary.md"
+            with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as import_home:
+                with patch("tempfile.mkdtemp", return_value=import_home):
+                    runner = importlib.import_module("runner")
+
+            selection = "S-042.1,S-042.2"
+            completed = runner.subprocess.CompletedProcess(
+                ["install.sh", "--version"], 0,
+                stdout="KB_INSTALL_NODE_VERSION Node.js 24", stderr="",
+            )
+
+            def run_node_guard(*_args, **_kwargs):
+                if execute_selected:
+                    for claim_id in selection.split(","):
+                        runner.CASE_JOURNEY.step(
+                            f"claim {claim_id}", "test", lambda: None, cases=[claim_id])
+                return completed, 0.0
+
+            with patch.dict("os.environ", {
+                    "KB_JOURNEY_SELECTED_STEPS": selection,
+                    "KB_JOURNEY_SUMMARY": str(report),
+                    "HOME": str(root),
+                }, clear=False), \
+                 patch.object(runner, "HOME", root), \
+                 patch.object(runner, "BIN", root / "missing-bin"), \
+                 patch.object(runner, "PLATFORM", root / "platform"), \
+                 patch.object(runner, "VARIANT", "wrong-node"), \
+                 patch.object(runner, "BASE_ENV", {
+                     **runner.BASE_ENV,
+                     "KB_CREATE_DOWNLOAD_BASE_URL": "http://journey.invalid/candidate",
+                 }), \
+                 patch.object(runner, "FIRST_FAILURE", ""), \
+                 patch.object(runner, "run", side_effect=run_node_guard), \
+                 patch.object(runner, "write_scoreboards"), \
+                 patch.object(runner, "dump_failure_state") as dump_failure_state:
+                exit_code = runner.main()
+                summary = report.read_text(encoding="utf-8")
+                return exit_code, summary, runner.FIRST_FAILURE, dump_failure_state.called
+
+    def test_main_terminal_outcome_fails_exit_and_summary_for_missing_selection(self):
+        exit_code, summary, first_failure, dumped_state = self._run_node_guard_terminal_path(
+            execute_selected=False)
+
+        self.assertEqual(exit_code, 1)
+        self.assertTrue(dumped_state)
+        self.assertIn("| FAIL |", summary)
+        self.assertIn(
+            "selected claim steps did not execute: S-042.1, S-042.2; "
+            "the selected runner did not call their registered step functions",
+            summary,
+        )
+        self.assertEqual(
+            first_failure,
+            "selected claim steps did not execute: S-042.1, S-042.2; "
+            "the selected runner did not call their registered step functions",
+        )
+
+    def test_main_terminal_outcome_passes_when_all_selected_claims_executed(self):
+        exit_code, summary, _first_failure, dumped_state = self._run_node_guard_terminal_path(
+            execute_selected=True)
+
+        self.assertEqual(exit_code, 0)
+        self.assertFalse(dumped_state)
+        self.assertIn("| PASS |", summary)
+
     def test_capture_case_failure_can_read_before_claims_split_across_journeys_run(self):
         with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as temporary:
             with patch("tempfile.mkdtemp", return_value=temporary):
