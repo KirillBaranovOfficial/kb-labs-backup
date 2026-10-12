@@ -301,6 +301,7 @@ class GatewayStepTests(unittest.TestCase):
             return 200, {"events": []}
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_PROJECT_ID": "prj_fixture",
         }, clear=False), patch("gateway_steps.run_llm_provider_steps"), \
                 patch("gateway_steps._http", side_effect=fake_http):
             journey = Journey("local", "planned-adapter-catalog-not-in-extras")

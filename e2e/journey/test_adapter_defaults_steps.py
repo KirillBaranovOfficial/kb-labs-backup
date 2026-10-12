@@ -53,6 +53,30 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertEqual(config_path.read_bytes(), original)
             self.assertEqual(commands, [["kb-create", "restart", "--platform-root", str(root), "--json"]])
 
+    def test_restore_reports_successful_restart_that_leaves_different_valid_config(self):
+        with tempfile.TemporaryDirectory(prefix="kb-adapter-restore-wrong-config-") as directory:
+            root = Path(directory)
+            config_path = root / ".kb" / "kb.config.json"
+            config_path.parent.mkdir()
+            original = b'{"platform":{"adapters":{"storage":"@kb-labs/adapters-fs"}}}\n'
+            config_path.write_bytes(b'{"platform":{"adapters":{}}}\n')
+
+            def runner(command, **_kwargs):
+                config_path.write_text(json.dumps({"platform": {"adapters": {"storage": "wrong"}}}))
+                return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
+
+            error = _restore_platform_adapter_fixture(
+                config_path, original, root / "project", root, {"HOME": directory}, runner,
+            )
+
+            self.assertEqual(error, "platform adapter config differs from its snapshot at keys: platform.adapters.storage")
+            self.assertNotIn("wrong", error)
+            journey = Journey("local", "adapter-restore-wrong-config")
+            cleanup = journey.step("restore adapter journey fixture state", "adapter",
+                                   lambda: error, role="lifecycle")
+            self.assertEqual(cleanup.status, "FAIL")
+            self.assertIn("platform.adapters.storage", cleanup.message)
+
     def test_workflow_readiness_claim_fails_when_required_upstream_is_down(self):
         with self.assertRaisesRegex(RuntimeError, "required upstreams not ready: marketplace"):
             _assert_required_upstreams_ready({
@@ -412,6 +436,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {"S-054.21", "S-054.22"} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
+            cleanup = next(step for step in journey.steps if step.name == "restore adapter journey fixture state")
+            self.assertEqual(cleanup.status, "PASS")
             self.assertEqual(claims, expected)
             workflow_rows = [
                 json.loads(line)
