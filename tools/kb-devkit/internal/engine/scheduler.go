@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -32,12 +33,17 @@ type RunOptions struct {
 
 // RunResult is the aggregate result of a scheduler run.
 type RunResult struct {
-	OK      bool
-	Results []TaskResult
+	OK           bool
+	Scheduled    int
+	Results      []TaskResult
+	BlockedTasks []BlockedTask
 }
 
 func (r RunResult) Summary() RunSummary {
-	s := RunSummary{Total: len(r.Results)}
+	s := RunSummary{
+		Scheduled:    r.Scheduled,
+		BlockedTasks: append([]BlockedTask{}, r.BlockedTasks...),
+	}
 	for _, res := range r.Results {
 		switch {
 		case res.Cached:
@@ -48,15 +54,25 @@ func (r RunResult) Summary() RunSummary {
 			s.Failed++
 		}
 	}
+	s.Skipped = s.Scheduled - len(r.Results)
 	return s
 }
 
-// RunSummary is the JSON summary envelope.
+// RunSummary partitions every scheduled task by its execution outcome.
 type RunSummary struct {
-	Total  int `json:"total"`
-	Passed int `json:"passed"`
-	Failed int `json:"failed"`
-	Cached int `json:"cached"`
+	Scheduled    int           `json:"scheduled"`
+	Passed       int           `json:"passed"`
+	Failed       int           `json:"failed"`
+	Cached       int           `json:"cached"`
+	Skipped      int           `json:"skipped"`
+	BlockedTasks []BlockedTask `json:"blockedTasks"`
+}
+
+// BlockedTask records the downstream task count omitted after a failed task.
+type BlockedTask struct {
+	Package    string `json:"package"`
+	Task       string `json:"task"`
+	Dependents int    `json:"dependents"`
 }
 
 // Run builds the (package × task) DAG and executes it in topological order.
@@ -214,9 +230,44 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 				_ = states.SetDirty(k.pkg, k.task, "not_executed")
 			}
 		}
+		blockedTasks := failedTaskDependents(allResults, revDeps, executed)
+		return RunResult{OK: false, Scheduled: total, Results: allResults, BlockedTasks: blockedTasks}, nil
 	}
 
-	return RunResult{OK: ok, Results: allResults}, nil
+	return RunResult{OK: ok, Scheduled: total, Results: allResults, BlockedTasks: []BlockedTask{}}, nil
+}
+
+func failedTaskDependents(results []TaskResult, reverse map[nodeKey][]nodeKey, executed map[nodeKey]bool) []BlockedTask {
+	blocked := make([]BlockedTask, 0)
+	for _, result := range results {
+		if result.OK || result.Cached {
+			continue
+		}
+		root := nodeKey{pkg: result.Package, task: result.Task}
+		visited := make(map[nodeKey]bool)
+		queue := append([]nodeKey(nil), reverse[root]...)
+		count := 0
+		for len(queue) > 0 {
+			dependent := queue[0]
+			queue = queue[1:]
+			if visited[dependent] {
+				continue
+			}
+			visited[dependent] = true
+			if !executed[dependent] {
+				count++
+			}
+			queue = append(queue, reverse[dependent]...)
+		}
+		blocked = append(blocked, BlockedTask{Package: result.Package, Task: result.Task, Dependents: count})
+	}
+	sort.Slice(blocked, func(i, j int) bool {
+		if blocked[i].Package == blocked[j].Package {
+			return blocked[i].Task < blocked[j].Task
+		}
+		return blocked[i].Package < blocked[j].Package
+	})
+	return blocked
 }
 
 func containsTask(tasks []string, wanted string) bool {
@@ -542,9 +593,10 @@ func UnionPackages(ws *workspace.Workspace, a, b []workspace.Package) []workspac
 // directly changed packages + all their downstream dependents (BFS).
 //
 // Strategy is controlled by cfg.Affected.Strategy (default: "git").
-//   git        — single `git diff --name-only HEAD` from ws root
-//   submodules — walks .gitmodules, runs git diff inside each submodule
-//   command    — runs cfg.Affected.Command, reads file paths from stdout
+//
+//	git        — single `git diff --name-only HEAD` from ws root
+//	submodules — walks .gitmodules, runs git diff inside each submodule
+//	command    — runs cfg.Affected.Command, reads file paths from stdout
 func AffectedPackages(ws *workspace.Workspace, cfg *config.DevkitConfig) ([]workspace.Package, error) {
 	strategy := cfg.Affected.Strategy
 	if strategy == "" {
