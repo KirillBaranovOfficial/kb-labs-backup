@@ -658,7 +658,7 @@ func TestStartFailureWhenHostExits(t *testing.T) {
 }
 
 func TestStartIdentityTimeoutTerminatesAndReapsHost(t *testing.T) {
-	f := newRunner(t, 10, 5)
+	f := newRunner(t, 1, 5)
 	childPID := 0
 	f.runner.identityReader = func(pid int) (string, error) {
 		childPID = pid
@@ -685,6 +685,35 @@ func TestStartIdentityTimeoutTerminatesAndReapsHost(t *testing.T) {
 	if conn, dialErr := net.DialTimeout("tcp", f.runner.Spec.HealthAddress(), 200*time.Millisecond); dialErr == nil {
 		_ = conn.Close()
 		t.Fatal("host listener remains after identity timeout")
+	}
+}
+
+func TestStartWaitsPastFormerIdentityLimitForDelayedMatch(t *testing.T) {
+	f := newRunner(t, 3, 5)
+	started := time.Now()
+	childPID := 0
+	f.runner.identityReader = func(pid int) (string, error) {
+		childPID = pid
+		if time.Since(started) < 1100*time.Millisecond {
+			return "", errProcessEnvironmentNotReady
+		}
+		return ProcessIdentityForPID(pid)
+	}
+	info, err := startProcessForTest(t, f.runner, context.Background())
+	if err != nil {
+		t.Fatalf("delayed valid identity should start successfully: %v", err)
+	}
+	if info.PID == 0 || info.PID != childPID || !processAlive(info.PID) {
+		t.Fatalf("host PID %d is not alive after delayed identity verification", info.PID)
+	}
+	if _, err := os.Stat(f.runner.State.HostPID()); err != nil {
+		t.Fatalf("verified host PID record was not published: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 1100*time.Millisecond {
+		t.Fatalf("identity wait lasted %s; want more than the former one-second bound", elapsed)
+	}
+	if _, err := f.runner.Stop(context.Background()); err != nil {
+		t.Fatalf("stop delayed host: %v", err)
 	}
 }
 

@@ -56,7 +56,7 @@ func TestPostStartIdentityRegression(t *testing.T) {
 			waitErr <- command.Wait()
 			close(exited)
 		}()
-		identityStatus := host.WaitForProcessIdentity(command.Process.Pid, identity, exited, time.Second)
+		identityStatus := host.WaitForProcessIdentityWithReader(command.Process.Pid, identity, exited, time.Now().Add(time.Second), nil)
 		_ = stdin.Close()
 		if err := <-waitErr; err != nil {
 			t.Fatalf("child %d exit: %v", index, err)
@@ -148,7 +148,7 @@ func TestExecChainIdentityChecks(t *testing.T) {
 		case host.ProcessIdentityMismatch:
 			oldMismatches++
 		}
-		if got := host.WaitForProcessIdentity(process.Process.Pid, identity, exited, time.Second); got != host.ProcessIdentityMatch {
+		if got := host.WaitForProcessIdentityWithReader(process.Process.Pid, identity, exited, time.Now().Add(time.Second), nil); got != host.ProcessIdentityMatch {
 			boundedFailures++
 		}
 		_ = stdin.Close()

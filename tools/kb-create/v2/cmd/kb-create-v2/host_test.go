@@ -913,12 +913,13 @@ func TestSupervisorIdentityTimeoutTerminatesAndReapsChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	runner.Spec.ReadyTimeout = 100 * time.Millisecond
 	launcher := filepath.Join(t.TempDir(), "supervisor-launcher")
 	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	childPID := 0
-	command := hostCommand{PlatformRoot: inst.root, Executable: launcher, identityWaitTimeout: time.Millisecond,
+	command := hostCommand{PlatformRoot: inst.root, Executable: launcher,
 		identityReader: func(pid int) (string, error) {
 			childPID = pid
 			return "", errors.New("injected process environment unavailable")

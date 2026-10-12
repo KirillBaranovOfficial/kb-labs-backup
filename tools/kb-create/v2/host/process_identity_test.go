@@ -4,7 +4,23 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
+
+func TestProductIdentityWaitRetriesInjectedUndeterminedReads(t *testing.T) {
+	const undeterminedReads = 8
+	reads := 0
+	got := WaitForProcessIdentityWithReader(os.Getpid(), "launch-token", nil, time.Now().Add(time.Second), func(int) (string, error) {
+		reads++
+		if reads <= undeterminedReads {
+			return "", errors.New("environment not readable yet")
+		}
+		return "launch-token", nil
+	})
+	if got != ProcessIdentityMatch || reads != undeterminedReads+1 {
+		t.Fatalf("identity status=%v after %d reads; want match after %d undetermined reads", got, reads, undeterminedReads)
+	}
+}
 
 // case: S-025.8, PC-001.9
 func TestProcessIdentityRejectsForeignProcessWithEqualStartValue(t *testing.T) {
