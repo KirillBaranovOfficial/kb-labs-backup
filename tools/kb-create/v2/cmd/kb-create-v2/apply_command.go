@@ -61,8 +61,8 @@ func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps 
 		if err := writer.Fail(failure); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 		}
-	} else if err := writer.Result(result); err != nil {
-		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Apply result could not be written.")
+	} else if written, emitFailure := emitFirstAdminResult(result, "apply", func() error { return writer.Result(result) }); emitFailure != nil {
+		return finishFirstAdminResultFailure(writer, deps.Command, written, emitFailure)
 	}
 	exitCode := diag.ExitOK
 	if failure != nil {
@@ -372,14 +372,14 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	if securedAdmin {
 		var failure *diag.Diag
-		firstAdmin, failure = firstAdminDisclosure(store, adminEmail, bootstrapCompleted, platformRoot)
+		firstAdmin, failure = firstAdminResult(store, adminEmail, platformRoot)
 		if failure != nil {
 			return applyCommandResult{}, failure
 		}
 	}
 	return applyCommandResult{OK: true, Operation: "apply", Receipt: applied, LogPath: logPath,
 		Profile: applied.Plan.ServiceGraph.Profile, Services: applied.Plan.ServiceGraph.Services,
-		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin}, nil
+		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, disclosureStoreRoot: store.PlatformRoot}, nil
 }
 
 func unsupportedPlatformLayout(root string, cause error) *diag.Diag {

@@ -10,6 +10,7 @@ import (
 
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
+	clikitresult "github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/clikit/stream"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -18,6 +19,7 @@ import (
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/kb-labs/create/v2/wizard"
+	"github.com/spf13/cobra"
 )
 
 type installCommandInput struct {
@@ -283,10 +285,23 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 			return streamCompletion{ExitCode: writer.ExitCode()}, nil
 		}
 	}
-	if err := writer.Result(result); err != nil {
-		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install result could not be written.")
+	if written, emitFailure := emitFirstAdminResult(result, "install", func() error { return writer.Result(result) }); emitFailure != nil {
+		return finishFirstAdminResultFailure(writer, deps.Command, written, emitFailure)
 	}
 	if err := writer.Finish(diag.ExitOK); err != nil {
+		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
+	}
+	return streamCompletion{ExitCode: writer.ExitCode()}, nil
+}
+
+func finishFirstAdminResultFailure(writer *stream.Writer, command *cobra.Command, written bool, failure *diag.Diag) (streamCompletion, *diag.Diag) {
+	if written {
+		errorWriter := clikitcommand.FromCommand(command).ErrorWriter()
+		clikitresult.RenderDiag(errorWriter, errorWriter, failure, clikitresult.ModeHuman)
+	} else if err := writer.Fail(failure); err != nil {
+		return streamCompletion{}, failure
+	}
+	if err := writer.Finish(diag.ExitCode(failure)); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
 	return streamCompletion{ExitCode: writer.ExitCode()}, nil

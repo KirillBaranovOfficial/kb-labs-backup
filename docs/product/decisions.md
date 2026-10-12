@@ -51,14 +51,21 @@ S-050.5, S-050.6, S-223.
 
 ## 2026-10-09
 
-### Secured install creates and discloses the first administrator credential once
+### First-administrator disclosure is recorded after a successful result write
 
 A secured install with a first-admin email and no supplied password generates a
-password, seeds the administrator, and displays the email and password once in
-human output or once in the JSON install result. The password lives in the
-platform secret store and is absent from the plan, receipt, logs, and later
-commands. `kb-create doctor --recover` remains for account recovery after
-installation. Cases: PC-001, S-040, S-100.
+password and seeds the administrator. The installer records disclosure only
+after a result containing that credential was successfully written. Failures
+before the result write leave the credential eligible for the next successful
+install or apply result. A crash after the write and before the marker can show
+the credential again on retry; avoiding that duplicate is less important than
+avoiding lockout when the only generated password was never delivered. The
+password remains in the platform secret store and is absent from the plan,
+receipt, logs, and diagnostics. If the disclosure marker exists or the password
+is absent, a later result gives the administrator's email and the exact
+stop/recovery/start sequence without a password. `kb-create doctor --recover`
+remains for account recovery after installation. Cases: PC-001, S-040, S-100,
+S-222.
 
 ### Marketplace integrity pins may bypass registry freshness for the pinned artifact
 

@@ -147,6 +147,12 @@ func callDescriptor(cmd *cobra.Command, descriptor operationDescriptor, values m
 			command.Printf("%s\n", human)
 		}
 	}
+	if applyResult, ok := output.(applyCommandResult); ok {
+		return result.ReturnWithEmitter(output, func(write func() error) *diag.Diag {
+			_, failure := emitFirstAdminResult(applyResult, descriptor.Name, write)
+			return failure
+		})
+	}
 	return result.Return(output)
 }
 

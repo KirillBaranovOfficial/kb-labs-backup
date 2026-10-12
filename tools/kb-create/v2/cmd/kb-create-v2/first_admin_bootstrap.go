@@ -153,34 +153,56 @@ func bootstrapOutcomeFailure(platformRoot, cause string) *diag.Diag {
 		"Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot)+"` to inspect Gateway authentication readiness and resolve the issue, then rerun `kb-create install`.", fmt.Errorf("%s", cause))
 }
 
-func firstAdminDisclosure(store secrets.Store, adminEmail string, completed bool, platformRoot string) (*firstAdminCredential, *diag.Diag) {
+func firstAdminResult(store secrets.Store, adminEmail string, platformRoot string) (*firstAdminCredential, *diag.Diag) {
 	bootstrapState, present, readErr := store.Get(secrets.BootstrapCompleted)
-	generated, generatedErr := store.Exists(secrets.BootstrapGenerated)
 	disclosed, disclosedErr := store.Exists(secrets.BootstrapDisclosed)
-	if readErr != nil || generatedErr != nil || disclosedErr != nil {
-		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator bootstrap state could not be read", "check that the platform root is writable, then rerun `kb-create install`", errors.Join(readErr, generatedErr, disclosedErr))
+	if readErr != nil || disclosedErr != nil {
+		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator bootstrap state could not be read", "check that the platform root is writable, then rerun `kb-create install`", errors.Join(readErr, disclosedErr))
 	}
-	if !present || bootstrapState != "provisioned" || !generated {
+	if !present || bootstrapState != "provisioned" {
 		return nil, nil
 	}
 	if disclosed {
 		return previouslyDisclosedFirstAdmin(adminEmail, platformRoot), nil
 	}
-	if completed {
-		recovery := buildFirstAdminRecoveryCommands(platformRoot, adminEmail)
-		return nil, contracts.NewDiag(contracts.CodeApplyFailed,
-			"the first administrator credential was not disclosed during the original install and cannot be disclosed after bootstrap completion",
-			"Sign in with the administrator's current password. If no administrator can sign in, run `"+recovery.Stop+"`, then `"+recovery.Doctor+"`, then `"+recovery.Start+"`.",
-			fmt.Errorf("bootstrap completion predates the undisclosed credential state"))
-	}
 	password, passwordPresent, passwordErr := store.Get("gateway.bootstrap.password")
-	if passwordErr != nil || !passwordPresent {
-		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the generated first administrator password could not be read", "check that the platform root is writable, then rerun `kb-create install`", passwordErr)
+	if passwordErr != nil {
+		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read", "check that the platform root is writable, then rerun `kb-create install`", passwordErr)
 	}
-	if err := store.Put(secrets.BootstrapDisclosed, "true"); err != nil {
-		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator credential disclosure could not be recorded", "check that the platform root is writable, then rerun `kb-create install`", err)
+	if !passwordPresent {
+		return previouslyDisclosedFirstAdmin(adminEmail, platformRoot), nil
 	}
 	return &firstAdminCredential{State: firstAdminDisclosed, Email: adminEmail, Password: password}, nil
+}
+
+func setBootstrapDisclosed(store secrets.Store) error {
+	return store.Put(secrets.BootstrapDisclosed, "true")
+}
+
+func emitFirstAdminResult(value applyCommandResult, operation string, emit func() error) (bool, *diag.Diag) {
+	if err := emit(); err != nil {
+		platformRoot := value.Receipt.Plan.Request.PlatformRoot
+		retry := contracts.ShellCommand("kb-create", operation, "--platform-root", platformRoot)
+		return false, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the command result could not be written",
+			"Restore writable stdout, then rerun `"+retry+"` to receive the first-administrator result.", err)
+	}
+	if value.FirstAdmin == nil || value.FirstAdmin.Password == "" {
+		return true, nil
+	}
+	if value.disclosureStoreRoot == "" {
+		return true, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the first-administrator result was written, but its disclosure state could not be recorded",
+			"Check the platform root permissions, then rerun `"+contracts.ShellCommand("kb-create", operation, "--platform-root", value.Receipt.Plan.Request.PlatformRoot)+"`.",
+			fmt.Errorf("first-administrator disclosure store root is missing"))
+	}
+	store := secrets.Store{PlatformRoot: value.disclosureStoreRoot}
+	if err := setBootstrapDisclosed(store); err != nil {
+		return true, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the first-administrator result was written, but its disclosure state could not be recorded",
+			"Check the platform root permissions, then rerun `"+contracts.ShellCommand("kb-create", operation, "--platform-root", value.Receipt.Plan.Request.PlatformRoot)+"`.", err)
+	}
+	return true, nil
 }
 
 func previouslyDisclosedFirstAdmin(adminEmail, platformRoot string) *firstAdminCredential {

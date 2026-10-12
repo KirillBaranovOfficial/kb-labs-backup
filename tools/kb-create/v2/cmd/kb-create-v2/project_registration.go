@@ -87,6 +87,9 @@ func existingProjectSelection(platformRoot, selected string) (bool, *diag.Diag) 
 		if active.Plan.Request.ProjectRoot == "" {
 			return false, nil
 		}
+		if selectedPath == active.Plan.Request.ProjectRoot {
+			return false, nil
+		}
 		return true, missingProjectIdentityFailure(active, platformRoot)
 	}
 	if selectedPath != active.ProjectSelectedPath && selectedPath != active.ProjectCanonicalPath {

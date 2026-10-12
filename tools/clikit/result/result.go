@@ -50,12 +50,19 @@ type CommandOutput struct {
 // Returned marks a handler value for the shared command boundary to render.
 type Returned struct {
 	Data any
+	Emit func(func() error) *diag.Diag
 }
 
 func (r *Returned) Error() string { return "command result" }
 
 // Return hands a value to the shared command boundary without writing it.
 func Return(data any) error { return &Returned{Data: data} }
+
+// ReturnWithEmitter lets a command wrap the shared result write with work that
+// must happen only after the result has been written successfully.
+func ReturnWithEmitter(data any, emit func(func() error) *diag.Diag) error {
+	return &Returned{Data: data, Emit: emit}
+}
 
 // ReturnedData extracts a handler value without exposing it as an error.
 func ReturnedData(err error) (any, bool) {
@@ -64,6 +71,21 @@ func ReturnedData(err error) (any, bool) {
 		return returned.Data, true
 	}
 	return nil, false
+}
+
+// EmitReturned writes a returned result through its command-owned emitter, or
+// directly when the result has no post-write behavior.
+func EmitReturned(err error, write func() error) *diag.Diag {
+	var returned *Returned
+	if errors.As(err, &returned) && returned != nil && returned.Emit != nil {
+		return returned.Emit(write)
+	}
+	if writeErr := write(); writeErr != nil {
+		return diag.New("KB_RUNTIME_UNEXPECTED", "The command result could not be written.",
+			diag.WithCauseAndReason("the output writer returned an error: "+writeErr.Error()),
+			diag.WithHint("Restore a writable output destination, then rerun the command."))
+	}
+	return nil
 }
 
 // Streamed marks a command whose shared stream writer emitted its own terminal
