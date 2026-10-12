@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
-from service_steps import FlowGraph, Journey
+from service_steps import FlowGraph, Journey, JourneyResult
 from journey_dependencies import Dependency
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
                          print_report_text, read_ux_cli_result, read_ux_http_result, run_command,
@@ -1161,6 +1161,10 @@ def main() -> int:
         output_payload = {**result.__dict__, "states": graph.states}
         output_payload = write_report_json(args.output, output_payload, env=os.environ)
     print_report_text(json.dumps(output_payload, indent=2), env=os.environ)
+    return journey_result_exit_code(result)
+
+
+def journey_result_exit_code(result: JourneyResult) -> int:
     return 0 if result.status == "PASS" else 1
 
 

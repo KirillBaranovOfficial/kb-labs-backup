@@ -27,7 +27,7 @@ _active_memory_step: ContextVar[tuple[str, frozenset[str], frozenset[str]] | Non
 
 
 class JourneyMemory:
-    """The single in-memory store available to registered journey steps."""
+    """The declared in-memory value store used by journey steps that opt into it."""
 
     def __init__(self, declarations: Mapping[str, tuple[Iterable[str], Iterable[str]]]):
         self._declarations = {name: tuple(required) for name, (required, _) in declarations.items()}
@@ -37,8 +37,6 @@ class JourneyMemory:
     def register(self, name: str, requires: Iterable[str], provides: Iterable[str]) -> None:
         required_names = tuple(Dependency.parse(item).name for item in requires
                                if Dependency.parse(item).kind == "step")
-        for required_name in required_names:
-            self._declarations.setdefault(required_name, ())
         self._declarations[name] = required_names
         for key in provides:
             producer = self._producers.get(key)
@@ -60,6 +58,11 @@ class JourneyMemory:
             closure.add(name)
             pending.extend(self._declarations[name])
         return closure
+
+    def validate_requirements(self, requires: Iterable[str]) -> None:
+        required_names = tuple(Dependency.parse(item).name for item in requires
+                               if Dependency.parse(item).kind == "step")
+        self._closure(required_names)
 
     @contextmanager
     def activate(self, name: str, requires: Iterable[str], provides: Iterable[str]):
@@ -149,6 +152,14 @@ class Journey:
         required_items = tuple(requires)
         provided_items = tuple(provides)
         self.memory.register(name, required_items, provided_items)
+        try:
+            self.memory.validate_requirements(required_items)
+        except JourneyContractError as error:
+            selected = bool(self.selected_steps.intersection(case_ids))
+            details = {"selectionRole": "selected"} if selected else None
+            result = StepResult(name, capability, self.mode, "FAIL", 0.0, str(error), case_ids, details)
+            self.steps.append(result)
+            return result
         required = {Dependency.parse(item) for item in requires}
         selected = bool(self.selected_steps.intersection(case_ids))
         eligible_runners = set(runners)

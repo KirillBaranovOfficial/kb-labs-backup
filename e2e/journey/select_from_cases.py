@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Select journey entry points from release cases claimed by executable flows.
 
-The static dependency rail requires every `.step`/`.flow` recorder attribute in
-runner-reachable modules to be the direct callee of a call. Reflection such as
-`getattr(journey, name)` and `eval` is outside this AST rail. Runtime
-`Journey.step` checks every declared step or flow outcome in all run modes;
-`FlowGraph.flow` records flow outcomes for those checks. Thus a dependency the
-selector cannot see still produces a BLOCKED row for a selected claim, never a
-PASS.
+The declaration parser and the module-global-state lint inspect specific AST
+forms. They do not prove that all callback state is declared; closure-held
+state and FlowGraph state remain outside this lint. Runtime JourneyMemory
+checks apply to the keys explicitly routed through that container.
 """
 from __future__ import annotations
 from journey_values import journey_value
@@ -368,14 +365,19 @@ def _validate_dependency_declarations_cached(sources: tuple[str, ...], root: Pat
               for entry, graph in reachable.items()}
     validate_dependency_edges(declarations, reachable, graphs)
     reachable_sources = set().union(*reachable.values()) if reachable else set()
-    validate_registered_state_dependencies(reachable_sources, root)
+    lint_direct_module_global_state_handoffs(reachable_sources, root)
     validate_journey_environment_reads(reachable_sources, root)
     validate_runner_conditions(reachable_sources, root)
     return declarations
 
 
-def validate_registered_state_dependencies(sources: set[str], root: Path) -> None:
-    """Fail closed when a registered callback can reach module-owned mutable state."""
+def lint_direct_module_global_state_handoffs(sources: set[str], root: Path) -> None:
+    """Lint recognized direct callback/helper handoffs through mutable module globals.
+
+    This AST lint recognizes module-level dict/list/set/comprehension values and
+    non-whitelisted constructor calls, then follows direct callback references
+    and statically named helpers. It is not a complete state ownership check.
+    """
     for source in sorted(sources):
         if not source.endswith(".py"):
             continue
@@ -524,33 +526,62 @@ def validate_registered_state_dependencies(sources: set[str], root: Path) -> Non
             if len(registrations) > 1 and any(registrations.values()):
                 lines = ", ".join(str(line) for line in sorted(registrations))
                 raise ValueError(
-                    f"{source}:{lines}: registered callbacks share module-global mutable state "
-                    f"{state_name!r}; declare it in journey memory with provides= and requires=")
+                    f"{source}:{lines}: module-global-state lint detected registered callbacks "
+                    f"sharing recognized mutable global {state_name!r}; route shared state "
+                    "through journey memory with provides= and requires= when applicable")
 
 
 def validate_journey_environment_reads(sources: set[str], root: Path) -> None:
-    """Require KB_JOURNEY_* reads to pass through the journey_values accessor."""
+    """Lint direct os environment lookups; journey inputs must use the accessor."""
     for source in sorted(sources):
         if not source.endswith(".py") or source == "e2e/journey/journey_values.py":
             continue
         tree = _source_tree(source, root)
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+        def literal_key(expression: ast.expr) -> str | None:
+            if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+                return expression.value
+            if isinstance(expression, ast.Name):
+                owner = parents.get(expression)
+                while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    owner = parents.get(owner)
+                if owner is not None:
+                    values = []
+                    for candidate in ast.walk(owner):
+                        if isinstance(candidate, ast.Assign) and any(
+                                isinstance(target, ast.Name) and target.id == expression.id
+                                for target in candidate.targets):
+                            values.append(candidate.value)
+                        elif (isinstance(candidate, ast.AnnAssign)
+                              and isinstance(candidate.target, ast.Name)
+                              and candidate.target.id == expression.id and candidate.value is not None):
+                            values.append(candidate.value)
+                    if values and all(isinstance(value, ast.Constant) and isinstance(value.value, str)
+                                      for value in values):
+                        keys = {value.value for value in values if isinstance(value, ast.Constant)}
+                        return next(iter(keys)) if len(keys) == 1 else None
+            return None
+
+        def check_key(expression: ast.expr, node: ast.AST) -> None:
+            key = literal_key(expression)
+            if key is None:
+                raise ValueError(
+                    f"{source}:{node.lineno}: computed environment keys are outside the journey input "
+                    "lint; use journey_values.journey_value for harness inputs or a literal process key")
+            if key.startswith("KB_JOURNEY_"):
+                raise ValueError(
+                    f"{source}:{node.lineno}: {key} must be read through journey_values.journey_value")
+
         for node in ast.walk(tree):
             if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
                     and node.value.attr == "environ" and isinstance(node.value.value, ast.Name)
-                    and node.value.value.id == "os" and isinstance(node.ctx, ast.Load)
-                    and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str)
-                    and node.slice.value.startswith("KB_JOURNEY_")):
-                raise ValueError(
-                    f"{source}:{node.lineno}: {node.slice.value} must be read through journey_values.journey_value")
+                    and node.value.value.id == "os" and isinstance(node.ctx, ast.Load)):
+                check_key(node.slice, node)
             if not isinstance(node, ast.Call):
                 continue
             function = _call_name(node)
             if function not in {"get", "getenv"}:
-                continue
-            if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
-                continue
-            key = node.args[0].value
-            if not key.startswith("KB_JOURNEY_"):
                 continue
             is_os_getenv = (isinstance(node.func, ast.Attribute) and node.func.attr == "getenv"
                             and isinstance(node.func.value, ast.Name) and node.func.value.id == "os")
@@ -560,8 +591,9 @@ def validate_journey_environment_reads(sources: set[str], root: Path) -> None:
                                  and isinstance(node.func.value.value, ast.Name)
                                  and node.func.value.value.id == "os")
             if is_os_getenv or is_os_environ_get:
-                raise ValueError(
-                    f"{source}:{node.lineno}: {key} must be read through journey_values.journey_value")
+                if not node.args:
+                    raise ValueError(f"{source}:{node.lineno}: environment read has no literal key")
+                check_key(node.args[0], node)
 
 
 def full_runner_plans(root: Path) -> dict[str, list[str]]:

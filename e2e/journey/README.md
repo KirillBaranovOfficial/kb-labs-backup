@@ -71,13 +71,27 @@ python3 e2e/journey/select_from_cases.py --write-plan-baseline
 ```
 
 Review the ordered JSON diff before accepting a new baseline. Registered steps
-declare their state prerequisites with `requires=`; selected runs expand that
-same graph before dispatch. In-memory state shared by callbacks must use the
-journey memory contract (`provides=`/`requires=`), which reports undeclared
-reads and writes as harness failures. State on disk, such as the installed
-platform, host, or registered project, cannot be checked by that memory
-container: its producing install/start/registration steps must appear in the
-step's direct or transitive `requires=` chain.
+declare prerequisites with `requires=`; selection expands those declared edges
+before dispatch. The runtime `JourneyMemory` contract applies only to values
+already stored there: an undeclared read raises a harness-contract error and
+the FAIL row names its reader, key, and producer; an undeclared write names its
+writer and key.
+
+Two static checks are lints for specific syntax. The module-global-state lint
+recognizes module-level dict/list/set/comprehension values and non-whitelisted
+constructor calls, direct references from registered callbacks, and statically
+named helper calls; it reports recognized mutable globals shared by callbacks
+when at least one callback writes. The journey-environment lint checks direct
+`os.environ[...]`, `os.environ.get(...)`, and `os.getenv(...)` lookups: the key
+must be a literal or a local name assigned one literal value, and literal
+`KB_JOURNEY_*` keys must use `journey_values.journey_value`. These lints do not
+prove that every state handoff or environment access is declared.
+
+Callback state held in closures and `FlowGraph.states` is not covered by
+`JourneyMemory`, and no structural check yet requires each installed-platform
+step to depend on install/start/registration producers. Those gaps are the
+follow-up stream **journey state migration**; until it lands, do not treat the
+static lints or declared edges as proof of those broader properties.
 
 The local run verifies loopback access without login. The secured run creates
 an isolated admin during installation, creates and activates a member through
