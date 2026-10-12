@@ -104,6 +104,37 @@ describe('marketplace:sync', () => {
     expect(result).toMatchObject({ added: expect.any(Array), total: 1 });
   });
 
+  it('S-179.33: parses slash-star workspace globs in JSONC sync config', async () => {
+    mockedReadFile.mockResolvedValueOnce(
+      '{ "marketplace": { "sync": { "include": ["plugins/*/entry",], }, }, }',
+    );
+    mockedPost.mockResolvedValue({ added: [], skipped: [], total: 0 });
+
+    const ctx = createMockContext();
+    const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+
+    expect(result).not.toHaveProperty('ok');
+    expect(mockedPost).toHaveBeenCalledWith('/workspace/sync', expect.objectContaining({ include: ['plugins/*/entry'] }));
+  });
+
+  it('S-179.34: reports invalid JSONC at its config path', async () => {
+    mockedReadFile.mockResolvedValueOnce('{ "marketplace": /* broken */ }');
+
+    const ctx = createMockContext();
+    const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        message: expect.stringContaining('/workspace/.kb/kb.config.jsonc'),
+        hint: expect.stringContaining('kb marketplace sync --scope project'),
+      },
+    });
+    expect(result).not.toMatchObject({ error: { message: expect.stringContaining('No marketplace.sync.include') } });
+    expect(mockedPost).not.toHaveBeenCalled();
+  });
+
   it('CS-04: HTTP error — returns exitCode 1 with error captured', async () => {
     mockValidSyncConfig();
     mockedPost.mockRejectedValue(new Error('Marketplace /workspace/sync failed (500): Server error'));

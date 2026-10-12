@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPlatformReleaseConfig } from './platform-release-config.mjs';
+import { isPlatformPackage } from '../../../core/plugin-runtime/src/platform-resolve/platform-package.js';
 
 const script = new URL('./prepare-release-index.mjs', import.meta.url);
 const temporaryRoots = new Set();
@@ -369,11 +370,18 @@ test('validates runtime imports against built workspace manifests and the config
     ...releaseConfig.platformMembers,
     ...registryManifest.core.map(({ name }) => name),
     ...registryManifest.services.map(({ pkg }) => pkg),
+    ...registryManifest.plugins.map(({ pkg }) => pkg).filter(packageName => workspaceByName.has(packageName)),
     ...releaseConfig.platformRequires
       .map(slot => releaseConfig.adapters[slot])
       .filter(Boolean)
       .map(adapter => adapter.startsWith('@') ? adapter.split('/').slice(0, 2).join('/') : adapter.split('/')[0]),
   ]);
+  for (const workspacePackage of workspacePackages) {
+    const relativePackagePath = relative(workspaceRoot, workspacePackage.path);
+    if (!relativePackagePath.startsWith('plugins/') && !relativePackagePath.startsWith('adapters/') && !relativePackagePath.startsWith('sdk/')) continue;
+    const packageJSON = JSON.parse(readFileSync(join(workspacePackage.path, 'package.json'), 'utf8'));
+    if (Object.keys(packageJSON.peerDependencies ?? {}).some(isPlatformPackage)) candidatePackageNames.add(packageJSON.name);
+  }
   for (const packageName of candidatePackageNames) {
     if (artifactNames.has(packageName)) continue;
     const workspacePackage = workspaceByName.get(packageName);
@@ -540,6 +548,41 @@ test('records the SDK and platform versions without a second range compatibility
     status: 'prepared',
     validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-peer-dependency'],
   });
+});
+
+// case: S-179.14
+test('each staged plugin must have its declared platform peers provided by the platform graph', () => {
+  const root = temporaryRoot('kb-release-index-platform-peer-');
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/cli-bin', '2.0.0', '', { dependencies: { '@kb-labs/cli-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-entry', '2.0.0', '', {
+      peerDependencies: { '@kb-labs/cli-runtime': '^2.0.0' },
+    }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/marketplace-plugin', '2.0.0', '', {
+      peerDependencies: { '@kb-labs/cli-runtime': '^2.0.0' },
+    }, { 'dist/manifest.json': JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/marketplace-plugin', version: '2.0.0' }) }),
+  ];
+  writeStageManifest(root, packageRoot, stage, artifacts);
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  const args = [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
+    '--binary-manifest', binaryManifest,
+    '--platform-member-packages', '@kb-labs/cli-bin,@kb-labs/workflow-entry',
+    '--output', join(root, 'release-index.json')];
+  const missingPeer = spawnSync(process.execPath, args, { encoding: 'utf8' });
+  assert.notEqual(missingPeer.status, 0);
+  assert.match(`${missingPeer.stdout}\n${missingPeer.stderr}`, /declares platform peer @kb-labs\/cli-runtime, which the platform package graph does not provide/);
+
+  artifacts.push(packageArtifact(root, packageRoot, stage, '@kb-labs/cli-runtime', '2.0.0', ''));
+  writeStageManifest(root, packageRoot, stage, artifacts);
+  const providedPeer = spawnSync(process.execPath, args, { encoding: 'utf8' });
+  assert.equal(providedPeer.status, 0, `${providedPeer.stdout}\n${providedPeer.stderr}`);
 });
 
 test('fails closed when a required platform member was not staged', () => {

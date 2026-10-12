@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createAdapter } from "./index.js";
-import { HostServiceAddressError } from "@kb-labs/core-platform";
+import { HostServiceAddressError } from "@kb-labs/sdk";
 import { manifest } from "./manifest.js";
 
 describe("state broker host address", () => {

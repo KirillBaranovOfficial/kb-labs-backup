@@ -8,6 +8,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 )
 
@@ -23,7 +24,11 @@ type entry struct {
 }
 
 func main() {
-	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		fail(fmt.Errorf("locate diagnostic generator source"))
+	}
+	root, err := filepath.Abs(filepath.Join(filepath.Dir(sourceFile), "../../../.."))
 	if err != nil {
 		fail(err)
 	}
@@ -53,7 +58,7 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	if err := os.WriteFile("catalog_gen.go", formatted, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(filepath.Dir(sourceFile), "..", "catalog_gen.go"), formatted, 0o644); err != nil {
 		fail(err)
 	}
 }
