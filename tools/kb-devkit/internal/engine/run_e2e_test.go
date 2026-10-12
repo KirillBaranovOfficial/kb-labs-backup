@@ -78,6 +78,67 @@ func TestRunE2ECachesAndRestoresOutputs(t *testing.T) {
 	}
 }
 
+// case: S-179.18
+func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	writePkg(t, filepath.Join(root, "packages", "app"), `{"name":"@kb/app"}`)
+
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "libs", Category: config.CategoryConfig{Match: []string{"packages/*"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {{
+			Command: `sh -c "test -f ../dependency.ready"`,
+			Outputs: []string{"dist/**"},
+		}},
+	}
+
+	ws := mustWorkspace(t, root, cfg)
+	cacheRoot := filepath.Join(root, ".kb", "devkit-cache")
+	run := func() RunResult {
+		t.Helper()
+		result, err := Run(ws, cfg, RunOptions{
+			Tasks:     []string{"build"},
+			WSRoot:    root,
+			CacheRoot: cacheRoot,
+		})
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		return result
+	}
+
+	first := run()
+	if first.OK || first.Summary().Failed != 1 {
+		t.Fatalf("first run = %+v, want one failed task", first)
+	}
+
+	second := run()
+	if second.OK || len(second.Results) != 1 || second.Results[0].Cached {
+		t.Fatalf("second run = %+v, want a fresh failed execution", second)
+	}
+	if summary := second.Summary(); summary.Total != 1 || summary.Passed != 0 || summary.Failed != 1 || summary.Cached != 0 {
+		t.Fatalf("second summary = %+v, want total=1 passed=0 failed=1 cached=0", summary)
+	}
+	if err := os.WriteFile(filepath.Join(root, "packages", "dependency.ready"), nil, 0o644); err != nil {
+		t.Fatalf("write dependency artifact: %v", err)
+	}
+
+	third := run()
+	if !third.OK || len(third.Results) != 1 || third.Results[0].Cached {
+		t.Fatalf("third run = %+v, want a fresh successful execution", third)
+	}
+	if summary := third.Summary(); summary.Total != 1 || summary.Passed != 1 || summary.Failed != 0 || summary.Cached != 0 {
+		t.Fatalf("third summary = %+v, want total=1 passed=1 failed=0 cached=0", summary)
+	}
+
+	fourth := run()
+	if !fourth.OK || len(fourth.Results) != 1 || !fourth.Results[0].Cached {
+		t.Fatalf("fourth run = %+v, want the successful task cached", fourth)
+	}
+}
+
 func TestRunE2ERespectsCrossPackageDependencies(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceRoot(t, root, []string{"packages/*"})
