@@ -200,6 +200,10 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 	} else {
 		request, requestErr := input.Direct.normalize()
 		if requestErr != nil {
+			var diagnostic *diag.Diag
+			if errors.As(requestErr, &diagnostic) {
+				return resolvedPlan{}, diagnostic
+			}
 			var validation *contracts.RequestValidationError
 			if errors.As(requestErr, &validation) {
 				diagnostic := validation.Diagnostic()
@@ -343,7 +347,9 @@ func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
 		appendFlag("service-profile", input.Direct.ServiceProfile)
 		appendFlag("plugins", input.Direct.Plugins)
 		appendFlag("adapters", input.Direct.Adapters)
-		appendFlag("provider", input.Direct.Providers)
+		for _, provider := range input.Direct.Providers {
+			appendFlag("provider", provider)
+		}
 		appendFlag("policy", input.Direct.Policy)
 		if input.Direct.Offline {
 			args = append(args, "--offline")

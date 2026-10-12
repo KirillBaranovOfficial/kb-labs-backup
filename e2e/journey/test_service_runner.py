@@ -51,6 +51,39 @@ class SecuredCliLoginTests(unittest.TestCase):
             )
 
 
+class AdapterDefaultsProbeTests(unittest.TestCase):
+    def test_probe_detects_valid_but_different_config_after_successful_restore_row(self):
+        with tempfile.TemporaryDirectory(prefix="journey-adapter-probe-") as directory:
+            config_path = Path(directory) / "kb.config.json"
+            original = b'{"platform":{"adapterOptions":{"storage":{"baseDir":"storage"}}}}\n'
+            config_path.write_bytes(b'{"platform":{"adapterOptions":{"storage":{"baseDir":"changed"}}}}\n')
+            journey = service_runner.Journey("local", "adapter-probe-wrong-config")
+            journey.step("adapter defaults flow", "adapter", lambda: None)
+            journey.step("restore adapter journey fixture state", "adapter", lambda: None, role="lifecycle")
+
+            error = service_runner._adapter_defaults_probe_error(
+                journey, {"path": config_path, "contents": original}, Path(directory),
+            )
+
+        self.assertEqual(error, "platform adapter config differs from its snapshot at keys: platform.adapterOptions.storage.baseDir")
+        self.assertNotIn("changed", error)
+        probe = journey.step("state probe: adapter-defaults", "journey.state", lambda: error)
+        self.assertEqual(probe.status, "FAIL")
+        self.assertIn("platform.adapterOptions.storage.baseDir", probe.message)
+
+    def test_probe_names_the_flow_that_prevented_fixture_cleanup(self):
+        journey = service_runner.Journey("local", "adapter-probe-blocked")
+        journey.step("adapter defaults flow", "adapter",
+                     lambda: "BLOCKED: blocked by state project-registered: project add failed")
+
+        error = service_runner._adapter_defaults_probe_error(journey, {}, Path("/unused"))
+        probe = journey.step("state probe: adapter-defaults", "journey.state", lambda: error)
+
+        self.assertEqual(probe.status, "BLOCKED")
+        self.assertIn("adapter defaults flow ended BLOCKED", error)
+        self.assertIn("project-registered", error)
+
+
 class SecuredServiceTokenTests(unittest.TestCase):
     def _admin_login_check(self):
         return next(check[2] for check in service_runner._checks("secured")

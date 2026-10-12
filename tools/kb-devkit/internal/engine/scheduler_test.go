@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/config"
@@ -17,6 +18,72 @@ func writePkgJSON(t *testing.T, dir, content string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// case: S-179.19
+func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate scheduler test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "../../../.."))
+	cfg, err := config.LoadFile(filepath.Join(root, "devkit.yaml"))
+	if err != nil {
+		t.Fatalf("load workspace devkit.yaml: %v", err)
+	}
+	ws, err := workspace.New(root, cfg)
+	if err != nil {
+		t.Fatalf("discover workspace packages: %v", err)
+	}
+	pkgs := expandBuildDependencyClosure(ws.Packages, ws.Packages)
+	nodes, err := buildDAG(pkgs, []string{"build"}, cfg, ws)
+	if err != nil {
+		t.Fatalf("build workspace task DAG: %v", err)
+	}
+	if len(pkgs) != len(ws.Packages) {
+		t.Fatalf("build dependency closure has %d packages; workspace has %d", len(pkgs), len(ws.Packages))
+	}
+
+	byName := make(map[string]workspace.Package, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		byName[pkg.Name] = pkg
+		def := ResolveTaskDef(cfg, "build", pkg.Category)
+		if def == nil {
+			if _, scheduled := nodes[nodeKey{pkg.Name, "build"}]; scheduled {
+				t.Errorf("package %s has a build node without a matching task definition", pkg.Name)
+			}
+			continue
+		}
+		if _, scheduled := nodes[nodeKey{pkg.Name, "build"}]; !scheduled {
+			t.Errorf("package %s has a build task definition but no build node", pkg.Name)
+		}
+	}
+
+	for key, node := range nodes {
+		def := ResolveTaskDef(cfg, "build", node.pkg.Category)
+		if def == nil || !containsTask(def.Deps, "^build") {
+			continue
+		}
+		for _, depName := range readWorkspaceDeps(node.pkg.Dir, byName) {
+			if depName == node.pkg.Name {
+				continue
+			}
+			depKey := nodeKey{pkg: depName, task: "build"}
+			if _, scheduled := nodes[depKey]; !scheduled {
+				continue
+			}
+			found := false
+			for _, actual := range node.deps {
+				if actual == depKey {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("%s build node is missing declared workspace dependency %s", key.pkg, depName)
+			}
+		}
 	}
 }
 

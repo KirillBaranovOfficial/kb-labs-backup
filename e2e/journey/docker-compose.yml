@@ -62,7 +62,7 @@ services:
       KB_JOURNEY_SUMMARY: /summary/journey-summary.md
     volumes:
       - ../.journey/reports:/summary
-      - ../..:/opt/kb-workspace:ro
+      - ${KB_JOURNEY_WORKSPACE_SOURCE:?run e2e/journey/run.sh to set the workspace source}:/opt/kb-workspace:ro
       - ./oidc-idp/certs:/e2e-oidc-certs:ro
     networks: [journey]
     init: true
@@ -96,9 +96,6 @@ services:
     networks: [journey]
 
   verdaccio:
-    extends:
-      file: docker-compose.yml
-      service: verdaccio
     networks: [journey]
 
 networks:

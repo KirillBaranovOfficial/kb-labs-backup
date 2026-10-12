@@ -349,6 +349,89 @@ func TestJSONInstallProgressEndsWithTerminalRecord(t *testing.T) {
 	}
 }
 
+// case: S-179.25
+func TestPlanRejectsExplicitEmptyProviderValuesAtExecuteBoundary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	index := filepath.Join(t.TempDir(), "release-index.json")
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
+	source.Platforms[0].Host = testHostOnFreePort(t)
+	release, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root := newRootCommand()
+	base := []string{"plan", "--index", index, "--platform-root", filepath.Join(t.TempDir(), "platform"), "--platform-version", "2.0.0", "--policy", string(contracts.PolicyCompatible)}
+	inputs := [][]string{{"--provider", ""}, {"--provider", "", "--provider", "x=y"}, {"--provider", "x=y", "--provider", ""}}
+	var diagnosticLine string
+	var humanLine string
+	for _, providerArgs := range inputs {
+		var stdout, stderr bytes.Buffer
+		args := append(append([]string(nil), base...), providerArgs...)
+		args = append(args, "--json")
+		code := clikitcommand.Execute(root, args, &stdout, &stderr)
+		var envelope struct {
+			OK    bool `json:"ok"`
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+			t.Fatalf("--provider input %q JSON = %s (exit %d): %v", providerArgs, stdout.String(), code, err)
+		}
+		if code != 2 || envelope.OK || envelope.Error.Code != "KB_RUNTIME_INPUT_INVALID" {
+			t.Fatalf("--provider input %q = exit %d, result %#v, stderr=%s", providerArgs, code, envelope, stderr.String())
+		}
+		if diagnosticLine == "" {
+			diagnosticLine = envelope.Error.Message
+		} else if envelope.Error.Message != diagnosticLine {
+			t.Fatalf("--provider input %q message = %q, want %q", providerArgs, envelope.Error.Message, diagnosticLine)
+		}
+		var humanOut, humanErr bytes.Buffer
+		humanArgs := append(append([]string(nil), base...), providerArgs...)
+		if code := clikitcommand.Execute(root, humanArgs, &humanOut, &humanErr); code != 2 {
+			t.Fatalf("human --provider input %q exit = %d, stdout=%s stderr=%s", providerArgs, code, humanOut.String(), humanErr.String())
+		}
+		gotHumanLine := strings.SplitN(strings.TrimSpace(humanOut.String()+humanErr.String()), "\n", 2)[0]
+		if humanLine == "" {
+			humanLine = gotHumanLine
+		} else if gotHumanLine != humanLine {
+			t.Fatalf("human --provider input %q line = %q, want %q", providerArgs, gotHumanLine, humanLine)
+		}
+	}
+	if !strings.Contains(humanLine, diagnosticLine) {
+		t.Fatalf("human line %q does not contain diagnostic %q", humanLine, diagnosticLine)
+	}
+
+	var absentOut, absentErr bytes.Buffer
+	if code := clikitcommand.Execute(root, append(append([]string(nil), base...), "--json"), &absentOut, &absentErr); code != 0 {
+		t.Fatalf("absent provider plan exit = %d, stdout=%s stderr=%s", code, absentOut.String(), absentErr.String())
+	}
+	var planEnvelope struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Request struct {
+				ProviderPreferences map[string]string `json:"providerPreferences"`
+			} `json:"request"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(absentOut.Bytes(), &planEnvelope); err != nil {
+		t.Fatalf("absent provider plan JSON = %s: %v", absentOut.String(), err)
+	}
+	if !planEnvelope.OK || len(planEnvelope.Data.Request.ProviderPreferences) != 0 {
+		t.Fatalf("absent provider preferences = %#v, response %s", planEnvelope.Data.Request.ProviderPreferences, absentOut.String())
+	}
+}
+
 // case: S-203.7, S-203.13
 func TestJSONInstallFailureEndsWithTerminalRecord(t *testing.T) {
 	var stdout bytes.Buffer

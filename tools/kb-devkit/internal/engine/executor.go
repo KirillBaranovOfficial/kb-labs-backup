@@ -76,12 +76,12 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 			// Restore output files.
 			if err := e.restoreOutputs(m, pkg.Dir); err == nil {
 				return TaskResult{
-					Package:  pkg.Name,
-					Task:     def.Name,
-					OK:       true,
-					Cached:   true,
-					Stdout:   m.Stdout,
-					Elapsed:  time.Since(start),
+					Package: pkg.Name,
+					Task:    def.Name,
+					OK:      true,
+					Cached:  true,
+					Stdout:  m.Stdout,
+					Elapsed: time.Since(start),
 				}
 			}
 			// If restore fails, fall through to re-run.
@@ -106,8 +106,9 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 		result.Error = runErr.Error()
 	}
 
-	// 4. Store outputs + write manifest (even on failure — helps debugging).
-	if def.Cache {
+	// 4. Cache successful results only. Failed tasks depend on execution state
+	//     outside the input hash and must be retried on the next run.
+	if def.Cache && result.OK {
 		m := &cache.Manifest{
 			InputHash: inputHash,
 			ExitCode:  exitCode,
@@ -120,8 +121,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 			m.Stderr = stderr
 		}
 
-		// Only store output files on success.
-		if result.OK && len(def.Outputs) > 0 {
+		if len(def.Outputs) > 0 {
 			refs, storeErr := e.storeOutputs(pkg.Dir, def.Outputs)
 			if storeErr == nil {
 				m.Outputs = refs
