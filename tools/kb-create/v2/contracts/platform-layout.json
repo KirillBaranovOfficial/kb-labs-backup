@@ -9,6 +9,7 @@
   "hostStateDirectory": "installer/host",
   "platformDataRoot": { "platformPath": ".kb/data", "statePath": "state/data" },
   "ownershipRecord": "ownership.json",
+  "ownershipRecordStagingPrefix": ".ownership.json.pending-",
   "ownedEntries": [
     "current",
     "versions",
