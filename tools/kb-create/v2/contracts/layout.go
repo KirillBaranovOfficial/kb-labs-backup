@@ -11,19 +11,20 @@ import (
 var platformLayoutJSON []byte
 
 type platformLayout struct {
-	Schema                  string              `json:"schema"`
-	CurrentLink             string              `json:"currentLink"`
-	VersionRoots            layoutDirectory     `json:"versionRoots"`
-	SharedStateDirectory    string              `json:"sharedStateDirectory"`
-	InstallerStateDirectory string              `json:"installerStateDirectory"`
-	HostStateDirectory      string              `json:"hostStateDirectory"`
-	PlatformDataRoot        PlatformDataRoot    `json:"platformDataRoot"`
-	OwnershipRecord         string              `json:"ownershipRecord"`
-	OwnedEntries            []string            `json:"ownedEntries"`
-	SharedRuntimePaths      []SharedRuntimePath `json:"sharedRuntimePaths"`
-	VersionStatePaths       []string            `json:"versionStatePaths"`
-	RuntimeStatePaths       []string            `json:"runtimeStatePaths"`
-	InstallerRecords        installerRecords    `json:"installerRecords"`
+	Schema                       string              `json:"schema"`
+	CurrentLink                  string              `json:"currentLink"`
+	VersionRoots                 layoutDirectory     `json:"versionRoots"`
+	SharedStateDirectory         string              `json:"sharedStateDirectory"`
+	InstallerStateDirectory      string              `json:"installerStateDirectory"`
+	HostStateDirectory           string              `json:"hostStateDirectory"`
+	PlatformDataRoot             PlatformDataRoot    `json:"platformDataRoot"`
+	OwnershipRecord              string              `json:"ownershipRecord"`
+	OwnershipRecordStagingPrefix string              `json:"ownershipRecordStagingPrefix"`
+	OwnedEntries                 []string            `json:"ownedEntries"`
+	SharedRuntimePaths           []SharedRuntimePath `json:"sharedRuntimePaths"`
+	VersionStatePaths            []string            `json:"versionStatePaths"`
+	RuntimeStatePaths            []string            `json:"runtimeStatePaths"`
+	InstallerRecords             installerRecords    `json:"installerRecords"`
 }
 
 type installerRecords struct {
@@ -92,6 +93,19 @@ func OwnershipRecordPath(installRoot string) string {
 		panic("invalid embedded platform layout ownership-record path")
 	}
 	return filepath.Join(installRoot, filepath.FromSlash(layout.OwnershipRecord))
+}
+
+func OwnershipRecordStagingPrefix() string {
+	var layout platformLayout
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil || layout.OwnershipRecordStagingPrefix == "" ||
+		strings.ContainsAny(layout.OwnershipRecordStagingPrefix, `/\\`) {
+		panic("invalid embedded platform layout ownership-record staging prefix")
+	}
+	return layout.OwnershipRecordStagingPrefix
+}
+
+func OwnershipRecordStagingPath(installRoot, installationID string) string {
+	return filepath.Join(installRoot, OwnershipRecordStagingPrefix()+installationID)
 }
 
 func HostStateDirectory(installRoot string) string {

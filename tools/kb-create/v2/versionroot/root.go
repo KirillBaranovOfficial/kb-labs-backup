@@ -14,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
@@ -23,6 +25,37 @@ import (
 type Layout struct{ Root string }
 
 var ErrPlatformNotInstalled = errors.New("platform is not installed")
+var ErrOwnershipPublicationConflict = errors.New("another initial install published ownership first")
+
+type OwnershipStagingArtifactError struct {
+	Path  string
+	Paths []string
+	Cause error
+}
+
+func (e *OwnershipStagingArtifactError) Error() string {
+	paths := e.Paths
+	if len(paths) == 0 {
+		paths = []string{e.Path}
+	}
+	return fmt.Sprintf("cannot validate ownership staging file(s) %s: %v", strings.Join(paths, ", "), e.Cause)
+}
+
+func (e *OwnershipStagingArtifactError) Unwrap() error { return e.Cause }
+
+type OwnershipWritePoint string
+
+const (
+	OwnershipBeforeStagingCreate OwnershipWritePoint = "before-staging-create"
+	OwnershipAfterStagingCreate  OwnershipWritePoint = "after-staging-create"
+	OwnershipDuringStagingWrite  OwnershipWritePoint = "during-staging-write"
+	OwnershipAfterStagingSync    OwnershipWritePoint = "after-staging-sync"
+	OwnershipBeforePublish       OwnershipWritePoint = "before-publish"
+	OwnershipAfterPublish        OwnershipWritePoint = "after-publish"
+	OwnershipAfterStagingCleanup OwnershipWritePoint = "after-staging-cleanup"
+)
+
+var ownershipWriteFaultHook func(OwnershipWritePoint, string) error
 
 type UpdateMetadata struct {
 	SnapshotID string `json:"snapshotId"`
@@ -258,6 +291,11 @@ func (l Layout) ValidateInitialTarget() error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("installation root is not a real directory")
 	}
+	lock, err := lockInitialRoot(l.Root)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	entries, err := os.ReadDir(l.Root)
 	if err != nil {
 		return err
@@ -278,10 +316,29 @@ func (l Layout) ValidateInitialTarget() error {
 	}
 	owner, err := l.readOwnership()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) && len(entries) == 1 && entries[0].Name() == filepath.Base(l.ownershipPath()) {
-			return nil
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read installation ownership: %w", err)
 		}
-		return fmt.Errorf("read installation ownership: %w", err)
+		staging := ownershipStagingPaths(entries)
+		if len(staging) == 0 {
+			return fmt.Errorf("read installation ownership: %w", err)
+		}
+		if len(staging) != 1 {
+			paths := make([]string, len(staging))
+			for i, name := range staging {
+				paths[i] = filepath.Join(l.Root, name)
+			}
+			return &OwnershipStagingArtifactError{Path: paths[0], Paths: paths, Cause: fmt.Errorf("multiple ownership staging files prevent unambiguous recovery")}
+		}
+		owner, err = l.readValidatedOwnershipStaging(staging[0])
+		if err != nil {
+			return &OwnershipStagingArtifactError{Path: filepath.Join(l.Root, staging[0]), Cause: err}
+		}
+		if err := l.publishOwnershipStaging(filepath.Join(l.Root, staging[0])); err != nil {
+			return err
+		}
+	} else if err := l.cleanupPublishedOwnershipStaging(entries); err != nil {
+		return err
 	}
 	if owner.InitialInstallState != "in-progress" {
 		return fmt.Errorf("installation root has no valid in-progress ownership record")
@@ -393,19 +450,14 @@ func (l Layout) stageInitial(after func(HandoffPoint) error) (string, error) {
 }
 
 func (l Layout) ensureOwnership() (string, error) {
+	lock, err := lockInitialRoot(l.Root)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
 	if owner, err := l.readOwnership(); err == nil && owner.InstallationID != "" {
 		return owner.InstallationID, nil
 	} else if err != nil && !os.IsNotExist(err) {
-		return "", err
-	}
-	if info, err := os.Lstat(l.ownershipPath()); err == nil {
-		if !info.Mode().IsRegular() || info.Size() != 0 {
-			return "", fmt.Errorf("incomplete installation ownership record is not empty")
-		}
-		if err := os.Remove(l.ownershipPath()); err != nil {
-			return "", err
-		}
-	} else if !os.IsNotExist(err) {
 		return "", err
 	}
 	var identity [16]byte
@@ -419,33 +471,74 @@ func (l Layout) ensureOwnership() (string, error) {
 		return "", err
 	}
 	data = append(data, '\n')
-	file, err := os.OpenFile(l.ownershipPath(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
+	stagingPath := contracts.OwnershipRecordStagingPath(l.Root, owner.InstallationID)
+	if err := l.ownershipWriteCheckpoint(OwnershipBeforeStagingCreate, stagingPath); err != nil {
 		return "", err
 	}
-	if _, err := file.Write(data); err != nil {
+	file, err := os.OpenFile(stagingPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return "", &OwnershipStagingArtifactError{Path: stagingPath, Cause: fmt.Errorf("staging path already exists")}
+		}
+		return "", err
+	}
+	if err := syncDirectory(l.Root); err != nil {
 		return "", errors.Join(err, file.Close())
 	}
-	if err := errors.Join(file.Sync(), file.Close(), syncDirectory(l.Root)); err != nil {
+	if err := l.ownershipWriteCheckpoint(OwnershipAfterStagingCreate, stagingPath); err != nil {
+		return "", errors.Join(err, file.Close())
+	}
+	midpoint := len(data) / 2
+	if _, err := file.Write(data[:midpoint]); err != nil {
+		return "", errors.Join(err, file.Close())
+	}
+	if err := l.ownershipWriteCheckpoint(OwnershipDuringStagingWrite, stagingPath); err != nil {
+		return "", errors.Join(err, file.Close())
+	}
+	if _, err := file.Write(data[midpoint:]); err != nil {
+		return "", errors.Join(err, file.Close())
+	}
+	if err := errors.Join(file.Sync(), file.Close()); err != nil {
+		return "", err
+	}
+	if err := l.ownershipWriteCheckpoint(OwnershipAfterStagingSync, stagingPath); err != nil {
+		return "", err
+	}
+	if err := l.publishOwnershipStaging(stagingPath); err != nil {
 		return "", err
 	}
 	return owner.InstallationID, nil
 }
 
+func lockInitialRoot(root string) (*os.File, error) {
+	directory, err := os.Open(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(directory.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = directory.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, ErrOwnershipPublicationConflict
+		}
+		return nil, err
+	}
+	return directory, nil
+}
+
 func (l Layout) readOwnership() (Ownership, error) {
-	data, err := os.ReadFile(l.ownershipPath())
+	return readOwnershipRecord(l.ownershipPath())
+}
+
+func readOwnershipRecord(path string) (Ownership, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return Ownership{}, err
-	}
-	if len(data) == 0 {
-		return Ownership{}, os.ErrNotExist
 	}
 	var owner Ownership
 	if err := json.Unmarshal(data, &owner); err != nil {
 		return Ownership{}, err
 	}
-	if owner.Schema != OwnershipSchema || len(owner.InstallationID) != 32 ||
-		(owner.InitialInstallState != "" && owner.InitialInstallState != "in-progress" && owner.InitialInstallState != "complete") {
+	if owner.Schema != OwnershipSchema || len(owner.InstallationID) != 32 || owner.InitialInstallState != "in-progress" {
 		return Ownership{}, fmt.Errorf("invalid install-root ownership record")
 	}
 	if _, err := hex.DecodeString(owner.InstallationID); err != nil {
@@ -454,33 +547,111 @@ func (l Layout) readOwnership() (Ownership, error) {
 	return owner, nil
 }
 
-func (l Layout) completeInitialInstallOwnership() error {
-	owner, err := l.readOwnership()
+func (l Layout) ownershipWriteCheckpoint(point OwnershipWritePoint, path string) error {
+	if ownershipWriteFaultHook == nil {
+		return nil
+	}
+	return ownershipWriteFaultHook(point, path)
+}
+
+func ownershipStagingPaths(entries []os.DirEntry) []string {
+	prefix := contracts.OwnershipRecordStagingPrefix()
+	paths := make([]string, 0)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			paths = append(paths, entry.Name())
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func (l Layout) readValidatedOwnershipStaging(name string) (Ownership, error) {
+	prefix := contracts.OwnershipRecordStagingPrefix()
+	if !strings.HasPrefix(name, prefix) {
+		return Ownership{}, fmt.Errorf("staging filename is outside the layout contract")
+	}
+	installationID := strings.TrimPrefix(name, prefix)
+	if len(installationID) != 32 {
+		return Ownership{}, fmt.Errorf("staging filename does not contain an installation identity")
+	}
+	if _, err := hex.DecodeString(installationID); err != nil {
+		return Ownership{}, fmt.Errorf("staging filename has an invalid installation identity: %w", err)
+	}
+	path := filepath.Join(l.Root, name)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return Ownership{}, fmt.Errorf("staging artifact is not a regular file")
+	}
+	owner, err := readOwnershipRecord(path)
+	if err != nil {
+		return Ownership{}, err
+	}
+	if owner.InstallationID != installationID {
+		return Ownership{}, fmt.Errorf("staging filename and ownership identity do not match")
+	}
+	return owner, nil
+}
+
+func (l Layout) publishOwnershipStaging(stagingPath string) error {
+	if err := l.ownershipWriteCheckpoint(OwnershipBeforePublish, stagingPath); err != nil {
+		return err
+	}
+	if err := os.Link(stagingPath, l.ownershipPath()); err != nil {
+		if os.IsExist(err) {
+			cleanupErr := os.Remove(stagingPath)
+			if cleanupErr == nil {
+				cleanupErr = syncDirectory(l.Root)
+			}
+			return errors.Join(ErrOwnershipPublicationConflict, cleanupErr)
+		}
+		return err
+	}
+	if err := syncDirectory(l.Root); err != nil {
+		return err
+	}
+	if err := l.ownershipWriteCheckpoint(OwnershipAfterPublish, stagingPath); err != nil {
+		return err
+	}
+	if err := os.Remove(stagingPath); err != nil {
+		return err
+	}
+	if err := syncDirectory(l.Root); err != nil {
+		return err
+	}
+	return l.ownershipWriteCheckpoint(OwnershipAfterStagingCleanup, stagingPath)
+}
+
+func (l Layout) cleanupPublishedOwnershipStaging(entries []os.DirEntry) error {
+	ownerInfo, err := os.Lstat(l.ownershipPath())
 	if err != nil {
 		return err
 	}
-	owner.InitialInstallState = "complete"
-	data, err := json.Marshal(owner)
-	if err != nil {
-		return err
+	for _, name := range ownershipStagingPaths(entries) {
+		path := filepath.Join(l.Root, name)
+		stageOwner, err := l.readValidatedOwnershipStaging(name)
+		if err != nil {
+			return &OwnershipStagingArtifactError{Path: path, Cause: err}
+		}
+		owner, err := l.readOwnership()
+		if err != nil || stageOwner.InstallationID != owner.InstallationID {
+			return &OwnershipStagingArtifactError{Path: path, Cause: fmt.Errorf("staging identity does not match published ownership")}
+		}
+		stageInfo, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(ownerInfo, stageInfo) {
+			return &OwnershipStagingArtifactError{Path: path, Cause: fmt.Errorf("staging file is not the published ownership record")}
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		if err := syncDirectory(l.Root); err != nil {
+			return err
+		}
 	}
-	data = append(data, '\n')
-	temp, err := os.CreateTemp(l.InstallerStateDir(), ".ownership-*.tmp")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if _, err := temp.Write(data); err != nil {
-		return errors.Join(err, temp.Close())
-	}
-	if err := errors.Join(temp.Sync(), temp.Close()); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, l.ownershipPath()); err != nil {
-		return err
-	}
-	return syncDirectory(l.Root)
+	return nil
 }
 
 func (l Layout) hasOwnershipMarker() bool {
@@ -884,9 +1055,6 @@ func (l Layout) activateInitial(stage, version, planHash string, after func(Hand
 	if err := syncDirectory(l.Root); err != nil {
 		return "", err
 	}
-	if err := l.completeInitialInstallOwnership(); err != nil {
-		return "", err
-	}
 	if after != nil {
 		if err := after(HandoffInitialLinkSwitched); err != nil {
 			return target, err
@@ -952,6 +1120,13 @@ func (l Layout) validateOwnedContainerEntries(entries []os.DirEntry, rejectForei
 		name := entry.Name()
 		kind, declared := kinds[name]
 		if !declared {
+			if rejectForeign && strings.HasPrefix(name, contracts.OwnershipRecordStagingPrefix()) {
+				info, err := os.Lstat(filepath.Join(l.Root, name))
+				if err != nil || !info.Mode().IsRegular() {
+					return &OwnershipStagingArtifactError{Path: filepath.Join(l.Root, name), Cause: fmt.Errorf("staging artifact is not a regular file")}
+				}
+				continue
+			}
 			if rejectForeign {
 				return fmt.Errorf("installation root contains undeclared data at %s", name)
 			}
@@ -1183,6 +1358,9 @@ func (l Layout) ValidateStructure() error {
 	}
 	if err := l.validateOwnedContainerEntries(entries, false, true); err != nil {
 		return err
+	}
+	if staging := ownershipStagingPaths(entries); len(staging) > 0 {
+		return &OwnershipStagingArtifactError{Path: filepath.Join(l.Root, staging[0]), Cause: fmt.Errorf("unexpected ownership staging file in an installed container")}
 	}
 	if err := l.validateContractStatePaths(); err != nil {
 		return err
