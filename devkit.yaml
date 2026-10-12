@@ -840,9 +840,8 @@ custom_checks:
   # or moved but its lock entry wasn't) and corruption (malformed id/path
   # from a buggy install) before it silently rots. Same lock the MKT-02 e2e
   # diagnostics test and `kb marketplace doctor` both read.
-  # Fix: no CLI command prunes stale entries yet ("marketplace sync" only
-  # adds, "rehash" only rebuilds discovery hashes) — edit
-  # .kb/marketplace.lock by hand to remove the offending entry.
+  # The check resolves the lock's scope from the runtime's platform/project roots.
+  # A shared development root is platform-owned; use the reported scope when syncing.
   # Self-filters: runs once, anchored to @kb-labs/devkit.
   # Standalone: node scripts/checks/check-marketplace-lock.mjs
   - name: check-marketplace-lock

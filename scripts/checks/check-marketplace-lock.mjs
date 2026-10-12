@@ -1,34 +1,38 @@
 #!/usr/bin/env node
 /**
- * check-marketplace-lock — verifies the project lock with core-discovery's
- * runtime validator and reports project-scope remediation.
+ * check-marketplace-lock — validates the workspace lock under the scope
+ * assigned to its root by the runtime root resolver.
  */
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-const { validateMarketplaceLock } = await import('@kb-labs/core-discovery');
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const { validateMarketplaceLockAtRoot } = await import('@kb-labs/core-discovery');
+const { resolveRoots } = await import('../../core/workspace/dist/index.js');
 
 const CHECK_NAME = 'check-marketplace-lock';
 const ANCHOR_PACKAGE = '@kb-labs/devkit';
 const DEVKIT_MODE = Boolean(process.env.KB_DEVKIT_MODE);
-const ROOT = process.env.KB_MARKETPLACE_LOCK_ROOT ?? new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
-const LOCK_PATH = join(ROOT, '.kb', 'marketplace.lock');
-const REMEDIATION = 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock.';
+const WORKSPACE_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+const LOCK_ROOT = process.env.KB_MARKETPLACE_LOCK_ROOT ?? WORKSPACE_ROOT;
 
-function validate() {
-  if (!existsSync(LOCK_PATH)) {return [];}
+export async function checkMarketplaceLock(root, roots) {
+  const lockPath = join(root, '.kb', 'marketplace.lock');
+  if (!existsSync(lockPath)) {return [];}
 
   let lock;
   try {
-    lock = JSON.parse(readFileSync(LOCK_PATH, 'utf-8'));
+    lock = JSON.parse(readFileSync(lockPath, 'utf-8'));
   } catch (error) {
     return [issue(`.kb/marketplace.lock is not valid JSON: ${error.message}`)];
   }
 
-  const validation = validateMarketplaceLock(lock, 'project');
+  const validation = await validateMarketplaceLockAtRoot(lock, roots, root);
   if (!validation.valid) {
     const subject = validation.entry ? `"${validation.entry}"` : '.kb/marketplace.lock';
-    return [issue(`${subject}: ${validation.reason}. ${REMEDIATION}`)];
+    const remediation = `Run "kb marketplace sync --scope ${validation.scope}" to regenerate .kb/marketplace.lock.`;
+    return [issue(`${subject}: ${validation.reason}. ${remediation}`)];
   }
 
   return [];
@@ -47,22 +51,35 @@ function printHuman(issues) {
   process.stderr.write(`\n${CHECK_NAME}: ${issues.length} error(s) found\n`);
 }
 
-if (DEVKIT_MODE) {
-  let pkgName = process.env.KB_DEVKIT_PACKAGE_NAME ?? '';
-  if (!pkgName) {
-    const chunks = [];
-    process.stdin.setEncoding('utf-8');
-    for await (const chunk of process.stdin) {chunks.push(chunk);}
-    const raw = chunks.join('');
-    if (raw) {pkgName = JSON.parse(raw)?.name ?? '';}
-  }
-  if (pkgName !== ANCHOR_PACKAGE) {
-    process.stdout.write(JSON.stringify({ issues: [] }) + '\n');
+async function main() {
+  const roots = await resolveRoots({
+    moduleUrl: import.meta.url,
+    startDir: WORKSPACE_ROOT,
+    env: process.env,
+    projectScope: 'platform',
+  });
+
+  if (DEVKIT_MODE) {
+    let pkgName = process.env.KB_DEVKIT_PACKAGE_NAME ?? '';
+    if (!pkgName) {
+      const chunks = [];
+      process.stdin.setEncoding('utf-8');
+      for await (const chunk of process.stdin) {chunks.push(chunk);}
+      const raw = chunks.join('');
+      if (raw) {pkgName = JSON.parse(raw)?.name ?? '';}
+    }
+    if (pkgName !== ANCHOR_PACKAGE) {
+      process.stdout.write(JSON.stringify({ issues: [] }) + '\n');
+    } else {
+      process.stdout.write(JSON.stringify({ issues: await checkMarketplaceLock(LOCK_ROOT, roots) }) + '\n');
+    }
   } else {
-    process.stdout.write(JSON.stringify({ issues: validate() }) + '\n');
+    const issues = await checkMarketplaceLock(LOCK_ROOT, roots);
+    printHuman(issues);
+    process.exit(issues.some((item) => item.severity === 'error') ? 1 : 0);
   }
-} else {
-  const issues = validate();
-  printHuman(issues);
-  process.exit(issues.some((item) => item.severity === 'error') ? 1 : 0);
+}
+
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  await main();
 }

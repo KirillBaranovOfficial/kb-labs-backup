@@ -32,7 +32,6 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kb-labs/cli-runtime": "workspace:*",
     "@kb-labs/host-agent-client": "workspace:*",
     "@kb-labs/host-agent-contracts": "workspace:*",
     "@kb-labs/host-agent-transport": "workspace:*",
@@ -46,7 +45,8 @@
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@kb-labs/cli-runtime": "workspace:*"
   },
   "engines": {
     "node": ">=24.0.0",
@@ -55,5 +55,8 @@
   "kb": {
     "manifest": "./dist/manifest.js"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "peerDependencies": {
+    "@kb-labs/cli-runtime": "workspace:^"
+  }
 }

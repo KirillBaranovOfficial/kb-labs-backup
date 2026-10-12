@@ -40,6 +40,8 @@ export {
   disablePlugin,
 } from './marketplace-lock.js';
 export type { MarketplaceLockScope, MarketplaceLockValidationResult } from './marketplace-lock.js';
+export { resolveMarketplaceLockScope, validateMarketplaceLockAtRoot } from './marketplace-lock-scope.js';
+export type { MarketplaceLockRoots } from './marketplace-lock-scope.js';
 
 // Manifest loader
 export { loadManifestFile } from './manifest-loader.js';

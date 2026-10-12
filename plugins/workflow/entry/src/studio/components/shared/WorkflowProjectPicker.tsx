@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useData } from '@kb-labs/sdk/studio';
-import type { ProjectEntry } from '@kb-labs/core-contracts';
+import type { ProjectEntry } from '@kb-labs/sdk';
 
 export function useWorkflowProject() {
   const { data: projects = [] } = useData<ProjectEntry[]>('/v1/projects');
