@@ -302,6 +302,7 @@ func binaries(t *testing.T) (launcher, fakehost string) {
 	if buildErr != nil {
 		t.Fatal(buildErr)
 	}
+	t.Cleanup(func() { _ = os.Remove(filepath.Join(buildDir, "kb")) })
 	return filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost")
 }
 

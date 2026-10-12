@@ -859,6 +859,201 @@ func TestInstallAndApplyArgvRefuseUnattributedRootsUnchanged(t *testing.T) {
 	}
 }
 
+// case: PC-001.10, PC-001.11, S-181.1
+func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
+	index := filepath.Join(home, "release-index.json")
+	source, err := catalog.LoadFile(filepath.Join("..", "..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := source.Platforms[0].Profiles["default"]
+	services := graph.Services
+	minPort, maxPort, gatewayPort := 65535, 0, 0
+	for _, service := range services {
+		if service.Port < minPort {
+			minPort = service.Port
+		}
+		if service.Port > maxPort {
+			maxPort = service.Port
+		}
+		if service.ID == "gateway" {
+			gatewayPort = service.Port
+		}
+	}
+	shift, foundPortRange := freePortRangeShift(t, services, minPort, maxPort-minPort+300)
+	if !foundPortRange {
+		t.Fatal("could not find a free contiguous service-port range for shim ownership regression")
+	}
+	for i := range services {
+		oldPort := services[i].Port
+		services[i].Port += shift
+		for configIndex := range source.Platforms[0].Config {
+			source.Platforms[0].Config[configIndex].Default = strings.ReplaceAll(source.Platforms[0].Config[configIndex].Default,
+				fmt.Sprintf("127.0.0.1:%d", oldPort), fmt.Sprintf("127.0.0.1:%d", services[i].Port))
+		}
+		if services[i].ID == "gateway" {
+			gatewayPort = services[i].Port
+		}
+	}
+	graph.Services = services
+	source.Platforms[0].Profiles["default"] = graph
+	source.Platforms[0].Host = testHostOnFreePortWithPortHeadroom(t, maxPort-minPort+1500)
+	release, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	launcherDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(launcherDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(launcherDir, "kb-create")
+	if err := os.WriteFile(launcher, []byte("test launcher"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(home, "project")
+	if err := os.Mkdir(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rootA := filepath.Join(home, "root-a")
+	rootB := filepath.Join(home, "root-b")
+	rootC := filepath.Join(home, "root-c")
+	linkPath := shim.Path(launcher)
+	var expectedTarget string
+	run := func(root string, args ...string) string {
+		t.Helper()
+		depsFactory := func(cmd *cobra.Command) commandDependencies {
+			var artifactRunner runtime.ArtifactInstaller
+			if args[0] == "uninstall" {
+				artifactRunner = &recordingInstaller{}
+			} else {
+				artifactRunner = installArtifacts{root: root}
+			}
+			return commandDependencies{Runtime: &runtime.Dependencies{Artifacts: artifactRunner, Host: installHost{}},
+				NodeCheck: func() error { return nil }, InstallInput: strings.NewReader(strings.Repeat("\n", 12)),
+				InstallOutput: clikitcommand.FromCommand(cmd).ProgressWriter(), Command: cmd, Executable: launcher,
+				ProjectRegistrar: func(string, string) (string, error) { return "prj_fixture", nil }}
+		}
+		var stdout, stderr bytes.Buffer
+		code := clikitcommand.Execute(newRootCommandWithDependencyFactory(depsFactory), args, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("Execute %q exited %d: stdout=%s stderr=%s", args, code, stdout.String(), stderr.String())
+		}
+		if root == rootA && args[0] == "uninstall" {
+			if _, readErr := os.Readlink(linkPath); !os.IsNotExist(readErr) {
+				t.Fatalf("owner uninstall left the kb link: %v", readErr)
+			}
+			return stdout.String()
+		}
+		if target, readErr := os.Readlink(linkPath); expectedTarget != "" && (readErr != nil || target != expectedTarget) {
+			t.Fatalf("Execute %q changed kb link: before=%q after=%q error=%v", args, expectedTarget, target, readErr)
+		} else if expectedTarget == "" && readErr == nil {
+			expectedTarget = target
+		}
+		return stdout.String()
+	}
+	install := func(root string, linked bool, more ...string) {
+		args := []string{"install", "--json", "--index", index, "--platform-root", root, "--service-profile", "default", "--scenario", "explore", "--registry", "http://127.0.0.1:4873"}
+		args = append(args, more...)
+		output := run(root, args...)
+		layout, layoutErr := versionroot.New(rootA)
+		if layoutErr != nil {
+			t.Fatal(layoutErr)
+		}
+		canonicalOwner, canonicalErr := filepath.EvalSymlinks(layout.InstallRoot())
+		if canonicalErr != nil {
+			t.Fatal(canonicalErr)
+		}
+		if !strings.Contains(output, fmt.Sprintf(`"shim":{"linked":%t,"owner":"%s"}`, linked, canonicalOwner)) {
+			t.Fatalf("install for %q did not report linked=%t and canonical owner %q: %s", root, linked, canonicalOwner, output)
+		}
+	}
+	install(rootA, true)
+	activeA, err := versionroot.New(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliEntry := filepath.Join(activeA.PlatformRoot(), "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
+	if err := os.WriteFile(cliEntry, []byte("process.stdout.write('root-a\\n')\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	install(rootB, false)
+	install(rootC, false, "--gateway-url", fmt.Sprintf("http://127.0.0.1:%d", gatewayPort+200), "--project-root", project)
+
+	activeRoot, err := activeA.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spellings := []string{rootA, activeA.PlatformRoot(), activeRoot}
+	for _, spelling := range spellings {
+		for _, operation := range []string{"plan", "update"} {
+			args := []string{operation, "--json", "--index", index, "--platform-root", spelling, "--service-profile", "default", "--registry", "http://127.0.0.1:4873"}
+			run(rootA, args...)
+		}
+	}
+
+	for _, root := range []string{rootC, rootB} {
+		layout, layoutErr := versionroot.New(root)
+		if layoutErr != nil {
+			t.Fatal(layoutErr)
+		}
+		spelling := layout.PlatformRoot()
+		if root == rootC {
+			spelling = root
+		}
+		args := []string{"uninstall", "--platform-root", spelling, "--yes", "--json", "--registry", "http://127.0.0.1:4873"}
+		run(root, args...)
+	}
+	if target, err := os.Readlink(linkPath); err != nil || target != expectedTarget {
+		t.Fatalf("owner link after secondary uninstalls = %q, %v; want %q", target, err, expectedTarget)
+	}
+	output, err := exec.Command(linkPath, "--help").CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "root-a") {
+		t.Fatalf("kb did not run A after secondary uninstalls: output=%s error=%v", output, err)
+	}
+	ownerUninstall := []string{"uninstall", "--platform-root", activeRoot, "--yes", "--json", "--registry", "http://127.0.0.1:4873"}
+	if result := run(rootA, ownerUninstall...); !strings.Contains(result, `"shimAction": "removed"`) {
+		t.Fatalf("owner uninstall did not report shim removal: %s", result)
+	}
+}
+
+func freePortRangeShift(t *testing.T, services []contracts.Service, minPort, offsets int) (int, bool) {
+	t.Helper()
+	for base := 12000; base+offsets < 64000; base += 317 {
+		listeners := make([]net.Listener, 0, len(services)*3)
+		available := true
+		for _, offset := range []int{0, 100, 200} {
+			for _, service := range services {
+				listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", base+service.Port-minPort+offset))
+				if err != nil {
+					available = false
+					break
+				}
+				listeners = append(listeners, listener)
+			}
+			if !available {
+				break
+			}
+		}
+		for _, listener := range listeners {
+			_ = listener.Close()
+		}
+		if available {
+			return base - minPort, true
+		}
+	}
+	return 0, false
+}
+
 func TestOwnershipPublicationErrorsHaveActionableEnvelopes(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "kb-platform")
 	conflict := unsupportedPlatformLayout(root, versionroot.ErrOwnershipPublicationConflict)
