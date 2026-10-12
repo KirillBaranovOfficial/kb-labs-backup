@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -17,6 +18,46 @@ import (
 )
 
 type streamWriterKey struct{}
+
+// FlagValueResetter lets a custom pflag.Value restore its declared default
+// without assuming that Set is idempotent or assignment-based.
+type FlagValueResetter interface {
+	ResetFlagValue(defaultValue string) error
+}
+
+type resettableSliceValue struct {
+	value    pflag.SliceValue
+	firstSet bool
+}
+
+func (v *resettableSliceValue) String() string { return v.value.(pflag.Value).String() }
+func (v *resettableSliceValue) Type() string   { return v.value.(pflag.Value).Type() }
+func (v *resettableSliceValue) Set(value string) error {
+	if !v.firstSet {
+		if err := v.value.Replace([]string{}); err != nil {
+			return err
+		}
+		v.firstSet = true
+	}
+	return v.value.(pflag.Value).Set(value)
+}
+func (v *resettableSliceValue) Append(value string) error { return v.value.Append(value) }
+func (v *resettableSliceValue) Replace(values []string) error {
+	v.firstSet = true
+	return v.value.Replace(values)
+}
+func (v *resettableSliceValue) GetSlice() []string { return v.value.GetSlice() }
+func (v *resettableSliceValue) ResetFlagValue(defaultValue string) error {
+	defaults, err := parseSliceDefault(defaultValue)
+	if err != nil {
+		return err
+	}
+	if err := v.value.Replace(defaults); err != nil {
+		return err
+	}
+	v.firstSet = false
+	return nil
+}
 
 type captureBuffer struct {
 	mu sync.Mutex
@@ -132,6 +173,11 @@ func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
 	}
 	if err != nil {
 		diagnostic := diag.FromError(err)
+		if mode == result.ModeHuman {
+			if human := captured.String(); human != "" {
+				_, _ = io.WriteString(stdout, human)
+			}
+		}
 		return result.RenderDiag(stdout, stderr, diagnostic, mode)
 	}
 	human := strings.TrimSpace(captured.String())
@@ -166,42 +212,59 @@ func modeForArgs(args []string) result.Mode {
 }
 
 func resetFlags(root *cobra.Command) error {
+	// Cobra trees are reused as package-level singletons across invocations,
+	// so restore defaults before parsing to prevent one call's values leaking into the next.
 	var visit func(*cobra.Command)
-	var resetErr error
+	var flags []*pflag.Flag
 	visit = func(command *cobra.Command) {
 		command.Flags().VisitAll(func(flag *pflag.Flag) {
-			if err := resetFlag(flag); err != nil && resetErr == nil {
-				resetErr = err
-			}
+			flags = append(flags, flag)
 		})
 		command.PersistentFlags().VisitAll(func(flag *pflag.Flag) {
-			if err := resetFlag(flag); err != nil && resetErr == nil {
-				resetErr = err
-			}
+			flags = append(flags, flag)
 		})
 		for _, child := range command.Commands() {
 			visit(child)
 		}
 	}
 	visit(root)
-	return resetErr
+	for _, flag := range flags {
+		if err := validateFlagResetContract(flag); err != nil {
+			return err
+		}
+	}
+	for _, flag := range flags {
+		if err := resetFlag(flag); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateFlagResetContract(flag *pflag.Flag) error {
+	if _, ok := flag.Value.(FlagValueResetter); ok {
+		return nil
+	}
+	if _, ok := flag.Value.(pflag.SliceValue); ok {
+		return nil
+	}
+	if isPflagPrimitive(flag.Value) {
+		return nil
+	}
+	return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("Flag --%s uses unsupported value type %q.", flag.Name, flag.Value.Type()),
+		diag.WithHint("Implement command.FlagValueResetter on custom flag values used by a reusable command tree."))
 }
 
 func resetFlag(flag *pflag.Flag) error {
-	if values, ok := flag.Value.(pflag.SliceValue); ok {
-		defaultValue := strings.TrimSuffix(strings.TrimPrefix(flag.DefValue, "["), "]")
-		var defaults []string
-		if defaultValue == "" {
-			defaults = []string{}
-		} else {
-			reader := csv.NewReader(strings.NewReader(defaultValue))
-			var err error
-			defaults, err = reader.Read()
-			if err != nil {
-				return fmt.Errorf("reset slice flag %q to its default: %w", flag.Name, err)
-			}
+	if resetter, ok := flag.Value.(FlagValueResetter); ok {
+		if err := resetter.ResetFlagValue(flag.DefValue); err != nil {
+			return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("Could not reset flag --%s to its declared default.", flag.Name),
+				diag.WithHint("Fix its FlagValueResetter implementation, then rerun the command."))
 		}
-		if err := values.Replace(defaults); err != nil {
+	} else if values, ok := flag.Value.(pflag.SliceValue); ok {
+		wrapped := &resettableSliceValue{value: values}
+		flag.Value = wrapped
+		if err := wrapped.ResetFlagValue(flag.DefValue); err != nil {
 			return fmt.Errorf("reset slice flag %q to its default: %w", flag.Name, err)
 		}
 	} else {
@@ -211,4 +274,31 @@ func resetFlag(flag *pflag.Flag) error {
 	}
 	flag.Changed = false
 	return nil
+}
+
+func parseSliceDefault(value string) ([]string, error) {
+	value = strings.TrimSuffix(strings.TrimPrefix(value, "["), "]")
+	if value == "" {
+		return []string{}, nil
+	}
+	reader := csv.NewReader(strings.NewReader(value))
+	defaults, err := reader.Read()
+	if err != nil {
+		return nil, err
+	}
+	return defaults, nil
+}
+
+func isPflagPrimitive(value pflag.Value) bool {
+	typeOfValue := reflect.TypeOf(value)
+	if typeOfValue == nil || typeOfValue.Kind() != reflect.Ptr || typeOfValue.Elem().PkgPath() != "github.com/spf13/pflag" {
+		return false
+	}
+	switch value.Type() {
+	case "bool", "duration", "float32", "float64", "int", "int8", "int16", "int32", "int64",
+		"ip", "ipMask", "ipNet", "string", "uint", "uint8", "uint16", "uint32", "uint64":
+		return true
+	default:
+		return false
+	}
 }

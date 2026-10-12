@@ -112,24 +112,34 @@ Examples:
 		}
 
 		if jsonMode {
-			if !result.OK {
-				return commandFailure("kb-devkit run")
-			}
-			return JSONOut(map[string]any{
+			payload := map[string]any{
 				"results": result.Results,
 				"summary": result.Summary(),
 				"elapsed": elapsed.String(),
-			})
+			}
+			if !result.OK {
+				return commandFailureWithData("kb-devkit run", payload)
+			}
+			return JSONOut(payload)
 		}
 
 		// Summary line.
 		s := result.Summary()
-		clikitcommand.Printf("\n  %s  %s  %s  — %s\n\n",
+		clikitcommand.Printf("\n  %s scheduled  %s  %s  %s  %s  — %s\n\n",
+			o.dim.Render(fmt.Sprintf("%d", s.Scheduled)),
 			o.healthy.Render(fmt.Sprintf("%d passed", s.Passed)),
 			o.dim.Render(fmt.Sprintf("%d cached", s.Cached)),
 			colorCount(s.Failed, o),
+			o.warning.Render(fmt.Sprintf("%d skipped", s.Skipped)),
 			elapsed.Round(time.Millisecond),
 		)
+		if len(s.BlockedTasks) <= 10 {
+			for _, blocked := range s.BlockedTasks {
+				clikitcommand.Printf("  %s\n", o.dim.Render(fmt.Sprintf("%s:%s blocked %d dependents", blocked.Package, blocked.Task, blocked.Dependents)))
+			}
+		} else if len(s.BlockedTasks) > 10 {
+			clikitcommand.Printf("  %s\n", o.dim.Render("Blocked task details omitted; rerun with --json for the full list."))
+		}
 
 		if !result.OK {
 			return commandFailure("kb-devkit run")

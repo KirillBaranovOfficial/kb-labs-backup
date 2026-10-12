@@ -54,6 +54,13 @@ func (values *repeatedValue) Set(value string) error {
 	*values = append(*values, value)
 	return nil
 }
+func (values *repeatedValue) ResetFlagValue(defaultValue string) error {
+	*values = nil
+	if defaultValue == "" {
+		return nil
+	}
+	return values.Set(defaultValue)
+}
 
 // SetVersionInfo exposes the build identity to diagnostics without changing
 // the human --version output contract.
@@ -299,11 +306,11 @@ func configuredFirstAdmin(request contracts.InstallRequest) (string, bool) {
 
 func parseProviders(value string) (map[string]string, error) {
 	preferences := map[string]string{}
+	if value == "" {
+		return preferences, nil
+	}
 	for _, item := range strings.Split(value, ",") {
 		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
 		capability, adapter, ok := strings.Cut(item, "=")
 		capability, adapter = strings.TrimSpace(capability), strings.TrimSpace(adapter)
 		if !ok || strings.TrimSpace(capability) == "" || strings.TrimSpace(adapter) == "" {

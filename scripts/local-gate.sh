@@ -21,6 +21,11 @@ while (($#)); do
 done
 [[ "$MODE" == quick || "$MODE" == batch ]] || { echo "Usage: scripts/local-gate.sh quick [--packages a,b] [--dry-run] | batch [--full] [--dry-run] [--keep-going]" >&2; exit 2; }
 if [[ "$MODE" == quick && "$FULL" == 1 ]]; then echo "local-gate: --full is only available with batch" >&2; exit 2; fi
+if ! command -v go >/dev/null 2>&1; then
+  echo "local-gate: Go 1.26 is required to build kb-devkit from this checkout." >&2
+  echo "Install Go from https://go.dev/dl/ (Homebrew: brew install go), then rerun: scripts/local-gate.sh $MODE" >&2
+  exit 127
+fi
 
 DEVKIT_DIR=""
 DEVKIT_BIN=""
