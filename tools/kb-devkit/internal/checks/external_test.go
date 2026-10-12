@@ -139,8 +139,8 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 	if input.Workspace.Packages[0].Category != "adapter" || input.Workspace.Packages[1].Category != "ts-lib" {
 		t.Fatalf("package categories = %#v, want resolved devkit categories", input.Workspace.Packages)
 	}
-	if _, ok := results["workspace"]; ok {
-		t.Fatalf("clean workspace check created a result with issues: %#v", results["workspace"])
+	if result, ok := results["workspace"]; !ok || len(result.Issues) != 0 || result.ChecksRun != 1 {
+		t.Fatalf("clean workspace check result = %#v, want one successful anchored check", result)
 	}
 }
 
