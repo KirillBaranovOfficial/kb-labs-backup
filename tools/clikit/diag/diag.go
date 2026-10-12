@@ -54,6 +54,7 @@ type Diag struct {
 	Cause string `json:"-"`
 	// Meta carries structured context (paths, hosts, per-action failures, …).
 	Meta            map[string]any `json:"meta,omitempty"`
+	Data            any            `json:"-"`
 	Actions         []Action       `json:"-"`
 	Docs            string         `json:"-"`
 	CorrelationID   string         `json:"correlationId,omitempty"`
@@ -115,6 +116,10 @@ func WithMeta(meta map[string]any) Opt {
 		}
 	}
 }
+
+// WithData attaches structured command result data to a failed diagnostic
+// envelope without flattening it into string-only diagnostic details.
+func WithData(data any) Opt { return func(d *Diag) { d.Data = data } }
 
 // WithCorrelationID attaches the ID that joins a safe result to its log entry.
 func WithCorrelationID(id string) Opt { return func(d *Diag) { d.CorrelationID = id } }

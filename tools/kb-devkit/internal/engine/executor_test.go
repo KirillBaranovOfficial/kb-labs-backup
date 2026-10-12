@@ -206,6 +206,13 @@ func TestExecutorDoesNotReplayCachedFailure(t *testing.T) {
 	if r := exec.Run(pkg, def, false, nil); r.OK {
 		t.Fatal("first run: expected failure")
 	}
+	inputHash, err := cache.HashInputsWithFingerprint(pkgDir, nil, []string{"package.json"}, exec.taskFingerprint(def))
+	if err != nil {
+		t.Fatalf("hash failed task inputs: %v", err)
+	}
+	if _, ok := exec.manifests.Get(pkg.Name, def.Name, inputHash); ok {
+		t.Fatal("failed task result was written to the cache")
+	}
 	if err := os.WriteFile(filepath.Join(root, "marker"), nil, 0o644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}

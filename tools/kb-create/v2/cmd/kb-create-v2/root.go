@@ -96,7 +96,7 @@ func readUpdateRequest(flags *commandFlagReader) directRequest {
 }
 
 func readDirectRequestAt(flags *commandFlagReader, platformRootFlag string) directRequest {
-	return directRequest{PlatformRoot: flags.String(platformRootFlag), ProjectRoot: flags.String("project-root"), PlatformVersion: flags.String("platform-version"), PlatformChannel: flags.String("platform-channel"), GatewayURL: flags.String("gateway-url"), SDKVersion: flags.String("sdk-version"), ServiceProfile: flags.String("service-profile"), Plugins: flags.String("plugins"), Adapters: flags.String("adapters"), Providers: strings.Join(flags.Strings("provider"), ","), Policy: flags.String("policy"), Offline: flags.Bool("offline")}
+	return directRequest{PlatformRoot: flags.String(platformRootFlag), ProjectRoot: flags.String("project-root"), PlatformVersion: flags.String("platform-version"), PlatformChannel: flags.String("platform-channel"), GatewayURL: flags.String("gateway-url"), SDKVersion: flags.String("sdk-version"), ServiceProfile: flags.String("service-profile"), Plugins: flags.String("plugins"), Adapters: flags.String("adapters"), Providers: flags.Strings("provider"), Policy: flags.String("policy"), Offline: flags.Bool("offline")}
 }
 
 func executablePath() string {

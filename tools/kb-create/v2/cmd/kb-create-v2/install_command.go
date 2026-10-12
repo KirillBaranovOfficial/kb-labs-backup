@@ -209,7 +209,7 @@ func mergeDirectRequest(request contracts.InstallRequest, direct directRequest) 
 	if direct.Adapters != "" {
 		request.Adapters = fields.Adapters
 	}
-	if direct.Providers != "" {
+	if len(direct.Providers) > 0 {
 		request.ProviderPreferences = fields.ProviderPreferences
 	}
 	if direct.Policy != "" {
