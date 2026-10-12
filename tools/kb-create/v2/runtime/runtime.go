@@ -349,7 +349,7 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 	if !ok {
 		return contracts.Snapshot{}, fmt.Errorf("uninstall: artifact installer does not support removal")
 	}
-	layout, err := versionroot.New(platformRoot)
+	layout, err := versionroot.ForPlatformPath(platformRoot)
 	if err != nil {
 		return contracts.Snapshot{}, err
 	}

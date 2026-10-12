@@ -54,7 +54,7 @@ func (c hostCommand) setup(runnerOperation string) (*host.ProcessRunner, host.St
 	if c.PlatformRoot == "" {
 		return nil, host.State{}, contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
 	}
-	layout, layoutErr := versionroot.New(c.PlatformRoot)
+	layout, layoutErr := versionroot.ForPlatformPath(c.PlatformRoot)
 	if runnerOperation == "stop" {
 		runner, runnerErr := host.NewRecordedRunner(c.PlatformRoot)
 		if runnerErr != nil {
@@ -146,6 +146,11 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	}
 	defer logFile.Close()
 	cmd := exec.Command(executable, "supervise", "--json", "--platform-root", c.PlatformRoot)
+	identityToken, err := host.NewProcessIdentityToken()
+	if err != nil {
+		return host.Info{}, contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "The supervisor process identity could not be created.", "Check that system randomness is available, then run `"+contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)+"`.", err)
+	}
+	cmd.Env = host.ProcessEnvironmentWithIdentity(os.Environ(), identityToken)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	host.ConfigureDetached(cmd)
 	if err := cmd.Start(); err != nil {
@@ -168,14 +173,14 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 		case <-exited:
 			return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
 		case <-deadline:
-			host.KillProcess(cmd.Process.Pid)
+			host.KillProcessIfIdentity(cmd.Process.Pid, identityToken)
 			return host.Info{}, host.StartFailure(state, errors.New("supervisor did not report a healthy host in time"), map[string]string{
 				"supervisorLog": state.SupervisorLog(), "readinessURL": process.Spec.HealthURL,
 				"waited":      time.Since(started).Round(time.Millisecond).String(),
 				"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot),
 			})
 		case <-ctx.Done():
-			host.KillProcess(cmd.Process.Pid)
+			host.KillProcessIfIdentity(cmd.Process.Pid, identityToken)
 			return host.Info{}, host.StartFailure(state, ctx.Err(), map[string]string{
 				"supervisorLog": state.SupervisorLog(), "readinessURL": process.Spec.HealthURL,
 				"waited":      time.Since(started).Round(time.Millisecond).String(),
@@ -237,7 +242,8 @@ func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopR
 	if record, stale := supervisor.StaleRecord(state); stale {
 		return host.StopResult{Runner: runner.Name()}, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
 	}
-	if record, alive := supervisor.ReadRecord(state); alive && record.PlatformRoot == platformRoot {
+	installationID, identityErr := versionroot.InstallationIDForPath(platformRoot)
+	if record, alive := supervisor.ReadRecord(state); alive && identityErr == nil && record.InstallationID == installationID {
 		if host.TerminateProcessIfIdentity(record.PID, record.ProcessIdentity) && !waitExit(record.PID, record.ProcessIdentity, stopBudget(runner)) {
 			host.KillProcessIfIdentity(record.PID, record.ProcessIdentity)
 			waitExit(record.PID, record.ProcessIdentity, 5*time.Second)
@@ -261,15 +267,15 @@ func stopBudget(runner host.Runner) time.Duration {
 	return 15 * time.Second
 }
 
-func waitExit(pid int, processStart string, timeout time.Duration) bool {
+func waitExit(pid int, processIdentity string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !host.ProcessIdentityMatches(pid, processStart) {
+		if !host.ProcessIdentityMatches(pid, processIdentity) {
 			return true
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return !host.ProcessIdentityMatches(pid, processStart)
+	return !host.ProcessIdentityMatches(pid, processIdentity)
 }
 
 func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {

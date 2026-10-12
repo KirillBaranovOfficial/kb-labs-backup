@@ -20,7 +20,7 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	if root == "" {
 		root = defaultPlatformRoot()
 	}
-	layout, err := versionroot.New(root)
+	layout, err := versionroot.ForPlatformPath(root)
 	if err != nil {
 		return nil, asDiag(err)
 	}
