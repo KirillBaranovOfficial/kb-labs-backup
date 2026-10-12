@@ -29,6 +29,7 @@ import enableCommand from '../../commands/plugins/enable.js';
 import disableCommand from '../../commands/plugins/disable.js';
 import linkCommand from '../../commands/plugins/link.js';
 import unlinkCommand from '../../commands/plugins/unlink.js';
+import { manifest } from '../../manifest.js';
 
 const mockedPost = vi.mocked(post);
 const mockedResolveCliScope = vi.mocked(resolveCliScope);
@@ -93,6 +94,13 @@ describe('marketplace:plugins:disable', () => {
 });
 
 describe('marketplace:link', () => {
+  it('S-179.32: declares --json on the mutating link command', () => {
+    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace link');
+
+    expect(command?.operationType).toBe('mutate');
+    expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'json', type: 'boolean' }));
+  });
+
   it('links a project-relative local plugin successfully', async () => {
     mockedPost.mockResolvedValue({ id: 'my-plugin', scope: 'project' });
     const { ui, captured } = createCapturedUI();

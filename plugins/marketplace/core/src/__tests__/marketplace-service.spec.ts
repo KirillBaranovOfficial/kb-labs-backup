@@ -964,6 +964,61 @@ describe('MarketplaceService', () => {
         .toContain('@kb-labs/found-adapter');
     });
 
+    // case: S-179.31
+    it('removes adapter entries from a project lock during sync while retaining plugins', async () => {
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await createPluginDir(projectRoot, 'found-plugin', '@kb-labs/found-plugin');
+      await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3', plugins: {}, adapters: { '@kb-labs/platform-adapter': {
+          source: 'platform', version: '1.0.0', integrity: 'sha256-platform', resolvedPath: './adapters/platform', enabled: true,
+        } },
+      }));
+      await fs.writeFile(path.join(projectRoot, '.kb', 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3', plugins: { '@kb-labs/found-plugin': {
+          link: './packages/found-plugin', source: 'local', enabled: true,
+        } }, adapters: { '@kb-labs/found-adapter': {
+          source: 'platform', version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: './adapters/found', enabled: true,
+        } },
+      }));
+      const service = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source: createMockSource(new Map()) });
+
+      const result = await service.sync({ scope: 'project', projectRoot }, { include: ['packages/*'] });
+
+      expect(result.total).toBe(1);
+      const lock = await readMarketplaceLock(projectRoot, new DiagnosticCollector(), 'project');
+      expect(lock?.plugins['@kb-labs/found-plugin']).toBeDefined();
+      expect(lock?.adapters).toBeUndefined();
+      const platformLock = await readMarketplaceLock(tmpDir, new DiagnosticCollector(), 'platform');
+      expect(platformLock?.adapters?.['@kb-labs/platform-adapter']).toBeDefined();
+    });
+
+    // case: S-179.36
+    it('preserves platform adapter entries when project sync targets the shared platform root', async () => {
+      const root = tmpDir;
+      await fs.mkdir(path.join(root, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(root, '.kb', 'marketplace.lock'), JSON.stringify({
+        schema: 'kb.marketplace/3',
+        plugins: { '@kb-labs/shared-plugin': { link: './plugins/shared-plugin', enabled: true, source: 'local' } },
+        adapters: { '@kb-labs/shared-adapter': {
+          source: 'platform', version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: './adapters/shared', enabled: true,
+        } },
+      }));
+      const service = makeMarketplaceService({
+        platformRoot: root,
+        projectRoot: root,
+        source: createMockSource(new Map()),
+      });
+
+      const result = await service.sync({ scope: 'project', projectRoot: root }, { include: [] });
+
+      expect(result.total).toBe(2);
+      const lock = await readMarketplaceLock(root, new DiagnosticCollector(), 'platform');
+      expect(lock?.plugins['@kb-labs/shared-plugin']).toBeDefined();
+      expect(lock?.adapters?.['@kb-labs/shared-adapter']).toBeDefined();
+    });
+
     it('skips packages already in lock', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'existing', '@kb-labs/existing');
       const source = createMockSource(

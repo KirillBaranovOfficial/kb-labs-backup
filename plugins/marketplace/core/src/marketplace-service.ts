@@ -15,6 +15,7 @@ import * as crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { IntegrityMismatchError, type IExtensionStore } from '@kb-labs/core-extension-store';
 import type { ILogger } from '@kb-labs/core-platform';
+import { resolveMarketplaceLockScope } from '@kb-labs/core-discovery';
 import { glob } from 'glob';
 import semver from 'semver';
 import type { EntityKind, MarketplaceLock, MarketplaceLockEntry } from '@kb-labs/core-discovery';
@@ -560,8 +561,24 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       autoEnable?: boolean;
     },
   ): Promise<SyncResult> {
-    const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    return this.withScopeMutation(scopeRoot, () => this.syncInScope(ctx, scopeRoot, opts));
+    let effectiveCtx = ctx;
+    let scopeRoot: string;
+    if (ctx.scope === 'project') {
+      const projectRoot = ctx.projectRoot ?? this.roots.projectRoot;
+      if (projectRoot && path.isAbsolute(projectRoot)) {
+        const lockScope = await resolveMarketplaceLockScope(
+          { ...this.roots, projectRoot },
+          projectRoot,
+        );
+        if (lockScope === 'platform') {
+          // In development mode one physical lock can own both logical roots.
+          // Runtime adapter discovery treats that shared file as platform-owned.
+          effectiveCtx = { ...ctx, scope: 'platform' };
+        }
+      }
+    }
+    scopeRoot = resolveScopeRoot(this.roots, effectiveCtx);
+    return this.withScopeMutation(scopeRoot, () => this.syncInScope(effectiveCtx, scopeRoot, opts));
   }
 
   private async syncInScope(
@@ -575,7 +592,11 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   ): Promise<SyncResult> {
     const autoEnable = opts.autoEnable ?? false;
     const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope) ?? createEmptyLock();
+    const readScope = ctx.scope === 'project' ? 'platform' : ctx.scope;
+    const lock = await readMarketplaceLock(scopeRoot, diag, readScope) ?? createEmptyLock();
+    if (ctx.scope === 'project') {
+      delete lock.adapters;
+    }
     const existingIds = new Set([
       ...Object.keys(lock.plugins),
       ...Object.keys(lock.adapters ?? {}),

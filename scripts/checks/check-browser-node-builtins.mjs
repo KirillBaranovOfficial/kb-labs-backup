@@ -98,7 +98,7 @@ function declaresWorkspaceDependency(pkg, name) {
 
 export function analyze(workspaceRoot, workspacePackages) {
   const workspace = path.resolve(workspaceRoot);
-  const packages = workspacePackages.map((pkg) => {
+  const packages = workspacePackages.filter((pkg) => pkg.language === 'typescript').map((pkg) => {
     const absDir = path.resolve(workspace, pkg.dir);
     const json = JSON.parse(readFileSync(path.join(absDir, 'package.json'), 'utf8'));
     return { ...pkg, absDir, json, relDir: pkg.relDir ?? path.relative(workspace, absDir).split(path.sep).join('/') };

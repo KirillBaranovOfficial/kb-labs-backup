@@ -16,6 +16,7 @@ import {
   readMarketplaceLock,
   DiagnosticCollector,
   findWorkspacePackages,
+  resolveMarketplaceLockScope,
 } from '@kb-labs/core-discovery';
 import { loadAdapterManifest } from '@kb-labs/core-platform';
 import type { AdapterManifest } from '@kb-labs/core-platform';
@@ -54,7 +55,8 @@ async function loadAdaptersFromLock(
   discovered: Map<string, DiscoveredAdapter>,
 ): Promise<void> {
   const diag = new DiagnosticCollector();
-  const lock = await readMarketplaceLock(root, diag, 'platform');
+  const scope = await resolveMarketplaceLockScope({ platformRoot: root }, root);
+  const lock = await readMarketplaceLock(root, diag, scope);
   if (!lock) { return; }
 
   for (const [pkgId, entry] of Object.entries(lock.adapters ?? {})) {
@@ -159,7 +161,8 @@ export async function loadAdapterChannelFactory(
     candidateRoots.push(...packages.map(pkg => pkg.packageRoot));
   } else {
     const diagnostic = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(platformRoot, diagnostic, 'platform');
+    const scope = await resolveMarketplaceLockScope({ platformRoot }, platformRoot);
+    const lock = await readMarketplaceLock(platformRoot, diagnostic, scope);
     for (const entry of Object.values(lock?.adapters ?? {})) {
       if (entry.enabled && entry.resolvedPath) {
         candidateRoots.push(path.resolve(platformRoot, entry.resolvedPath));

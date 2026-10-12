@@ -734,10 +734,6 @@ importers:
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/coverage-istanbul@4.1.11)(@vitest/coverage-v8@4.1.11)(@vitest/ui@4.1.11)(jsdom@27.4.0)(vite@7.3.5(@types/node@24.12.2)(jiti@2.6.1)(terser@5.51.2)(tsx@4.21.0)(yaml@2.8.3))
 
   adapters/state-broker:
-    dependencies:
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../core/platform
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
@@ -3494,9 +3490,6 @@ importers:
 
   plugins/host-agent/entry:
     dependencies:
-      '@kb-labs/cli-runtime':
-        specifier: workspace:*
-        version: link:../../../cli/runtime
       '@kb-labs/host-agent-client':
         specifier: workspace:*
         version: link:../client
@@ -3510,6 +3503,9 @@ importers:
         specifier: workspace:*
         version: link:../../../sdk/sdk
     devDependencies:
+      '@kb-labs/cli-runtime':
+        specifier: workspace:*
+        version: link:../../../cli/runtime
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
@@ -3611,9 +3607,6 @@ importers:
 
   plugins/impact/core:
     dependencies:
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../../core/project-registry
       '@kb-labs/impact-contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -3624,6 +3617,9 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../../core/project-registry
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
@@ -3954,9 +3950,6 @@ importers:
 
   plugins/marketplace-registry/entry:
     dependencies:
-      '@kb-labs/cli-runtime':
-        specifier: workspace:*
-        version: link:../../../cli/runtime
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
@@ -3964,6 +3957,9 @@ importers:
         specifier: ^9.5.3
         version: 9.6.1
     devDependencies:
+      '@kb-labs/cli-runtime':
+        specifier: workspace:*
+        version: link:../../../cli/runtime
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
@@ -4178,13 +4174,13 @@ importers:
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
-      '@kb-labs/shared-cli-ui':
-        specifier: workspace:*
-        version: link:../../../shared/cli-ui
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/shared-cli-ui':
+        specifier: workspace:*
+        version: link:../../../shared/cli-ui
       '@kb-labs/shared-testing-e2e':
         specifier: workspace:*
         version: link:../../../shared/testing-e2e
@@ -5376,9 +5372,6 @@ importers:
       '@ant-design/icons':
         specifier: ^5.4.0
         version: 5.6.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-      '@kb-labs/sdk':
-        specifier: workspace:*
-        version: link:../../../sdk/sdk
       '@kb-labs/viewer-contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -5413,6 +5406,9 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/studio-plugin-tools':
         specifier: workspace:*
         version: link:../../../studio/plugin-tools
@@ -5738,18 +5734,6 @@ importers:
 
   plugins/workflow/entry:
     dependencies:
-      '@kb-labs/cli-runtime':
-        specifier: workspace:*
-        version: link:../../../cli/runtime
-      '@kb-labs/core-contracts':
-        specifier: workspace:*
-        version: link:../../../core/contracts
-      '@kb-labs/core-platform':
-        specifier: workspace:*
-        version: link:../../../core/platform
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../../core/project-registry
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
@@ -5772,6 +5756,18 @@ importers:
         specifier: ^11.11.4
         version: 11.11.4(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
     devDependencies:
+      '@kb-labs/cli-runtime':
+        specifier: workspace:*
+        version: link:../../../cli/runtime
+      '@kb-labs/core-contracts':
+        specifier: workspace:*
+        version: link:../../../core/contracts
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../../core/project-registry
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
@@ -5948,6 +5944,12 @@ importers:
 
   sdk/sdk:
     dependencies:
+      '@kb-labs/core-config':
+        specifier: workspace:*
+        version: link:../../core/config
+      '@kb-labs/core-contracts':
+        specifier: workspace:*
+        version: link:../../core/contracts
       '@kb-labs/core-project-registry':
         specifier: workspace:*
         version: link:../../core/project-registry
