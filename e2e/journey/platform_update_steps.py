@@ -321,6 +321,15 @@ def run_platform_update_steps(
             raise RuntimeError("kb-create status did not report the pending restart object")
         if pending != pending_restart_object:
             raise RuntimeError("kb-create status pendingRestart differs from the update result")
+        for status_root in (platform_root, platform_root / "current", (platform_root / "current").resolve()):
+            spelling_status = _json_command(
+                run_command, [launcher, "status", "--platform-root", str(status_root), "--json"],
+                f"updated status through {status_root}")
+            if (spelling_status.get("running") is not True
+                    or spelling_status.get("runningVersion") != base_version
+                    or spelling_status.get("installedVersion") != updated_version
+                    or spelling_status.get("pendingRestart") != pending_restart_object):
+                raise RuntimeError(f"status through {status_root} lost the running old host or pending restart")
         doctor_status = _json_command(run_command, [launcher, "doctor", "--platform-root", root, "--json"],
                                       "doctor before restart")
         if doctor_status.get("pendingRestart") != pending_restart_object:

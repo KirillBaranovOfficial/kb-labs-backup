@@ -1296,6 +1296,21 @@ def main():
                 status_ok = False
             if not status_ok:
                 fail("kb-create status: expected running/reachable JSON and active receipt ID")
+            for status_root in (PLATFORM, PLATFORM_CURRENT, PLATFORM_CURRENT.resolve()):
+                spelling_result = run_command([launcher, "status", "--platform-root", str(status_root), "--json"])
+                try:
+                    spelling_status = decode_ux_success_result(
+                        read_ux_cli_result(spelling_result.stdout, spelling_result.returncode))
+                    spelling_installation = spelling_status.get("installation", {})
+                    spelling_ok = (spelling_result.returncode == 0
+                                   and spelling_status.get("running") is True
+                                   and spelling_status.get("reachable") is True
+                                   and spelling_status.get("host", {}).get("state") == "running"
+                                   and spelling_installation.get("receiptId") == active_receipt.get("id"))
+                except (ValueError, json.JSONDecodeError, AttributeError):
+                    spelling_ok = False
+                if not spelling_ok:
+                    fail(f"kb-create status did not identify the running installation through {status_root}")
             record_case("running status", status_ok,
                        "status JSON did not report a running host and active receipt",
                        cases=["PC-001.7", "PC-002.2"])

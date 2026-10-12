@@ -30,7 +30,7 @@ func RestartWithRecovery(ctx context.Context, root string, previous *ProcessRunn
 	}
 	info, err := start(ctx, active)
 	if err == nil {
-		layout, layoutErr := versionroot.New(root)
+		layout, layoutErr := versionroot.ForPlatformPath(root)
 		if layoutErr != nil {
 			return RestartOutcome{Stopped: stopped, Info: info, Runner: active}, layoutErr
 		}
@@ -41,7 +41,7 @@ func RestartWithRecovery(ctx context.Context, root string, previous *ProcessRunn
 		}
 		return RestartOutcome{Stopped: stopped, Info: info, Runner: active}, nil
 	}
-	layout, layoutErr := versionroot.New(root)
+	layout, layoutErr := versionroot.ForPlatformPath(root)
 	if layoutErr != nil {
 		return RestartOutcome{}, recoveryFailure(root, active.TreeRoot, "resolve version layout", "", "", layoutErr, false)
 	}
