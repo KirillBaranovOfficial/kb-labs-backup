@@ -24,11 +24,13 @@ import (
 // hostCommand carries everything a host lifecycle command needs; nothing is
 // read from package state.
 type hostCommand struct {
-	PlatformRoot string
-	Foreground   bool
-	Executable   string // launcher binary re-executed by `start` to run `supervise`
-	Version      string
-	Err          io.Writer
+	PlatformRoot        string
+	Foreground          bool
+	Executable          string // launcher binary re-executed by `start` to run `supervise`
+	Version             string
+	Err                 io.Writer
+	identityReader      func(int) (string, error)
+	identityWaitTimeout time.Duration
 }
 
 type hostCommandResult map[string]any
@@ -160,7 +162,11 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	waitErr := make(chan error, 1)
 	go func() { waitErr <- cmd.Wait(); close(exited) }()
 	started := time.Now()
-	identityStatus := host.WaitForProcessIdentity(cmd.Process.Pid, identityToken, exited, time.Second)
+	waitTimeout := c.identityWaitTimeout
+	if waitTimeout <= 0 {
+		waitTimeout = time.Second
+	}
+	identityStatus := host.WaitForProcessIdentityWithReader(cmd.Process.Pid, identityToken, exited, waitTimeout, c.identityReader)
 	switch identityStatus {
 	case host.ProcessIdentityMatch:
 	case host.ProcessIdentityMismatch:
@@ -169,11 +175,10 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 			return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
 		default:
 		}
-		killErr := cmd.Process.Kill()
+		killErr := host.TerminateAndReapLaunchedProcess(cmd.Process, exited)
 		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
 			return host.Info{}, host.StartFailure(state, fmt.Errorf("started supervisor process identity did not match its launch token, and the child could not be stopped: %w", killErr), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 		}
-		<-exited
 		if errors.Is(killErr, os.ErrProcessDone) {
 			return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
 		}
@@ -187,7 +192,20 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 				<-exited
 				return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
 			}
-			return host.Info{}, host.StartFailure(state, errors.New("started supervisor process identity could not be determined while it remained alive"), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
+			killErr := host.TerminateAndReapLaunchedProcess(cmd.Process, exited)
+			if errors.Is(killErr, os.ErrProcessDone) {
+				_ = os.Remove(state.SupervisorPID())
+				return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
+			}
+			if killErr == nil {
+				_ = os.Remove(state.SupervisorPID())
+				waited := time.Since(started).Round(time.Millisecond)
+				failure := host.StartFailure(state, fmt.Errorf("supervisor process identity remained undetermined after %s; the started process was terminated", waited), map[string]string{"supervisorLog": state.SupervisorLog(), "waited": waited.String(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
+				return host.Info{}, failure
+			}
+			_ = os.Remove(state.SupervisorPID())
+			waited := time.Since(started).Round(time.Millisecond)
+			return host.Info{}, host.StartFailure(state, fmt.Errorf("supervisor process identity remained undetermined and the started process could not be stopped: %w", killErr), map[string]string{"supervisorLog": state.SupervisorLog(), "waited": waited.String(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 		}
 	default:
 		return host.Info{}, host.StartFailure(state, errors.New("started supervisor process identity result is invalid"), map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})

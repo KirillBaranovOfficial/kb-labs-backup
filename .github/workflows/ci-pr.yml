@@ -118,7 +118,7 @@ jobs:
           - shard: offline-journey
             packages: ./v2/journey ./v2/verify
           - shard: host-lifecycle
-            packages: ./v2/host ./v2/control ./v2/supervisor ./v2/swap
+            packages: ./v2/host/... ./v2/control ./v2/supervisor ./v2/swap
     permissions:
       contents: read
     defaults:

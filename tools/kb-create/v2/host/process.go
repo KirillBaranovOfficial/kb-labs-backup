@@ -171,8 +171,9 @@ type ProcessRunner struct {
 	Identity       ProcessIdentity
 	Operation      string
 	// HTTP and PollInterval exist for tests; zero values use sane defaults.
-	HTTP         *http.Client
-	PollInterval time.Duration
+	HTTP           *http.Client
+	PollInterval   time.Duration
+	identityReader func(int) (string, error)
 	// SecretEnv supplies the secret environment variables of the host process
 	// (the platform's private store). It is read on every Start.
 	SecretEnv func() (map[string]string, error)
@@ -309,7 +310,8 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}()
 	record := pidRecord{PID: cmd.Process.Pid, ProcessIdentity: processIdentity, InstallationID: r.InstallationID, PlatformRoot: r.PlatformRoot, TreeRoot: r.Identity.TreeRoot, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command,
 		PlatformVersion: r.Identity.PlatformVersion, ReceiptID: r.Identity.ReceiptID, ServiceIDs: append([]string(nil), r.Identity.ServiceIDs...)}
-	identityStatus := WaitForProcessIdentity(cmd.Process.Pid, processIdentity, exited, time.Second)
+	identityStarted := time.Now()
+	identityStatus := WaitForProcessIdentityWithReader(cmd.Process.Pid, processIdentity, exited, time.Second, r.identityReader)
 	switch identityStatus {
 	case ProcessIdentityMatch:
 	case ProcessIdentityMismatch:
@@ -324,11 +326,10 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 			return Info{}, r.startFailed(fmt.Errorf("host exited before startup identity was verified: %s", processExit(cause)), processExitDetails(cause))
 		default:
 		}
-		killErr := cmd.Process.Kill()
+		killErr := TerminateAndReapLaunchedProcess(cmd.Process, exited)
 		if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
 			return Info{}, r.startFailed(fmt.Errorf("started host process identity did not match the token assigned by this launcher, and the child could not be stopped: %w", killErr), nil)
 		}
-		<-exited
 		if errors.Is(killErr, os.ErrProcessDone) {
 			r.mu.Lock()
 			cause := r.waitErr
@@ -360,12 +361,30 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 				}
 				return Info{}, r.startFailed(fmt.Errorf("host exited before startup identity was verified: %s", processExit(cause)), processExitDetails(cause))
 			}
-			if r.InstallationID != "" {
-				if err := writeJSONFile(r.State.HostPID(), record); err != nil {
-					return Info{}, r.startFailed(fmt.Errorf("started host process identity could not be determined while it remained alive, and its process record could not be written: %w", err), nil)
+			killErr := TerminateAndReapLaunchedProcess(cmd.Process, exited)
+			if errors.Is(killErr, os.ErrProcessDone) {
+				r.mu.Lock()
+				cause := r.waitErr
+				r.mu.Unlock()
+				if cause == nil {
+					cause = errors.New("process exited before its identity could be verified")
 				}
+				return Info{}, r.startFailed(fmt.Errorf("host exited before startup identity was verified: %s", processExit(cause)), processExitDetails(cause))
 			}
-			return Info{}, r.startFailed(errors.New("started host process identity could not be determined while it remained alive"), nil)
+			if killErr == nil {
+				_ = os.Remove(r.State.HostPID())
+				r.mu.Lock()
+				r.pid, r.exited, r.processIdentity = 0, nil, ""
+				r.mu.Unlock()
+				waited := time.Since(identityStarted).Round(time.Millisecond)
+				return Info{}, r.startFailed(fmt.Errorf("host process identity remained undetermined after %s; the started process was terminated", waited), map[string]string{"waited": waited.String()})
+			}
+			_ = os.Remove(r.State.HostPID())
+			r.mu.Lock()
+			r.pid, r.exited, r.processIdentity = 0, nil, ""
+			r.mu.Unlock()
+			waited := time.Since(identityStarted).Round(time.Millisecond)
+			return Info{}, r.startFailed(fmt.Errorf("host process identity remained undetermined after %s and the started process could not be stopped: %w", waited, killErr), map[string]string{"waited": waited.String()})
 		}
 	default:
 		return Info{}, r.startFailed(errors.New("started host process identity result is invalid"), nil)

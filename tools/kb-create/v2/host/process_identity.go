@@ -124,11 +124,22 @@ func ProcessIdentityOf(pid int, expected string) ProcessIdentityStatus {
 
 // WaitForProcessIdentity retries undetermined reads while the launched process is alive.
 func WaitForProcessIdentity(pid int, expected string, exited <-chan struct{}, timeout time.Duration) ProcessIdentityStatus {
+	return WaitForProcessIdentityWithReader(pid, expected, exited, timeout, ProcessIdentityForPID)
+}
+
+// WaitForProcessIdentityWithReader applies the startup wait contract with an
+// injectable OS reader so callers can exercise unreadable-environment states.
+func WaitForProcessIdentityWithReader(pid int, expected string, exited <-chan struct{}, timeout time.Duration, readIdentity func(int) (string, error)) ProcessIdentityStatus {
+	if readIdentity == nil {
+		readIdentity = ProcessIdentityForPID
+	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(processIdentityPollInterval)
 	defer ticker.Stop()
-	return waitForProcessIdentityWith(pid, expected, ProcessIdentityOf, processAlive, func() bool {
+	return waitForProcessIdentityWith(pid, expected, func(pid int, expected string) ProcessIdentityStatus {
+		return processIdentityStatusWithReader(pid, expected, readIdentity, processAlive)
+	}, processAlive, func() bool {
 		select {
 		case <-exited:
 			return false
@@ -138,6 +149,20 @@ func WaitForProcessIdentity(pid int, expected string, exited <-chan struct{}, ti
 			return true
 		}
 	})
+}
+
+// TerminateAndReapLaunchedProcess stops the exact child returned by Start and
+// waits for its Wait goroutine to finish. It never resolves or signals a PID.
+func TerminateAndReapLaunchedProcess(process *os.Process, exited <-chan struct{}) error {
+	if process == nil {
+		return errors.New("launched process handle is nil")
+	}
+	err := process.Kill()
+	if err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	<-exited
+	return err
 }
 
 func waitForProcessIdentityWith(
