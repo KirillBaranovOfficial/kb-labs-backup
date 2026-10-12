@@ -149,6 +149,17 @@ func TestGatewayBootstrapContractUsesSharedSchemaAndFixture(t *testing.T) {
 	}
 }
 
+// case: S-222.9
+func TestSecuredSSOInstallWithoutBootstrapEmailDoesNotRequireBootstrapCompletion(t *testing.T) {
+	request := contracts.InstallRequest{Values: map[string]string{
+		"gateway.access.mode":              "\"secured\"",
+		"gateway.auth.providers.corp.type": "\"oidc\"",
+	}}
+	if email, configured := configuredFirstAdmin(request); configured || email != "" {
+		t.Fatalf("SSO-only install bootstrap = %q, %v; want no first-admin bootstrap", email, configured)
+	}
+}
+
 // case: S-222.1
 func TestBootstrapContractFailureNamesInternalMismatchAndNextDiagnosticCommand(t *testing.T) {
 	store := secrets.Store{PlatformRoot: t.TempDir()}
@@ -255,7 +266,7 @@ func (starter *bootstrapOutcomeTestStarter) Start(context.Context, contracts.Hos
 	}, nil
 }
 
-// case: S-222.6, S-222.7
+// case: S-222.6, S-222.7, S-222.10
 func TestGatewayWithoutUsableAdminCannotWriteBootstrapCompletion(t *testing.T) {
 	const remoteSecretMarker = "REMOTE_FIRST_ADMIN_HEALTH_SECRET"
 	for _, response := range []struct {

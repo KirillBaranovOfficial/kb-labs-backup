@@ -20,7 +20,7 @@ import { createInMemoryDocumentDatabase } from '@kb-labs/sdk/testing';
 import { UsersStore } from '../users-store.js';
 import { CredentialsStore } from '../credentials-store.js';
 import { MembershipsStore } from '../memberships-store.js';
-import { ensureBootstrapAdmin } from '../bootstrap-admin.js';
+import { BootstrapCredentialConflictError, ensureBootstrapAdmin } from '../bootstrap-admin.js';
 import { evaluateAuthReadiness } from '../auth-readiness.js';
 import { createEmailPasswordProvider } from '../providers/email-password.js';
 
@@ -49,9 +49,10 @@ class InterruptUsersStore extends UsersStore {
     if (this.interruptAfter === 'user') { throw new Error('injected user write interruption'); }
     return user;
   }
-  override async setStatus(userId: string, status: Parameters<UsersStore['setStatus']>[1]) {
-    await super.setStatus(userId, status);
-    if (this.interruptAfter === 'activation' && status === 'active') { throw new Error('injected activation write interruption'); }
+  override async activateBootstrapAdmin(userId: string, revision: number) {
+    const user = await super.activateBootstrapAdmin(userId, revision);
+    if (this.interruptAfter === 'activation') { throw new Error('injected activation write interruption'); }
+    return user;
   }
 }
 
@@ -59,9 +60,10 @@ class InterruptCredentialsStore extends CredentialsStore {
   constructor(docs: ConstructorParameters<typeof UsersStore>[0], private readonly interruptAfterCredential: boolean) {
     super(docs);
   }
-  override async setCredential(input: Parameters<CredentialsStore['setCredential']>[0]) {
-    await super.setCredential(input);
+  override async setBootstrapCredential(input: Parameters<CredentialsStore['setBootstrapCredential']>[0]) {
+    const credential = await super.setBootstrapCredential(input);
     if (this.interruptAfterCredential) { throw new Error('injected credential write interruption'); }
+    return credential;
   }
 }
 
@@ -94,6 +96,7 @@ describe('happy path', () => {
       users,
       credentials,
       memberships,
+      providers: [{ id: 'email-password', kind: 'password' }],
       bcryptCost: 4,
       logger,
     });
@@ -117,19 +120,20 @@ describe('happy path', () => {
 describe('idempotency', () => {
   it('three consecutive runs yield exactly one admin', async () => {
     for (let i = 0; i < 3; i++) {
-      await ensureBootstrapAdmin({ bootstrap: cfg, users, credentials, memberships, bcryptCost: 4, logger });
+      await ensureBootstrapAdmin({ bootstrap: cfg, users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger });
     }
     const u = await users.findByEmailTenant(cfg.adminEmail, cfg.tenantId);
     expect(u).not.toBeNull();
     const originalCredential = await credentials.getCredential(u!.userId, 'email-password');
-    await ensureBootstrapAdmin({
+    await expect(ensureBootstrapAdmin({
       bootstrap: { ...cfg, adminPassword: 'different-bootstrap-password' },
       users,
       credentials,
       memberships,
+      providers: [{ id: 'email-password', kind: 'password' }],
       bcryptCost: 4,
       logger,
-    });
+    })).rejects.toBeInstanceOf(BootstrapCredentialConflictError);
     const allMem = await memberships.listByUser(u!.userId);
     expect(allMem).toHaveLength(1);
     expect(warnings.length).toBe(0); // no warnings on idempotent reruns
@@ -157,6 +161,7 @@ describe('interrupted bootstrap recovery', () => {
         users: interruptedUsers,
         credentials: interruptedCredentials,
         memberships: interruptedMemberships,
+        providers: [{ id: 'email-password', kind: 'password' }],
         bcryptCost: 4,
         logger,
       })).rejects.toThrow('injected');
@@ -169,6 +174,7 @@ describe('interrupted bootstrap recovery', () => {
         users: restartedUsers,
         credentials: restartedCredentials,
         memberships: restartedMemberships,
+        providers: [{ id: 'email-password', kind: 'password' }],
         bcryptCost: 4,
         logger,
       });
@@ -196,9 +202,45 @@ describe('interrupted bootstrap recovery', () => {
         users: restartedUsers,
         credentials: restartedCredentials,
         memberships: restartedMemberships,
+        providers: [{ id: 'email-password', kind: 'password' }],
       })).resolves.toMatchObject({ ok: true, activeAdmins: 1 });
       expect(JSON.stringify(logRecords)).not.toContain(cfg.adminPassword);
     }
+  });
+
+  // case: S-222.8
+  it('a sequential pending restart adopts the new password before activation', async () => {
+    const interruptedCredentials = new InterruptCredentialsStore(docs, true);
+    await expect(ensureBootstrapAdmin({
+      bootstrap: cfg,
+      users,
+      credentials: interruptedCredentials,
+      memberships,
+      providers: [{ id: 'email-password', kind: 'password' }],
+      bcryptCost: 4,
+      logger,
+    })).rejects.toThrow('injected credential write interruption');
+
+    const changed = { ...cfg, adminPassword: 'replacement-bootstrap-password' };
+    await ensureBootstrapAdmin({
+      bootstrap: changed,
+      users,
+      credentials,
+      memberships,
+      providers: [{ id: 'email-password', kind: 'password' }],
+      bcryptCost: 4,
+      logger,
+    });
+    const provider = createEmailPasswordProvider({
+      users,
+      credentials,
+      tenantId: cfg.tenantId,
+      bcryptCost: 4,
+    });
+    await expect(provider.authenticate({ email: cfg.adminEmail, password: changed.adminPassword }))
+      .resolves.toMatchObject({ ok: true, email: cfg.adminEmail });
+    await expect(provider.authenticate({ email: cfg.adminEmail, password: cfg.adminPassword }))
+      .resolves.toMatchObject({ ok: false });
   });
 });
 
@@ -206,7 +248,7 @@ describe('absent bootstrap config', () => {
   it('is a no-op when bootstrap is undefined', async () => {
     await ensureBootstrapAdmin({
       bootstrap: undefined,
-      users, credentials, memberships, bcryptCost: 4, logger,
+      users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger,
     });
     expect(await users.findByEmailTenant(cfg.adminEmail, cfg.tenantId)).toBeNull();
   });
@@ -215,7 +257,7 @@ describe('absent bootstrap config', () => {
     await expect(
       ensureBootstrapAdmin({
         bootstrap: { adminEmail: cfg.adminEmail, adminPassword: '', tenantId: cfg.tenantId },
-        users, credentials, memberships, bcryptCost: 4, logger,
+        users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger,
       }),
     ).rejects.toThrow();
   });
@@ -230,7 +272,7 @@ describe('conflicting state', () => {
       email: cfg.adminEmail,
       status: 'disabled',
     });
-    await ensureBootstrapAdmin({ bootstrap: cfg, users, credentials, memberships, bcryptCost: 4, logger });
+    await ensureBootstrapAdmin({ bootstrap: cfg, users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger });
     const u = await users.findByEmailTenant(cfg.adminEmail, cfg.tenantId);
     expect(u!.userId).toBe('pre-existing');
     expect(u!.status).toBe('disabled');
@@ -242,7 +284,7 @@ describe('conflicting state', () => {
 
 describe('returned outcome', () => {
   const run = (bootstrap: typeof cfg | undefined) =>
-    ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, bcryptCost: 4, logger });
+    ensureBootstrapAdmin({ bootstrap, users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger });
 
   it("'not-configured' when there is no bootstrap config", async () => {
     expect(await run(undefined)).toBe('not-configured');

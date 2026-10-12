@@ -41,6 +41,7 @@ const evaluate = (overrides: Partial<AuthReadinessInput> = {}) =>
     users,
     memberships,
     credentials,
+    providers: [{ id: 'email-password', kind: 'password' }],
     ...overrides,
   });
 
@@ -53,7 +54,7 @@ const seedAdmin = async (userId = 'u1', status: 'active' | 'disabled' = 'active'
 describe('auth enabled', () => {
   it('is ok with one active admin and a real secret', async () => {
     await seedAdmin();
-    const r = await evaluate();
+    const r = await evaluate({ providers: [{ id: 'email-password', kind: 'password' }] });
     expect(r).toMatchObject({ ok: true, activeAdmins: 1, issues: [] });
   });
 
@@ -70,6 +71,19 @@ describe('auth enabled', () => {
   it('falls back to a placeholder email in the hint when none is configured', async () => {
     const r = await evaluate({ bootstrap: { status: 'not-configured' } });
     expect(r.issues[0]!.hint).toContain('--email <admin-email>');
+  });
+
+  // case: S-222.9
+  it('counts passwordless active admins only when a configured provider can authenticate them', async () => {
+    await users.create({ userId: 'sso', tenantId: TENANT, email: 'sso@x.test', status: 'active' });
+    await memberships.addMembership({ userId: 'sso', tenantId: TENANT, groupId: 'tenant-admin' });
+
+    expect((await evaluate({ providers: [] })).activeAdmins).toBe(0);
+    expect(await evaluate({
+      providers: [{ id: 'corp', kind: 'redirect' }],
+      bootstrap: { status: 'not-configured' },
+    }))
+      .toMatchObject({ ok: true, activeAdmins: 1 });
   });
 
   it('a disabled admin does not count', async () => {
@@ -148,7 +162,7 @@ describe('the seeded-by-bootstrap path', () => {
   it('a bootstrap-provisioned admin makes a fresh install ready', async () => {
     const status = await ensureBootstrapAdmin({
       bootstrap: { adminEmail: EMAIL, adminPassword: 'long-enough-password', tenantId: TENANT },
-      users, credentials, memberships, bcryptCost: 4, logger,
+      users, credentials, memberships, providers: [{ id: 'email-password', kind: 'password' }], bcryptCost: 4, logger,
     });
     expect(status).toBe('provisioned');
     expect(await evaluate({ bootstrap: { status, email: EMAIL } })).toMatchObject({ ok: true, activeAdmins: 1 });
