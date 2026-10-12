@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Small named-step framework shared by installed service journeys."""
 from __future__ import annotations
+from journey_values import journey_value
 
 import json
 import time
 import traceback
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +16,83 @@ from typing import Any, Callable, Iterable, Mapping
 from invocations import invocation_context, invocation_link, write_report_json, write_report_text
 from journey_dependencies import Dependency
 from journey_values import MissingJourneyState
+
+
+class JourneyContractError(RuntimeError):
+    """A runner violated its registered step-to-step state contract."""
+
+
+_active_memory_step: ContextVar[tuple[str, frozenset[str], frozenset[str]] | None] = ContextVar(
+    "active_journey_memory_step", default=None)
+
+
+class JourneyMemory:
+    """The single in-memory store available to registered journey steps."""
+
+    def __init__(self, declarations: Mapping[str, tuple[Iterable[str], Iterable[str]]]):
+        self._declarations = {name: tuple(required) for name, (required, _) in declarations.items()}
+        self._producers = {key: name for name, (_, keys) in declarations.items() for key in keys}
+        self._values: dict[str, Any] = {}
+
+    def register(self, name: str, requires: Iterable[str], provides: Iterable[str]) -> None:
+        required_names = tuple(Dependency.parse(item).name for item in requires
+                               if Dependency.parse(item).kind == "step")
+        for required_name in required_names:
+            self._declarations.setdefault(required_name, ())
+        self._declarations[name] = required_names
+        for key in provides:
+            producer = self._producers.get(key)
+            if producer is not None and producer != name:
+                raise JourneyContractError(
+                    f"harness defect: journey state key {key!r} has multiple producers "
+                    f"{producer!r} and {name!r}")
+            self._producers[key] = name
+
+    def _closure(self, required: Iterable[str]) -> set[str]:
+        closure: set[str] = set()
+        pending = list(required)
+        while pending:
+            name = pending.pop()
+            if name in closure:
+                continue
+            if name not in self._declarations:
+                raise JourneyContractError(f"harness defect: unknown journey prerequisite {name!r}")
+            closure.add(name)
+            pending.extend(self._declarations[name])
+        return closure
+
+    @contextmanager
+    def activate(self, name: str, requires: Iterable[str], provides: Iterable[str]):
+        required_names = tuple(Dependency.parse(item).name for item in requires
+                               if Dependency.parse(item).kind == "step")
+        token = _active_memory_step.set(
+            (name, frozenset(self._closure(required_names)), frozenset(provides)))
+        try:
+            yield
+        finally:
+            _active_memory_step.reset(token)
+
+    def get(self, key: str) -> Any:
+        active = _active_memory_step.get()
+        producer = self._producers.get(key)
+        if active is None:
+            raise JourneyContractError(f"harness defect: journey state {key!r} read outside a registered step")
+        reader, closure, _ = active
+        if producer is None or producer not in closure:
+            raise JourneyContractError(
+                f"harness defect: undeclared dependency: reader {reader!r} reads key {key!r} "
+                f"from producer {producer or '<unregistered>'!r}")
+        return self._values[key]
+
+    def set(self, key: str, value: Any) -> None:
+        active = _active_memory_step.get()
+        if active is None:
+            raise JourneyContractError(f"harness defect: journey state {key!r} written outside a registered step")
+        writer, _, provides = active
+        if key not in provides:
+            raise JourneyContractError(
+                f"harness defect: undeclared write: writer {writer!r} writes key {key!r}")
+        self._values[key] = value
 
 
 @dataclass
@@ -49,22 +129,26 @@ class Journey:
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.started = time.monotonic()
         self.steps: list[StepResult] = []
-        self.selected_steps = set(filter(None, os.getenv("KB_JOURNEY_SELECTED_STEPS", "").split(",")))
+        self.selected_steps = set(filter(None, journey_value("KB_JOURNEY_SELECTED_STEPS", "").split(",")))
         self.selected_claims = set(self.selected_steps)
-        self.prerequisite_steps = set(filter(None, os.getenv("KB_JOURNEY_PREREQUISITE_STEPS", "").split(",")))
-        self.prerequisite_flows = set(filter(None, os.getenv("KB_JOURNEY_PREREQUISITE_FLOWS", "").split(",")))
+        self.prerequisite_steps = set(filter(None, journey_value("KB_JOURNEY_PREREQUISITE_STEPS", "").split(",")))
+        self.prerequisite_flows = set(filter(None, journey_value("KB_JOURNEY_PREREQUISITE_FLOWS", "").split(",")))
         self.flows: dict[str, tuple[str, str]] = {}
-        self.selection = list(filter(None, os.getenv("KB_JOURNEY_CASES", "").split(",")))
-        self.runner_selector = os.getenv("KB_JOURNEY_RUNNER_SELECTOR", "")
+        self.selection = list(filter(None, journey_value("KB_JOURNEY_CASES", "").split(",")))
+        self.runner_selector = journey_value("KB_JOURNEY_RUNNER_SELECTOR", "")
         self.step_guard: Callable[[str, Callable[[], str | None]], str | None] | None = None
+        self.memory = parent.memory if parent is not None else JourneyMemory({})
 
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
              details: Callable[[], dict[str, Any]] | None = None, *,
-             requires: Iterable[str] = (), role: str = "step",
+             requires: Iterable[str] = (), provides: Iterable[str] = (), role: str = "step",
              runners: Iterable[str] = ()) -> StepResult:
         if role not in {"step", "lifecycle"}:
             raise ValueError(f"unsupported journey step role: {role}")
         case_ids = list(cases)
+        required_items = tuple(requires)
+        provided_items = tuple(provides)
+        self.memory.register(name, required_items, provided_items)
         required = {Dependency.parse(item) for item in requires}
         selected = bool(self.selected_steps.intersection(case_ids))
         eligible_runners = set(runners)
@@ -113,7 +197,8 @@ class Journey:
         missing_state_key: str | None = None
         try:
             with invocation_context(step_id=",".join(case_ids) or name):
-                message = self.step_guard(name, check) if self.step_guard else check()
+                with self.memory.activate(name, (str(item) for item in required), provided_items):
+                    message = self.step_guard(name, check) if self.step_guard else check()
             if isinstance(message, str) and message.startswith("BLOCKED:"):
                 status = "BLOCKED"
                 message = message.removeprefix("BLOCKED:").strip()
@@ -123,6 +208,9 @@ class Journey:
             status = "BLOCKED"
             message = str(error)
             missing_state_key = error.key
+        except JourneyContractError as error:
+            status = "FAIL"
+            message = str(error)
         except Exception as error:  # Include a concise error, not a raw traceback.
             status = "FAIL"
             message = str(error) or error.__class__.__name__
@@ -258,6 +346,7 @@ class FlowGraph:
         self.diagnostics_path = Path(diagnostics_path) if diagnostics_path else None
         self.states = dict(states or {})
         self.state_producers = dict(state_producers or {})
+        self.resources: list[Any] = []
 
     def _blocker(self, group: str) -> tuple[str, dict[str, object]] | None:
         for state in self.dependencies.get(group, ()):
@@ -378,12 +467,6 @@ class FlowGraph:
         return "PASS"
 
 
-def run_steps(journey: Journey, steps: Iterable[tuple[str, str, Callable[[], str | None]]]) -> JourneyResult:
-    for name, capability, check in steps:
-        journey.step(name, capability, check)
-    return journey.result()
-
-
 def _step_dict(step: StepResult) -> dict[str, Any]:
     result = asdict(step)
     if step.details is None:
@@ -433,7 +516,7 @@ def record_candidate_provenance(journey: Journey, checkout_commit: str,
 
 def source_selected(module_file: str) -> bool:
     """Whether a module contributes a selected claim or prerequisite."""
-    if not os.getenv("KB_JOURNEY_SELECTED_STEPS"):
+    if not journey_value("KB_JOURNEY_SELECTED_STEPS"):
         return True
     path = Path(module_file).resolve()
     root = Path(__file__).resolve().parents[2]
@@ -441,5 +524,5 @@ def source_selected(module_file: str) -> bool:
         source = path.relative_to(root).as_posix()
     except ValueError:
         return False
-    selected_sources = set(filter(None, os.getenv("KB_JOURNEY_SELECTED_SOURCES", "").split(",")))
+    selected_sources = set(filter(None, journey_value("KB_JOURNEY_SELECTED_SOURCES", "").split(",")))
     return source in selected_sources

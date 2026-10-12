@@ -1,5 +1,6 @@
 """Additional install, repair, and request-selection case claims."""
 from __future__ import annotations
+from journey_values import journey_value
 
 import json
 import hashlib
@@ -803,7 +804,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
     def install_secured_project_without_session() -> None:
         root = platform_root.parent / "s187-secured"
         project = platform_root.parent / "s187-secured-project"
-        admin_password = os.environ.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyInstallSecret1!")
+        admin_password = journey_value("KB_JOURNEY_ADMIN_PASSWORD", "JourneyInstallSecret1!")
         root.mkdir(parents=True, exist_ok=True)
         project.mkdir(parents=True, exist_ok=True)
         try:

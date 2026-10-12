@@ -10,6 +10,7 @@ selector cannot see still produces a BLOCKED row for a selected claim, never a
 PASS.
 """
 from __future__ import annotations
+from journey_values import journey_value
 
 import json
 import os
@@ -23,6 +24,14 @@ from invocations import (decode_ux_success_result, describe_cli_failure, invocat
                          print_report_text, read_ux_cli_result)
 from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
 from journey_dependencies import Dependency
+
+
+def _call_name(call: ast.Call) -> str:
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    return ""
 
 
 @lru_cache(maxsize=None)
@@ -81,8 +90,19 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         else:
             raise ValueError(f"step {name!r} in {source} must declare prerequisites as a literal sequence")
         role_name = role.value if isinstance(role, ast.Constant) else None
+        provides_node = keywords.get("provides")
+        if provides_node is None:
+            provides = []
+        elif isinstance(provides_node, (ast.Tuple, ast.List)):
+            if any(not isinstance(item, ast.Constant) or not isinstance(item.value, str)
+                   for item in provides_node.elts):
+                raise ValueError(f"provides= in {source}:{call.lineno} must contain literal state keys")
+            provides = [item.value for item in provides_node.elts]
+        else:
+            raise ValueError(f"provides= in {source}:{call.lineno} must contain a literal sequence")
         declaration = {"name": name, "kind": "flow" if function == "flow" else "step",
-                       "requires": required, "role": role_name, "runners": runners}
+                       "requires": required, "provides": provides,
+                       "role": role_name, "runners": runners}
         for line in range(call.lineno, call.end_lineno + 1):
             declarations.setdefault(line, declaration)
     return declarations
@@ -349,13 +369,219 @@ def _validate_dependency_declarations_cached(sources: tuple[str, ...], root: Pat
     validate_dependency_edges(declarations, reachable, graphs)
     reachable_sources = set().union(*reachable.values()) if reachable else set()
     validate_registered_state_dependencies(reachable_sources, root)
+    validate_journey_environment_reads(reachable_sources, root)
     validate_runner_conditions(reachable_sources, root)
     return declarations
 
 
 def validate_registered_state_dependencies(sources: set[str], root: Path) -> None:
-    """Require an edge when one registered callback reads mutable state another writes."""
-    _validate_registered_state_dependencies_cached(tuple(sorted(sources)), root)
+    """Fail closed when a registered callback can reach module-owned mutable state."""
+    for source in sorted(sources):
+        if not source.endswith(".py"):
+            continue
+        tree = _source_tree(source, root)
+        functions = {node.name: node for node in ast.walk(tree)
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        mutable_globals: set[str] = set()
+        for node in tree.body:
+            value = None
+            targets = []
+            annotation = ""
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                value = node.value
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if isinstance(node, ast.AnnAssign) and node.annotation is not None:
+                    annotation = ast.unparse(node.annotation).replace(" ", "")
+            if annotation in {"dict[str,str]", "dict[str,float]", "dict[str,str]|None"}:
+                continue
+            if value is None:
+                continue
+            mutable = (isinstance(value, (ast.Dict, ast.List, ast.Set, ast.ListComp,
+                                          ast.DictComp, ast.SetComp))
+                       or isinstance(value, ast.Call)
+                       and not (isinstance(value.func, ast.Name)
+                                and value.func.id in {"journey_value", "str", "int", "float", "bool",
+                                                      "tuple", "frozenset", "Path", "MappingProxyType"}
+                                or isinstance(value.func, ast.Attribute)
+                                and value.func.attr in {"rstrip", "strip", "lower", "upper", "casefold"})
+                       and (not isinstance(value.func, ast.Name)
+                            or value.func.id not in {"bytes"}))
+            if mutable:
+                mutable_globals.update(target.id for target in targets if isinstance(target, ast.Name))
+
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        state_accesses: dict[str, dict[int, bool]] = {}
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or _call_name(call) not in {"step", "flow", "service_check"}:
+                continue
+            case_declaration = next((keyword.value for keyword in call.keywords if keyword.arg == "cases"), None)
+            if case_declaration is not None and not isinstance(case_declaration, (ast.List, ast.Tuple)):
+                continue
+            callback_index = (3 if _call_name(call) == "flow" or len(call.args) >= 4 else 2)
+            if len(call.args) <= callback_index:
+                continue
+            callback_node = call.args[callback_index]
+            if isinstance(callback_node, ast.Name):
+                callback_node = functions.get(callback_node.id)
+                if callback_node is None:
+                    owner = parents.get(call)
+                    while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        owner = parents.get(owner)
+                    if owner is not None:
+                        local_values = []
+                        for local_node in ast.walk(owner):
+                            if isinstance(local_node, ast.Assign):
+                                assigned = [target.id for target in local_node.targets if isinstance(target, ast.Name)]
+                                if call.args[callback_index].id in assigned:
+                                    local_values.append(local_node.value)
+                            elif (isinstance(local_node, ast.AnnAssign)
+                                  and isinstance(local_node.target, ast.Name)
+                                  and local_node.target.id == call.args[callback_index].id):
+                                local_values.append(local_node.value)
+                        if local_values:
+                            forwarded_callbacks = []
+                            for value in local_values:
+                                if isinstance(value, ast.Name):
+                                    value = functions.get(value.id, value)
+                                if isinstance(value, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+                                    forwarded_callbacks.append(value)
+                                else:
+                                    raise ValueError(
+                                        f"{source}:{call.lineno}: registered callback capture is not statically resolvable")
+                            callback_node = forwarded_callbacks[0]
+                            forwarded_callbacks = forwarded_callbacks[1:]
+                        else:
+                            forwarded_callbacks = []
+                        parameters = [argument.arg for argument in
+                                      [*owner.args.posonlyargs, *owner.args.args, *owner.args.kwonlyargs]]
+                        if not local_values and call.args[callback_index].id in parameters:
+                            parameter = call.args[callback_index].id
+                            parameter_index = parameters.index(parameter)
+                            forwarded = []
+                            for site in ast.walk(tree):
+                                if not isinstance(site, ast.Call) or _call_name(site) != owner.name:
+                                    continue
+                                site_keywords = {keyword.arg: keyword.value for keyword in site.keywords}
+                                value = site_keywords.get(parameter)
+                                if value is None and parameter_index < len(site.args):
+                                    value = site.args[parameter_index]
+                                if value is None:
+                                    raise ValueError(
+                                        f"{source}:{site.lineno}: registered callback capture is not statically resolvable")
+                                if isinstance(value, ast.Name):
+                                    value = functions.get(value.id, value)
+                                if isinstance(value, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+                                    forwarded.append(value)
+                                else:
+                                    raise ValueError(
+                                        f"{source}:{site.lineno}: registered callback capture is not statically resolvable")
+                            if not forwarded:
+                                raise ValueError(
+                                    f"{source}:{call.lineno}: registered callback capture is not statically resolvable")
+                            callback_node = forwarded[0]
+                            forwarded_callbacks = forwarded[1:]
+                        elif not local_values:
+                            forwarded_callbacks = []
+                    else:
+                        forwarded_callbacks = []
+                else:
+                    forwarded_callbacks = []
+            else:
+                forwarded_callbacks = []
+            if not isinstance(callback_node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+                raise ValueError(f"{source}:{call.lineno}: registered callback capture is not statically resolvable")
+            callback_name = callback_node.name if isinstance(callback_node, (ast.FunctionDef, ast.AsyncFunctionDef)) else "<lambda>"
+            pending = [callback_node, *forwarded_callbacks]
+            visited: set[ast.AST] = set()
+            while pending:
+                callback = pending.pop()
+                if callback in visited:
+                    continue
+                visited.add(callback)
+                for item in ast.walk(callback):
+                    if isinstance(item, ast.Name):
+                        if item.id in mutable_globals:
+                            writes = isinstance(item.ctx, (ast.Store, ast.Del))
+                            parent = parents.get(item)
+                            cursor = parent
+                            while cursor is not None and cursor is not callback:
+                                if (isinstance(cursor, (ast.Subscript, ast.Attribute))
+                                        and isinstance(cursor.ctx, (ast.Store, ast.Del))):
+                                    writes = True
+                                    break
+                                cursor = parents.get(cursor)
+                            if isinstance(parent, ast.Call) and isinstance(parent.func, ast.Attribute):
+                                writes = writes or parent.func.attr in {
+                                    "append", "extend", "insert", "pop", "remove", "clear",
+                                    "update", "setdefault", "add", "discard",
+                                }
+                            accesses = state_accesses.setdefault(item.id, {})
+                            accesses[call.lineno] = accesses.get(call.lineno, False) or writes
+                        helper = functions.get(item.id)
+                        if isinstance(item.ctx, ast.Load) and helper is not None and helper is not callback:
+                            pending.append(helper)
+        for state_name, registrations in state_accesses.items():
+            if len(registrations) > 1 and any(registrations.values()):
+                lines = ", ".join(str(line) for line in sorted(registrations))
+                raise ValueError(
+                    f"{source}:{lines}: registered callbacks share module-global mutable state "
+                    f"{state_name!r}; declare it in journey memory with provides= and requires=")
+
+
+def validate_journey_environment_reads(sources: set[str], root: Path) -> None:
+    """Require KB_JOURNEY_* reads to pass through the journey_values accessor."""
+    for source in sorted(sources):
+        if not source.endswith(".py") or source == "e2e/journey/journey_values.py":
+            continue
+        tree = _source_tree(source, root)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
+                    and node.value.attr == "environ" and isinstance(node.value.value, ast.Name)
+                    and node.value.value.id == "os" and isinstance(node.ctx, ast.Load)
+                    and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str)
+                    and node.slice.value.startswith("KB_JOURNEY_")):
+                raise ValueError(
+                    f"{source}:{node.lineno}: {node.slice.value} must be read through journey_values.journey_value")
+            if not isinstance(node, ast.Call):
+                continue
+            function = _call_name(node)
+            if function not in {"get", "getenv"}:
+                continue
+            if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
+                continue
+            key = node.args[0].value
+            if not key.startswith("KB_JOURNEY_"):
+                continue
+            is_os_getenv = (isinstance(node.func, ast.Attribute) and node.func.attr == "getenv"
+                            and isinstance(node.func.value, ast.Name) and node.func.value.id == "os")
+            is_os_environ_get = (isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+                                 and isinstance(node.func.value, ast.Attribute)
+                                 and node.func.value.attr == "environ"
+                                 and isinstance(node.func.value.value, ast.Name)
+                                 and node.func.value.value.id == "os")
+            if is_os_getenv or is_os_environ_get:
+                raise ValueError(
+                    f"{source}:{node.lineno}: {key} must be read through journey_values.journey_value")
+
+
+def full_runner_plans(root: Path) -> dict[str, list[str]]:
+    plans = {}
+    for selector, runner in RUNNERS.items():
+        sources = set().union(*(_imported_journey_sources({source}, root)
+                                for source in runner.journey_sources))
+        registrations = _source_step_declarations(sources, root)
+        plans[selector] = [
+            declaration["name"] for declaration in registrations.values()
+            if declaration.get("name") is not None
+            and (not declaration.get("runners") or selector in declaration["runners"])
+        ]
+    return plans
+
+
+def write_full_runner_plan_baseline(root: Path) -> Path:
+    path = root / "e2e/journey/full-plan-baseline.json"
+    path.write_text(json.dumps(full_runner_plans(root), indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def validate_runner_conditions(sources: set[str], root: Path) -> None:
@@ -387,102 +613,6 @@ def validate_runner_conditions(sources: set[str], root: Path) -> None:
                             "declare its executable runners= variants"
                         )
                 current = parents.get(current)
-
-
-@lru_cache(maxsize=None)
-def _validate_registered_state_dependencies_cached(sources: tuple[str, ...], root: Path) -> None:
-    registrations: list[tuple[str, str, int, str, set[str], set[str], set[str]]] = []
-    callback_accesses: dict[ast.AST, tuple[set[str], set[str]]] = {}
-    for source in sources:
-        if not source.endswith(".py"):
-            continue
-        tree = _source_tree(source, root)
-        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-        functions = {node.name: node for node in ast.walk(tree)
-                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-        for call in ast.walk(tree):
-            if not isinstance(call, ast.Call):
-                continue
-            function_name = call.func.attr if isinstance(call.func, ast.Attribute) else (
-                call.func.id if isinstance(call.func, ast.Name) else "")
-            if function_name not in {"step", "flow", "service_check"}:
-                continue
-            callback_index = 3 if function_name == "flow" else 2
-            if len(call.args) <= callback_index:
-                continue
-            callback = call.args[callback_index]
-            if isinstance(callback, ast.Name):
-                callback = functions.get(callback.id)
-            if not isinstance(callback, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            name_node = call.args[0] if call.args else None
-            name = name_node.value if isinstance(name_node, ast.Constant) and isinstance(name_node.value, str) else None
-            if name is None:
-                continue
-            scope_node = parents.get(call)
-            while scope_node is not None and not isinstance(scope_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                scope_node = parents.get(scope_node)
-            scope = scope_node.name if scope_node is not None else "<module>"
-            keywords = {keyword.arg: keyword.value for keyword in call.keywords}
-            requires_node = keywords.get("requires")
-            requires = {item.value for item in requires_node.elts
-                        if isinstance(item, ast.Constant) and isinstance(item.value, str)} \
-                if isinstance(requires_node, (ast.Tuple, ast.List)) else set()
-            if callback not in callback_accesses:
-                reads: set[str] = set()
-                writes: set[str] = set()
-                callback_locals = {node.id for node in ast.walk(callback)
-                                   if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
-                for node in ast.walk(callback):
-                    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-                        key = (node.slice.value if isinstance(node.slice, ast.Constant)
-                               and isinstance(node.slice.value, str) else "*")
-                        target = writes if isinstance(node.ctx, ast.Store) else reads if isinstance(node.ctx, ast.Load) else None
-                        if target is not None:
-                            target.add(f"{node.value.id}[{key}]")
-                    elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                          and isinstance(node.func.value, ast.Name)):
-                        state_name = node.func.value.id
-                        if node.func.attr in {"get", "pop", "setdefault"}:
-                            key_node = node.args[0] if node.args else None
-                            key = (key_node.value if isinstance(key_node, ast.Constant)
-                                   and isinstance(key_node.value, str) else "*")
-                            reads.add(f"{state_name}[{key}]")
-                            if node.func.attr in {"pop", "setdefault"}:
-                                writes.add(f"{state_name}[{key}]")
-                        elif node.func.attr == "update":
-                            writes.update(f"{state_name}[{keyword.arg}]"
-                                          for keyword in node.keywords if keyword.arg is not None)
-                            if node.args:
-                                writes.add(f"{state_name}[*]")
-                reads = {state for state in reads if state.split("[", 1)[0] not in callback_locals}
-                writes = {state for state in writes if state.split("[", 1)[0] not in callback_locals}
-                callback_accesses[callback] = reads, writes
-            reads, writes = callback_accesses[callback]
-            registrations.append((source, scope, call.lineno, name, requires, reads, writes))
-
-    writers: dict[tuple[str, str, str], list[tuple[str, str]]] = {}
-    for source, scope, _, name, _, _, writes in registrations:
-        for state_name in writes:
-            writers.setdefault((source, scope, state_name), []).append((source, name))
-    for source, scope, line, name, requires, reads, _ in registrations:
-        for state_name in sorted(reads):
-            variable, key = state_name[:-1].split("[", 1)
-            possible_writes = [write for (write_source, write_scope, write_name), values in writers.items()
-                               if write_source == source and write_scope == scope
-                               and write_name.split("[", 1)[0] == variable
-                               and (key == "*" or write_name.endswith("[*]")
-                                    or write_name.endswith(f"[{key}]"))
-                               for write in values]
-            for producer_source, producer_name in possible_writes:
-                if producer_source == source and producer_name == name:
-                    continue
-                dependency = f"step:{producer_name}"
-                if dependency not in requires:
-                    raise ValueError(
-                        f"{source}:{line}: registered step {name!r} reads shared state {state_name!r} "
-                        f"written by {producer_name!r} without requires=(\"{dependency}\",)"
-                    )
 
 
 def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str, set[str]],
@@ -683,11 +813,15 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)
     resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name,
-                                 owners_by_step, os.environ.get("KB_JOURNEY_ONLY", ""), ineligible_by_step)
+                                 owners_by_step, journey_value("KB_JOURNEY_ONLY", ""), ineligible_by_step)
     return {"selection": sorted(set(tokens)), **resolved}
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--write-plan-baseline"]:
+        root = Path(__file__).resolve().parents[2]
+        print_report_text(str(write_full_runner_plan_baseline(root)), flush=True)
+        return 0
     results = []
     for mode in ("local", "secured"):
         command = ["pnpm", "-s", "kb", "qa", "cases", "coverage", "--level", "all", "--mode", mode, "--json"]
@@ -696,7 +830,7 @@ def main() -> int:
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
         results.append(read_coverage_result(result.stdout, result.returncode))
-    requested = os.environ.get("KB_JOURNEY_CASES", "")
+    requested = journey_value("KB_JOURNEY_CASES", "")
     if requested:
         print_report_text(json.dumps(selection_from_coverage(results, requested)), flush=True)
     else:

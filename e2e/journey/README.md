@@ -60,6 +60,25 @@ e2e/journey/smoke.sh secured --resolve-only
 `--resolve-only` performs selection before report-directory setup and does not
 write journey reports or start build/container work.
 
+## Journey plan and state contracts
+
+The unselected runner plan is checked against
+`e2e/journey/full-plan-baseline.json`. To propose an intentional plan change,
+regenerate it with the same registration enumerator:
+
+```bash
+python3 e2e/journey/select_from_cases.py --write-plan-baseline
+```
+
+Review the ordered JSON diff before accepting a new baseline. Registered steps
+declare their state prerequisites with `requires=`; selected runs expand that
+same graph before dispatch. In-memory state shared by callbacks must use the
+journey memory contract (`provides=`/`requires=`), which reports undeclared
+reads and writes as harness failures. State on disk, such as the installed
+platform, host, or registered project, cannot be checked by that memory
+container: its producing install/start/registration steps must appear in the
+step's direct or transitive `requires=` chain.
+
 The local run verifies loopback access without login. The secured run creates
 an isolated admin during installation, creates and activates a member through
 the invite routes, and checks both roles in Studio. Each result is written to

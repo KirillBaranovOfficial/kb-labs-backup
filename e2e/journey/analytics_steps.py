@@ -1,5 +1,6 @@
 """Installed-platform analytics API claims for S-191 and S-201."""
 from __future__ import annotations
+from journey_values import journey_value
 
 from project_service_path import project_service_path
 
@@ -18,7 +19,7 @@ from gateway_steps import run_gateway_steps
 
 def _request(method: str, path: str, *, token: str, payload: object = None,
              opener=urllib.request.urlopen) -> tuple[int, object]:
-    base = os.environ.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
+    base = journey_value("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
     data = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(
         f"{base}{path}", data=data,
@@ -75,8 +76,8 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
     event_type = "case.analytics.persist"
     source = "case-fixture"
     before = datetime.now(timezone.utc) - timedelta(seconds=2)
-    project_a = os.environ.get("KB_JOURNEY_PROJECT_ROOT", "")
-    project_b = os.environ.get("KB_JOURNEY_PROJECT_B_ROOT", "")
+    project_a = journey_value("KB_JOURNEY_PROJECT_ROOT", "")
+    project_b = journey_value("KB_JOURNEY_PROJECT_B_ROOT", "")
     fixture_install = _run_fixture_command(
         ["kb", "marketplace", "install", "@kb-labs/e2e-analytics-emitter", "--scope", "platform", "--json"],
         step_id="S-191.1", runner=runner, cwd=project_a,
@@ -93,7 +94,7 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
         else "fixture analytics plugin install and both project invocations must succeed; provide registered project roots"
     ), cases=["S-191.1"])
 
-    project_id = os.environ.get("KB_JOURNEY_PROJECT_ID", "")
+    project_id = journey_value("KB_JOURNEY_PROJECT_ID", "")
     query_path = project_service_path(project_id, "rest", "analytics/events?type=" + event_type + "&source=" + source
                   + "&from=" + before.isoformat() + "&to="
                   + (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat())
@@ -122,7 +123,7 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
         else f"restart exited {restarted.returncode}; post-restart analytics query returned HTTP {after_status}"
     ), cases=["S-191.3"])
 
-    fixture_file = os.environ.get("KB_JOURNEY_STUDIO_FIXTURE_FILE", "")
+    fixture_file = journey_value("KB_JOURNEY_STUDIO_FIXTURE_FILE", "")
     if fixture_file and event_a:
         fixture_path = Path(fixture_file)
         fixture_path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,8 +135,8 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
             "projectBEvent": marker_b,
         }), encoding="utf-8")
 
-    projects = [os.environ.get("KB_JOURNEY_PROJECT_ID", ""),
-                os.environ.get("KB_JOURNEY_PROJECT_B_ID", "")]
+    projects = [journey_value("KB_JOURNEY_PROJECT_ID", ""),
+                journey_value("KB_JOURNEY_PROJECT_B_ID", "")]
     project_events: list[list[dict]] = []
     project_runs: list[object] = []
     for project_id in projects:

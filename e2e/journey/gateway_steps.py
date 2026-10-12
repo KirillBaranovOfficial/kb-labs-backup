@@ -1,5 +1,6 @@
 """Gateway configuration, adapter-call and telemetry claims."""
 from __future__ import annotations
+from journey_values import journey_value
 
 import json
 import os
@@ -17,7 +18,7 @@ from service_steps import Journey
 
 def _http(path: str, *, token: str, method: str = "GET", payload: object = None,
           opener=urllib.request.urlopen) -> tuple[int, object]:
-    base = os.environ.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
+    base = journey_value("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
     request = urllib.request.Request(
         base + path,
         data=json.dumps(payload).encode() if payload is not None else None,
@@ -37,7 +38,7 @@ def _http(path: str, *, token: str, method: str = "GET", payload: object = None,
 
 def _cli(command: list[str], step_id: str, runner, *, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
     with invocation_context(step_id=step_id):
-        return runner(command, cwd=cwd or os.environ.get("KB_JOURNEY_PROJECT_ROOT"), env=os.environ.copy(),
+        return runner(command, cwd=cwd or journey_value("KB_JOURNEY_PROJECT_ROOT"), env=os.environ.copy(),
                       timeout=180, capture_output=True, text=True, check=False)
 
 
@@ -108,7 +109,7 @@ def _install_error(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def _store_studio_llm_model(model: str | None) -> None:
-    fixture_file = os.environ.get("KB_JOURNEY_STUDIO_FIXTURE_FILE", "")
+    fixture_file = journey_value("KB_JOURNEY_STUDIO_FIXTURE_FILE", "")
     if not model or not fixture_file:
         return
     path = Path(fixture_file)
@@ -121,7 +122,7 @@ def _store_studio_llm_model(model: str | None) -> None:
 
 def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
     """Exercise and prove both configured provider protocols with the fixture plugin."""
-    mock_base = os.environ.get("KB_JOURNEY_LLM_MOCK_BASE_URL", "http://mock-llm:8317")
+    mock_base = journey_value("KB_JOURNEY_LLM_MOCK_BASE_URL", "http://mock-llm:8317")
     adapter = _cli(["kb", "config", "set", "--scope", "platform", "platform.adapters.llm",
                     "@kb-labs/adapters-openai", "--json"], "S-017.1", runner)
     journey.step("configure platform OpenAI adapter", "gateway", lambda: (
@@ -130,7 +131,7 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
 
     secret_ref = _cli(["kb", "config", "set", "--scope", "platform",
                        "platform.adapterOptions.llm.apiKey", "${OPENAI_API_KEY}", "--json"], "S-017.2", runner)
-    project_config = Path(os.environ.get("KB_JOURNEY_PROJECT_ROOT", ".")) / ".kb" / "kb.config.jsonc"
+    project_config = Path(journey_value("KB_JOURNEY_PROJECT_ROOT", ".")) / ".kb" / "kb.config.jsonc"
     project_config_before = project_config.read_bytes() if project_config.is_file() else None
     openai_base = _cli(["kb", "config", "set", "--scope", "platform",
                         "platform.adapterOptions.llm.baseURL", f"{mock_base}/v1", "--json"], "S-017.2", runner)
@@ -140,7 +141,7 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
     except ValueError as error:
         base_result = {}
         base_result_error = str(error)
-    platform_root = Path(os.environ.get("KB_JOURNEY_PLATFORM_ROOT", str(Path.home() / "kb-platform"))).resolve()
+    platform_root = Path(journey_value("KB_JOURNEY_PLATFORM_ROOT", str(Path.home() / "kb-platform"))).resolve()
     expected_platform_config = str(active_platform_root(platform_root) / ".kb" / "kb.config.jsonc")
     scope_ok = (base_result_error is None and base_result.get("file") == expected_platform_config
                 and project_config_before == (project_config.read_bytes() if project_config.is_file() else None)
@@ -168,8 +169,8 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
               if base_result_error else "kb config set did not return a restart command")
     ), cases=["S-017.5"])
 
-    project_a = os.environ.get("KB_JOURNEY_PROJECT_ROOT", "")
-    project_b = os.environ.get("KB_JOURNEY_PROJECT_B_ROOT", "")
+    project_a = journey_value("KB_JOURNEY_PROJECT_ROOT", "")
+    project_b = journey_value("KB_JOURNEY_PROJECT_B_ROOT", "")
     fixture_command = ["kb", "journey", "llm", "complete", "--json"]
 
     openai_a = _cli([*fixture_command, "--marker=provider-openai-project-a"], "S-017.3", runner, cwd=project_a) if project_a else None
@@ -185,7 +186,7 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
         _cli([*fixture_command, f"--marker=provider-openai-{label}"], "S-018.2", runner, cwd=root)
         for label, root in (("a", project_a), ("b", project_b)) if root
     ]
-    project_ids = [os.environ.get("KB_JOURNEY_PROJECT_ID", ""), os.environ.get("KB_JOURNEY_PROJECT_B_ID", "")]
+    project_ids = [journey_value("KB_JOURNEY_PROJECT_ID", ""), journey_value("KB_JOURNEY_PROJECT_B_ID", "")]
     journey.step("call OpenAI adapter from both registered projects", "gateway", lambda: (
         None if all(project_ids) and len(openai_projects) == 2
         and all(_json_contains(item, "OPENAI_MOCK_RESPONSE") for item in openai_projects)
@@ -326,7 +327,7 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
     ), cases=["S-189.6"])
 
     telemetry_source = f"case-fixture-{journey.run_id}"
-    telemetry_from = os.environ.get("KB_JOURNEY_STARTED_AT", "")
+    telemetry_from = journey_value("KB_JOURNEY_STARTED_AT", "")
     events500 = [{"source": telemetry_source, "type": f"case.telemetry.{index}"} for index in range(500)]
     with invocation_context(step_id="S-190.1"):
         accepted_status, accepted = _http("/telemetry/v1/ingest", token=token, method="POST",
@@ -341,7 +342,7 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
     with invocation_context(step_id="S-190.2"):
         rejected_status, rejected = _http("/telemetry/v1/ingest", token=token, method="POST",
                                           payload={"events": events501}, opener=opener)
-    project_id = os.environ.get("KB_JOURNEY_PROJECT_ID", "")
+    project_id = journey_value("KB_JOURNEY_PROJECT_ID", "")
     telemetry_query = project_service_path(project_id, "rest", f"analytics/events?source={telemetry_source}")
     if telemetry_from:
         telemetry_query += f"&from={telemetry_from}"
