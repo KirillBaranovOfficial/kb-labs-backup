@@ -160,13 +160,17 @@ func firstAdminDisclosure(store secrets.Store, adminEmail string, completed bool
 	if readErr != nil || generatedErr != nil || disclosedErr != nil {
 		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator bootstrap state could not be read", "check that the platform root is writable, then rerun `kb-create install`", errors.Join(readErr, generatedErr, disclosedErr))
 	}
-	if !present || bootstrapState != "provisioned" || !generated || disclosed {
+	if !present || bootstrapState != "provisioned" || !generated {
 		return nil, nil
 	}
+	if disclosed {
+		return previouslyDisclosedFirstAdmin(adminEmail, platformRoot), nil
+	}
 	if completed {
+		recovery := buildFirstAdminRecoveryCommands(platformRoot, adminEmail)
 		return nil, contracts.NewDiag(contracts.CodeApplyFailed,
 			"the first administrator credential was not disclosed during the original install and cannot be disclosed after bootstrap completion",
-			"Sign in with the administrator's current password. If no administrator can sign in, run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot, "--recover", "--email", adminEmail, "--generate", "--yes")+"` to recover access.",
+			"Sign in with the administrator's current password. If no administrator can sign in, run `"+recovery.Stop+"`, then `"+recovery.Doctor+"`, then `"+recovery.Start+"`.",
 			fmt.Errorf("bootstrap completion predates the undisclosed credential state"))
 	}
 	password, passwordPresent, passwordErr := store.Get("gateway.bootstrap.password")
@@ -176,7 +180,37 @@ func firstAdminDisclosure(store secrets.Store, adminEmail string, completed bool
 	if err := store.Put(secrets.BootstrapDisclosed, "true"); err != nil {
 		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator credential disclosure could not be recorded", "check that the platform root is writable, then rerun `kb-create install`", err)
 	}
-	return &firstAdminCredential{Email: adminEmail, Password: password, ShownOnce: true}, nil
+	return &firstAdminCredential{State: firstAdminDisclosed, Email: adminEmail, Password: password}, nil
+}
+
+func previouslyDisclosedFirstAdmin(adminEmail, platformRoot string) *firstAdminCredential {
+	recovery := buildFirstAdminRecoveryCommands(platformRoot, adminEmail)
+	return &firstAdminCredential{
+		State:           firstAdminPreviouslyDisclosed,
+		Email:           adminEmail,
+		Notice:          fmt.Sprintf("The first-administrator credential for %s was issued by an earlier run and is not shown again. To recover access, run the commands below in order.", adminEmail),
+		RecoveryCommand: recovery.Doctor,
+		StopCommand:     recovery.Stop,
+		StartCommand:    recovery.Start,
+	}
+}
+
+type firstAdminRecoveryCommands struct {
+	Stop   string
+	Doctor string
+	Start  string
+}
+
+func buildFirstAdminRecoveryCommands(platformRoot, adminEmail string) firstAdminRecoveryCommands {
+	return firstAdminRecoveryCommands{
+		Stop:   contracts.ShellCommand("kb-create", "stop", "--platform-root", platformRoot),
+		Doctor: firstAdminRecoveryCommand(platformRoot, adminEmail),
+		Start:  contracts.ShellCommand("kb-create", "start", "--platform-root", platformRoot),
+	}
+}
+
+func firstAdminRecoveryCommand(platformRoot, adminEmail string) string {
+	return contracts.ShellCommand("kb-create", "doctor", "--platform-root", platformRoot, "--recover", "--email", adminEmail, "--generate", "--yes")
 }
 
 func errorsJoinStop(cause error, stop func() error) error {

@@ -322,13 +322,6 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	} else {
 		applied.Plan.Request.PlatformRoot = platformRoot
 	}
-	if securedAdmin {
-		var failure *diag.Diag
-		firstAdmin, failure = firstAdminDisclosure(store, adminEmail, bootstrapCompleted, platformRoot)
-		if failure != nil {
-			return applyCommandResult{}, failure
-		}
-	}
 	if planned.Host != nil {
 		roots := make([]gateway.Root, 0, 2)
 		if owner, ok := shim.Owner(input.Executable); ok && filepath.Clean(owner) != filepath.Clean(platformRoot) {
@@ -375,6 +368,13 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			if relative, relErr := filepath.Rel(operationRoot, transcript.Path()); relErr == nil {
 				logPath = filepath.Join(activeRoot, relative)
 			}
+		}
+	}
+	if securedAdmin {
+		var failure *diag.Diag
+		firstAdmin, failure = firstAdminDisclosure(store, adminEmail, bootstrapCompleted, platformRoot)
+		if failure != nil {
+			return applyCommandResult{}, failure
 		}
 	}
 	return applyCommandResult{OK: true, Operation: "apply", Receipt: applied, LogPath: logPath,

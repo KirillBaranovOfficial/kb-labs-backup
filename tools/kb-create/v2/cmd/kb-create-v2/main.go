@@ -48,10 +48,21 @@ type applyCommandResult struct {
 	FirstAdmin *firstAdminCredential    `json:"firstAdmin,omitempty"`
 }
 
+type firstAdminState string
+
+const (
+	firstAdminDisclosed           firstAdminState = "disclosed"
+	firstAdminPreviouslyDisclosed firstAdminState = "previously-disclosed"
+)
+
 type firstAdminCredential struct {
-	Email     string `json:"email"`
-	Password  string `json:"password"`
-	ShownOnce bool   `json:"shownOnce"`
+	State           firstAdminState `json:"state"`
+	Email           string          `json:"email"`
+	Password        string          `json:"password,omitempty"`
+	Notice          string          `json:"notice,omitempty"`
+	RecoveryCommand string          `json:"recoveryCommand,omitempty"`
+	StopCommand     string          `json:"stopCommand,omitempty"`
+	StartCommand    string          `json:"startCommand,omitempty"`
 }
 
 func (values *repeatedValue) String() string { return strings.Join(*values, ",") }
