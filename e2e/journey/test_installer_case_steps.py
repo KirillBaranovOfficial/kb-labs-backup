@@ -376,42 +376,56 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         active = create_fixture_install_container(install_root)
                     receipt_path = active / ".kb/v2/receipt.json"
                     first_install = not receipt_path.exists()
+                    previous_receipt = None
                     if receipt_path.exists():
-                        active = json.loads(receipt_path.read_text())
+                        previous_receipt = json.loads(receipt_path.read_text())
                         selected = args[args.index("--project-root") + 1] if "--project-root" in args else ""
-                        recorded = active["plan"]["request"].get("projectRoot", "")
-                        if selected and selected != recorded:
+                        selected_path = str(Path(selected).absolute()) if selected else ""
+                        if selected and selected_path not in {
+                                previous_receipt.get("projectSelectedPath"),
+                                previous_receipt.get("projectCanonicalPath")}:
                             return subprocess.CompletedProcess(args, 1,
                                 '{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
                                 '"area":"install","stage":"resolve","severity":"error",'
-                                '"retryable":false,"message":"project changed",'
+                                '"retryable":false,"message":"The selected project path spelling differs from the project selection recorded by this installation.",'
                                 "\"hint\":\"Run `'kb' 'auth' 'login' '--gateway-url' 'URL' '--email' 'EMAIL'`, "
                                 "then `'kb' 'project' 'add' 'PATH'`, then `'kb' 'project' 'show' 'PATH'`.\","
                                 '"correlationId":"fixture"}}', "")
                     active_root = active_platform_root(install_root)
                     (active_root / ".kb/v2/bin").mkdir(parents=True, exist_ok=True)
-                    (active_root / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"request": {
+                    selected = args[args.index("--project-root") + 1] if "--project-root" in args else ""
+                    selected_path = str(Path(selected).absolute()) if selected else ""
+                    canonical_path = str(Path(selected).resolve()) if selected else ""
+                    receipt_data = {"schema": "kb.create.receipt/v3", "projectSelectedPath": selected_path,
+                                    "projectCanonicalPath": canonical_path,
+                                    "projectId": "prj_0123456789abcdef" if selected else "",
+                                    "plan": {"request": {
                         "platformRoot": str(install_root),
-                        "projectRoot": args[args.index("--project-root") + 1] if "--project-root" in args else ""}},
-                        "verification": {"hostHealthUrl": "http://127.0.0.1:45678/health"}}))
+                        "projectRoot": selected}},
+                        "verification": {"hostHealthUrl": "http://127.0.0.1:45678/health"}}
+                    if previous_receipt and previous_receipt.get("projectId"):
+                        for field in ("projectSelectedPath", "projectCanonicalPath", "projectId"):
+                            receipt_data[field] = previous_receipt[field]
+                    (active_root / ".kb/v2/receipt.json").write_text(json.dumps(receipt_data))
                     (active_root / ".kb/v2/bin/kb").write_text("fixture")
                     if first_install and "--project-root" in args:
-                        selected_path = str(Path(args[args.index("--project-root") + 1]).resolve())
+                        selected_path = canonical_path
                         registry_path = Path.home() / ".kb/projects.json"
                         registry_path.parent.mkdir(parents=True, exist_ok=True)
                         entries = json.loads(registry_path.read_text()).get("projects", []) if registry_path.exists() else []
-                        entries.append({"id": "prj_test", "path": selected_path})
+                        entries.append({"id": "prj_0123456789abcdef", "path": selected_path})
                         registry_path.write_text(json.dumps({"projects": entries}))
                     if "--secret-env" in args:
                         selected_path = str(Path(args[args.index("--project-root") + 1]).resolve())
                         registry_path = Path.home() / ".kb/projects.json"
                         registry_path.parent.mkdir(parents=True, exist_ok=True)
-                        registry_path.write_text(json.dumps({"projects": [{"id": "prj_test", "path": selected_path}]}))
+                        registry_path.write_text(json.dumps({"projects": [{"id": "prj_0123456789abcdef", "path": selected_path}]}))
                         return subprocess.CompletedProcess(args, 0,
                             "First administrator credentials (shown once)\nPassword: x18-journey-first-admin\n"
                             f"Verification: project registered. Next: run `'kb-create' 'status'` and "
                             f"`'kb' 'project' 'show' '{selected_path}'`.\n", "")
-                    return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{"operation":"install"}}', "")
+                    result_data = {"operation": "install", "receipt": receipt_data}
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": result_data}), "")
                 if args[1] == "update":
                     return subprocess.CompletedProcess(args, 0,
                         '{"ok":true,"data":{"ok":true,"alreadyUpToDate":true}}', "")
@@ -419,7 +433,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     return subprocess.CompletedProcess(args, 1,
                         '{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
                         '"area":"install","stage":"resolve","severity":"error",'
-                        '"retryable":false,"message":"project changed",'
+                        '"retryable":false,"message":"The selected project path spelling differs from the project selection recorded by this installation.",'
                         "\"hint\":\"Run `'kb' 'auth' 'login' '--gateway-url' 'URL' '--email' 'EMAIL'`, "
                         "then `'kb' 'project' 'add' 'PATH'`, then `'kb' 'project' 'show' 'PATH'`.\","
                         '"correlationId":"fixture"}}', "")
@@ -431,7 +445,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                         if entry.get("path") == str(Path(args[3]).resolve())), None)
                         if project is None and projects:
                             project = projects[-1]
-                        project = project or {"id": "prj_test", "path": str(Path(args[3]).resolve())}
+                        project = project or {"id": "prj_0123456789abcdef", "path": str(Path(args[3]).resolve())}
                         return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
                             "project": project}}), "")
                     if len(args) > 2 and args[2] == "add":
@@ -442,10 +456,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         if registry_path.exists():
                             entries = json.loads(registry_path.read_text()).get("projects", [])
                         if not any(entry.get("path") == selected_path for entry in entries):
-                            entries.append({"id": "prj_test", "path": selected_path})
+                            entries.append({"id": "prj_0123456789abcdef", "path": selected_path})
                         registry_path.write_text(json.dumps({"projects": entries}))
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
-                        "project": {"id": "prj_test", "path": str(Path(args[3]).resolve())},
+                        "project": {"id": "prj_0123456789abcdef", "path": str(Path(args[3]).resolve())},
                         "alreadyExisted": True}}), "")
                 if args[1] == "status":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {

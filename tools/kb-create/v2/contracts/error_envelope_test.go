@@ -56,6 +56,42 @@ func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	}
 }
 
+func TestNewDiagRejectsMissingCauseForCauseRequiredInstallCodes(t *testing.T) {
+	for _, code := range []string{
+		CodeProjectRegistrationFailed,
+		CodeReleaseIndexInvalid,
+		CodeReleaseIndexUnreadable,
+		CodeReleaseIndexSealFailed,
+	} {
+		for _, missing := range []struct {
+			name  string
+			cause error
+		}{{name: "nil"}, {name: "empty", cause: errors.New("")}} {
+			t.Run(code+"/"+missing.name, func(t *testing.T) {
+				defer func() {
+					if recovered := recover(); recovered == nil {
+						t.Fatalf("NewDiag(%q, %v) did not reject a missing required cause", code, missing.cause)
+					}
+				}()
+				NewDiag(code, "failure", "retry", missing.cause)
+			})
+		}
+	}
+}
+
+func TestNewProjectRegistrationFailureBuildsCauseFromLocalContext(t *testing.T) {
+	status := 502
+	failure := NewProjectRegistrationFailure("login", "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", &status,
+		"0123456789abcdef0123456789abcdef", "retry with the administrator credentials")
+	if failure.Code != CodeProjectRegistrationFailed ||
+		failure.Cause != "Project registration failed during login: KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE (HTTP 502); Gateway correlation ID 0123456789abcdef0123456789abcdef" ||
+		failure.Meta["causeCode"] != "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE" ||
+		failure.Meta["requestStage"] != "login" || failure.Meta["httpStatus"] != status ||
+		failure.Meta["remoteCorrelationId"] != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("registration failure = %#v", failure)
+	}
+}
+
 func TestEmittedCodesAreKnown(t *testing.T) {
 	root := ".."
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
