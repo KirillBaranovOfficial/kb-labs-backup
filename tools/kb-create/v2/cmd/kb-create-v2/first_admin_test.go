@@ -152,7 +152,7 @@ func TestGatewayBootstrapContractUsesSharedSchemaAndFixture(t *testing.T) {
 // case: S-222.1
 func TestBootstrapContractFailureNamesInternalMismatchAndNextDiagnosticCommand(t *testing.T) {
 	store := secrets.Store{PlatformRoot: t.TempDir()}
-	err := bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", fmt.Errorf("invalid result"), store.PlatformRoot)
+	err := bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", "Gateway auth-health response did not match the installer contract", store.PlatformRoot)
 	var diagnostic *diag.Diag
 	if !errors.As(err, &diagnostic) {
 		t.Fatalf("bootstrap contract diagnostic = %T; want catalogued diag", err)
@@ -174,7 +174,7 @@ func TestUnknownGatewayBootstrapFailsWithCataloguedDiagnostic(t *testing.T) {
 	store := secrets.Store{PlatformRoot: t.TempDir()}
 	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) {
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || diagnostic.Cause == "" || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) {
 		t.Fatalf("unknown bootstrap status error = %#v, want catalogued apply diagnostic with next step", err)
 	}
 	if _, present, err := store.Get(secrets.BootstrapCompleted); err != nil || present {
@@ -222,7 +222,7 @@ func TestMissingGatewayRequiredHealthFieldsAreInternalContractFailures(t *testin
 			err = readBootstrapOutcome(context.Background(), server.URL+"/health", store)
 			var diagnostic *diag.Diag
 			wantDoctor := contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)
-			if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, wantDoctor) {
+			if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || diagnostic.Cause == "" || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, wantDoctor) {
 				t.Fatalf("missing required Gateway field %q = %#v, want internal contract mismatch", required, err)
 			}
 		})
@@ -238,11 +238,73 @@ func TestValidGatewayBootstrapFailureDirectsOperatorToAuthReadiness(t *testing.T
 	store := secrets.Store{PlatformRoot: t.TempDir()}
 	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "bootstrap did not complete") {
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "did not prove first-administrator bootstrap") {
 		t.Fatalf("valid Gateway bootstrap failure = %#v", err)
 	}
 	if !strings.Contains(diagnostic.Hint, "inspect Gateway authentication readiness") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) || strings.Contains(diagnostic.Hint, "contract mismatch") || strings.Contains(diagnostic.Hint, "Update the Gateway") {
 		t.Fatalf("valid Gateway bootstrap failure hint = %q", diagnostic.Hint)
+	}
+}
+
+type bootstrapOutcomeTestStarter struct{ stopped int }
+
+func (starter *bootstrapOutcomeTestStarter) Start(context.Context, contracts.HostSpec) (func() error, error) {
+	return func() error {
+		starter.stopped++
+		return nil
+	}, nil
+}
+
+// case: S-222.6, S-222.7
+func TestGatewayWithoutUsableAdminCannotWriteBootstrapCompletion(t *testing.T) {
+	const remoteSecretMarker = "REMOTE_FIRST_ADMIN_HEALTH_SECRET"
+	for _, response := range []struct {
+		name         string
+		ready        bool
+		activeAdmins int
+		bootstrap    string
+	}{
+		{name: "readiness false with no admins", ready: false, activeAdmins: 0, bootstrap: "provisioned"},
+		{name: "readiness false despite admin count", ready: false, activeAdmins: 1, bootstrap: "provisioned"},
+		{name: "readiness true without admin", ready: true, activeAdmins: 0, bootstrap: "provisioned"},
+		{name: "bootstrap failed despite readiness", ready: true, activeAdmins: 1, bootstrap: "failed"},
+		{name: "bootstrap not configured despite readiness", ready: true, activeAdmins: 1, bootstrap: "not-configured"},
+	} {
+		t.Run(response.name, func(t *testing.T) {
+			issue := fmt.Sprintf(`{"code":"bootstrap_failed","severity":"error","message":"%s","hint":"%s"}`, remoteSecretMarker, remoteSecretMarker)
+			body := fmt.Sprintf(`{"ok":true,"data":{"ok":%t,"authEnabled":true,"tenantId":"default","activeAdmins":%d,"bootstrap":%q,"issues":[%s]},"meta":{}}`, response.ready, response.activeAdmins, response.bootstrap, issue)
+			testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			defer testServer.Close()
+			store := secrets.Store{PlatformRoot: t.TempDir()}
+			starter := &bootstrapOutcomeTestStarter{}
+			_, err := (bootstrapOutcomeHost{starter: starter, store: store}).Start(context.Background(), contracts.HostSpec{HealthURL: testServer.URL})
+			var diagnostic *diag.Diag
+			if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || diagnostic.Cause == "" {
+				t.Fatalf("non-proving readiness = %#v, want typed failure with local cause", err)
+			}
+			if !strings.Contains(diagnostic.Message, "did not prove first-administrator bootstrap") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) {
+				t.Fatalf("non-proving readiness diagnostic = %#v", diagnostic)
+			}
+			var jsonOutput, humanOutput bytes.Buffer
+			clikitresult.RenderDiag(&jsonOutput, &humanOutput, diagnostic, clikitresult.ModeJSON)
+			encoded, marshalErr := json.Marshal(diagnostic)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			for _, output := range []string{err.Error(), string(encoded), jsonOutput.String(), humanOutput.String()} {
+				if strings.Contains(output, remoteSecretMarker) {
+					t.Fatalf("bootstrap refusal exposed remote health detail: %s", output)
+				}
+			}
+			if _, present, err := store.Get(secrets.BootstrapCompleted); err != nil || present {
+				t.Fatalf("non-proving readiness wrote completion marker: present=%v error=%v", present, err)
+			}
+			if starter.stopped != 1 {
+				t.Fatalf("host stop count = %d, want 1 after readiness refusal", starter.stopped)
+			}
+		})
 	}
 }
 

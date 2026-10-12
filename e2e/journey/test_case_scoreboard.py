@@ -80,7 +80,7 @@ class CaseScoreboardTests(unittest.TestCase):
         catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
         self.assertEqual(release_claims_for_case("S-109", catalog), [])
         self.assertEqual(release_claims_for_case("S-100", catalog),
-                         ["S-100.1", "S-100.2", "S-100.3", "S-100.4"])
+                         ["S-100.1", "S-100.2", "S-100.3", "S-100.4", "S-100.5"])
 
     def test_playwright_tags_and_skip_are_claimed(self):
         self.write_json("studio-playwright-secured.json", {"suites": [{"specs": [{

@@ -92,11 +92,11 @@ describe('admin stranded in a broken state', () => {
     await credentials.deleteCredential(userId, 'email-password');
     expect(await canLogin(OLD_PASSWORD)).toBe(false);
 
-    // Re-running the bootstrap does NOT repair it: it skips an active user.
-    await ensureBootstrapAdmin({
+    // Bootstrap never rewrites an active account. The operator uses explicit recovery.
+    await expect(ensureBootstrapAdmin({
       bootstrap: { adminEmail: EMAIL, adminPassword: OLD_PASSWORD, tenantId: TENANT },
       users, credentials, memberships, bcryptCost: 4, logger,
-    });
+    })).rejects.toThrow('existing active account is not usable');
     expect(await canLogin(OLD_PASSWORD)).toBe(false);
 
     const result = await reset();

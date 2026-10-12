@@ -40,11 +40,13 @@ const evaluate = (overrides: Partial<AuthReadinessInput> = {}) =>
     bootstrap: { status: 'provisioned', email: EMAIL },
     users,
     memberships,
+    credentials,
     ...overrides,
   });
 
 const seedAdmin = async (userId = 'u1', status: 'active' | 'disabled' = 'active', tenantId = TENANT) => {
   await users.create({ userId, tenantId, email: `${userId}@x.test`, status });
+  await credentials.setCredential({ userId, providerId: 'email-password', hash: 'test-hash' });
   await memberships.addMembership({ userId, tenantId, groupId: 'tenant-admin' });
 };
 

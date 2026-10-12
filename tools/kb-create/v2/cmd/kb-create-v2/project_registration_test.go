@@ -173,13 +173,15 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	}
 	secretStore := secrets.Store{PlatformRoot: root}
 	for name, value := range map[string]string{
-		secrets.BootstrapCompleted: "provisioned",
 		secrets.BootstrapGenerated: "true",
 		secrets.BootstrapDisclosed: "true",
 	} {
 		if err := secretStore.Put(name, value); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := readBootstrapOutcome(context.Background(), realGateway+"/health", secretStore); err != nil {
+		t.Fatalf("record first-admin completion from the secured Gateway auth-readiness route: %v", err)
 	}
 	layout, err := versionroot.New(root)
 	if err != nil {

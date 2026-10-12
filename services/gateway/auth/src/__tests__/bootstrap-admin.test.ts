@@ -21,24 +21,64 @@ import { UsersStore } from '../users-store.js';
 import { CredentialsStore } from '../credentials-store.js';
 import { MembershipsStore } from '../memberships-store.js';
 import { ensureBootstrapAdmin } from '../bootstrap-admin.js';
+import { evaluateAuthReadiness } from '../auth-readiness.js';
+import { createEmailPasswordProvider } from '../providers/email-password.js';
 
+let docs: ConstructorParameters<typeof UsersStore>[0];
 let users: UsersStore;
 let credentials: CredentialsStore;
 let memberships: MembershipsStore;
 let warnings: unknown[];
+let logRecords: unknown[];
 
 beforeEach(() => {
-  const docs = createInMemoryDocumentDatabase();
+  docs = createInMemoryDocumentDatabase();
   users = new UsersStore(docs);
   credentials = new CredentialsStore(docs);
   memberships = new MembershipsStore(docs);
   warnings = [];
+  logRecords = [];
 });
 
+class InterruptUsersStore extends UsersStore {
+  constructor(docs: ConstructorParameters<typeof UsersStore>[0], private readonly interruptAfter: 'user' | 'activation' | null) {
+    super(docs);
+  }
+  override async create(input: Parameters<UsersStore['create']>[0]) {
+    const user = await super.create(input);
+    if (this.interruptAfter === 'user') { throw new Error('injected user write interruption'); }
+    return user;
+  }
+  override async setStatus(userId: string, status: Parameters<UsersStore['setStatus']>[1]) {
+    await super.setStatus(userId, status);
+    if (this.interruptAfter === 'activation' && status === 'active') { throw new Error('injected activation write interruption'); }
+  }
+}
+
+class InterruptCredentialsStore extends CredentialsStore {
+  constructor(docs: ConstructorParameters<typeof UsersStore>[0], private readonly interruptAfterCredential: boolean) {
+    super(docs);
+  }
+  override async setCredential(input: Parameters<CredentialsStore['setCredential']>[0]) {
+    await super.setCredential(input);
+    if (this.interruptAfterCredential) { throw new Error('injected credential write interruption'); }
+  }
+}
+
+class InterruptMembershipsStore extends MembershipsStore {
+  constructor(docs: ConstructorParameters<typeof UsersStore>[0], private readonly interruptAfterMembership: boolean) {
+    super(docs);
+  }
+  override async addMembership(input: Parameters<MembershipsStore['addMembership']>[0]) {
+    await super.addMembership(input);
+    if (this.interruptAfterMembership) { throw new Error('injected membership write interruption'); }
+  }
+}
+
 const logger = {
-  warn: (...args: unknown[]) => warnings.push(args),
-  info: () => undefined,
-  error: () => undefined,
+  warn: (...args: unknown[]) => { warnings.push(args); logRecords.push(args); },
+  info: (...args: unknown[]) => { logRecords.push(args); },
+  error: (...args: unknown[]) => { logRecords.push(args); },
 };
 
 const cfg = {
@@ -81,9 +121,84 @@ describe('idempotency', () => {
     }
     const u = await users.findByEmailTenant(cfg.adminEmail, cfg.tenantId);
     expect(u).not.toBeNull();
+    const originalCredential = await credentials.getCredential(u!.userId, 'email-password');
+    await ensureBootstrapAdmin({
+      bootstrap: { ...cfg, adminPassword: 'different-bootstrap-password' },
+      users,
+      credentials,
+      memberships,
+      bcryptCost: 4,
+      logger,
+    });
     const allMem = await memberships.listByUser(u!.userId);
     expect(allMem).toHaveLength(1);
     expect(warnings.length).toBe(0); // no warnings on idempotent reruns
+    expect(await credentials.getCredential(u!.userId, 'email-password')).toEqual(originalCredential);
+    const auth = createEmailPasswordProvider({ users, credentials, tenantId: cfg.tenantId, bcryptCost: 4 });
+    await expect(auth.authenticate({ email: cfg.adminEmail, password: cfg.adminPassword }))
+      .resolves.toMatchObject({ ok: true, email: cfg.adminEmail });
+  });
+});
+
+describe('interrupted bootstrap recovery', () => {
+  // case: S-222.5
+  it('restart converges after failures following each persisted bootstrap write', async () => {
+    for (const failedWrite of ['user', 'credential', 'membership', 'activation'] as const) {
+      docs = createInMemoryDocumentDatabase();
+      const interruptedUsers = new InterruptUsersStore(
+        docs,
+        failedWrite === 'user' || failedWrite === 'activation' ? failedWrite : null,
+      );
+      const interruptedCredentials = new InterruptCredentialsStore(docs, failedWrite === 'credential');
+      const interruptedMemberships = new InterruptMembershipsStore(docs, failedWrite === 'membership');
+
+      await expect(ensureBootstrapAdmin({
+        bootstrap: cfg,
+        users: interruptedUsers,
+        credentials: interruptedCredentials,
+        memberships: interruptedMemberships,
+        bcryptCost: 4,
+        logger,
+      })).rejects.toThrow('injected');
+
+      const restartedUsers = new UsersStore(docs);
+      const restartedCredentials = new CredentialsStore(docs);
+      const restartedMemberships = new MembershipsStore(docs);
+      await ensureBootstrapAdmin({
+        bootstrap: cfg,
+        users: restartedUsers,
+        credentials: restartedCredentials,
+        memberships: restartedMemberships,
+        bcryptCost: 4,
+        logger,
+      });
+
+      const user = await restartedUsers.findByEmailTenant(cfg.adminEmail, cfg.tenantId);
+      expect(user).toMatchObject({ status: 'active' });
+      expect(await restartedUsers.listByTenant(cfg.tenantId)).toHaveLength(1);
+      const adminMemberships = (await restartedMemberships.listByUser(user!.userId))
+        .filter((membership) => membership.tenantId === cfg.tenantId && membership.groupId === 'tenant-admin');
+      expect(adminMemberships).toHaveLength(1);
+      const auth = createEmailPasswordProvider({
+        users: restartedUsers,
+        credentials: restartedCredentials,
+        tenantId: cfg.tenantId,
+        bcryptCost: 4,
+      });
+      await expect(auth.authenticate({ email: cfg.adminEmail, password: cfg.adminPassword }))
+        .resolves.toMatchObject({ ok: true, email: cfg.adminEmail });
+      await expect(evaluateAuthReadiness({
+        authEnabled: true,
+        loopbackOnly: false,
+        tenantId: cfg.tenantId,
+        jwtSecretIsDefault: false,
+        bootstrap: { status: 'exists-active', email: cfg.adminEmail },
+        users: restartedUsers,
+        credentials: restartedCredentials,
+        memberships: restartedMemberships,
+      })).resolves.toMatchObject({ ok: true, activeAdmins: 1 });
+      expect(JSON.stringify(logRecords)).not.toContain(cfg.adminPassword);
+    }
   });
 });
 
