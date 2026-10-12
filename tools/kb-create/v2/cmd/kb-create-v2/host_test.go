@@ -277,9 +277,11 @@ func childEnvironment(base []string, overrides map[string]string) []string {
 }
 
 var (
-	buildOnce sync.Once
-	buildDir  string
-	buildErr  error
+	buildOnce                sync.Once
+	buildDir                 string
+	buildErr                 error
+	hostSupervisorHelperOnce sync.Once
+	hostSupervisorHelperErr  error
 )
 
 // binaries builds the real launcher and the fake host once per test binary.
@@ -303,10 +305,28 @@ func binaries(t *testing.T) (launcher, fakehost string) {
 	return filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost")
 }
 
+func hostSupervisorHelperBinary(t *testing.T) string {
+	t.Helper()
+	binaries(t)
+	hostSupervisorHelperOnce.Do(func() {
+		output, err := exec.Command("go", "build", "-tags", "kb_create_test_support", "-o", filepath.Join(buildDir, "kb-create-supervisor.test"), "../../testsupport/identity-supervisor").CombinedOutput()
+		if err != nil {
+			hostSupervisorHelperErr = fmt.Errorf("build host test supervisor helper: %w\n%s", err, output)
+		}
+	})
+	if hostSupervisorHelperErr != nil {
+		t.Fatal(hostSupervisorHelperErr)
+	}
+	return filepath.Join(buildDir, "kb-create-supervisor.test")
+}
+
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if buildDir != "" {
-		for _, binary := range []string{filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost")} {
+		for _, binary := range []string{filepath.Join(buildDir, "kb-create"), filepath.Join(buildDir, "fakehost"), filepath.Join(buildDir, "kb-create-supervisor.test")} {
+			if _, err := os.Stat(binary); os.IsNotExist(err) {
+				continue
+			}
 			output, err := exec.Command("lsof", "-nP", "-t", binary).CombinedOutput()
 			if err == nil && len(bytes.TrimSpace(output)) > 0 {
 				fmt.Fprintf(os.Stderr, "test process remains alive for %s:\n%s", binary, output)
@@ -991,6 +1011,51 @@ func TestDetachedStartReadinessFailureCleansUpChildProcesses(t *testing.T) {
 		_ = conn.Close()
 		t.Fatal("failed detached start left the host listener open")
 	}
+}
+
+func TestDetachedStartHostIdentityTimeoutCleansUpChildProcesses(t *testing.T) {
+	inst := newInstallation(t, "-stderr-line=API_TOKEN=fake-secret-token")
+	runner, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.Spec.ReadyTimeout = 950 * time.Millisecond
+	state := runner.State
+	helperBinary := hostSupervisorHelperBinary(t)
+	hostPIDFile := filepath.Join(t.TempDir(), "host.pid")
+	t.Setenv("KB_CREATE_TEST_HOST_PID_FILE", hostPIDFile)
+	var supervisorPID int
+	command := hostCommand{
+		PlatformRoot: inst.root,
+		Executable:   helperBinary,
+		identityReader: func(pid int) (string, error) {
+			supervisorPID = pid
+			return host.ProcessIdentityForPID(pid)
+		},
+	}
+	_, failure := command.start(context.Background(), runner, state)
+	if failure == nil || failure.Code != "KB_HOST_START_FAILED" ||
+		!strings.Contains(failure.Cause, "host process identity remained undetermined") ||
+		strings.Contains(failure.Cause, "supervisor did not report") || failure.Meta["waited"] == nil {
+		t.Fatalf("detached host identity timeout = %#v; want the inner typed identity failure with elapsed time", failure)
+	}
+	tail := fmt.Sprint(failure.Meta["stderrTail"])
+	if !strings.Contains(tail, "fakehost: ready") || !strings.Contains(tail, "[REDACTED]") || strings.Contains(tail, "fake-secret-token") {
+		hostLog, _ := os.ReadFile(state.HostLog())
+		t.Fatalf("identity timeout stderr tail = %q; want ready line with secret redacted; diagnosis=%#v host log=%q", tail, failure, hostLog)
+	}
+	data, err := os.ReadFile(hostPIDFile)
+	if err != nil {
+		t.Fatalf("host process identity seam did not record the launched PID: %v", err)
+	}
+	hostPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || hostPID <= 0 || host.ProcessAlive(hostPID) {
+		t.Fatalf("launched host PID %q remains alive or is invalid: %v", data, err)
+	}
+	if supervisorPID <= 0 || host.ProcessAlive(supervisorPID) {
+		t.Fatalf("supervisor PID %d remains alive after the inner identity verdict", supervisorPID)
+	}
+	assertDetachedStartStateEmpty(t, state, inst.port)
 }
 
 func TestDetachedStartReadyBeforeDeadlineSucceeds(t *testing.T) {
