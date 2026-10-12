@@ -125,10 +125,10 @@ class PtyInvocationTest(unittest.TestCase):
 
     def test_missing_project_state_is_rejected_before_url_is_built(self):
         from project_service_path import project_service_path
-        from journey_values import MissingJourneyState, journey_state
+        from journey_values import MissingJourneyState, journey_value
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(MissingJourneyState, "KB_JOURNEY_PROJECT_ID"):
-                journey_state("KB_JOURNEY_PROJECT_ID")
+                journey_value("KB_JOURNEY_PROJECT_ID", required=True)
             with self.assertRaisesRegex(MissingJourneyState, "KB_JOURNEY_PROJECT_ID"):
                 project_service_path("", "rest", "workflow/health")
 

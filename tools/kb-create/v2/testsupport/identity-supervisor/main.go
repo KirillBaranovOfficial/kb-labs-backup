@@ -9,13 +9,15 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/supervisor"
 )
 
-const hostPIDFileEnvironment = "KB_CREATE_TEST_HOST_PID_FILE"
+const hostPIDFileEnvironment = "TEST_HOST_PID_FILE"
 
 func main() {
 	root := ""
@@ -52,7 +54,21 @@ func main() {
 		if pidFileErr != nil {
 			return "", pidFileErr
 		}
-		return "", errors.New("test injected unavailable host process identity")
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		timer := time.NewTimer(time.Until(deadline))
+		defer timer.Stop()
+		for {
+			log, err := os.ReadFile(runner.State.HostLog())
+			if err == nil && strings.Contains(string(log), "fakehost: ready") {
+				return "", errors.New("test injected unavailable host process identity")
+			}
+			select {
+			case <-ticker.C:
+			case <-timer.C:
+				return "", errors.New("test host did not become ready before the startup deadline")
+			}
+		}
 	})
 	err = (&supervisor.Supervisor{Runner: runner, State: runner.State, PlatformRoot: runner.InstallRoot}).Run(context.Background())
 	if err == nil {

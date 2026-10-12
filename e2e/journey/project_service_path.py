@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 from invocations import run_command
-from journey_values import journey_state
+from journey_values import journey_value
 
 
 def require_project_service_path_builder() -> Path:
@@ -19,7 +19,8 @@ def require_project_service_path_builder() -> Path:
 
 @lru_cache(maxsize=None)
 def project_service_path(project_id: str, service_id: str, path: str = "") -> str:
-    project_id = journey_state("KB_JOURNEY_PROJECT_ID", {"KB_JOURNEY_PROJECT_ID": project_id})
+    project_id = journey_value("KB_JOURNEY_PROJECT_ID", required=True,
+                               state={"KB_JOURNEY_PROJECT_ID": project_id})
     repo_root = require_project_service_path_builder()
     script = (
         "import { projectServicePath } from './core/plugin-contracts/dist/project-service-path.js'; "

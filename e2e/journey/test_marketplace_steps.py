@@ -725,10 +725,11 @@ class MarketplaceStepTests(unittest.TestCase):
                     requirements: dict[str, tuple[str, ...]] = {}
                     original_step = trial.step
 
-                    def record_requirements(name, capability, check, cases=(), details=None, *, requires=(), role="step"):
+                    def record_requirements(name, capability, check, cases=(), details=None, *,
+                                            requires=(), role="step", runners=()):
                         requirements[name] = tuple(Dependency.parse(item).name for item in requires)
                         return original_step(name, capability, check, cases=cases, details=details,
-                                             requires=requires, role=role)
+                                             requires=requires, role=role, runners=runners)
 
                     trial.step = record_requirements
                     checked_steps = []

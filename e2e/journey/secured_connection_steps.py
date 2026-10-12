@@ -241,8 +241,10 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         return None
 
     journey.step("invite member with admin session", "auth.secured", invite, cases=["S-042.1"])
-    journey.step("activate invitation and resolve member session", "auth.secured", activate, cases=["S-042.2"])
-    journey.step("reject consumed activation token", "auth.secured", replay_invite, cases=["S-042.3"])
+    journey.step("activate invitation and resolve member session", "auth.secured", activate, cases=["S-042.2"],
+                 requires=("step:invite member with admin session",))
+    journey.step("reject consumed activation token", "auth.secured", replay_invite, cases=["S-042.3"],
+                 requires=("step:invite member with admin session",))
 
     def reset_link():
         started = datetime.now(timezone.utc)
@@ -293,9 +295,12 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         validate_case_response("S-042.6", status, value)
         return None
 
-    journey.step("issue CLI password reset link", "auth.secured", reset_link, cases=["S-042.4"])
-    journey.step("consume reset link and verify revoked sessions", "auth.secured", perform_reset, cases=["S-042.5"])
-    journey.step("reject consumed password reset token", "auth.secured", replay_reset, cases=["S-042.6"])
+    journey.step("issue CLI password reset link", "auth.secured", reset_link, cases=["S-042.4"],
+                 requires=("step:invite member with admin session",))
+    journey.step("consume reset link and verify revoked sessions", "auth.secured", perform_reset,
+                 cases=["S-042.5"], requires=("step:issue CLI password reset link",))
+    journey.step("reject consumed password reset token", "auth.secured", replay_reset, cases=["S-042.6"],
+                 requires=("step:issue CLI password reset link",))
 
     # Keep the secured CLI profile independent from the reset-link flow.
     def apply_isolated_platform():
@@ -345,10 +350,14 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         validate_case_response("S-005.5", status, value)
         return None
 
-    journey.step("member signs in to secured gateway", "auth.secured", member_login, cases=["S-005.2"])
-    journey.step("member auth status identifies gateway", "auth.secured", member_status, cases=["S-005.3"])
-    journey.step("member reads authorized permissions", "auth.secured", member_permissions, cases=["S-005.4"])
-    journey.step("member cannot read tenant users", "auth.secured", member_users_denied, cases=["S-005.5"])
+    journey.step("member signs in to secured gateway", "auth.secured", member_login, cases=["S-005.2"],
+                 requires=("step:apply isolated client platform",))
+    journey.step("member auth status identifies gateway", "auth.secured", member_status, cases=["S-005.3"],
+                 requires=("step:apply isolated client platform",))
+    journey.step("member reads authorized permissions", "auth.secured", member_permissions, cases=["S-005.4"],
+                 requires=("step:member signs in to secured gateway",))
+    journey.step("member cannot read tenant users", "auth.secured", member_users_denied, cases=["S-005.5"],
+                 requires=("step:member signs in to secured gateway",))
 
     def expired_status():
         with invocation_context(step_id="journey.setup"):

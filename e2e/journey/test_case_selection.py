@@ -83,8 +83,10 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 self.assertNotIn("KB_NET_OFFSET", child_env)
             self.assertEqual(json.loads(output.getvalue()), {
                 "selection": ["S-042"], "steps": ["S-042.1"],
+                "owners": {"service-local:explore": ["S-042.1"],
+                           "service-secured:explore": ["S-042.1"]},
                 "runners": ["service-local:explore", "service-secured:explore"],
-                "prerequisiteSteps": [], "prerequisiteFlows": [],
+                "prerequisiteSteps": ["registered project setup"], "prerequisiteFlows": [],
                 "stepSources": ["e2e/journey/service_runner.py"],
             })
 
@@ -132,14 +134,81 @@ class CaseJourneySelectionTests(unittest.TestCase):
         ], "S-042,S-042.1")
         self.assertEqual(result, {
             "selection": ["S-042", "S-042.1"], "steps": ["S-042.1"],
+            "owners": {"service-local:explore": ["S-042.1"],
+                       "service-secured:explore": ["S-042.1"]},
             "runners": ["service-local:explore", "service-secured:explore"],
-            "prerequisiteSteps": [], "prerequisiteFlows": [],
+            "prerequisiteSteps": ["registered project setup"], "prerequisiteFlows": [],
             "stepSources": ["e2e/journey/service_runner.py"],
         })
 
     def test_rejects_unknown_case_or_step_id_by_name(self):
         with self.assertRaisesRegex(ValueError, "S-999"):
             selection_from_coverage([coverage("local", source="e2e/journey/service_runner.py")], "S-999")
+
+    def test_case_selection_refuses_unclaimed_steps_before_runner_start(self):
+        result = coverage("local", source="e2e/journey/service_runner.py")
+        result["cases"][0]["id"] = "PC-002"
+        result["cases"][0]["steps"].append({"stepId": "PC-002.4", "claims": []})
+        with self.assertRaisesRegex(ValueError, r"PC-002.*unclaimed.*PC-002.4"):
+            selection_from_coverage([result], "PC-002")
+
+    def test_only_filters_resolved_runners_and_reports_omitted_owners(self):
+        results = [
+            coverage("local", source="e2e/journey/runner.py"),
+            coverage("secured", source="e2e/journey/runner.py"),
+        ]
+        with patch.dict(os.environ, {"KB_JOURNEY_ONLY": "agent:commit,agent-secured:commit"}):
+            resolved = selection_from_coverage(results, "S-042.1")
+        self.assertEqual(resolved["runners"], ["agent-secured:commit", "agent:commit"])
+        with patch.dict(os.environ, {"KB_JOURNEY_ONLY": "agent:commit"}):
+            local = selection_from_coverage(results, "S-042.1")
+        self.assertEqual(local["runners"], ["agent:commit"])
+        with patch.dict(os.environ, {"KB_JOURNEY_ONLY": "service-local:explore"}):
+            with self.assertRaisesRegex(ValueError, r"agent:commit owns S-042.1: KB_JOURNEY_CASES=S-042.1 KB_JOURNEY_ONLY=agent:commit"):
+                selection_from_coverage(results, "S-042.1")
+
+    def test_full_run_runner_plan_still_uses_all_active_claim_owners(self):
+        results = [
+            coverage("local", source="e2e/journey/runner.py"),
+            coverage("secured", source="e2e/journey/runner.py"),
+        ]
+        self.assertEqual(selectors_from_coverage(results), ["agent-secured:commit", "agent:commit"])
+
+    def test_resolve_only_does_not_write_journey_reports(self):
+        root = Path(__file__).resolve().parents[2]
+        reports = root / ".journey" / "reports"
+        before = {path.relative_to(root).as_posix(): (path.stat().st_size, path.stat().st_mtime_ns)
+                  for path in reports.rglob("*") if path.is_file()} if reports.exists() else None
+        with tempfile.TemporaryDirectory(prefix="journey-resolve-home-") as home:
+            env = os.environ.copy()
+            env.update({"KB_JOURNEY_ONLY": "agent:commit", "HOME": home})
+            for key in ("KB_JOURNEY_CASES", "KB_PLATFORM_ROOT", "KB_HOME", "KB_NET_OFFSET"):
+                env.pop(key, None)
+            result = subprocess.run(["bash", "e2e/journey/run.sh", "--resolve-only"], cwd=root, env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('"front_door": "agent"', result.stdout)
+        after = {path.relative_to(root).as_posix(): (path.stat().st_size, path.stat().st_mtime_ns)
+                 for path in reports.rglob("*") if path.is_file()} if reports.exists() else None
+        self.assertEqual(after, before)
+
+    def test_runner_variant_registration_is_enforced_when_claim_executes(self):
+        with patch.dict(os.environ, {
+                "KB_JOURNEY_SELECTED_STEPS": "S-040.3",
+                "KB_JOURNEY_RUNNER_SELECTOR": "agent:commit",
+        }, clear=False):
+            journey = Journey("local", "wrong-variant")
+            result = journey.step("post-install running status", "platform.install", lambda: None,
+                                  cases=["S-040.3"], runners=("human:default",))
+        self.assertEqual(result.status, "FAIL")
+        self.assertIn("registered for runner(s) human:default", result.message)
+
+    def test_unselected_runner_variant_registration_is_not_emitted(self):
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "agent:commit"}, clear=False):
+            journey = Journey("local", "wrong-unselected-variant")
+            result = journey.step("human-only install", "platform.install", lambda: None,
+                                  cases=["S-040.1"], runners=("human:default",))
+        self.assertEqual(result.status, "SKIPPED")
 
     def test_every_registry_claim_is_reachable_by_step_selection(self):
         result = coverage("local", source="e2e/journey/service_runner.py")
