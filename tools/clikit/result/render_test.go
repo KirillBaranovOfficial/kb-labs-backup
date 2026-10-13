@@ -51,7 +51,7 @@ func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
 		diag.WithCorrelationID("corr-test"))
 	var out, herr bytes.Buffer
 	code := RenderDiag(&out, &herr, d, ModeJSON)
-	if code != diag.ExitError {
+	if code != diag.ExitCode(d) {
 		t.Errorf("exit = %d", code)
 	}
 	var env map[string]any
@@ -77,8 +77,8 @@ func TestRenderDiag_JSONKeepsStructuredFailureDataAtResultLevel(t *testing.T) {
 			"results": []map[string]any{{"package": "@fixture/core", "ok": false}},
 		}))
 	var out, herr bytes.Buffer
-	if code := RenderDiag(&out, &herr, d, ModeJSON); code != diag.ExitError {
-		t.Fatalf("exit = %d, want %d", code, diag.ExitError)
+	if code := RenderDiag(&out, &herr, d, ModeJSON); code != diag.ExitCode(d) {
+		t.Fatalf("exit = %d, want %d", code.Code(), diag.ExitCode(d).Code())
 	}
 	var env struct {
 		OK   bool `json:"ok"`

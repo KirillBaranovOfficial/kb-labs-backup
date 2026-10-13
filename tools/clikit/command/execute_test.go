@@ -40,7 +40,7 @@ func TestReturnedEmitterRecordsOnlyAfterSuccessfulResultWrite(t *testing.T) {
 				})
 			}
 			var stderr bytes.Buffer
-			if code := Execute(root, mode.args, rejectingResultWriter{err: fmt.Errorf("closed output")}, &stderr); code == 0 {
+			if code := Execute(root, mode.args, rejectingResultWriter{err: fmt.Errorf("closed output")}, &stderr); code == diag.SuccessStatus() {
 				t.Fatal("failed result write returned success")
 			}
 			if emitted != 0 {
@@ -62,7 +62,7 @@ func TestReturnedEmitterRecordsOnlyAfterSuccessfulResultWrite(t *testing.T) {
 					return nil
 				})
 			}
-			if code := Execute(root, mode.args, &stdout, &successStderr); code != 0 {
+			if code := Execute(root, mode.args, &stdout, &successStderr); code != diag.SuccessStatus() {
 				t.Fatalf("successful result write exit code = %d, stderr=%s", code, successStderr.String())
 			}
 			if emitted != 1 {
@@ -90,12 +90,12 @@ func TestExecuteResetsUnsetStringSliceToItsEmptyDefault(t *testing.T) {
 	root.AddCommand(run)
 
 	var stdout, stderr bytes.Buffer
-	if code := Execute(root, []string{"run", "--items", "first"}, &stdout, &stderr); code != 0 {
+	if code := Execute(root, []string{"run", "--items", "first"}, &stdout, &stderr); code != diag.SuccessStatus() {
 		t.Fatalf("first Execute exit code = %d; stderr=%s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Execute(root, []string{"run"}, &stdout, &stderr); code != 0 {
+	if code := Execute(root, []string{"run"}, &stdout, &stderr); code != diag.SuccessStatus() {
 		t.Fatalf("second Execute exit code = %d; stderr=%s", code, stderr.String())
 	}
 	if len(observed) != 2 || !reflect.DeepEqual(observed[0], []string{"first"}) ||
@@ -164,12 +164,12 @@ func TestExecuteResetsEveryRegisteredFlagKindBetweenInvocations(t *testing.T) {
 	root.AddCommand(run)
 
 	var stdout, stderr bytes.Buffer
-	if code := Execute(root, []string{"run", "--name", "first", "--enabled=false", "--count", "4", "--duration", "1s", "--items", "one,two", "--default-items", "prior", "--append", "old"}, &stdout, &stderr); code != 0 {
+	if code := Execute(root, []string{"run", "--name", "first", "--enabled=false", "--count", "4", "--duration", "1s", "--items", "one,two", "--default-items", "prior", "--append", "old"}, &stdout, &stderr); code != diag.SuccessStatus() {
 		t.Fatalf("first Execute exit code = %d; stderr=%s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Execute(root, []string{"run", "--items", "three", "--append", "new"}, &stdout, &stderr); code != 0 {
+	if code := Execute(root, []string{"run", "--items", "three", "--append", "new"}, &stdout, &stderr); code != diag.SuccessStatus() {
 		t.Fatalf("second Execute exit code = %d; stderr=%s", code, stderr.String())
 	}
 	want := []map[string]any{
@@ -213,7 +213,7 @@ func TestExecuteRejectsCustomFlagsWithoutResetContract(t *testing.T) {
 	root.AddCommand(run)
 	var stdout, stderr bytes.Buffer
 	code := Execute(root, []string{"run", "--custom", "value", "--json"}, &stdout, &stderr)
-	if code == 0 || executed || !strings.Contains(stdout.String(), "KB_RUNTIME_INPUT_INVALID") ||
+	if code == diag.SuccessStatus() || executed || !strings.Contains(stdout.String(), "KB_RUNTIME_INPUT_INVALID") ||
 		!strings.Contains(stdout.String(), "Flag --custom uses unsupported value type") ||
 		!strings.Contains(stdout.String(), "FlagValueResetter") {
 		t.Fatalf("unsupported custom flag outcome: exit=%d executed=%t stdout=%s stderr=%s", code, executed, stdout.String(), stderr.String())
@@ -252,7 +252,7 @@ func TestExecuteKeepsSliceFlagValuesStableAcrossRepeatedInvocations(t *testing.T
 		if call%2 == 0 {
 			args = append(args, "--items", fmt.Sprintf("local-%d", call), "--inherited-items", fmt.Sprintf("parent-%d", call))
 		}
-		if code := Execute(root, args, &stdout, &stderr); code != 0 {
+		if code := Execute(root, args, &stdout, &stderr); code != diag.SuccessStatus() {
 			t.Fatalf("Execute call %d exit code = %d; stdout=%s stderr=%s", call, code, stdout.String(), stderr.String())
 		}
 		localFlag := run.Flags().Lookup("items")

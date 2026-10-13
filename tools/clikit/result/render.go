@@ -28,7 +28,7 @@ func Render(w io.Writer, out CommandOutput, mode Mode) error {
 // RenderDiag writes a failure (a *Diag) to w in the given mode and returns the
 // process exit code. Human mode prints message + reason + hint lines; machine
 // modes print the {ok:false, error:{…}} envelope (agent mode omits meta).
-func RenderDiag(w io.Writer, hw io.Writer, d *diag.Diag, mode Mode) int {
+func RenderDiag(w io.Writer, hw io.Writer, d *diag.Diag, mode Mode) diag.ExitStatus {
 	switch mode {
 	case ModeJSON:
 		writeJSON(w, FailureEnvelope(d))

@@ -31,7 +31,7 @@ type operationDescriptor struct {
 }
 
 type versionCommandInput struct{}
-type streamCompletion struct{ ExitCode int }
+type streamCompletion struct{ ExitStatus diag.ExitStatus }
 
 var operationDescriptors = []operationDescriptor{
 	{Name: "install", JSONStream: true, Short: "Install KB Labs interactively", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderInstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
@@ -145,7 +145,7 @@ func callDescriptor(cmd *cobra.Command, descriptor operationDescriptor, values m
 		return runSafely(func() error { return failure })
 	}
 	if completion, ok := output.(streamCompletion); ok {
-		return result.StreamComplete(completion.ExitCode)
+		return result.StreamComplete(completion.ExitStatus)
 	}
 	if !jsonMode(cmd) && descriptor.Human != nil {
 		if human := descriptor.Human(output); human != "" {

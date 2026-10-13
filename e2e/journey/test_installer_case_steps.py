@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import installer_case_steps
+from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import (_data, _seed_doctor_fixture,
                                   cleanup_installer_fixture_root,
                                   run_doctor_root_isolation_step,
@@ -34,6 +35,7 @@ from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_creat
 from journey_resources import (active_platform_root, case_catalog_root,
                                create_fixture_install_container)
 from test_install_layout import create_test_install_container, move_test_platform_into_container
+from test_catalog_exit_status import catalogued_exit
 from service_steps import Journey, record_candidate_provenance
 from service_port_assertions import assert_service_ports_preserved
 
@@ -192,14 +194,16 @@ class InstallerCaseStepsTest(unittest.TestCase):
             "'kb-create' 'doctor' '--fix' '--platform-root' "
             "'/tmp/kb-journey-home-utz9qm1f/pc001-explicit-gateway-root'` to rebuild it from the installation receipt."
         )
-        for command, fixture, expected_exit in (("plan", "gateway-index-plan-refusal.json", 2),
-                                                ("apply", "gateway-index-apply-refusal.jsonl", 2)):
+        for command, fixture in (("plan", "gateway-index-plan-refusal.json"),
+                                 ("apply", "gateway-index-apply-refusal.jsonl")):
             with self.subTest(fixture=fixture):
+                expected_exit = int((fixtures / Path(fixture).with_suffix(".exit")).read_text().strip())
                 envelope = read_kb_create_cli_result(command, (fixtures / fixture).read_text(), expected_exit)
                 error = decode_ux_error_result(envelope)
                 self.assertEqual(error["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
                 self.assertEqual(error["hint"], expected_hint)
-                self.assertEqual(expected_exit, 2)
+                self.assertEqual(expected_exit, catalogued_exit(error["code"]))
+                self.assertEqual(expected_exit, 1)
 
     def test_s025_gateway_index_refusals_follow_each_command_output_form(self):
         fixtures = Path(__file__).parent / "testdata"
@@ -236,6 +240,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             refusal = fake_runner(args)
             parsed = read_gateway_index_refusal(refusal, operation, index, root)
             self.assertEqual(parsed["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
+            self.assertEqual(refusal.returncode, catalogued_exit(parsed["code"]))
         self.assertEqual([name for name, _ in calls],
                          ["plan", "apply", "status", "doctor", "uninstall"])
         apply_failure = decode_ux_error_result(read_kb_create_cli_result(
@@ -610,8 +615,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                 "\"hint\":\"Run `'kb' 'auth' 'login' '--gateway-url' 'URL' '--email' 'EMAIL'`, "
                                 "then `'kb' 'project' 'add' 'PATH'`, then `'kb' 'project' 'show' 'PATH'`.\","
                                 '"correlationId":"fixture"}}')
-                            return subprocess.CompletedProcess(args, 1,
-                                kb_create_stream(json.loads(refusal), 1), "")
+                            return subprocess.CompletedProcess(args, 2,
+                                kb_create_stream(json.loads(refusal), 2), "")
                     active_root = active_platform_root(install_root)
                     (active_root / ".kb/v2/bin").mkdir(parents=True, exist_ok=True)
                     selected = args[args.index("--project-root") + 1] if "--project-root" in args else ""
@@ -658,7 +663,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         "\"hint\":\"Run `'kb' 'auth' 'login' '--gateway-url' 'URL' '--email' 'EMAIL'`, "
                         "then `'kb' 'project' 'add' 'PATH'`, then `'kb' 'project' 'show' 'PATH'`.\","
                         '"correlationId":"fixture"}}')
-                    return subprocess.CompletedProcess(args, 1, kb_create_stream(json.loads(error), 1), "")
+                    return subprocess.CompletedProcess(args, 2, kb_create_stream(json.loads(error), 2), "")
                 if args[1] == "project":
                     if len(args) > 2 and args[2] == "show":
                         registry_path = Path.home() / ".kb/projects.json"

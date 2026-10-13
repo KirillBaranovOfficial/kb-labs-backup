@@ -147,7 +147,7 @@ func TestEmittedKbCreateDiagnosticsMatchPlatformErrorSchema(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		missingRoot := filepath.Join(t.TempDir(), "missing-platform")
 		code := clikitcommand.Execute(newRootCommand(), []string{"doctor", "--platform-root", missingRoot, "--json"}, &stdout, &stderr)
-		if code != 1 {
+		if code.Code() != 1 {
 			t.Fatalf("doctor exit = %d, want 1; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 		}
 		var result struct {
@@ -169,7 +169,7 @@ func TestEmittedKbCreateDiagnosticsMatchPlatformErrorSchema(t *testing.T) {
 		}
 		var stdout, stderr bytes.Buffer
 		code := clikitcommand.Execute(root, []string{"doctor", "--json"}, &stdout, &stderr)
-		if code != 1 {
+		if code.Code() != 1 {
 			t.Fatalf("unexpected doctor exit = %d, want 1; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 		}
 		var result struct {
@@ -254,7 +254,7 @@ func TestEmittedKbCreateDiagnosticsMatchPlatformErrorSchema(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		missingIndex := filepath.Join(t.TempDir(), "missing-release-index.json")
 		code := clikitcommand.Execute(newRootCommand(), []string{"install", "--json", "--index", missingIndex}, &stdout, &stderr)
-		if code != 2 {
+		if code.Code() != 2 {
 			t.Fatalf("install exit = %d, want 2; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 		}
 		lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")

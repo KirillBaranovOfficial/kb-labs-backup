@@ -9,7 +9,7 @@ func TestNewDoesNotInventHintForUncataloguedCode(t *testing.T) {
 }
 
 func TestExitCode_NilIsOK(t *testing.T) {
-	if got := ExitCode(nil); got != ExitOK {
-		t.Errorf("ExitCode(nil) = %d, want %d", got, ExitOK)
+	if got := ExitCode(nil); got != SuccessStatus() {
+		t.Errorf("ExitCode(nil) = %d, want %d", got.Code(), SuccessStatus().Code())
 	}
 }

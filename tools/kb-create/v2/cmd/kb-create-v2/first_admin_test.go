@@ -1085,8 +1085,8 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 	command.SetErr(&stderr)
 	deps.Command = command
 	completion, failure := executeApplyStream(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
-	if failure != nil || completion.ExitCode == 0 {
-		t.Fatalf("apply with a failing result writer did not return a typed output failure; failure=%v", failure)
+	if failure != nil || completion.ExitStatus.Code() == 0 {
+		t.Fatalf("apply with a failing result writer = completion %#v, failure %v; want typed output failure", completion, failure)
 	}
 	if disclosed, err := store.BootstrapDisclosed(); err != nil || disclosed {
 		t.Fatalf("failed final result write recorded disclosure = %v, err %v", disclosed, err)
@@ -1208,7 +1208,7 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 			args = append(args, "--platform-root", rootSpelling)
 		}
 		code := clikitcommand.Execute(command, args, &stdout, &stderr)
-		return code, stdout.String() + stderr.String()
+		return code.Code(), stdout.String() + stderr.String()
 	}
 	firstCode, firstOutput := run("")
 	activeRoot := platformRootForTest(t, root)
@@ -1290,7 +1290,7 @@ func runApplyStreamForTest(t *testing.T, resolved resolvedPlan, deps commandDepe
 	command.SetErr(&stderr)
 	deps.Command = command
 	completion, failure := executeApplyStream(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
-	if failure != nil || completion.ExitCode != 0 {
+	if failure != nil || completion.ExitStatus.Code() != 0 {
 		t.Fatalf("apply stream failed: completion=%#v failure=%v stdout=%s stderr=%s", completion, failure, stdout.String(), stderr.String())
 	}
 	return stdout.String()

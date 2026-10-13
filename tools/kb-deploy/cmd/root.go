@@ -57,14 +57,16 @@ Examples:
 // command is rendered as a structured diagnostic (message + reason + hint for
 // humans; {ok:false,error:{…}} for machines) and the process exits with the
 // shared diagnostic and exit code. Unknown errors are normalized by clikit.
-func Execute() {
+func Execute() diag.ExitStatus {
 	_, err := rootCmd.ExecuteC()
 	if err == nil {
-		return
+		return diag.SuccessStatus()
+	}
+	if status, ok := result.StreamExitCode(err); ok {
+		return status
 	}
 	d := diag.FromError(err)
-	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
-	os.Exit(code)
+	return result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
 }
 
 func init() {

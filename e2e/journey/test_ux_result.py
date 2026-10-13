@@ -8,6 +8,7 @@ import ast
 from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
                          KB_CREATE_JSON_STREAM_COMMANDS, read_kb_create_cli_result,
                          read_ux_cli_result, read_ux_cli_stream)
+from test_catalog_exit_status import catalogued_exit
 
 
 def kb_create_stdout_decoder_violations(source: str, filename: str) -> list[str]:
@@ -222,12 +223,16 @@ def bad_sink():
         fixtures = Path(__file__).parent / "testdata"
         document = (fixtures / "gateway-index-plan-refusal.json").read_text()
         stream = (fixtures / "gateway-index-apply-refusal.jsonl").read_text()
-        self.assertEqual(read_kb_create_cli_result("plan", document, 2)["ok"], False)
-        self.assertEqual(read_kb_create_cli_result("apply", stream, 2)["ok"], False)
+        plan_status = int((fixtures / "gateway-index-plan-refusal.exit").read_text().strip())
+        apply_status = int((fixtures / "gateway-index-apply-refusal.exit").read_text().strip())
+        self.assertEqual(read_kb_create_cli_result("plan", document, plan_status)["ok"], False)
+        self.assertEqual(read_kb_create_cli_result("apply", stream, apply_status)["ok"], False)
         with self.assertRaisesRegex(ValueError, "not JSON"):
-            read_kb_create_cli_result("plan", stream, 2)
+            read_kb_create_cli_result("plan", stream, plan_status)
         with self.assertRaisesRegex(ValueError, "non-JSON record"):
-            read_kb_create_cli_result("apply", document, 2)
+            read_kb_create_cli_result("apply", document, apply_status)
+        for status in (plan_status, apply_status):
+            self.assertEqual(status, catalogued_exit("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE"))
 
 
 if __name__ == "__main__":

@@ -84,7 +84,7 @@ func TestInteractionPTYChild(t *testing.T) {
 		_, err := fmt.Fprintln(FromCommand(command).ProgressWriter(), "PTY-CONFIRMED")
 		return err
 	}})
-	if code := Execute(root, []string{"run"}, os.Stdout, os.Stderr); code != 0 {
+	if code := Execute(root, []string{"run"}, os.Stdout, os.Stderr); code.Code() != 0 {
 		t.Fatalf("Execute() = %d", code)
 	}
 }

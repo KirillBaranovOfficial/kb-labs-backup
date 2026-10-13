@@ -38,7 +38,7 @@ func TestRegisteredCommandsUseSharedResultBoundary(t *testing.T) {
 		return result.Return(map[string]any{"operation": "doctor", "ok": true})
 	}
 	var success bytes.Buffer
-	if code := clikitcommand.Execute(root, []string{"doctor", "--json"}, &success, &bytes.Buffer{}); code != 0 {
+	if code := clikitcommand.Execute(root, []string{"doctor", "--json"}, &success, &bytes.Buffer{}); code.Code() != 0 {
 		t.Fatalf("doctor fixture exit = %d", code)
 	}
 	if err := result.ValidateMachineResult(success.Bytes()); err != nil {
@@ -55,13 +55,13 @@ func TestRegisteredCommandsUseSharedResultBoundary(t *testing.T) {
 		}
 		path := strings.Fields(strings.TrimPrefix(command.CommandPath(), root.CommandPath()))
 		var help bytes.Buffer
-		if code := clikitcommand.Execute(root, append(path, "--help"), &help, &bytes.Buffer{}); code != 0 {
+		if code := clikitcommand.Execute(root, append(path, "--help"), &help, &bytes.Buffer{}); code.Code() != 0 {
 			t.Errorf("%s --help exit = %d", command.CommandPath(), code)
 		}
 
 		var invalid bytes.Buffer
 		args := append(append([]string{}, path...), "--json", "--kb-contract-invalid")
-		if code := clikitcommand.Execute(root, args, &invalid, &bytes.Buffer{}); code != 2 {
+		if code := clikitcommand.Execute(root, args, &invalid, &bytes.Buffer{}); code.Code() != 2 {
 			t.Errorf("%s invalid flag exit = %d, want 2", command.CommandPath(), code)
 		}
 		if err := result.ValidateMachineResult(invalid.Bytes()); err != nil {
@@ -132,8 +132,8 @@ func TestCommandRejectsUndeclaredFlagsAndPositionalArguments(t *testing.T) {
 	} {
 		var stdout, stderr bytes.Buffer
 		code := clikitcommand.Execute(newRootCommand(), args, &stdout, &stderr)
-		if code != 2 {
-			t.Errorf("args %q exit = %d, want 2; stdout=%s stderr=%s", args, code, stdout.String(), stderr.String())
+		if code.Code() != 2 {
+			t.Errorf("args %q exit = %d, want 2; stdout=%s stderr=%s", args, code.Code(), stdout.String(), stderr.String())
 		}
 		var envelope struct {
 			OK    bool `json:"ok"`
@@ -189,8 +189,8 @@ func TestDoctorFailuresUseSharedHumanAndJSONBoundary(t *testing.T) {
 			if mode == "json" {
 				args = append(args, "--json")
 			}
-			if code := clikitcommand.Execute(root, args, &stdout, &stderr); code != 1 {
-				t.Fatalf("exit = %d, want 1; out=%s err=%s", code, stdout.String(), stderr.String())
+			if code := clikitcommand.Execute(root, args, &stdout, &stderr); code.Code() != 1 {
+				t.Fatalf("exit = %d, want 1; out=%s err=%s", code.Code(), stdout.String(), stderr.String())
 			}
 			if mode == "json" {
 				if err := result.ValidateMachineResult(stdout.Bytes()); err != nil {
@@ -215,7 +215,7 @@ func TestDoctorFailuresUseSharedHumanAndJSONBoundary(t *testing.T) {
 			if mode == "json" {
 				args = append(args, "--json")
 			}
-			if code := clikitcommand.Execute(root, args, &stdout, &stderr); code != 1 {
+			if code := clikitcommand.Execute(root, args, &stdout, &stderr); code.Code() != 1 {
 				t.Fatalf("exit = %d, want 1", code)
 			}
 			visible := stdout.String() + stderr.String()
@@ -250,8 +250,8 @@ func TestNewDiagCauseIsVisibleAndRedactedAtDoctorCommandBoundary(t *testing.T) {
 			if mode == "json" {
 				args = append(args, "--json")
 			}
-			if code := clikitcommand.Execute(root, args, &stdout, &stderr); code != 1 {
-				t.Fatalf("exit = %d, want 1; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			if code := clikitcommand.Execute(root, args, &stdout, &stderr); code.Code() != 1 {
+				t.Fatalf("exit = %d, want 1; stdout=%s stderr=%s", code.Code(), stdout.String(), stderr.String())
 			}
 			visible := stdout.String() + stderr.String()
 			if strings.Contains(visible, "private-value") || !strings.Contains(visible, "[REDACTED]") {
@@ -274,8 +274,8 @@ func TestDoctorMissingReceiptUsesSharedHumanAndJSONBoundary(t *testing.T) {
 			if mode == "json" {
 				args = append(args, "--json")
 			}
-			if code := clikitcommand.Execute(root, args, &stdout, &stderr); code != 1 {
-				t.Fatalf("exit = %d, want 1; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			if code := clikitcommand.Execute(root, args, &stdout, &stderr); code.Code() != 1 {
+				t.Fatalf("exit = %d, want 1; stdout=%s stderr=%s", code.Code(), stdout.String(), stderr.String())
 			}
 			visible := stdout.String() + stderr.String()
 			if mode == "json" {
@@ -315,7 +315,7 @@ func TestJSONInstallProgressEndsWithTerminalRecord(t *testing.T) {
 	inv := operationTestSetup{Operation: "install", Index: index, JSON: true, Direct: directRequest{PlatformRoot: platformRoot}, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}}, NodePreflight: func() error { return nil }}
 	descriptor, _ := lookupOperationDescriptor("install")
 	err = descriptorTestCall(cmd, descriptor, inv)
-	if code, ok := result.StreamExitCode(err); !ok || code != 0 {
+	if code, ok := result.StreamExitCode(err); !ok || code != diag.SuccessStatus() {
 		t.Fatalf("stream result = %v, %v; out=%s", code, ok, stdout.String())
 	}
 	lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))
@@ -386,10 +386,10 @@ func TestPlanRejectsExplicitEmptyProviderValuesAtExecuteBoundary(t *testing.T) {
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
-			t.Fatalf("--provider input %q JSON = %s (exit %d): %v", providerArgs, stdout.String(), code, err)
+			t.Fatalf("--provider input %q JSON = %s (exit %d): %v", providerArgs, stdout.String(), code.Code(), err)
 		}
-		if code != 2 || envelope.OK || envelope.Error.Code != "KB_RUNTIME_INPUT_INVALID" {
-			t.Fatalf("--provider input %q = exit %d, result %#v, stderr=%s", providerArgs, code, envelope, stderr.String())
+		if code.Code() != 2 || envelope.OK || envelope.Error.Code != "KB_RUNTIME_INPUT_INVALID" {
+			t.Fatalf("--provider input %q = exit %d, result %#v, stderr=%s", providerArgs, code.Code(), envelope, stderr.String())
 		}
 		if diagnosticLine == "" {
 			diagnosticLine = envelope.Error.Message
@@ -398,7 +398,7 @@ func TestPlanRejectsExplicitEmptyProviderValuesAtExecuteBoundary(t *testing.T) {
 		}
 		var humanOut, humanErr bytes.Buffer
 		humanArgs := append(append([]string(nil), base...), providerArgs...)
-		if code := clikitcommand.Execute(root, humanArgs, &humanOut, &humanErr); code != 2 {
+		if code := clikitcommand.Execute(root, humanArgs, &humanOut, &humanErr); code.Code() != 2 {
 			t.Fatalf("human --provider input %q exit = %d, stdout=%s stderr=%s", providerArgs, code, humanOut.String(), humanErr.String())
 		}
 		gotHumanLine := strings.SplitN(strings.TrimSpace(humanOut.String()+humanErr.String()), "\n", 2)[0]
@@ -413,7 +413,7 @@ func TestPlanRejectsExplicitEmptyProviderValuesAtExecuteBoundary(t *testing.T) {
 	}
 
 	var absentOut, absentErr bytes.Buffer
-	if code := clikitcommand.Execute(root, append(append([]string(nil), base...), "--json"), &absentOut, &absentErr); code != 0 {
+	if code := clikitcommand.Execute(root, append(append([]string(nil), base...), "--json"), &absentOut, &absentErr); code.Code() != 0 {
 		t.Fatalf("absent provider plan exit = %d, stdout=%s stderr=%s", code, absentOut.String(), absentErr.String())
 	}
 	var planEnvelope struct {
@@ -439,7 +439,7 @@ func TestJSONInstallFailureEndsWithTerminalRecord(t *testing.T) {
 	cmd.SetOut(&stdout)
 	descriptor, _ := lookupOperationDescriptor("install")
 	err := descriptorTestCall(cmd, descriptor, operationTestSetup{Operation: "install", JSON: true})
-	if code, ok := result.StreamExitCode(err); !ok || code != 2 {
+	if code, ok := result.StreamExitCode(err); !ok || code != diag.ExitCode(diag.New(contracts.CodeInputRequired, "required")) {
 		t.Fatalf("stream result = %v, %v; out=%s", code, ok, stdout.String())
 	}
 	lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))

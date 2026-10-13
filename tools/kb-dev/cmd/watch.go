@@ -35,8 +35,8 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	failStream := func(err error) error {
 		d := diag.FromError(err)
 		_ = events.Fail(d)
-		_ = events.Finish()
-		return result.StreamComplete(events.ExitCode())
+		_ = events.Finish(events.ExitStatus())
+		return result.StreamComplete(events.ExitStatus())
 	}
 	if allProjects {
 		if events != nil {
@@ -66,8 +66,8 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 		select {
 		case <-ctx.Done():
 			if events != nil {
-				_ = events.Finish()
-				return result.StreamComplete(events.ExitCode())
+				_ = events.Finish(events.ExitStatus())
+				return result.StreamComplete(events.ExitStatus())
 			}
 			return nil
 		case event := <-mgr.Events():
@@ -106,16 +106,16 @@ func runFleetWatch(cmd *cobra.Command, stream *clikitstream.Writer) error {
 	failStream := func(err error) error {
 		d := diag.FromError(err)
 		_ = stream.Fail(d)
-		_ = stream.Finish()
-		return result.StreamComplete(stream.ExitCode())
+		_ = stream.Finish(stream.ExitStatus())
+		return result.StreamComplete(stream.ExitStatus())
 	}
 	items, err := loadFleetManagers()
 	if err != nil {
 		if stream != nil {
 			d := diag.FromError(err)
 			_ = stream.Fail(d)
-			_ = stream.Finish()
-			return result.StreamComplete(stream.ExitCode())
+			_ = stream.Finish(stream.ExitStatus())
+			return result.StreamComplete(stream.ExitStatus())
 		}
 		return err
 	}
@@ -181,8 +181,8 @@ func runFleetWatch(cmd *cobra.Command, stream *clikitstream.Writer) error {
 		clikitcommand.Printf("  %s %s\n", icon, msg)
 	}
 	if stream != nil {
-		_ = stream.Finish()
-		return result.StreamComplete(stream.ExitCode())
+		_ = stream.Finish(stream.ExitStatus())
+		return result.StreamComplete(stream.ExitStatus())
 	}
 	return nil
 }

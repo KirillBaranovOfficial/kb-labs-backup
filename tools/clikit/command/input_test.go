@@ -20,8 +20,8 @@ func TestInstallInputBoundaryNormalizesRegisteredArgumentFailures(t *testing.T) 
 	if !errors.As(err, &d) {
 		t.Fatalf("error = %v, want *Diag", err)
 	}
-	if d.Code != "KB_RUNTIME_INPUT_INVALID" || diag.ExitCode(d) != diag.ExitInput || d.Hint == "" {
-		t.Fatalf("diagnostic = %+v, exit=%d", d, diag.ExitCode(d))
+	if d.Code != "KB_RUNTIME_INPUT_INVALID" || diag.ExitCode(d) != diag.ExitCode(diag.New("KB_RUNTIME_INPUT_INVALID", "invalid")) || d.Hint == "" {
+		t.Fatalf("diagnostic = %+v, exit=%d", d, diag.ExitCode(d).Code())
 	}
 }
 

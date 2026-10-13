@@ -600,7 +600,7 @@ func (i installation) update(t *testing.T, plan contracts.ResolvedInstallPlan, i
 	result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: i.launcher}, i.root, plan, state, launcherState, &deps)
 	if failure != nil {
 		payload := diagValue(t, failure)
-		return payload, diag.ExitCode(failure), fmt.Sprint(payload)
+		return payload, diag.ExitCode(failure).Code(), fmt.Sprint(payload)
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {

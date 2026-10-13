@@ -17,11 +17,11 @@ func TestFinishUsesCataloguedFailureStatus(t *testing.T) {
 	if err := writer.Fail(failure); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Finish(); err != nil {
+	if err := writer.Finish(writer.ExitStatus()); err != nil {
 		t.Fatal(err)
 	}
-	if writer.ExitCode() != diag.ExitError {
-		t.Fatalf("stream exit = %d, want catalogued status %d", writer.ExitCode(), diag.ExitError)
+	if writer.ExitStatus() != diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "failed")) {
+		t.Fatalf("stream exit = %d, want catalogued status %d", writer.ExitStatus(), diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "failed")))
 	}
 }
 
@@ -36,7 +36,7 @@ func TestStreamWritesEnvelopeEventsAndTerminalRecord(t *testing.T) {
 		diag.WithCorrelationID("stream-correlation"))); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Finish(); err != nil {
+	if err := writer.Finish(writer.ExitStatus()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,7 +86,7 @@ func TestStreamWritesEnvelopeEventsAndTerminalRecord(t *testing.T) {
 	if err := json.Unmarshal(lines[2], &terminal); err != nil {
 		t.Fatal(err)
 	}
-	if !terminal.Meta.Stream.Terminal || terminal.Meta.Stream.ExitCode != diag.ExitError {
+	if !terminal.Meta.Stream.Terminal || terminal.Meta.Stream.ExitCode != diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "failed")).Code() {
 		t.Fatalf("terminal record = %+v", terminal)
 	}
 }
@@ -100,7 +100,7 @@ func TestStreamResultEventHasResultMetadataAndTerminalRecord(t *testing.T) {
 	if err := writer.Result(map[string]any{"operation": "apply"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Finish(); err != nil {
+	if err := writer.Finish(writer.ExitStatus()); err != nil {
 		t.Fatal(err)
 	}
 	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))

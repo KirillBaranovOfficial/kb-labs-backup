@@ -3,6 +3,8 @@ package main
 
 import "github.com/kb-labs/devkit/cmd"
 
+import "os"
+
 var (
 	version = "dev"
 	commit  = "none"
@@ -11,5 +13,5 @@ var (
 
 func main() {
 	cmd.SetVersionInfo(version, commit, date)
-	cmd.Execute()
+	os.Exit(cmd.Execute().Code())
 }

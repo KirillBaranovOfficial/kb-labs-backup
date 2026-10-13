@@ -8,6 +8,7 @@ from pathlib import Path
 
 from platform_channel_steps import decode_canary_apply_result, run_platform_channel_steps
 from test_install_layout import create_test_install_container
+from test_catalog_exit_status import catalogued_exit
 
 def apply_stream(record: dict, exit_code: int) -> str:
     terminal = {"ok": True, "data": None,
@@ -48,14 +49,14 @@ class PlatformChannelStepsTest(unittest.TestCase):
         if args[1] == "apply":
             if self.record_apply_refusal:
                 fixture = Path(__file__).parent / "testdata/gateway-index-apply-refusal.jsonl"
-                return subprocess.CompletedProcess(args, 2, fixture.read_text(), "")
+                return subprocess.CompletedProcess(args, 1, fixture.read_text(), "")
             if self.fail_canary_preflight:
-                return subprocess.CompletedProcess(args, 2, apply_stream({"ok": False, "error": {
+                return subprocess.CompletedProcess(args, 1, apply_stream({"ok": False, "error": {
                     "code": "KB_INSTALL_MEMORY_INSUFFICIENT",
                     "message": "The platform install needs at least 1228.80 MiB of available memory; 1200.00 MiB is available.",
                     "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.",
                     "meta": {"minimum": "1228.80 MiB", "available": "1200.00 MiB"}, "correlationId": "c-memory",
-                }}, 2), "")
+                }}, 1), "")
             fresh_active_root = create_test_install_container(self.fresh_root)
             (fresh_active_root / ".kb/v2").mkdir(parents=True, exist_ok=True)
             plan = {"platformChannel": "canary", "serviceGraph": {"platformVersion": "3.0.2-canary.1"},
@@ -137,9 +138,10 @@ class PlatformChannelStepsTest(unittest.TestCase):
 
     def test_s053_canary_apply_refusal_reads_recorded_apply_stream(self):
         fixture = Path(__file__).parent / "testdata/gateway-index-apply-refusal.jsonl"
-        command = subprocess.CompletedProcess(["kb-create", "apply", "--json"], 2, fixture.read_text(), "")
+        command = subprocess.CompletedProcess(["kb-create", "apply", "--json"], 1, fixture.read_text(), "")
         error = decode_canary_apply_result(command)
         self.assertEqual(error["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
+        self.assertEqual(command.returncode, catalogued_exit(error["code"]))
         self.assertIn("rm", error["hint"])
         self.assertIn("doctor", error["hint"])
 

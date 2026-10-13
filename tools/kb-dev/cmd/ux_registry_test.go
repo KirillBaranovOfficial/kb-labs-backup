@@ -31,8 +31,8 @@ func TestRegisteredCommandsUseSharedResultBoundary(t *testing.T) {
 		return result.Return(map[string]string{"fixture": "status"})
 	}
 	var success bytes.Buffer
-	if code := clikitcommand.Execute(rootCmd, []string{"status", "--json"}, &success, &bytes.Buffer{}); code != 0 {
-		t.Fatalf("safe read-only fixture exit = %d", code)
+	if code := clikitcommand.Execute(rootCmd, []string{"status", "--json"}, &success, &bytes.Buffer{}); code.Code() != 0 {
+		t.Fatalf("safe read-only fixture exit = %d", code.Code())
 	}
 	if err := result.ValidateMachineResult(success.Bytes()); err != nil {
 		t.Fatalf("safe read-only fixture envelope: %v; output=%s", err, success.String())
@@ -48,14 +48,14 @@ func TestRegisteredCommandsUseSharedResultBoundary(t *testing.T) {
 		}
 		path := strings.Fields(strings.TrimPrefix(command.CommandPath(), rootCmd.CommandPath()))
 		var help bytes.Buffer
-		if code := clikitcommand.Execute(rootCmd, append(path, "--help"), &help, &bytes.Buffer{}); code != 0 {
-			t.Errorf("%s --help exit = %d", command.CommandPath(), code)
+		if code := clikitcommand.Execute(rootCmd, append(path, "--help"), &help, &bytes.Buffer{}); code.Code() != 0 {
+			t.Errorf("%s --help exit = %d", command.CommandPath(), code.Code())
 		}
 
 		var invalid bytes.Buffer
 		args := append(append([]string{}, path...), "--json", "--kb-contract-invalid")
-		if code := clikitcommand.Execute(rootCmd, args, &invalid, &bytes.Buffer{}); code != 2 {
-			t.Errorf("%s invalid flag exit = %d, want 2", command.CommandPath(), code)
+		if code := clikitcommand.Execute(rootCmd, args, &invalid, &bytes.Buffer{}); code.Code() != 2 {
+			t.Errorf("%s invalid flag exit = %d, want 2", command.CommandPath(), code.Code())
 		}
 		if err := result.ValidateMachineResult(invalid.Bytes()); err != nil {
 			t.Errorf("%s invalid flag envelope: %v; output=%s", command.CommandPath(), err, invalid.String())
