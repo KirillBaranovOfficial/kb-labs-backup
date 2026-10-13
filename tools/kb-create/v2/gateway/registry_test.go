@@ -1,13 +1,54 @@
 package gateway
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
 )
+
+func TestRegistryUnreadableIndexReturnsActionableCataloguedDiagnostic(t *testing.T) {
+	base := t.TempDir()
+	root, _, _ := installedRootSpellings(t, filepath.Join(base, "platform"))
+	path := filepath.Join(base, "launcher", "gateway-roots.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []struct {
+		name string
+		data string
+		want string
+	}{
+		{name: "schema 1", data: `{"schema":1,"roots":[]}`, want: "unsupported schema 1"},
+		{name: "malformed", data: `{"schema":`, want: "unexpected end of JSON input"},
+	} {
+		t.Run(input.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(input.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := (Registry{Path: path, OperationRoot: root}).Read()
+			var failure *diag.Diag
+			if !errors.As(err, &failure) || failure.Code != contracts.CodeGatewayIndexUnavailable {
+				t.Fatalf("Read error = %v, want catalogued Gateway index diagnostic", err)
+			}
+			if !strings.Contains(failure.Message, path) || !strings.Contains(failure.Message, input.want) ||
+				failure.Meta["path"] != path || failure.Meta["reason"] == "" {
+				t.Fatalf("diagnostic = %#v, want path and reason", failure)
+			}
+			remove := contracts.ShellCommand("rm", "--", path)
+			repair := contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root)
+			if !strings.Contains(failure.Hint, remove) || !strings.Contains(failure.Hint, repair) {
+				t.Fatalf("hint = %q, want ordered removal and receipt-based apply commands", failure.Hint)
+			}
+		})
+	}
+}
 
 func installedRootSpellings(t *testing.T, root string) (string, string, string) {
 	t.Helper()

@@ -236,6 +236,56 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 			t.Fatalf("status for %q after Execute install: code=%d data=%#v stdout=%s stderr=%s", spelling, code, response.Data, stdout.String(), stderr.String())
 		}
 	}
+	launcherState, err := host.StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryPath := filepath.Join(launcherState.Dir, "gateway-roots.json")
+	if err := os.WriteFile(registryPath, []byte(`{"schema":1,"roots":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var planOut, planErr bytes.Buffer
+	planCode := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath, "--platform-root", root}, &planOut, &planErr)
+	var failedPlan struct {
+		Error struct {
+			Code, Message, Hint string
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(planOut.Bytes(), &failedPlan); err != nil || planCode == 0 || failedPlan.Error.Code != contracts.CodeGatewayIndexUnavailable {
+		t.Fatalf("schema-1 plan result code=%d output=%s stderr=%s decode=%v", planCode, planOut.String(), planErr.String(), err)
+	}
+	removeCommand := contracts.ShellCommand("rm", "--", registryPath)
+	repairCommand := contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root)
+	if !strings.Contains(failedPlan.Error.Message, registryPath) || !strings.Contains(failedPlan.Error.Message, "unsupported schema 1") ||
+		!strings.Contains(failedPlan.Error.Hint, removeCommand) || !strings.Contains(failedPlan.Error.Hint, repairCommand) {
+		t.Fatalf("schema-1 diagnostic message/hint = %q / %q", failedPlan.Error.Message, failedPlan.Error.Hint)
+	}
+	before, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var humanOut, humanErr bytes.Buffer
+	if code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--index", indexPath, "--platform-root", root}, &humanOut, &humanErr); code == 0 ||
+		!strings.Contains(humanOut.String()+humanErr.String(), registryPath) || !strings.Contains(humanOut.String()+humanErr.String(), "unsupported schema 1") || !strings.Contains(humanOut.String()+humanErr.String(), repairCommand) {
+		t.Fatalf("human schema-1 plan code/output/stderr = %d / %s / %s", code, humanOut.String(), humanErr.String())
+	}
+	after, err := os.ReadFile(registryPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("read-only plan changed unsupported index: read error=%v", err)
+	}
+	if err := exec.Command("rm", "--", registryPath).Run(); err != nil {
+		t.Fatalf("execute rendered recovery command %q: %v", removeCommand, err)
+	}
+	var repairOut, repairErr bytes.Buffer
+	repairArgs := []string{"doctor", "--fix", "--platform-root", root, "--json"}
+	if code := clikitcommand.Execute(newRootCommand(), repairArgs, &repairOut, &repairErr); code != 0 {
+		t.Fatalf("execute rendered recovery command %q: exit=%d output=%s stderr=%s", repairCommand, code, repairOut.String(), repairErr.String())
+	}
+	roots, err := (gateway.Registry{Path: registryPath}).Read()
+	active, receiptErr := receipt.Read(physicalRoot)
+	if err != nil || receiptErr != nil || len(roots) != 1 || roots[0].InstallationID != active.InstallationID || roots[0].URL != fmt.Sprintf("http://127.0.0.1:%d", port) {
+		t.Fatalf("Gateway index after rendered recovery = %#v, error=%v receipt=%v; want the installed row", roots, err, receiptErr)
+	}
 }
 
 func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {

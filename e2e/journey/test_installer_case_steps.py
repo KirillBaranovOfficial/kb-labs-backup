@@ -25,7 +25,7 @@ from installer_case_steps import (_data, _seed_doctor_fixture,
                                   run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
                                   _snapshot_installation_owned_tree, shim_owner_matches,
                                   assert_foreign_shim_diagnosis, assert_other_shim_diagnosis,
-                                  verify_installation_spellings)
+                                  assert_gateway_index_diagnosis, verify_installation_spellings)
 from invocations import PtyCommandTimeout
 from journey_resources import (active_platform_root, case_catalog_root,
                                create_fixture_install_container)
@@ -62,7 +62,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     payload = {"operation": "apply", "receipt": {"id": "receipt-one",
                                                                        "installationId": "00112233445566778899aabbccddeeff",
                                                                        "plan": {"request": {"gatewayUrl": "http://127.0.0.1:4100"}}},
-                               "shim": {"linked": False, "owner": str(install_root.resolve())}}
+                               "shim": {"linked": True, "owner": str(install_root.resolve())}}
                 elif operation == "status":
                     payload = {"installation": {"receiptId": "receipt-one", "platformVersion": "1.2.3",
                                                  "platformChannel": "stable"}}
@@ -73,22 +73,26 @@ class InstallerCaseStepsTest(unittest.TestCase):
             verify_installation_spellings(
                 launcher=str(launcher), index=home / "stable-index.json", install_root=install_root,
                 channel="stable", version="1.2.3", gateway_url="http://127.0.0.1:4100",
-                installation_id="00112233445566778899aabbccddeeff",
-                shim_owner=install_root, run_command=run_command)
+                installation_id="00112233445566778899aabbccddeeff", run_command=run_command)
 
             expected_spellings = [str(install_root), str(install_root / "current"), str(active_root.resolve())]
             self.assertEqual(len(calls), 12)
             for operation_index in range(4):
                 self.assertEqual([calls[index][-1] for index in range(operation_index, 12, 4)], expected_spellings)
 
-    def test_shim_owner_expectation_uses_the_canonical_install_root(self):
+    def test_shim_owner_expectation_uses_the_product_owner_classification(self):
         with tempfile.TemporaryDirectory(prefix="journey-shim-owner-") as temp:
             root = Path(temp) / "platform"
             root.mkdir()
-            self.assertTrue(shim_owner_matches({"shim": {"linked": False, "owner": str(root.resolve())}},
-                                               linked=False, install_root=root))
-            self.assertFalse(shim_owner_matches({"shim": {"linked": False, "owner": str(root)}},
-                                                linked=False, install_root=root))
+            other = Path(temp) / "other"
+            other.mkdir()
+            owner_result = {"shim": {"linked": True, "owner": str(root.resolve())}}
+            other_result = {"shim": {"linked": False, "owner": str(other.resolve())}}
+            self.assertTrue(shim_owner_matches(owner_result, install_root=root))
+            self.assertTrue(shim_owner_matches(other_result, install_root=root))
+            self.assertFalse(shim_owner_matches(
+                {"shim": {"linked": False, "owner": str(root.resolve())}}, install_root=root),
+                "mutating owner expectation from linked=true to false must fail")
 
     def test_foreign_shim_expectation_requires_context_and_ordered_commands(self):
         with tempfile.TemporaryDirectory(prefix="journey-shim-foreign-") as temp:
@@ -118,6 +122,21 @@ class InstallerCaseStepsTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "deliberate switch"):
                 assert_other_shim_diagnosis(data, hint.replace(str(owner.resolve()), "wrong owner"),
                                             link, owner, root)
+
+    # case: S-025.10
+    def test_gateway_index_diagnosis_requires_reason_and_ordered_recovery_commands(self):
+        with tempfile.TemporaryDirectory(prefix="journey-gateway-index-diagnosis-") as temp:
+            root = Path(temp) / "platform"
+            index = Path(temp) / ".kb" / "launcher" / "gateway-roots.json"
+            hint = (f"Remove the derived index with 'rm' '--' '{index}', then run "
+                    f"'kb-create' 'doctor' '--fix' '--platform-root' '{root}' to rebuild it.")
+            error = {"code": "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE",
+                     "message": f"The Gateway address index at {index} cannot be used: unsupported schema 1.",
+                     "hint": hint}
+            assert_gateway_index_diagnosis({"error": error}, index, root)
+            with self.assertRaisesRegex(RuntimeError, "Gateway index diagnostic"):
+                assert_gateway_index_diagnosis({"error": {**error, "message": error["message"].replace("unsupported schema 1", "malformed")}},
+                                               index, root)
 
     def test_install_refusal_is_a_case_fail_with_the_product_envelope(self):
         journey = Journey("local")
@@ -1323,7 +1342,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                    run_command=fail_every_command)
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
-            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-181.1", "S-181.2",
+            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",

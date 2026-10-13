@@ -352,7 +352,7 @@ func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
 		t.Fatalf("fixture Gateway roots = %#v, %v", roots, err)
 	}
 
-	failure := portConflictError("4100", "127.0.0.1:4100", "gateway", portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", nil)
+	failure := portConflictError("4100", "127.0.0.1:4100", "gateway", portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", root, nil)
 	if failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["platformRoot"] != expectedRoot || failure.Meta["pid"] != strconv.Itoa(os.Getpid()) {
 		t.Fatalf("known installation conflict = %#v", failure)
 	}
@@ -371,9 +371,31 @@ func TestPortConflictIdentifiesRegisteredLiveInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := portConflictError("4100", "127.0.0.1:4100", "gateway",
-		portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", nil)
+		portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", root, nil)
 	if stale.Code != contracts.CodeHostProcessIdentityStale || strings.Contains(stale.Message, "already running") {
 		t.Fatalf("reused PID was identified as the registered installation: %#v", stale)
+	}
+}
+
+func TestPortConflictSurfacesGatewayIndexDiagnosticForRequestedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "requested platform")
+	launcherHome := t.TempDir()
+	t.Setenv(KBHomeEnv, launcherHome)
+	state, err := StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(state.Dir, "gateway-roots.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema":1,"roots":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	failure := portConflictError("4100", "127.0.0.1:4100", "gateway",
+		portOwner{PID: strconv.Itoa(os.Getpid()), Command: "kb-host"}, "start", root, nil)
+	if failure.Code != contracts.CodeGatewayIndexUnavailable || !strings.Contains(failure.Message, path) || !strings.Contains(failure.Hint, root) {
+		t.Fatalf("port conflict did not retain Gateway index diagnostic and requested root: %#v", failure)
 	}
 }
 
