@@ -141,6 +141,16 @@ def fixture_group_declarations(groups, selector: str, root: Path) -> dict[str, d
     Claim ownership is extracted here; the shared resolver supplies prerequisite step
     names, and FlowGraph remains the sole selection gate and skipped-flow writer.
     """
+    if selector and selector not in RUNNERS:
+        raise ValueError(f"unknown registered journey runner {selector!r}")
+    modes = {RUNNERS[selector].mode} if selector else {runner.mode for runner in RUNNERS.values()}
+
+    def declaration_runners(declaration: dict, source: str) -> set[str]:
+        declared = set(declaration["runners"])
+        if declared:
+            return declared
+        return set().union(*(runners_for_source(source, mode) for mode in modes))
+
     declarations_by_group: dict[str, dict[str, set[str]]] = {}
     for group in groups:
         source_path = Path(group.__code__.co_filename).resolve()
@@ -154,11 +164,10 @@ def fixture_group_declarations(groups, selector: str, root: Path) -> dict[str, d
                       and node.name == group.__name__), None)
         if owner is None:
             raise ValueError(f"fixture group {group.__name__!r} has no registered source function")
-        mode = "secured" if "secured" in selector else "local"
         source_registry = _source_step_declarations({source}, root)
         steps = set()
         for declaration in source_registry.values():
-            runners = declaration["runners"] or runners_for_source(source, mode)
+            runners = declaration_runners(declaration, source)
             if (selector and selector not in runners):
                 continue
             if any(registered_source == source and owner.lineno <= line <= owner.end_lineno
@@ -166,7 +175,7 @@ def fixture_group_declarations(groups, selector: str, root: Path) -> dict[str, d
                 steps.add(declaration["name"])
         claims = set()
         for line, declaration in _case_declarations(source, root).items():
-            runners = declaration["runners"] or runners_for_source(source, mode)
+            runners = declaration_runners(declaration, source)
             if owner.lineno <= line <= owner.end_lineno and (not selector or selector in runners):
                 claims.update(declaration.get("cases") or ())
         declarations_by_group[group.__name__] = {"cases": claims, "steps": steps}
@@ -761,7 +770,7 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
         for step_id in unowned:
             candidates = sorted(ineligible_by_step.get(step_id, set()))
             if candidates:
-                routes.extend(f"{step_id} is registered on {selector} ({'secured' if RUNNERS[selector].variant.endswith('secured') else 'local'} mode): "
+                routes.extend(f"{step_id} is registered on {selector} ({RUNNERS[selector].mode} mode): "
                               f"KB_JOURNEY_CASES={step_id} KB_JOURNEY_ONLY={selector} e2e/journey/run.sh --no-build"
                               for selector in candidates)
             else:
@@ -868,10 +877,10 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                         selectors = declaration.get("runners") or runners_for_source(source, mode)
                         if declaration.get("runners"):
                             for selector in selectors:
-                                if RUNNERS[selector].variant.endswith("secured") != (mode == "secured"):
+                                if RUNNERS[selector].mode != mode:
                                     ineligible_by_step.setdefault(step_id, set()).add(selector)
                             selectors = [selector for selector in selectors
-                                         if RUNNERS[selector].variant.endswith("secured") == (mode == "secured")]
+                                         if RUNNERS[selector].mode == mode]
                         for selector in selectors:
                             owners_by_step.setdefault(step_id, {}).setdefault(selector, set()).add(step_id)
                         if declaration:

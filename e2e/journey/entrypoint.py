@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from platform_state_dump import dump_platform_state, failure_dump_environment
+from dispatch_registry import RUNNERS
 from scoreboard import write_scoreboards
 from journey_resources import case_catalog_root, journey_module
 from invocations import print_report_text, write_report_json, write_report_text
@@ -126,11 +127,13 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
 
 
 def main() -> int:
-    variant = journey_value("KB_JOURNEY_VARIANT", "default")
-    mode = "secured" if variant.endswith("secured") else "local"
+    selector = journey_value("KB_JOURNEY_RUNNER_SELECTOR", "agent:commit")
+    runner = RUNNERS.get(selector)
+    if runner is None:
+        raise ValueError(f"unknown registered journey runner {selector!r}")
     runner_path = journey_module("runner.py")
     summary_path = journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")
-    return run_runner(runner_path, summary_path, mode)
+    return run_runner(runner_path, summary_path, runner.mode)
 
 
 if __name__ == "__main__":
