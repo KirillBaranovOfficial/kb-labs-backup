@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 import re
+import subprocess
 import ast
 
 from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
@@ -182,24 +183,43 @@ def bad_sink():
 
     def test_cli_exit_code_must_match_success_envelope(self):
         with self.assertRaisesRegex(ValueError, "exit code does not match"):
-            read_ux_cli_result('{"ok":true,"data":{}}', 1)
+            read_ux_cli_result(subprocess.CompletedProcess(["kb"], 1, '{"ok":true,"data":{}}', ""))
 
     def test_cli_exit_code_must_match_error_envelope(self):
         with self.assertRaisesRegex(ValueError, "exit code does not match"):
-            read_ux_cli_result('{"ok":false,"error":{"code":"KB_TEST","message":"failed"}}', 0)
+            read_ux_cli_result(subprocess.CompletedProcess(["kb"], 0, '{"ok":false,"error":{"code":"KB_TEST","message":"failed"}}', ""))
 
     def test_cli_stream_validates_terminal_exit_and_preserves_result_events(self):
         stream = ('{"ok":true,"data":{"phase":"Apply","state":"completed"}}\n'
                   '{"ok":true,"data":{"operation":"apply","receipt":{}},"meta":{"stream":{"result":true}}}\n'
                   '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":0}}}\n')
-        records = read_ux_cli_stream(stream, 0)
+        records = read_ux_cli_stream(subprocess.CompletedProcess(["kb-create", "apply"], 0, stream, ""))
         self.assertEqual(records[-2]["data"]["operation"], "apply")
 
     def test_cli_stream_rejects_terminal_exit_code_mismatch(self):
         stream = ('{"ok":false,"error":{"code":"KB_TEST","message":"failed"}}\n'
                   '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":1}}}\n')
         with self.assertRaisesRegex(ValueError, "terminal record does not match"):
-            read_ux_cli_stream(stream, 0)
+            read_ux_cli_stream(subprocess.CompletedProcess(["kb-create", "apply"], 0, stream, ""))
+
+    def test_catalogued_error_status_is_checked_at_the_shared_boundary(self):
+        failure = '{"ok":false,"error":{"code":"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE","message":"index unavailable"}}'
+        result = subprocess.CompletedProcess(["kb-create", "plan"], 2, failure, "")
+        with self.assertRaisesRegex(ValueError, r"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE \(operation-failure\).*process status 2.*terminal status None"):
+            read_kb_create_cli_result("plan", result)
+
+    def test_result_owner_rejects_non_process_shapes(self):
+        for result in ({"stdout": "{}", "returncode": 0},
+                       type("CustomResult", (), {"stdout": "{}", "returncode": 0})()):
+            with self.subTest(result=type(result).__name__), self.assertRaisesRegex(ValueError, "requires a subprocess.CompletedProcess"):
+                read_ux_cli_result(result)
+
+    def test_catalogued_stream_reports_process_and_terminal_statuses(self):
+        stream = ('{"ok":false,"error":{"code":"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE","message":"failed"}}\n'
+                  '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":2}}}\n')
+        result = subprocess.CompletedProcess(["kb-create", "apply"], 1, stream, "")
+        with self.assertRaisesRegex(ValueError, r"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE \(operation-failure\).*process status 1.*terminal status 2"):
+            read_kb_create_cli_result("apply", result)
 
     def test_setup_failure_description_preserves_typed_error_and_hint(self):
         output = '{"ok":false,"error":{"code":"KB_DOCTOR_INVALID","message":"Manifest scan failed.","hint":"Run `kb-create doctor --fix` and retry."}}'
@@ -225,12 +245,14 @@ def bad_sink():
         stream = (fixtures / "gateway-index-apply-refusal.jsonl").read_text()
         plan_status = int((fixtures / "gateway-index-plan-refusal.exit").read_text().strip())
         apply_status = int((fixtures / "gateway-index-apply-refusal.exit").read_text().strip())
-        self.assertEqual(read_kb_create_cli_result("plan", document, plan_status)["ok"], False)
-        self.assertEqual(read_kb_create_cli_result("apply", stream, apply_status)["ok"], False)
+        plan_result = subprocess.CompletedProcess(["kb-create", "plan"], plan_status, document, "")
+        apply_result = subprocess.CompletedProcess(["kb-create", "apply"], apply_status, stream, "")
+        self.assertEqual(read_kb_create_cli_result("plan", plan_result)["ok"], False)
+        self.assertEqual(read_kb_create_cli_result("apply", apply_result)["ok"], False)
         with self.assertRaisesRegex(ValueError, "not JSON"):
-            read_kb_create_cli_result("plan", stream, plan_status)
+            read_kb_create_cli_result("plan", apply_result)
         with self.assertRaisesRegex(ValueError, "non-JSON record"):
-            read_kb_create_cli_result("apply", document, apply_status)
+            read_kb_create_cli_result("apply", plan_result)
         for status in (plan_status, apply_status):
             self.assertEqual(status, catalogued_exit("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE"))
 

@@ -36,7 +36,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
     # case: S-203.1
     def test_coverage_cli_reader_requires_success_envelope(self):
         self.assertEqual(read_coverage_result(
-            '{"ok":true,"data":{"mode":"local","cases":[]}}', 0,
+            subprocess.CompletedProcess(["kb", "qa", "coverage"], 0, '{"ok":true,"data":{"mode":"local","cases":[]}}', ""),
         ), {"mode": "local", "cases": []})
         for stdout, returncode in (
             ('{"mode":"local","cases":[]}', 0),
@@ -44,7 +44,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             ('{"ok":true,"data":{}}', 1),
         ):
             with self.subTest(stdout=stdout, returncode=returncode), self.assertRaises(ValueError):
-                read_coverage_result(stdout, returncode)
+                read_coverage_result(subprocess.CompletedProcess(["kb", "qa", "coverage"], returncode, stdout, ""))
 
     def test_selector_runs_coverage_without_caller_home_or_platform_overrides(self):
         with tempfile.TemporaryDirectory() as caller_home:

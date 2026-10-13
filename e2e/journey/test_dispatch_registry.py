@@ -352,7 +352,7 @@ class DispatchRegistryTests(unittest.TestCase):
                        "--mode", mode, "--json"]
             result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr)
-            results.append(read_coverage_result(result.stdout, result.returncode))
+            results.append(read_coverage_result(result))
 
         registered: dict[str, dict[str, set[tuple[str, int]]]] = {}
         root = Path(__file__).resolve().parents[2]
@@ -698,7 +698,7 @@ class DispatchRegistryTests(unittest.TestCase):
                        "--mode", mode, "--json"]
             result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr)
-            results.append(read_coverage_result(result.stdout, result.returncode))
+            results.append(read_coverage_result(result))
         return results
 
 

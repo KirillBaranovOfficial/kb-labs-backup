@@ -198,7 +198,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                  ("apply", "gateway-index-apply-refusal.jsonl")):
             with self.subTest(fixture=fixture):
                 expected_exit = int((fixtures / Path(fixture).with_suffix(".exit")).read_text().strip())
-                envelope = read_kb_create_cli_result(command, (fixtures / fixture).read_text(), expected_exit)
+                result = subprocess.CompletedProcess(["kb-create", command, "--json"], expected_exit,
+                                                    (fixtures / fixture).read_text(), "")
+                envelope = read_kb_create_cli_result(command, result)
                 error = decode_ux_error_result(envelope)
                 self.assertEqual(error["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
                 self.assertEqual(error["hint"], expected_hint)
@@ -244,7 +246,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual([name for name, _ in calls],
                          ["plan", "apply", "status", "doctor", "uninstall"])
         apply_failure = decode_ux_error_result(read_kb_create_cli_result(
-            "apply", outputs["apply"][0], outputs["apply"][1]))
+            "apply", subprocess.CompletedProcess(["kb-create", "apply", "--json"],
+                                                  outputs["apply"][1], outputs["apply"][0], "")))
         self.assertEqual(apply_failure["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
 
         hinted_commands = [shlex.split(command) for command in re.findall(r"`([^`]*)`", error["hint"])]
@@ -263,10 +266,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
         stdout = "\n".join((
             json.dumps({"ok": False, "error": envelope}),
             json.dumps({"ok": True, "data": None,
-                        "meta": {"stream": {"terminal": True, "exitCode": 2}}}),
+                        "meta": {"stream": {"terminal": True, "exitCode": 1}}}),
         )) + "\n"
 
-        parsed = installer_case_steps.parse_install_refusal(stdout, 2)
+        parsed = installer_case_steps.parse_install_refusal(
+            subprocess.CompletedProcess(["kb-create", "install", "--json"], 1, stdout, ""))
         self.assertIsNotNone(parsed)
         message = (f"{parsed['code']}: {parsed['message']}; cause={parsed.get('cause', '')}; "
                    f"hint={parsed.get('hint', '')}")
