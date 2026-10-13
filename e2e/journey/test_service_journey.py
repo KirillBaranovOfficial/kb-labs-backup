@@ -24,7 +24,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_i
                             expect_html, install_project_agents_plugin,
                             request as request_result,
                             project_plugin_settings_isolation, repository_git_status,
-                            _prepare_and_export_mcp_projects,
+                            _prepare_mcp_projects,
                             journey_result_exit_code, main as service_main, mcp_probe,
                             prepare_service_api_session, service_api_token,
                             run_grouped_service_steps, run_service_steps)
@@ -546,7 +546,8 @@ raise SystemExit(1)
 
                     def execute_declared_steps(journey, steps, step_mode, *, graph):
                         for state, producer in STATE_PRODUCERS.items():
-                            graph.probe_state(state, producer, f"producer {state}", lambda: None)
+                            if state not in graph.states:
+                                graph.probe_state(state, producer, f"producer {state}", lambda: None)
                         for name, capability, check, cases in steps:
                             group = next(group for group, spec in SERVICE_GROUPS.items()
                                          if capability in spec["capabilities"])
@@ -580,7 +581,7 @@ raise SystemExit(1)
                                       value=lambda: None)), \
                             patch("service_runner.prepare_commit_project_fixture",
                                   side_effect=produce_commit_fixture), \
-                            patch("service_runner._prepare_and_export_mcp_projects",
+                            patch("service_runner._prepare_mcp_projects",
                                   side_effect=prepare_project_fixtures), \
                             patch("service_runner.configure_installed_cli_path"), \
                             patch("service_runner.restore_secured_cli_login", return_value=None), \
@@ -1262,12 +1263,13 @@ raise SystemExit(1)
                 commands.append((args, cwd))
                 return subprocess.CompletedProcess(args, 0, "{}", ""), 0.0
 
-            result = login_and_configure_secured_admin(
-                env={"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
-                     "KB_JOURNEY_PLATFORM_ROOT": str(root / "platform"),
-                     "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
-                     "KB_JOURNEY_ADMIN_PASSWORD": "password"},
-                launcher="kb-create", run_command=fake_run)
+            with patch("runner.PROJECT", project):
+                result = login_and_configure_secured_admin(
+                    env={"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
+                         "KB_JOURNEY_PLATFORM_ROOT": str(root / "platform"),
+                         "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+                         "KB_JOURNEY_ADMIN_PASSWORD": "password"},
+                    launcher="kb-create", run_command=fake_run)
 
         self.assertIsNone(result)
         self.assertEqual(len(commands), 1)
@@ -1340,7 +1342,7 @@ raise SystemExit(1)
             failure = mcp_probe("prj_test", "token")
         self.assertIn("kb-labs-workflow__workflow_run", failure)
 
-    def test_prepare_mcp_projects_exports_id_and_canonical_root_from_same_registration(self):
+    def test_prepare_mcp_projects_writes_id_and_canonical_root_to_fixture_handoff(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             home = root / "home"
@@ -1370,10 +1372,10 @@ raise SystemExit(1)
 
             with patch("service_runner._registry_version", return_value="2.120.1"):
                 with patch.dict(os.environ, {}, clear=False):
-                    project_b_id, project_b_root = _prepare_and_export_mcp_projects(
+                    project_b_id, project_b_root = _prepare_mcp_projects(
                         "prj_project_a", str(project_a), "http://registry.test", env, fake_runner)
-                    self.assertEqual(os.environ["KB_JOURNEY_PROJECT_B_ID"], project_b_id)
-                    self.assertEqual(os.environ["KB_JOURNEY_PROJECT_B_ROOT"], project_b_root)
+                    self.assertNotIn("KB_JOURNEY_PROJECT_B_ID", os.environ)
+                    self.assertNotIn("KB_JOURNEY_PROJECT_B_ROOT", os.environ)
             project_id = "prj_" + hashlib.sha256(
                 str(project_a.resolve()).encode("utf-8")).hexdigest()[:16]
             plan_path = home / ".kb" / "state" / project_id / "commit" / "plans" / "root" / "current" / "plan.json"
@@ -1382,8 +1384,8 @@ raise SystemExit(1)
 
         self.assertEqual(project_b_id, "prj_b")
         self.assertEqual(registered_project_roots, [project_b_root])
-        self.assertEqual(env["KB_JOURNEY_PROJECT_B_ID"], project_b_id)
-        self.assertEqual(env["KB_JOURNEY_PROJECT_B_ROOT"], project_b_root)
+        self.assertNotIn("KB_JOURNEY_PROJECT_B_ID", env)
+        self.assertNotIn("KB_JOURNEY_PROJECT_B_ROOT", env)
         self.assertEqual(handoff, {
             "projectAId": "prj_project_a",
             "projectARoot": str(project_a.resolve()),

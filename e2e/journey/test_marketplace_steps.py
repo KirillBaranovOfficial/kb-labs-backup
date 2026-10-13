@@ -623,7 +623,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 raise AssertionError("independent S-051 envelope assertion failed")
             with patch("marketplace_steps.run_plugin_policy_diagnostic_step", side_effect=fail_unrelated_policy_claim), \
                     patch("marketplace_steps.validate_shared_failure", side_effect=fail_unrelated_error_claim):
-                run_marketplace_steps(journey, project, "http://registry.test", env, fake_run, fake_http,
+                run_marketplace_steps(journey, project, "prj_marketplace_fixture", "http://registry.test", env, fake_run, fake_http,
                                       commit_case_hook=fake_commit_case_hook, fixture_entry=fixture_entry)
 
             expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 7))) for step in steps}
@@ -684,7 +684,7 @@ class MarketplaceStepTests(unittest.TestCase):
             try:
                 with patch("service_runner.prepare_mcp_projects", return_value=("prj_fixture_b", str(home / "project-b"))):
                     handoff = graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
-                                         lambda: service_runner._prepare_and_export_mcp_projects(
+                                         lambda: service_runner._prepare_mcp_projects(
                                              "prj_marketplace_fixture", str(project), "registry", env))
                 self.assertEqual(handoff, "PASS")
                 self.assertTrue(fixture_file.is_file())
@@ -753,7 +753,7 @@ class MarketplaceStepTests(unittest.TestCase):
                                side_effect=fail_unrelated_policy_claim), \
                             patch("marketplace_steps.validate_shared_failure",
                                   side_effect=fail_unrelated_error_claim):
-                        run_marketplace_steps(trial, project, "http://registry.test", env, fake_run, fake_http,
+                        run_marketplace_steps(trial, project, "prj_marketplace_fixture", "http://registry.test", env, fake_run, fake_http,
                                               commit_case_hook=fake_commit_case_hook,
                                               fixture_entry=trial_fixture_entry)
                     self.assertEqual(
@@ -816,7 +816,7 @@ class MarketplaceStepTests(unittest.TestCase):
                                   return_value=("prj_fixture_b", str(home / "project-b"))):
                         handoff = failure_graph.flow(
                             "prepare MCP project fixtures", "marketplace-fixtures", "mcp",
-                            lambda: service_runner._prepare_and_export_mcp_projects(
+                            lambda: service_runner._prepare_mcp_projects(
                                 "prj_marketplace_fixture", str(project), "registry", env))
                     self.assertEqual(handoff, "PASS")
                     self.assertTrue(fixture_file.is_file())
