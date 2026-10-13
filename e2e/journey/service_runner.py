@@ -437,9 +437,10 @@ def service_check(name, capability, check, *, cases=(), requires=(), runners=())
 
 def _checks(mode: str, graph: FlowGraph | None = None):
     def project_data() -> dict:
-        value = graph.state_value("project-registered") if graph is not None else None
+        value = graph.state_value_if_passed("project-registered") if graph is not None else None
         if not isinstance(value, dict):
-            raise MissingJourneyState("project-registered")
+            reason = graph.state_failure("project-registered") if graph is not None else "FlowGraph is unavailable"
+            raise MissingJourneyState("project-registered", reason)
         return value
 
     def project_id() -> str:
@@ -599,18 +600,23 @@ def service_api_token(graph: FlowGraph | None) -> str | None:
     """Read the HTTP credential from its established state; local mode stores no credential."""
     if graph is None:
         raise MissingJourneyState("service-api-session")
-    value = graph.state_value("service-api-session")
+    state = graph.states.get("service-api-session")
+    if state is None or state.get("passed") is not True:
+        raise MissingJourneyState("service-api-session", graph.state_failure("service-api-session"))
+    if "value" not in state:
+        raise MissingJourneyState("service-api-session", graph.state_failure("service-api-session"))
+    value = graph.state_value_if_passed("service-api-session")
     if value is None or isinstance(value, str):
         return value
-    raise MissingJourneyState("service-api-session")
+    raise MissingJourneyState("service-api-session", graph.state_failure("service-api-session"))
 
 
 def service_project_b(graph: FlowGraph | None) -> dict:
     if graph is None:
         raise MissingJourneyState("fixtures-installed")
-    value = graph.state_value("fixtures-installed")
+    value = graph.state_value_if_passed("fixtures-installed")
     if not isinstance(value, dict):
-        raise MissingJourneyState("fixtures-installed")
+        raise MissingJourneyState("fixtures-installed", graph.state_failure("fixtures-installed"))
     return value
 
 
@@ -618,8 +624,8 @@ def export_project_state_to_child_environment(graph: FlowGraph) -> None:
     """Publish registered project identities for CLI subprocesses only."""
     project_state = graph.states.get("project-registered", {})
     fixture_state = graph.states.get("fixtures-installed", {})
-    project = graph.state_value("project-registered") if project_state.get("passed") is True else None
-    fixtures = graph.state_value("fixtures-installed") if fixture_state.get("passed") is True else None
+    project = graph.state_value_if_passed("project-registered") if project_state.get("passed") is True else None
+    fixtures = graph.state_value_if_passed("fixtures-installed") if fixture_state.get("passed") is True else None
     export_project_identity_to_child_environment(
         os.environ,
         project_id=project.get("id", "") if isinstance(project, dict) else "",
@@ -666,12 +672,14 @@ def prepare_service_api_session(graph: FlowGraph, mode: str) -> None:
                       value=lambda: acquired["token"])
 
 
-def service_project(graph: FlowGraph) -> dict[str, str]:
-    value = graph.state_value("project-registered")
+def service_project(graph: FlowGraph) -> dict[str, str] | None:
+    value = graph.state_value_if_passed("project-registered")
+    if value is None:
+        return None
     if (not isinstance(value, dict)
             or not isinstance(value.get("id"), str) or not value["id"]
             or not isinstance(value.get("root"), str) or not value["root"]):
-        raise MissingJourneyState("project-registered")
+        raise MissingJourneyState("project-registered", graph.state_failure("project-registered"))
     return value
 
 
@@ -1046,7 +1054,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
         return run_with_runner(command_runner, command, timeout=timeout, **options)
     project_a = Path(project_root).resolve()
     package = "@kb-labs/commit-entry"
-    version = _registry_version(package, registry, env, runner)
+    version = _registry_version(package, registry, project_a, env, runner)
     install = kb_command([ "marketplace", "install", f"{package}@{version}", "--json"])
     installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
                        text=True, timeout=300)
@@ -1074,7 +1082,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     if not project_b_id or not project_b_root:
         raise RuntimeError("registering MCP isolation project B returned no project ID and canonical path")
     review_package = "@kb-labs/review-entry"
-    review_version = _registry_version(review_package, registry, env, runner)
+    review_version = _registry_version(review_package, registry, project_b, env, runner)
     review_install = kb_command([ "marketplace", "install", f"{review_package}@{review_version}", "--json"])
     review_installed = runner(review_install, cwd=str(project_b), env=env, capture_output=True,
                               text=True, timeout=300)
@@ -1117,7 +1125,7 @@ def install_project_agents_plugin(project_root: str, registry: str, env: dict[st
         options.pop("text", None)
         return run_with_runner(command_runner, command, timeout=timeout, **options)
 
-    version = _registry_version(package, registry, env, run)
+    version = _registry_version(package, registry, Path(project_root).resolve(), env, run)
     install = kb_command([ "marketplace", "install", f"{package}@{version}", "--json"])
     result = run(install, cwd=str(Path(project_root).resolve()), env=env,
                  capture_output=True, text=True, timeout=300)
@@ -1153,8 +1161,9 @@ def main() -> int:
         project_root = ""
         if project_state.get("passed") is True:
             registered_project = service_project(graph)
-            project_id = registered_project["id"]
-            project_root = registered_project["root"]
+            if registered_project is not None:
+                project_id = registered_project["id"]
+                project_root = registered_project["root"]
         registry = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
         env = os.environ.copy()
         fixture_entry: dict | None = None
@@ -1265,7 +1274,8 @@ def main() -> int:
         if project_root:
             _run_installed_flows(journey, project_root, registry, graph)
         else:
-            reason = "project-registered state did not provide the installed project root"
+            reason = ("blocked by state project-registered: "
+                      + graph.state_failure("project-registered"))
             journey.blocked("marketplace and adapter user flows", "marketplace", reason,
                             cases=["S-010.1", "S-054.1"])
             journey.blocked("plugin author flow", "plugin-author", reason,

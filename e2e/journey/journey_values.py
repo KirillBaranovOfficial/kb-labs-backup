@@ -5,9 +5,10 @@ import os
 
 
 class MissingJourneyState(RuntimeError):
-    def __init__(self, key: str):
+    def __init__(self, key: str, reason: str | None = None):
         self.key = key
-        super().__init__(f"missing journey state key {key}")
+        self.reason = reason or "state probe has not run"
+        super().__init__(f"missing journey state key {key}: {self.reason}")
 
 
 def journey_value(key: str, default: str | None = None, *, required: bool = False,
