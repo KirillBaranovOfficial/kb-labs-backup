@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
@@ -269,21 +270,30 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			return resolvedPlan{}, unsupportedPlatformLayout(root, layoutErr)
 		}
 		registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
-		knownByRoot := make(map[string]gateway.Root, len(input.KnownGateways))
+		known := make([]gateway.Root, 0, len(input.KnownGateways))
 		for _, candidate := range input.KnownGateways {
-			candidateRoot := filepath.Clean(candidate.PlatformRoot)
-			if candidate.PlatformRoot == "" || candidateRoot == filepath.Clean(root) || (installed && candidateRoot == filepath.Clean(activeRoot)) {
+			if candidate.PlatformRoot == "" || gateway.SameInstallation(candidate.PlatformRoot, root) {
 				continue
 			}
-			if activeOwner, ownerErr := receipt.Read(candidate.PlatformRoot); ownerErr == nil {
+			candidateLayout, ownerErr := versionroot.ForPlatformPath(candidate.PlatformRoot)
+			if ownerErr == nil {
+				ownerErr = candidateLayout.Validate()
+			}
+			if ownerErr == nil {
+				candidateRoot := filepath.Clean(candidateLayout.PlatformRoot())
+				if slices.ContainsFunc(known, func(existing gateway.Root) bool {
+					return gateway.SameInstallation(existing.PlatformRoot, candidateRoot)
+				}) {
+					continue
+				}
+				activeOwner, readErr := receipt.Read(candidateRoot)
+				if readErr != nil {
+					continue
+				}
 				if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" {
-					knownByRoot[candidateRoot] = gateway.Root{PlatformRoot: candidateRoot, URL: ownerURL}
+					known = append(known, gateway.Root{PlatformRoot: candidateRoot, URL: ownerURL})
 				}
 			}
-		}
-		known := make([]gateway.Root, 0, len(knownByRoot))
-		for _, item := range knownByRoot {
-			known = append(known, item)
 		}
 		requestedURL := response.Plan.Request.GatewayURL
 		if installed && requestedURL == "" {
@@ -291,19 +301,15 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 				requestedURL = recordedGatewayURL(active)
 			}
 		}
-		allocationRoot := root
-		if installed {
-			allocationRoot = activeRoot
-		}
 		defaultURL, originErr := gateway.OriginFromHealthURL(response.Plan.Host.HealthURL)
 		if originErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeHostSpecInvalid, "the release Gateway address is invalid", "select a release with a valid loopback Gateway health URL", originErr)
 		}
-		selectedURL, allocErr := registry.AllocateWithKnown(allocationRoot, defaultURL, requestedURL, known)
+		selectedURL, allocErr := registry.AllocateWithKnown(root, defaultURL, requestedURL, known)
 		if allocErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", allocErr)
 		}
-		claimant, claimed, claimErr := registry.ClaimantAmong(allocationRoot, selectedURL, known)
+		claimant, claimed, claimErr := registry.ClaimantAmong(root, selectedURL, known)
 		if claimErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", claimErr)
 		}

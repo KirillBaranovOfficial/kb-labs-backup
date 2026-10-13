@@ -52,7 +52,7 @@ func (r Registry) Read() ([]Root, error) {
 			return nil, fmt.Errorf("installed Gateway root index %s contains an invalid root or URL", r.Path)
 		}
 		for _, previous := range value.Roots[:index] {
-			if sameInstallation(previous.PlatformRoot, root.PlatformRoot) {
+			if SameInstallation(previous.PlatformRoot, root.PlatformRoot) {
 				return nil, fmt.Errorf("installed Gateway root index %s contains duplicate root %s", r.Path, root.PlatformRoot)
 			}
 		}
@@ -86,7 +86,7 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 	roots = append(roots, known...)
 	claimed := make(map[string]struct{}, len(roots))
 	for _, root := range roots {
-		if sameInstallation(root.PlatformRoot, platformRoot) {
+		if SameInstallation(root.PlatformRoot, platformRoot) {
 			return root.URL, nil
 		}
 		claimed[root.URL] = struct{}{}
@@ -123,7 +123,7 @@ func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (
 		return Root{}, false, err
 	}
 	for _, root := range append(roots, known...) {
-		if !sameInstallation(root.PlatformRoot, platformRoot) && root.URL == gatewayURL {
+		if !SameInstallation(root.PlatformRoot, platformRoot) && root.URL == gatewayURL {
 			return root, true, nil
 		}
 	}
@@ -143,7 +143,7 @@ func (r Registry) RegisterMany(values []Root) error {
 		root.PlatformRoot = filepath.Clean(root.PlatformRoot)
 		replaced := false
 		for index := range byRoot {
-			if sameInstallation(byRoot[index].PlatformRoot, root.PlatformRoot) {
+			if SameInstallation(byRoot[index].PlatformRoot, root.PlatformRoot) {
 				byRoot[index] = root
 				replaced = true
 				break
@@ -167,7 +167,7 @@ func (r Registry) Register(platformRoot, gatewayURL string) error {
 	root := filepath.Clean(platformRoot)
 	updated := false
 	for index := range roots {
-		if sameInstallation(roots[index].PlatformRoot, root) {
+		if SameInstallation(roots[index].PlatformRoot, root) {
 			roots[index].URL = gatewayURL
 			updated = true
 			break
@@ -187,14 +187,17 @@ func (r Registry) Remove(platformRoot string) error {
 	root := filepath.Clean(platformRoot)
 	filtered := roots[:0]
 	for _, entry := range roots {
-		if !sameInstallation(entry.PlatformRoot, root) {
+		if !SameInstallation(entry.PlatformRoot, root) {
 			filtered = append(filtered, entry)
 		}
 	}
 	return r.write(filtered)
 }
 
-func sameInstallation(left, right string) bool {
+// SameInstallation reports whether two validated platform paths belong to the
+// same installation identity. It also accepts an exact path match so Remove
+// can delete the registry row after uninstall has removed that installation.
+func SameInstallation(left, right string) bool {
 	if filepath.Clean(left) == filepath.Clean(right) {
 		return true
 	}

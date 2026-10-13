@@ -97,10 +97,12 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	if stateErr != nil {
 		return nil, asDiag(stateErr)
 	}
+	shimTarget, unverifiedShim := "", false
 	if in.Executable != "" {
-		if target, unverified := shim.Dangling(in.Executable); unverified {
+		shimTarget, unverifiedShim = shim.Dangling(in.Executable)
+		if unverifiedShim {
 			response.Findings = append(response.Findings, doctor.Finding{Code: "KB_INSTALL_SHIM_DANGLING", Severity: doctor.SeverityError,
-				Component: "kb-create", Path: shim.Path(in.Executable), Hint: fmt.Sprintf("The target %s cannot be mapped to a validated installation. Inspect it, then remove the launcher with %s.", target, shim.RemoveCommand(shim.Path(in.Executable)))})
+				Component: "kb-create", Path: shim.Path(in.Executable), Hint: foreignShimHint(shim.Path(in.Executable), shimTarget, root)})
 		}
 	}
 	if active, readErr := receipt.Read(platformRoot); readErr == nil {
@@ -136,8 +138,8 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	installation := doctor.InspectInstallation(platformRoot, state)
 	if in.Executable != "" && !shim.Correct(in.Executable, platformRoot) {
 		hint := "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "` to repair the command shim."
-		if _, unverified := shim.Dangling(in.Executable); unverified {
-			hint = "Inspect the existing target, then remove the unverified launcher with " + shim.RemoveCommand(shim.Path(in.Executable)) + "."
+		if unverifiedShim {
+			hint = foreignShimHint(shim.Path(in.Executable), shimTarget, root)
 		}
 		installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing, foreign, or points to another installation.", Hint: hint})
 		installation.OK = false
@@ -175,6 +177,13 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 		status = "unhealthy"
 	}
 	return doctorCommandResult{Operation: "doctor", Status: status, Response: response}, nil
+}
+
+func foreignShimHint(link, target, platformRoot string) string {
+	remove := contracts.ShellCommand("rm", "--", link)
+	repair := contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", platformRoot)
+	return fmt.Sprintf("The `kb` link %s points to %s. It cannot be mapped to a validated installation, so KB Labs considers it foreign and will not change it. Inspect the target first, then run %s to remove this link and %s to recreate the shim.",
+		contracts.ShellCommand(link), contracts.ShellCommand(target), remove, repair)
 }
 
 func executeDoctorFix(input doctorCommandInput, response doctor.Response) (doctorFixResult, *diag.Diag) {

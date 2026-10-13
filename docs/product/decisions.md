@@ -604,17 +604,21 @@ S-005.6–S-005.7.
 
 ### One `kb` command belongs to one live platform root
 
-The user has one managed `kb` command. Applying another platform leaves the
-shim with its current owner while that root has a valid V2 receipt. Apply takes
-the shim when it is absent, already points to the requested root, or points to
-a managed target whose receipt is no longer valid. JSON reports the current
-owner when apply leaves the shim in place, and human output gives the direct
-CLI path for the new root. Uninstall removes the shim only when the uninstalling
-root owns it; uninstall does not guess a replacement owner. Doctor reports a
-dangling managed target and repairs it to its requested root only when the
-target root has no valid receipt. User-owned files at the shim path are never
-modified. The decision is enforced in the shared `shim.Ensure` and
-`shim.Remove` boundary used by apply, uninstall, and doctor.
+The user has one managed `kb` command. Shim ownership is the validated
+installation identity, so an install root, its `current` path, and its active
+version path identify the same owner. Applying another platform leaves the
+shim with its current owner while that installation has a valid V2 receipt.
+Apply takes the shim when it is absent, already points to the requested
+installation, or points to a managed target whose receipt is no longer valid.
+JSON reports the canonical installation root when apply leaves the shim in
+place, and human output gives the direct CLI path for the new root. Uninstall
+removes the shim only when the uninstalling installation owns it; uninstall
+does not guess a replacement owner. A target that cannot be mapped to a
+validated installation is foreign and remains untouched. Doctor names the link
+and target, explains why it is foreign, and tells the user to inspect it before
+removing that exact link and running doctor fix for the intended installation.
+User-owned files at the shim path are never modified. The decision is enforced
+at the shared `shim` ownership boundary used by apply, uninstall, and doctor.
 Cases: PC-001.10–PC-001.11, S-025.9.
 
 ### Installed host roots receive distinct Gateway addresses by default

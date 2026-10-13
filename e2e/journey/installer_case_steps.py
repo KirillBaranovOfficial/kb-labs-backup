@@ -51,6 +51,26 @@ def _hint_has_argv(text: str, expected: list[str]) -> bool:
     return False
 
 
+def shim_owner_matches(data: dict, linked: bool, install_root: Path) -> bool:
+    return data.get("shim") == {"linked": linked, "owner": str(install_root.resolve())}
+
+
+def assert_foreign_shim_diagnosis(data: dict, human_output: str, link: Path,
+                                  target: Path, install_root: Path) -> None:
+    finding = next((item for item in data.get("findings", [])
+                    if item.get("code") == "KB_INSTALL_SHIM_DANGLING"), None)
+    if not finding or finding.get("path") != str(link):
+        raise RuntimeError(f"doctor omitted the foreign shim finding or link path: {data}")
+    hint = finding.get("hint", "")
+    repair = f"'kb-create' 'doctor' '--fix' '--platform-root' '{install_root}'"
+    required = (str(link), str(target), "cannot be mapped to a validated installation",
+                "considers it foreign and will not change it", "'rm' '--'", repair)
+    for output in (hint, human_output):
+        positions = [output.find(fragment) for fragment in required]
+        if any(position < 0 for position in positions) or positions != sorted(positions):
+            raise RuntimeError(f"doctor did not explain the foreign shim and ordered cleanup/repair: {output}")
+
+
 class InstallerHostLifecycle:
     """Single owner for inspecting, changing, and restoring fixture host state."""
 
@@ -686,6 +706,8 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
                                   "--gateway-url", "http://127.0.0.1:4200"])
             explicit_installed = (active_platform_root(explicit_root) / ".kb/v2/receipt.json").is_file()
             data = _data(result, "explicit Gateway apply")
+            if not shim_owner_matches(data, linked=False, install_root=primary_root):
+                raise RuntimeError(f"explicit secondary apply reported the wrong shim owner: {data.get('shim')}")
             explicit_receipt = data.get("receipt", {})
             explicit_url = explicit_receipt.get("verification", {}).get("hostHealthUrl", "")
             if explicit_url != "http://127.0.0.1:4200/health":
@@ -1442,7 +1464,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                      "--platform-channel", channel, "--policy", "compatible",
                                      "--platform-root", str(platform_root.parent / root_name)]),
                         f"{channel} apply")
-        if applied.get("shim") != {"linked": False, "owner": str(platform_root)}:
+        if not shim_owner_matches(applied, linked=False, install_root=platform_root):
             raise RuntimeError(f"{channel} apply changed the live command owner: {applied.get('shim')}")
         status = _json_command(run_command, [launcher, "status", "--json", "--platform-root",
                                              str(platform_root.parent / root_name)], f"{channel} status")
@@ -1469,7 +1491,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                                 "admin.tenant": "journey"}),
                                     "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
         payload = _data(apply_result, "secret apply")
-        if payload.get("shim") != {"linked": False, "owner": str(platform_root)}:
+        if not shim_owner_matches(payload, linked=False, install_root=platform_root):
             raise RuntimeError(f"secret apply changed the live command owner: {payload.get('shim')}")
         secondary_receipt = json.loads((active_platform_root(secret_root) / ".kb/v2/receipt.json").read_text())
         if secondary_receipt.get("verification", {}).get("hostHealthUrl") != "http://127.0.0.1:4100/health":
@@ -1508,11 +1530,9 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         shim_path.symlink_to(dangling_root / "current/.kb/v2/bin/kb")
         diagnosis = _data(run_command([launcher, "doctor", "--platform-root", str(platform_root), "--json"]),
                           "doctor dangling shim")
-        finding = next((item for item in diagnosis.get("findings", [])
-                        if item.get("code") == "KB_INSTALL_SHIM_DANGLING"), None)
-        expected_fix = f'kb-create doctor --fix --platform-root "{platform_root}"'
-        if not finding or expected_fix not in finding.get("hint", ""):
-            raise RuntimeError(f"doctor omitted the dangling shim finding or exact repair command: {diagnosis}")
+        human_diagnosis = run_command([launcher, "doctor", "--platform-root", str(platform_root)])
+        assert_foreign_shim_diagnosis(diagnosis, human_diagnosis.stdout, shim_path,
+                                      dangling_root / "current/.kb/v2/bin/kb", platform_root)
         _data(run_command([launcher, "doctor", "--fix", "--platform-root", str(platform_root), "--json"]),
               "doctor fix dangling shim")
         if shim_path.resolve() != (platform_root / "current/.kb/v2/bin/kb").resolve():
@@ -1522,8 +1542,11 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                  repair_dangling_shim, cases=["S-025.9"])
 
     def uninstall_non_owner() -> None:
-        _data(run_command([launcher, "uninstall", "--platform-root", str(secret_root), "--yes", "--json"]),
-              "uninstall non-owning root")
+        result = _data(run_command([launcher, "uninstall", "--platform-root", str(secret_root), "--yes", "--json"]),
+                       "uninstall non-owning root")
+        canonical_owner = str(platform_root.resolve())
+        if result.get("shimAction") != "left" or result.get("shimOwner") != canonical_owner:
+            raise RuntimeError(f"non-owner uninstall did not report the canonical shim owner: {result}")
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
         if not shim_path.is_symlink() or shim_path.readlink() != platform_root / "current/.kb/v2/bin/kb":
             raise RuntimeError("uninstall changed the live owner's kb shim")

@@ -90,6 +90,18 @@ def block_outer_dependents(graph: FlowGraph, groups: list[str]) -> None:
                    lambda: None, record_empty_success=False)
 
 
+def uninstall_shim_result_matches(payload: dict, install_root: Path) -> bool:
+    action = payload.get("shimAction")
+    if action == "removed":
+        return True
+    return action == "left" and payload.get("shimOwner") == str(install_root.resolve())
+
+
+def uninstall_human_summary_has_shim_result(output: str, install_root: Path) -> bool:
+    return ("The kb command was removed." in output
+            or f"The kb command remains with its owner at {install_root.resolve()}." in output)
+
+
 def cleanup_partial_install(graph: FlowGraph, env: dict[str, str], launcher: str) -> None:
     if (PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json").is_file():
         _run_final_uninstall(graph, env, launcher)
@@ -712,9 +724,10 @@ def run_uninstall_group(graph: FlowGraph, env: dict[str, str], launcher: str) ->
             record_case("human uninstall confirmation prompt", prompt_ok,
                        "uninstall prompt omitted its root, artifacts, receipt, snapshots, or project preservation",
                        cases=["S-050.2"], runners=("human:default", "human:nondefault"))
-            human_uninstall_ok = (result.returncode == 0 and "uninstall" in result.stdout.lower())
+            human_uninstall_ok = (result.returncode == 0 and "uninstall" in result.stdout.lower()
+                                  and uninstall_human_summary_has_shim_result(result.stdout, PLATFORM))
             record_case("human confirmed uninstall", human_uninstall_ok,
-                       "confirmed human uninstall did not show its completion summary",
+                       "confirmed human uninstall omitted its shim disposition or completion summary",
                        cases=["S-050.5"], runners=("human:default", "human:nondefault"))
         else:
             try:
@@ -722,9 +735,11 @@ def run_uninstall_group(graph: FlowGraph, env: dict[str, str], launcher: str) ->
             except json.JSONDecodeError:
                 uninstall_payload = {}
             uninstall_ok = (result.returncode == 0 and uninstall_payload.get("operation") == "uninstall"
-                            and bool(uninstall_payload.get("snapshot")) and bool(uninstall_payload.get("logPath")))
+                            and bool(uninstall_payload.get("snapshot")) and bool(uninstall_payload.get("logPath"))
+                            and uninstall_shim_result_matches(uninstall_payload, PLATFORM))
             record_case("agent confirmed uninstall", uninstall_ok,
-                       "agent uninstall result omitted operation, snapshot, or logPath", cases=["S-050.6"],
+                       "agent uninstall result omitted operation, snapshot, logPath, or shim disposition/owner",
+                       cases=["S-050.6"],
                        runners=("agent:commit", "agent-secured:commit"))
         alive = [p for p in graph.resources if p.poll() is None]
         listeners, _ = run(["ss", "-H", "-ltnp"], timeout=20)
