@@ -263,7 +263,9 @@ func TestApplyDoesNotCommitReceiptWhenArtifactInstallFails(t *testing.T) {
 
 func TestUpdateSnapshotsPreviousVerifiedReceipt(t *testing.T) {
 	root := t.TempDir()
-	previous := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", InstallationID: "stable-installation", Plan: contracts.ResolvedInstallPlan{PlanHash: "old"}}
+	previous := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", InstallationID: "stable-installation",
+		ProjectSelectedPath: "/work/selected-alias", ProjectID: "prj_0123456789abcdef", ProjectCanonicalPath: "/work/project",
+		Plan: contracts.ResolvedInstallPlan{PlanHash: "old"}}
 	if err := receipt.Write(root, previous); err != nil {
 		t.Fatal(err)
 	}
@@ -273,6 +275,9 @@ func TestUpdateSnapshotsPreviousVerifiedReceipt(t *testing.T) {
 	}
 	if result.InstallationID != "stable-installation" {
 		t.Fatalf("update installation ID = %q", result.InstallationID)
+	}
+	if result.ProjectSelectedPath != previous.ProjectSelectedPath || result.ProjectID != previous.ProjectID || result.ProjectCanonicalPath != previous.ProjectCanonicalPath {
+		t.Fatalf("update did not preserve registry project identity: %#v", result)
 	}
 }
 

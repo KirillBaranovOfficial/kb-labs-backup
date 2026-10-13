@@ -31,7 +31,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import { createInMemoryDocumentDatabase, createInMemoryKVStore } from '@kb-labs/sdk/testing';
-import type { ICache } from '@kb-labs/core-platform';
+import type { ICache, ILogger } from '@kb-labs/core-platform';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import {
   UsersStore,
@@ -58,7 +58,7 @@ import { createAuthMiddleware } from '../middleware.js';
 import { registerAuthRoutes, type MachineAuthRoutesUserExt } from '../routes.js';
 import { registerUserAuthRoutes, createUserRefreshFn } from '../user-routes.js';
 import { COOKIE_ACCESS, COOKIE_REFRESH, COOKIE_CSRF } from '../user-cookies.js';
-import { registerGatewayUxErrorResponses } from '../../ux-boundary.js';
+import { registerGatewayUxBoundary, registerGatewayUxErrorResponses } from '../../ux-boundary.js';
 import bcryptjs from 'bcryptjs';
 
 // Minimal no-op ICache stub used to satisfy machine auth service constructor.
@@ -99,6 +99,7 @@ interface BuildAppOpts {
   /** Tenant used as the final fallback when Host resolves no tenant and the body
    *  carries none either. Defaults to TENANT_ID so existing tests are unaffected. */
   bootstrapTenantId?: string;
+  uxBoundary?: boolean;
 }
 
 async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
@@ -183,7 +184,15 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   };
 
   const app = Fastify({ logger: false, trustProxy: true });
-  registerGatewayUxErrorResponses(app);
+  if (opts.uxBoundary) {
+    const logger: ILogger = {
+      info: () => {}, warn: () => {}, error: () => {}, fatal: () => {}, debug: () => {}, trace: () => {},
+      child: () => logger,
+    };
+    registerGatewayUxBoundary(app, logger);
+  } else {
+    registerGatewayUxErrorResponses(app);
+  }
   await app.register(fastifyCookie);
 
   // User-auth middleware runs first (before machine Bearer check).
@@ -371,6 +380,33 @@ describe('POST /auth/login/cli', () => {
     expect(body.tenantId).toBe(TENANT_ID);
     // The entire point of a dedicated route: never leak tokens via Set-Cookie.
     expect(r.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('returns the secured Gateway success envelope consumed by kb-create', async () => {
+    const ctx = await buildApp({ uxBoundary: true });
+    await seedAdmin(ctx);
+    try {
+      const response = await ctx.app.inject({
+        method: 'POST',
+        url: '/auth/login/cli',
+        headers: { host: HOST },
+        payload: { email: 'admin@test.com', password: 'Password123!' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        ok: true,
+        data: {
+          accessToken: expect.any(String),
+          refreshToken: expect.any(String),
+          expiresIn: expect.any(Number),
+          tenantId: TENANT_ID,
+        },
+      });
+      expect(response.headers['set-cookie']).toBeUndefined();
+    } finally {
+      await ctx.app.close();
+    }
   });
 
   it('returns the shared credentials envelope on CLI wrong password', async () => {

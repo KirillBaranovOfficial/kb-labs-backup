@@ -105,6 +105,16 @@ describe('setStatus', () => {
   });
 });
 
+describe('bootstrap credential claim ownership', () => {
+  // case: S-222.8
+  it('does not claim or revise a pending user that bootstrap does not own', async () => {
+    await users.create({ userId: 'unowned', tenantId: t1, email: 'unowned@example.com', status: 'pending' });
+
+    expect(await users.beginBootstrapCredentialWrite('unowned')).toBeNull();
+    expect(await users.getById('unowned')).toMatchObject({ status: 'pending', bootstrapRevision: undefined });
+  });
+});
+
 describe('delete', () => {
   it('removes the user', async () => {
     await users.create({ userId: 'u1', tenantId: t1, email: 'a@b.c', status: 'active' });

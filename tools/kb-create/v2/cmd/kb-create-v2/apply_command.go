@@ -61,8 +61,8 @@ func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps 
 		if err := writer.Fail(failure); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 		}
-	} else if err := writer.Result(result); err != nil {
-		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Apply result could not be written.")
+	} else if written, emitFailure := emitFirstAdminResult(result, "apply", func() error { return writer.Result(result) }); emitFailure != nil {
+		return finishFirstAdminResultFailure(writer, deps.Command, written, emitFailure)
 	}
 	exitCode := diag.ExitOK
 	if failure != nil {
@@ -218,16 +218,11 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if securedAdmin {
 		var existsErr error
 		bootstrapCompleted, existsErr = store.Exists(secrets.BootstrapCompleted)
-		if existsErr == nil {
+		if existsErr == nil && !bootstrapCompleted {
 			adminPasswordPresent, existsErr = store.Exists("gateway.bootstrap.password")
 		}
 		if existsErr != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read from the secret store", "check that the platform root is writable, then rerun `kb-create install`", existsErr)
-		}
-		if bootstrapCompleted && !adminPasswordPresent {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
-				"the secured Gateway was bootstrapped, but its stored first administrator password is missing",
-				"Recover the account with `"+contracts.ShellCommand("kb-create", "doctor", "--recover", "--platform-root", root)+"`.", nil)
 		}
 	}
 	if err := secrets.EnsureGenerated(&planned, store); err != nil {
@@ -327,24 +322,6 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	} else {
 		applied.Plan.Request.PlatformRoot = platformRoot
 	}
-	if securedAdmin {
-		bootstrapState, present, readErr := store.Get(secrets.BootstrapCompleted)
-		generated, generatedErr := store.Exists(secrets.BootstrapGenerated)
-		disclosed, disclosedErr := store.Exists(secrets.BootstrapDisclosed)
-		if readErr != nil || generatedErr != nil || disclosedErr != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator bootstrap state could not be read", "check that the platform root is writable, then rerun `kb-create install`", errors.Join(readErr, generatedErr, disclosedErr))
-		}
-		if present && bootstrapState == "provisioned" && generated && !disclosed {
-			password, passwordPresent, passwordErr := store.Get("gateway.bootstrap.password")
-			if passwordErr != nil || !passwordPresent {
-				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the generated first administrator password could not be read", "check that the platform root is writable, then rerun `kb-create install`", passwordErr)
-			}
-			if err := store.Put(secrets.BootstrapDisclosed, "true"); err != nil {
-				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator credential disclosure could not be recorded", "check that the platform root is writable, then rerun `kb-create install`", err)
-			}
-			firstAdmin = &firstAdminCredential{Email: adminEmail, Password: password, ShownOnce: true}
-		}
-	}
 	if planned.Host != nil {
 		roots := make([]gateway.Root, 0, 2)
 		if owner, ok := shim.Owner(input.Executable); ok && filepath.Clean(owner) != filepath.Clean(platformRoot) {
@@ -393,9 +370,16 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			}
 		}
 	}
+	if securedAdmin {
+		var failure *diag.Diag
+		firstAdmin, failure = firstAdminResult(store, adminEmail, platformRoot)
+		if failure != nil {
+			return applyCommandResult{}, failure
+		}
+	}
 	return applyCommandResult{OK: true, Operation: "apply", Receipt: applied, LogPath: logPath,
 		Profile: applied.Plan.ServiceGraph.Profile, Services: applied.Plan.ServiceGraph.Services,
-		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin}, nil
+		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, disclosureStoreRoot: store.PlatformRoot}, nil
 }
 
 func unsupportedPlatformLayout(root string, cause error) *diag.Diag {

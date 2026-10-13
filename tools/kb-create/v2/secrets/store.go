@@ -51,10 +51,16 @@ type Store struct {
 }
 
 const (
-	BootstrapCompleted = "gateway.bootstrap.completed"
-	BootstrapGenerated = "gateway.bootstrap.generated"
-	BootstrapDisclosed = "gateway.bootstrap.disclosed"
+	BootstrapCompleted           = "gateway.bootstrap.completed"
+	BootstrapGenerated           = "gateway.bootstrap.generated"
+	BootstrapDisclosed           = "gateway.bootstrap.disclosed"
+	BootstrapPasswordEnvironment = "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"
 )
+
+type Environment struct {
+	Values     map[string]string
+	Suppressed []string
+}
 
 func (store Store) Put(name, value string) error {
 	if store.ReadOnly {
@@ -159,10 +165,14 @@ var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // names, for the host process. Requirement IDs such as "gateway.jwtSecret" are
 // not variable names; each secret reaches the host under the variable its plan
 // patch binds it to (see BindEnvironments).
-func (store Store) Environment() (map[string]string, error) {
+func (store Store) Environment() (Environment, error) {
 	values, err := store.read()
 	if err != nil {
-		return nil, err
+		return Environment{}, err
+	}
+	completed, err := store.Exists(BootstrapCompleted)
+	if err != nil {
+		return Environment{}, err
 	}
 	result := make(map[string]string, len(values))
 	for name, value := range values {
@@ -170,7 +180,12 @@ func (store Store) Environment() (map[string]string, error) {
 			result[name] = value
 		}
 	}
-	return result, nil
+	environment := Environment{Values: result}
+	if completed {
+		delete(environment.Values, BootstrapPasswordEnvironment)
+		environment.Suppressed = []string{BootstrapPasswordEnvironment}
+	}
+	return environment, nil
 }
 
 func (store Store) path() (string, error) {

@@ -23,7 +23,9 @@
           "code": { "type": "string" },
           "severity": { "enum": ["error", "warning"] },
           "message": { "type": "string" },
-          "hint": { "type": "string" }
+          "hint": { "type": "string" },
+          "providerId": { "type": "string" },
+          "failure": { "enum": ["unreachable", "invalid-discovery"] }
         }
       }
     }

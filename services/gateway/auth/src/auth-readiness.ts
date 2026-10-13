@@ -16,10 +16,14 @@
 
 import type { UsersStore } from './users-store.js';
 import type { MembershipsStore } from './memberships-store.js';
+import type { CredentialsStore } from './credentials-store.js';
 import type { BootstrapOutcome } from './bootstrap-admin.js';
+import type { ProviderInfo } from './provider-registry.js';
+import { isUsableAdmin } from './usable-admin.js';
 
 export type AuthIssueCode =
   | 'no_active_admin'
+  | 'login_provider_unavailable'
   | 'jwt_secret_default'
   | 'bootstrap_failed'
   | 'bootstrap_user_inactive';
@@ -30,6 +34,8 @@ export interface AuthIssue {
   message: string;
   /** What the operator should run/change. */
   hint: string;
+  providerId?: string;
+  failure?: 'unreachable' | 'invalid-discovery';
 }
 
 export type BootstrapStatus = BootstrapOutcome | 'failed';
@@ -48,6 +54,8 @@ export interface AuthReadinessInput {
   };
   users: Pick<UsersStore, 'getById'>;
   memberships: Pick<MembershipsStore, 'listByTenant'>;
+  credentials: Pick<CredentialsStore, 'getCredential'>;
+  providers: ProviderInfo[];
 }
 
 export interface AuthReadiness {
@@ -63,11 +71,24 @@ export interface AuthReadiness {
 const countActiveAdmins = async (
   users: AuthReadinessInput['users'],
   memberships: AuthReadinessInput['memberships'],
+  credentials: AuthReadinessInput['credentials'],
+  providers: ProviderInfo[],
   tenantId: string,
-): Promise<number> => {
+): ReturnType<typeof Promise.all<ReturnType<typeof isUsableAdmin>[]>> => {
   const admins = (await memberships.listByTenant(tenantId)).filter((m) => m.groupId === 'tenant-admin');
-  const found = await Promise.all(admins.map((m) => users.getById(m.userId)));
-  return found.filter((u) => u !== null && u.tenantId === tenantId && u.status === 'active').length;
+  return Promise.all(admins.map(async (membership) => {
+    const user = await users.getById(membership.userId);
+    const userCredentials = user
+      ? await Promise.all(providers
+        .filter((provider) => provider.kind === 'password')
+        .map((provider) => credentials.getCredential(user.userId, provider.id)))
+      : [];
+    const userMemberships = admins.filter((candidate) => candidate.userId === membership.userId);
+    return isUsableAdmin(user, userCredentials.filter((credential) => credential !== null), userMemberships, {
+      tenantId,
+      providers,
+    });
+  }));
 };
 
 export const evaluateAuthReadiness = async (input: AuthReadinessInput): Promise<AuthReadiness> => {
@@ -77,7 +98,8 @@ export const evaluateAuthReadiness = async (input: AuthReadinessInput): Promise<
   let activeAdmins = 0;
 
   if (authEnabled) {
-    activeAdmins = await countActiveAdmins(input.users, input.memberships, tenantId);
+    const adminResults = await countActiveAdmins(input.users, input.memberships, input.credentials, input.providers, tenantId);
+    activeAdmins = adminResults.filter((result) => result.usable).length;
     if (activeAdmins === 0) {
       issues.push({
         code: 'no_active_admin',
@@ -85,6 +107,19 @@ export const evaluateAuthReadiness = async (input: AuthReadinessInput): Promise<
         message: `Authentication is enabled but tenant "${tenantId}" has no active admin — nobody can log in.`,
         hint: `Stop the host (kb-create stop), then run: kb-create doctor --recover --email ${emailArg} --tenant ${tenantId} --generate --yes`,
       });
+      const unavailableProviders = new Map(adminResults.flatMap((result) => result.unavailableProviders)
+        .map((provider) => [provider.id, provider]));
+      for (const provider of unavailableProviders.values()) {
+        if (provider.operational.state !== 'unavailable') { continue; }
+        issues.push({
+          code: 'login_provider_unavailable',
+          severity: 'error',
+          providerId: provider.id,
+          failure: provider.operational.failure,
+          message: `Configured login provider "${provider.id}" is unavailable (${provider.operational.failure}).`,
+          hint: `Check provider "${provider.id}" configuration and Gateway network access, then run kb-create restart --platform-root <platform-root> after correcting it.`,
+        });
+      }
     }
 
     if (bootstrap.status === 'failed') {

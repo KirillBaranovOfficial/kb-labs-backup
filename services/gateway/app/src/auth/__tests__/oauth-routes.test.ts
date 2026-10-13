@@ -74,6 +74,7 @@ function makeRedirectProvider(
   const provider: TestRedirectProvider = {
     id,
     kind: 'redirect',
+    async getOperationalState() { return { state: 'operational', checkedAt: Date.now() }; },
     async startAuthorization(ctx) {
       provider.lastStart = ctx;
       const url = new URL('https://idp.example/authorize');

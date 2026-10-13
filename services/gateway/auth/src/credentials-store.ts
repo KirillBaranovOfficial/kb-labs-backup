@@ -29,12 +29,14 @@ export interface Credential {
   hash: string;
   createdAt: number;
   updatedAt?: number;
+  bootstrapRevision?: number;
 }
 
 interface CredentialDoc extends BaseDocument {
   userId: string;
   providerId: string;
   hash: string;
+  bootstrapRevision?: number;
 }
 
 const docToCredential = (doc: CredentialDoc): Credential => ({
@@ -43,6 +45,7 @@ const docToCredential = (doc: CredentialDoc): Credential => ({
   hash: doc.hash,
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
+  bootstrapRevision: doc.bootstrapRevision,
 });
 
 export interface SetCredentialInput {
@@ -91,6 +94,52 @@ export class CredentialsStore {
       },
       { upsert: true },
     );
+  }
+
+  /** Write a pending bootstrap credential only while its monotonic user
+   * revision is newer than the credential's existing revision. */
+  async setBootstrapCredential(input: SetCredentialInput & { revision: number }): Promise<Credential> {
+    await this.ensureSchema();
+    const filter = {
+      $and: [
+        { userId: { $eq: input.userId } },
+        { providerId: { $eq: input.providerId } },
+        { $or: [
+          { bootstrapRevision: { $exists: false } },
+          { bootstrapRevision: { $lt: input.revision } },
+        ] },
+      ],
+    };
+    const update = { $set: {
+      userId: input.userId,
+      providerId: input.providerId,
+      hash: input.hash,
+      bootstrapRevision: input.revision,
+    } };
+    const updated = await this.docs.updateOne<CredentialDoc>(COLLECTION, filter, update);
+    if (updated) { return docToCredential(updated); }
+    try {
+      const inserted = await this.docs.insertOne<CredentialDoc>(COLLECTION, {
+        userId: input.userId,
+        providerId: input.providerId,
+        hash: input.hash,
+        bootstrapRevision: input.revision,
+      });
+      return docToCredential(inserted);
+    } catch (error) {
+      const existing = await this.getCredential(input.userId, input.providerId);
+      if (!existing) { throw error; }
+      if (existing.bootstrapRevision !== undefined && existing.bootstrapRevision >= input.revision) {
+        return existing;
+      }
+      const advanced = await this.docs.updateOne<CredentialDoc>(COLLECTION, filter, update);
+      if (advanced) { return docToCredential(advanced); }
+      const latest = await this.getCredential(input.userId, input.providerId);
+      if (latest && latest.bootstrapRevision !== undefined && latest.bootstrapRevision >= input.revision) {
+        return latest;
+      }
+      throw error;
+    }
   }
 
   async getCredential(userId: string, providerId: string): Promise<Credential | null> {

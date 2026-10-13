@@ -80,7 +80,7 @@ type operationTestSetup struct {
 	InstallOutput                                                                     io.Writer
 	RuntimeDeps                                                                       *runtime.Dependencies
 	NodePreflight                                                                     func() error
-	ProjectRegistrar                                                                  func(string) (string, error)
+	ProjectRegistrar                                                                  func(string) (projectRegistrationResult, error)
 }
 
 func executeForTest(t *testing.T, setup operationTestSetup) (any, *diag.Diag, int, string) {
@@ -105,7 +105,7 @@ func executeForTest(t *testing.T, setup operationTestSetup) (any, *diag.Diag, in
 	if deps.NodeCheck == nil {
 		deps.NodeCheck = func() error { return nil }
 	}
-	deps.ProjectRegistrar = func(root, project string) (string, error) {
+	deps.ProjectRegistrar = func(root, project string) (projectRegistrationResult, error) {
 		return registerInstalledProject(root, project, setup.ProjectRegistrar)
 	}
 	data, failure := descriptor.Handler(context.Background(), cmd, reader, deps)
@@ -236,7 +236,7 @@ func descriptorTestCall(cmd *cobra.Command, descriptor operationDescriptor, setu
 	if deps.NodeCheck == nil {
 		deps.NodeCheck = func() error { return nil }
 	}
-	deps.ProjectRegistrar = func(root, project string) (string, error) {
+	deps.ProjectRegistrar = func(root, project string) (projectRegistrationResult, error) {
 		return registerInstalledProject(root, project, setup.ProjectRegistrar)
 	}
 	return callDescriptor(cmd, descriptor, values, deps)

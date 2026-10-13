@@ -981,14 +981,14 @@ def main():
                                         "installed first-admin password")
                     first_admin_shown_once = (
                         credential.get("email") == "journey-admin@example.test"
-                        and credential.get("shownOnce") is True
+                        and credential.get("state") == "disclosed"
                         and bool(password)
                         and result.stdout.count(password) == 1
                     )
                     if first_admin_shown_once:
                         env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
                 if not first_admin_shown_once:
-                    fail("secured install did not return exactly one firstAdmin credential with shownOnce=true")
+                    fail("secured install did not return exactly one firstAdmin credential with state=disclosed")
             payload = {}
         else:
             try:
@@ -1558,15 +1558,31 @@ def main():
             def bootstrap_admin_status():
                 if not first_admin_shown_once:
                     raise AssertionError("secured install did not disclose a first administrator credential exactly once")
+                installed, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"],
+                                   env=service_env, timeout=120)
+                status_result = read_ux_cli_result(installed.stdout, installed.returncode)
+                status_payload = decode_ux_success_result(status_result)
+                if status_payload.get("bootstrapCompleted") is not True:
+                    raise AssertionError("kb-create status did not report completed first-administrator bootstrap")
                 run_cli_auth_status(str(BIN / "kb"), service_env, authenticated=True,
                                     email=service_env["KB_JOURNEY_ADMIN_EMAIL"],
                                     password=service_env["KB_JOURNEY_ADMIN_PASSWORD"],
                                     base_url="http://127.0.0.1:4000")
+                status, raw, _ = open_http(
+                    urllib.request.urlopen,
+                    urllib.request.Request("http://127.0.0.1:4000/health/auth"),
+                    timeout=30,
+                    env=service_env,
+                )
+                readiness = json.loads(raw)
+                data = readiness.get("data", {})
+                if status != 200 or data.get("ok") is not True or data.get("activeAdmins", 0) < 1:
+                    raise AssertionError("secured install did not prove a usable active administrator")
 
             auth_journey.step(
                 "bootstrap administrator CLI status", "auth.accounts",
                 bootstrap_admin_status,
-                cases=["S-100.1"], runners=("service-secured:explore",),
+                cases=["S-100.1", "S-100.5"], runners=("service-secured:explore",),
             )
             recovered_password = "JourneyRecovered123!"
 
