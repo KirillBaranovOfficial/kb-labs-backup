@@ -49,6 +49,29 @@ class PlatformUpdateStepsTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_secured_update_registers_nonpass_scan_when_bootstrap_password_is_missing(self):
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {
+                "KB_JOURNEY_SELECTED_STEPS": "S-100.1",
+                "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/platform_update_steps.py",
+                "KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore",
+        }, clear=False):
+            journey = run_platform_update_steps(
+                mode="secured", launcher="kb-create", kb_binary="kb",
+                platform_root=self.root, update_index=self.update_index,
+                request_file=self.root / "request.json", base_version="3.0.0",
+                updated_version="3.0.1", bootstrap_password=None,
+                parent_journey=self.parent_journey,
+            )
+
+        scan = next((step for step in journey.steps
+                     if step.name == "verify disclosed bootstrap credential absent after update and rollback"), None)
+        self.assertIsNotNone(scan, "selected S-100.1 scan must be registered without a password")
+        self.assertEqual(scan.status, "BLOCKED")
+        self.assertIn("bootstrap password was unavailable", scan.message)
+        self.assertNotIn("journey-bootstrap-secret-sentinel", scan.message)
+
     def _write_receipt(self, version: str):
         self.receipt.write_text(json.dumps({
             "installationId": "installation-stable-1",

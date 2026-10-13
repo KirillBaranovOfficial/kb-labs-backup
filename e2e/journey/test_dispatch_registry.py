@@ -237,6 +237,26 @@ class DispatchRegistryTests(unittest.TestCase):
             )
             self.assertTrue(claim_prerequisites)
 
+    def test_s100_1_selects_both_bootstrap_secret_scans_and_update_journey(self):
+        resolved = selection_from_coverage(self._coverage(), "S-100.1")
+        self.assertEqual(resolved["runners"], ["service-secured:explore"])
+        self.assertIn("e2e/journey/bootstrap_secret_steps.py", resolved["stepSources"])
+        self.assertIn("e2e/journey/platform_update_steps.py", resolved["stepSources"])
+        root = Path(__file__).resolve().parents[2]
+        declarations = [declaration
+                       for source in ("e2e/journey/bootstrap_secret_steps.py",
+                                      "e2e/journey/platform_update_steps.py")
+                       for declaration in _case_declarations(source, root).values()
+                       if "S-100.1" in (declaration.get("cases") or ())]
+        scans = {declaration["name"]: declaration for declaration in declarations
+                 if declaration["name"].startswith("verify disclosed bootstrap credential absent")}
+        self.assertEqual(set(scans), {
+            "verify disclosed bootstrap credential absent after install",
+            "verify disclosed bootstrap credential absent after update and rollback",
+        })
+        self.assertTrue(all("service-secured:explore" in declaration["runners"]
+                            for declaration in scans.values()))
+
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         results = []
         root = Path(__file__).resolve().parents[2]
