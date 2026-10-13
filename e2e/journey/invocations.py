@@ -365,24 +365,30 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         "duration_seconds": round(duration_seconds, 3),
     }
     if invocation_evidence is None and kind == "command" and exit_code not in (None, 0):
-        invocation_evidence = _capture_typed_error_files(stdout, stderr, effective_env)
+        invocation_evidence = _capture_typed_error_files(argv, stdout, stderr, exit_code, effective_env)
     if invocation_evidence:
         record["invocation_evidence"] = invocation_evidence
     target = root / "invocations" / "calls.jsonl"
     return write_report_json(target, record, env=effective_env, append=True, indent=None, ensure_ascii=False)
 
 
-def _capture_typed_error_files(stdout: str, stderr: str, env: Mapping[str, str] | None) -> list[str]:
-    """Capture bounded tails for existing file paths named by a typed error."""
+def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,
+                               exit_code: int, env: Mapping[str, str] | None) -> list[str]:
+    """Copy existing diagnostic files named by a typed error into the run report."""
     root = _REPORT_ROOT.get()
     if root is None:
         configured = journey_value("KB_JOURNEY_INVOCATIONS")
         root = Path(configured) if configured else None
     if root is None:
         return []
+    output = stdout or stderr
     try:
-        result = json.loads(stdout or stderr)
-    except json.JSONDecodeError:
+        result = None
+        if argv and Path(argv[0]).name == "kb-create" and len(argv) > 1:
+            result = read_kb_create_cli_result(argv[1], output, exit_code)
+        else:
+            result = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
         return []
     error = result.get("error") if isinstance(result, dict) and result.get("ok") is False else None
     details = error.get("details") if isinstance(error, dict) else None
@@ -408,13 +414,11 @@ def _capture_typed_error_files(stdout: str, stderr: str, env: Mapping[str, str] 
     references = []
     for ordinal, source in enumerate(paths, 1):
         try:
-            lines = source.read_text(errors="replace").splitlines()
+            contents = source.read_text(errors="replace")
         except OSError:
             continue
-        tail = "\n".join(lines[-200:]) + "\n"
-        tail = tail[-256 * 1024:]
         target = root / "invocations" / "evidence" / f"{invocation_number:04d}-{ordinal:02d}-{source.name}"
-        write_report_text(target, tail, env=env)
+        write_report_text(target, contents, env=env)
         references.append(str(target.relative_to(root)))
     return references
 
@@ -443,11 +447,19 @@ def invocation_link(step_id: str) -> str | None:
         return None
     target = root / "invocations" / "calls.jsonl"
     try:
-        matching = [number for number, line in enumerate(target.read_text(encoding="utf-8").splitlines(), 1)
+        matching = [(number, json.loads(line))
+                    for number, line in enumerate(target.read_text(encoding="utf-8").splitlines(), 1)
                     if json.loads(line).get("step_id") == step_id]
     except (OSError, json.JSONDecodeError):
         return None
-    return f"invocations/calls.jsonl:{matching[-1]}" if matching else None
+    if not matching:
+        return None
+    number, record = matching[-1]
+    reference = f"invocations/calls.jsonl:{number}"
+    evidence = record.get("invocation_evidence")
+    if evidence:
+        reference += f"; copied report evidence: {', '.join(evidence)}"
+    return reference
 
 
 def run_command(argv: list[str], *, cwd: str | Path | None = None,
