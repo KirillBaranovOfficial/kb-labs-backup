@@ -251,10 +251,13 @@ def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platfo
 
 
 def _command(output: Path, label: str, args: list[str], *, env: Mapping[str, str], cwd: Path,
-             admin_password: str, timeout: int = 30, budget: int = MAX_DUMP_BYTES) -> int:
+             admin_password: str, timeout: int = 30, budget: int = MAX_DUMP_BYTES,
+             stdout_sink: list[str] | None = None) -> int:
     try:
         from invocations import run_command
         result = run_command(args, cwd=cwd, env=env, timeout=timeout)
+        if stdout_sink is not None:
+            stdout_sink.append(result.stdout)
         body = f"exit_code: {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     except (OSError, subprocess.TimeoutExpired) as error:
         body = f"error: {error.__class__.__name__}: {error}"
@@ -327,19 +330,6 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         snapshots = installer_record_path(root, "snapshots")
         for source in sorted(snapshots.glob("*.json")):
             add(source, Path("installer/snapshots") / source.name)
-        home_value = (env or os.environ).get("HOME")
-        launcher_root = Path(home_value) / ".kb" / "launcher" if home_value else None
-        launcher_logs = []
-        if launcher_root:
-            try:
-                launcher_logs = sorted(path for path in launcher_root.rglob("*.log") if path.is_file())
-            except OSError:
-                pass
-        for source in launcher_logs:
-            if used >= CONTENT_BUDGET:
-                break
-            relative = Path("launcher-logs") / source.relative_to(launcher_root)
-            add(source, relative, tail=True)
         receipt_path = active / ".kb/v2/receipt.json"
         try:
             receipt_value = json.loads(receipt_path.read_text())
@@ -456,6 +446,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         if not launcher and (root.parent / ".local" / "bin" / "kb-create").is_file():
             launcher = str(root.parent / ".local" / "bin" / "kb-create")
         launcher = launcher or "kb-create"
+        doctor_stdout: list[str] = []
         for name in ("status", "doctor"):
             if used >= CONTENT_BUDGET:
                 break
@@ -463,8 +454,32 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             args = [launcher, name, "--platform-root", str(root), "--json"]
             used += _command(target, "$ kb-create " + " ".join(args[1:]), args,
                              env=command_env, cwd=command_cwd, admin_password=admin_password,
-                             budget=CONTENT_BUDGET - used)
+                             budget=CONTENT_BUDGET - used,
+                             stdout_sink=doctor_stdout if name == "doctor" else None)
             entries.append(f"- `{target.name}` ({target.stat().st_size} bytes)")
+
+        host_state_missing = "Doctor did not report retention.hostState; host log sources are unavailable."
+        try:
+            doctor_result = json.loads(doctor_stdout[-1])
+            doctor_data = doctor_result.get("data", {})
+            retention = doctor_data.get("retention", {})
+            host_state_value = retention.get("hostState")
+            if isinstance(host_state_value, str) and host_state_value:
+                host_state = Path(host_state_value)
+                logs = sorted(path for path in host_state.rglob("*.log") if path.is_file())
+                if not logs:
+                    host_state_missing = f"Doctor reported hostState `{host_state}` but it contains no log files."
+                else:
+                    host_state_missing = ""
+                    for source in logs:
+                        if used >= CONTENT_BUDGET:
+                            break
+                        relative = Path("installer-host-state") / source.relative_to(host_state)
+                        add(source, relative, tail=True)
+        except (IndexError, OSError, json.JSONDecodeError, AttributeError, TypeError, ValueError):
+            pass
+        if host_state_missing:
+            entries.append(f"- Missing host log evidence: {host_state_missing}")
 
         if used < CONTENT_BUDGET:
             target = destination / "kb-adapter-list.txt"

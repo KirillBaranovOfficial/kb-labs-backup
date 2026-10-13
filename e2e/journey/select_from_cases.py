@@ -129,6 +129,79 @@ def _source_step_declarations(sources: set[str], root: Path) -> dict[str, dict]:
     return _source_step_declarations_cached(tuple(sorted(expanded)), root)
 
 
+def registered_group_selected(function, selected_claims: set[str], selector: str, root: Path) -> bool:
+    """Ask the claim registry whether a fixture function owns selected work."""
+    if not selected_claims:
+        return True
+    source_path = Path(function.__code__.co_filename).resolve()
+    try:
+        source = source_path.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return False
+    tree = _source_tree(source, root)
+    owner = next((node for node in ast.walk(tree)
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  and node.name == function.__name__), None)
+    if owner is None:
+        raise ValueError(f"fixture group {function.__name__!r} has no registered source function")
+    declarations = _case_declarations(source, root)
+    source_registry = _source_step_declarations({source}, root)
+    own_names = set()
+    own_claims = set()
+    mode = "secured" if "secured" in selector else "local"
+    for declaration in source_registry.values():
+        declared_runners = declaration["runners"] or runners_for_source(source, mode)
+        if (selector in declared_runners
+                and any(registered_source == source and owner.lineno <= line <= owner.end_lineno
+                        for registered_source, line, _ in declaration.get("locations", ()))):
+            own_names.add(declaration["name"])
+    for line, declaration in declarations.items():
+        if not owner.lineno <= line <= owner.end_lineno:
+            continue
+        declared_runners = declaration["runners"] or runners_for_source(source, mode)
+        if selector not in declared_runners:
+            continue
+        own_names.add(declaration["name"])
+        own_claims.update(declaration.get("cases") or ())
+    if own_claims.intersection(selected_claims):
+        return True
+
+    runner = RUNNERS.get(selector)
+    if runner is None:
+        raise ValueError(f"unknown journey runner selector: {selector}")
+    sources = _imported_journey_sources(set(runner.journey_sources), root)
+    registry = _source_step_declarations(sources, root)
+    required_names = set()
+    pending = []
+    for registered_source in sources:
+        mode = "secured" if "secured" in selector else "local"
+        for declaration in _case_declarations(registered_source, root).values():
+            declared_runners = declaration["runners"] or runners_for_source(registered_source, mode)
+            if (selected_claims.intersection(declaration.get("cases") or ())
+                    and selector in declared_runners):
+                key = str(Dependency(declaration["kind"], declaration["name"]))
+                if key in registry:
+                    pending.append(registry[key])
+    while pending:
+        declaration = pending.pop()
+        for reference in declaration.get("requires", ()):
+            dependency = Dependency.parse(reference)
+            if dependency.name in required_names:
+                continue
+            required_names.add(dependency.name)
+            producer = registry.get(str(dependency))
+            if producer is not None:
+                pending.append(producer)
+    return bool(own_names.intersection(required_names))
+
+
+def selected_fixture_groups(groups, selected_claims: set[str], selector: str,
+                            root: Path) -> tuple:
+    """Resolve each fixture group's work from registered claim declarations once."""
+    return tuple(group for group in groups
+                 if registered_group_selected(group, selected_claims, selector, root))
+
+
 def _imported_journey_sources(sources: set[str], root: Path) -> set[str]:
     """Follow local imports from the claim registry to find shared step declarations."""
     return set(_imported_journey_sources_cached(tuple(sorted(sources)), root))

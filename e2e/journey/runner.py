@@ -26,8 +26,7 @@ from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_installer_case_steps, run_invalid_request_step,
                                   run_apply_scenario_step,
-                                  run_uninstall_decline_step, run_missing_project_request_steps,
-                                  run_fixture_group)
+                                  run_uninstall_decline_step, run_missing_project_request_steps)
 from installer_case_steps import parse_install_refusal
 from journey_resources import case_catalog_root, journey_module, workspace_resource
 from project_service_path import project_service_path
@@ -35,6 +34,7 @@ from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, record_candidate_provenance, record_runner_failure,
                            record_runner_exception, replay_steps, source_selected)
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
+from select_from_cases import selected_fixture_groups
 from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status,
                         run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
 from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps, run_invite_lifecycle_steps,
@@ -1379,63 +1379,79 @@ def main():
                 store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
                                     "installer scenario password")
             return run(args, env=installer_env, timeout=1200)[0]
-        root_isolation_journey = run_doctor_root_isolation_step(
-            mode=mode, launcher=launcher, platform_root=PLATFORM, run_command=root_isolation_command,
-        )
-        for step in root_isolation_journey.result().steps:
-            CASE_JOURNEY.step(step["name"], step["capability"],
-                              lambda step=step: None if step["status"] == "PASS" else step["message"],
-                              cases=step["cases"])
-        stopped, _ = run([launcher, "stop", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
-        if stopped.returncode != 0:
-            raise RuntimeError(f"could not stop the main host before isolated installer fixtures: {stopped.stderr or stopped.stdout}")
-        installer_case_journey = None
-        try:
-            container_update_indexes = {}
-            candidate_base = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/"
-            for key, filename in (("update", "release-index-update.json"),
-                                  ("jump", "release-index-update-jump.json")):
-                status, body, _ = open_http(urllib.request.urlopen,
-                    urllib.request.Request(candidate_base + filename), timeout=30, env=env)
-                if status != 200:
-                    raise RuntimeError(f"GET {candidate_base + filename} returned HTTP {status}")
-                path = HOME / f"container-{filename}"
-                path.write_bytes(body)
-                container_update_indexes[key] = path
-            installer_case_journey = run_installer_case_steps(
-                mode=mode, launcher=launcher, stable_index=stable_index,
-                update_index=container_update_indexes["update"],
-                jump_index=container_update_indexes["jump"], canary_index=canary_index,
-                platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command,
-            )
-            installer_case_journey.steps.extend(run_apply_scenario_step(
-                mode=mode, launcher=launcher, stable_index=stable_index,
-                platform_root=PLATFORM, run_command=installer_command,
-            ).steps)
-            installer_case_journey.steps.extend(run_invalid_request_step(
-                mode=mode, launcher=launcher, stable_index=stable_index,
-                platform_root=PLATFORM, run_command=installer_command,
-            ).steps)
-            run_fixture_group(installer_case_journey, "missing project request", lambda: run_missing_project_request_steps(
-                mode=mode, launcher=launcher, stable_index=stable_index,
-                home=HOME, run_command=installer_command,
-            ))
-        finally:
-            body_error = sys.exc_info()[1]
+        fixture_groups = (run_doctor_root_isolation_step, run_installer_case_steps,
+                          run_apply_scenario_step, run_invalid_request_step,
+                          run_missing_project_request_steps)
+        selector = journey_value("KB_JOURNEY_RUNNER_SELECTOR", "")
+        selected_claims = set(filter(None, journey_value("KB_JOURNEY_SELECTED_STEPS", "").split(",")))
+        if not selected_claims:
+            selected_claims = set(filter(None, journey_value("KB_JOURNEY_CASES", "").split(",")))
+        selected_groups = selected_fixture_groups(
+            fixture_groups, selected_claims, selector, Path(__file__).resolve().parents[2])
+        selected_group_set = set(selected_groups)
+        for group in fixture_groups:
+            if group not in selected_group_set:
+                print_report_text(f"{group.__name__}: not selected", flush=True)
+
+        if selected_groups:
+            stopped, _ = run([launcher, "stop", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
+            if stopped.returncode != 0:
+                raise RuntimeError(f"could not stop the main host before isolated installer fixtures: {stopped.stderr or stopped.stdout}")
+            fixture_journeys = []
+            installer_case_journey = None
+            try:
+                if run_doctor_root_isolation_step in selected_groups:
+                    root_isolation_journey = run_doctor_root_isolation_step(
+                        mode=mode, launcher=launcher, platform_root=PLATFORM,
+                        run_command=root_isolation_command)
+                    fixture_journeys.append(root_isolation_journey)
+                container_update_indexes = {}
+                candidate_base = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/"
+                if run_installer_case_steps in selected_groups:
+                    for key, filename in (("update", "release-index-update.json"),
+                                          ("jump", "release-index-update-jump.json")):
+                        status, body, _ = open_http(urllib.request.urlopen,
+                            urllib.request.Request(candidate_base + filename), timeout=30, env=env)
+                        if status != 200:
+                            raise RuntimeError(f"GET {candidate_base + filename} returned HTTP {status}")
+                        path = HOME / f"container-{filename}"
+                        path.write_bytes(body)
+                        container_update_indexes[key] = path
+                    installer_case_journey = run_installer_case_steps(
+                        mode=mode, launcher=launcher, stable_index=stable_index,
+                        update_index=container_update_indexes["update"],
+                        jump_index=container_update_indexes["jump"], canary_index=canary_index,
+                        platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command)
+                    fixture_journeys.append(installer_case_journey)
+                if run_apply_scenario_step in selected_groups:
+                    fixture_journeys.append(run_apply_scenario_step(
+                        mode=mode, launcher=launcher, stable_index=stable_index,
+                        platform_root=PLATFORM, run_command=installer_command))
+                if run_invalid_request_step in selected_groups:
+                    fixture_journeys.append(run_invalid_request_step(
+                        mode=mode, launcher=launcher, stable_index=stable_index,
+                        platform_root=PLATFORM, run_command=installer_command))
+                if run_missing_project_request_steps in selected_groups:
+                    fixture_journeys.append(run_missing_project_request_steps(
+                        mode=mode, launcher=launcher, stable_index=stable_index,
+                        home=HOME, run_command=installer_command))
+            finally:
+                body_error = sys.exc_info()[1]
+                for fixture_journey in fixture_journeys:
+                    replay_steps(fixture_journey, CASE_JOURNEY)
+                started, _ = run([launcher, "start", "--platform-root", str(PLATFORM), "--json"],
+                                 env=env, timeout=180)
+                if started.returncode != 0:
+                    restart_failure = ("could not restart the main host after isolated installer fixtures: "
+                                       f"{' '.join((started.stderr or started.stdout).split())[-500:]}")
+                    CASE_JOURNEY.step("restart the main host after isolated installer fixtures",
+                                      "journey.orchestration", lambda: restart_failure)
+                    if body_error is None:
+                        raise RuntimeError(restart_failure)
             if installer_case_journey is not None:
-                replay_steps(installer_case_journey, CASE_JOURNEY)
-            started, _ = run([launcher, "start", "--platform-root", str(PLATFORM), "--json"],
-                             env=env, timeout=180)
-            if started.returncode != 0:
-                restart_failure = ("could not restart the main host after isolated installer fixtures: "
-                                   f"{' '.join((started.stderr or started.stdout).split())[-500:]}")
-                CASE_JOURNEY.step("restart the main host after isolated installer fixtures",
-                                  "journey.orchestration", lambda: restart_failure)
-                if body_error is None:
-                    raise RuntimeError(restart_failure)
-        installer_case_report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
-            f"installer-cases-{mode}.json")
-        installer_case_journey.write_json(installer_case_report)
+                installer_case_report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
+                    f"installer-cases-{mode}.json")
+                installer_case_journey.write_json(installer_case_report)
 
     local_service_journey = FRONT == "agent" and SCENARIO == "explore" and VARIANT == "default"
     secured_service_journey = FRONT == "human" and VARIANT.endswith("secured")
