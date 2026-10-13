@@ -65,7 +65,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		secretIDs = append(secretIDs, mapping[0])
 	}
 	if failure := resolve.ValidateSecretInputIDs(plan.Artifacts, secretIDs); failure != nil {
-		return updateCommandResult{}, inputFailure(asDiag(failure))
+		return updateCommandResult{}, asDiag(failure)
 	}
 	layout, layoutErr := versionroot.ForPlatformPath(plan.Request.PlatformRoot)
 	if layoutErr == nil {
