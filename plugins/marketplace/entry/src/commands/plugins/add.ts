@@ -3,16 +3,16 @@ import { defineCommand, validationError, handleError, type PluginCommandContextV
 import { post } from '../../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../../scope.js';
 
-interface LinkFlags {
+interface AddFlags {
   link?: string;
   scope?: string;
   json?: boolean;
   'dry-run'?: boolean;
 }
 
-interface LinkInput {
+interface AddInput {
   argv?: string[];
-  flags?: LinkFlags;
+  flags?: AddFlags;
 }
 
 interface LinkResponse {
@@ -24,13 +24,13 @@ interface LinkResponse {
   scope: string;
 }
 
-export default defineCommand<unknown, LinkInput, { id: string; scope: string }>({
-  id: 'marketplace:link',
-  description: 'Link a local plugin for development',
+export default defineCommand<unknown, AddInput, { id: string; scope: string }>({
+  id: 'marketplace:plugins:add',
+  description: 'Register a local project plugin',
 
   handler: {
-    async intent(_ctx: PluginCommandContextV3, input: LinkInput) {
-      const flags = (input.flags ?? input) as LinkFlags;
+    async intent(_ctx: PluginCommandContextV3, input: AddInput) {
+      const flags = (input.flags ?? input) as AddFlags;
       const pluginPath = flags.link ?? input.argv?.[0] ?? '(unknown)';
       return {
         summary: `Link local plugin at "${pluginPath}"`,
@@ -38,12 +38,12 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
       };
     },
 
-    async execute(ctx: PluginCommandContextV3, input: LinkInput): Promise<CommandResult<{ id: string; scope: string }>> {
-      const flags = (input.flags ?? input) as LinkFlags;
+    async execute(ctx: PluginCommandContextV3, input: AddInput): Promise<CommandResult<{ id: string; scope: string }>> {
+      const flags = (input.flags ?? input) as AddFlags;
       const pluginPath = flags.link ?? input.argv?.[0];
 
       if (!pluginPath) {
-        return validationError('Specify a project-relative package path to link', 'Usage: kb marketplace link --link <relative-path>');
+        return validationError('Specify a project-relative package path to register', 'Usage: kb marketplace plugins add --link <relative-path>');
       }
 
       let scopeCtx;
@@ -71,7 +71,7 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
         if (flags.json) {
           return { id: result.id, scope: result.scope };
         } else {
-          ctx.ui?.success?.(`Linked ${result.id} (${result.scope})`);
+          ctx.ui?.success?.(`Added ${result.id} (${result.scope})`);
         }
         return { id: result.id, scope: result.scope };
       } catch (err) {

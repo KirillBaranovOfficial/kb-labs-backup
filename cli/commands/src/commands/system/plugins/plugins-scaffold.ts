@@ -271,7 +271,7 @@ pnpm build
 pnpm dev
 
 # Link for local development
-kb marketplace link ./${pluginName}
+kb marketplace plugins add ./${pluginName}
 \`\`\`
 `;
 
@@ -309,7 +309,7 @@ dist
           `  ${ctx.ui.colors.info(`cd ${nameDisplay}`)}`,
           `  ${ctx.ui.colors.info('pnpm install')}`,
           `  ${ctx.ui.colors.info('pnpm build')}`,
-          `  ${ctx.ui.colors.info(`kb marketplace link ./${nameDisplay}`)}`,
+          `  ${ctx.ui.colors.info(`kb marketplace plugins add ./${nameDisplay}`)}`,
           `  ${ctx.ui.colors.info(`kb ${nameDisplay} hello`)}`,
           '',
           ctx.ui.colors.muted('See docs/plugin-development.md for more details'),

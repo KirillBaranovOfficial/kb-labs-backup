@@ -237,7 +237,7 @@ pnpm build
 # → dist/index.js, dist/cli/commands/hello.js, dist/manifest.js, plus .d.ts files
 
 # Link into your KB Labs workspace:
-pnpm kb marketplace link /absolute/path/to/packages/hello-plugin
+pnpm kb marketplace plugins add /absolute/path/to/packages/hello-plugin
 ```
 
 The `marketplace plugins refresh` step is mandatory — without it, the CLI uses a cached registry and won't see your new plugin.

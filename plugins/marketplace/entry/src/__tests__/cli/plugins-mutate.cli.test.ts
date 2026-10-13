@@ -27,8 +27,8 @@ import { post } from '../../http.js';
 import { resolveCliScope, scopeBody } from '../../scope.js';
 import enableCommand from '../../commands/plugins/enable.js';
 import disableCommand from '../../commands/plugins/disable.js';
-import linkCommand from '../../commands/plugins/link.js';
-import unlinkCommand from '../../commands/plugins/unlink.js';
+import addCommand from '../../commands/plugins/add.js';
+import removeCommand from '../../commands/plugins/remove.js';
 import { manifest } from '../../manifest.js';
 
 const mockedPost = vi.mocked(post);
@@ -93,20 +93,32 @@ describe('marketplace:plugins:disable', () => {
   });
 });
 
-describe('marketplace:link', () => {
-  it('S-179.32: declares --json on the mutating link command', () => {
-    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace link');
+describe('marketplace plugins add', () => {
+  it('S-179.32: declares --json on the mutating add command', () => {
+    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace plugins add');
 
     expect(command?.operationType).toBe('mutate');
     expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'json', type: 'boolean' }));
   });
 
-  it('links a project-relative local plugin successfully', async () => {
+  it('registers add and remove under the existing plural plugins group', () => {
+    const paths = manifest.cli.commands.map(({ path }) => path);
+
+    expect(paths).toContain('marketplace plugins add');
+    expect(paths).toContain('marketplace plugins remove');
+    expect(manifest.cli.groupMeta).toContainEqual(expect.objectContaining({ path: 'marketplace plugins' }));
+    expect(manifest.cli.commands.find(({ path }) => path === 'marketplace plugins add')?.examples)
+      .toContain('kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry');
+    expect(manifest.cli.commands.find(({ path }) => path === 'marketplace plugins remove')?.examples)
+      .toContain('kb marketplace plugins remove @kb-labs/my-plugin');
+  });
+
+  it('adds a project-relative local plugin successfully', async () => {
     mockedPost.mockResolvedValue({ id: 'my-plugin', scope: 'project' });
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await linkCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '.kb/plugins/my-plugin/packages/my-plugin-entry' } }));
+    const result = await addCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '.kb/plugins/my-plugin/packages/my-plugin-entry' } }));
 
     expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
@@ -117,21 +129,41 @@ describe('marketplace:link', () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await linkCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '/path/to/plugin' } }));
+    const result = await addCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '/path/to/plugin' } }));
 
-    if (!('error' in result)) { throw new Error('expected invalid plugin link path to fail'); }
+    if (!('error' in result)) { throw new Error('expected invalid plugin add path to fail'); }
     expect(mockedPost).not.toHaveBeenCalled();
     expect(result.error.message).toContain('The --link path must be relative to the selected scope directory.');
   });
 });
 
-describe('marketplace:plugins:unlink', () => {
-  it('PU-01: unlinks plugin successfully', async () => {
+describe('marketplace plugins remove', () => {
+  it('declares --json on the mutating remove command', () => {
+    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace plugins remove');
+
+    expect(command?.operationType).toBe('mutate');
+    expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'json', type: 'boolean' }));
+  });
+
+  it('removes a project plugin registration', async () => {
     mockedPost.mockResolvedValue({ packageId: 'my-plugin', scope: 'project' });
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await unlinkCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: {} }));
+    const result = await removeCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: {} }));
+
+    expect(result).not.toHaveProperty('ok');
+    expect(captured.success.length).toBeGreaterThan(0);
+  });
+});
+
+describe('marketplace:plugins:remove', () => {
+  it('PU-01: removes a plugin registration successfully', async () => {
+    mockedPost.mockResolvedValue({ packageId: 'my-plugin', scope: 'project' });
+    const { ui, captured } = createCapturedUI();
+    const ctx = createMockContext({ ui });
+
+    const result = await removeCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: {} }));
 
     expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
@@ -141,7 +173,7 @@ describe('marketplace:plugins:unlink', () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await unlinkCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { 'dry-run': true } }));
+    const result = await removeCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { 'dry-run': true } }));
 
     expect(result).not.toHaveProperty('ok');
     expect(mockedPost).not.toHaveBeenCalled();

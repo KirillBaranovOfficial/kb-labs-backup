@@ -37,21 +37,22 @@ if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and
     (entry / "src/commands/hello.ts").write_text(
         "const { greeting } = hello({ who: input.flags.who ?? 'World' });\n")
     core.write_text('return { greeting: `Hello, ${who} from demo!` };\n')
-elif args[:3] == ["marketplace", "link", "--link"]:
-    if os.environ.get("FAIL_MARKETPLACE_LINK"):
-        print("simulated marketplace link failure")
+elif args[:3] == ["marketplace", "plugins", "add"]:
+    if os.environ.get("FAIL_MARKETPLACE_ADD"):
+        print("simulated marketplace plugins add failure")
         raise SystemExit(1)
-    if not (root / args[3] / "package.json").is_file():
+    link_path = args[args.index("--link") + 1]
+    if not (root / link_path / "package.json").is_file():
         raise SystemExit("entry package is missing")
     lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {"demo": {
-        "source": "local", "link": args[3], "enabled": True
+        "source": "local", "link": link_path, "enabled": True
     }}}))
 elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
     plugins = json.loads(lock_path.read_text()).get("plugins", {}) if lock_path.exists() else {}
     entries = [{"id": key, "source": value["source"], "scope": "project"}
                for key, value in plugins.items()]
     print(json.dumps({"ok": True, "data": {"entries": entries, "total": len(entries)}}))
-elif args[:4] == ["marketplace", "plugins", "unlink", "demo"]:
+elif args[:3] == ["marketplace", "plugins", "remove"] and args[3] == "demo":
     lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {}}))
 elif args[:2] == ["marketplace", "install"]:
     print(json.dumps({"ok": True, "data": {"scope": "project"}}))
@@ -231,7 +232,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
     # case: S-003.1
     # case: S-210.1
-    def test_scaffold_link_edit_invoke_and_unlink_records_all_case_steps(self):
+    def test_scaffold_add_edit_invoke_and_remove_records_all_case_steps(self):
         result = self.run_flow()
 
         self.assertEqual(result.status, "PASS")
@@ -250,13 +251,13 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             "kb scaffold run plugin demo --mode standalone --yes",
             "pnpm install",
             "pnpm -w build",
-            "kb marketplace link --link .kb/plugins/demo/packages/demo-entry",
+            "kb marketplace plugins add --link .kb/plugins/demo/packages/demo-entry",
             "kb marketplace plugins list --json",
             "kb --help",
             "kb demo hello",
             "pnpm -w build",
             "kb demo hello",
-            "kb marketplace plugins unlink demo",
+            "kb marketplace plugins remove demo",
             "kb marketplace plugins list --json",
         ])
         self.assertFalse((self.project / ".kb/plugins/demo").exists())
@@ -289,17 +290,17 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
         self.assertIn("ERR_PNPM_MINIMUM_RELEASE_AGE", result.first_failure["message"])
 
-    def test_link_failure_is_recorded_without_masking_it_with_a_blocked_step_error(self):
-        self.env["FAIL_MARKETPLACE_LINK"] = "1"
+    def test_add_failure_is_recorded_without_masking_it_with_a_blocked_step_error(self):
+        self.env["FAIL_MARKETPLACE_ADD"] = "1"
 
         result = self.run_flow()
 
         self.assertEqual(result.status, "FAIL")
-        self.assertEqual(result.first_failure["name"], "link plugin to project")
-        self.assertIn("simulated marketplace link failure", result.first_failure["message"])
+        self.assertEqual(result.first_failure["name"], "add plugin to project")
+        self.assertIn("simulated marketplace plugins add failure", result.first_failure["message"])
         self.assertEqual(result.steps[-1]["status"], "BLOCKED")
-        self.assertEqual(result.steps[-1]["name"], "unlink plugin")
-        self.assertIn("plugin was not linked", result.steps[-1]["message"])
+        self.assertEqual(result.steps[-1]["name"], "remove plugin registration")
+        self.assertIn("plugin was not added", result.steps[-1]["message"])
 
 
 if __name__ == "__main__":

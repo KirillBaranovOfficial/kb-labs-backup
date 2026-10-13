@@ -171,7 +171,7 @@ Hooks degrade gracefully — if the platform doesn't provide a service (e.g. no 
 
 ## Discovery
 
-The platform **does not scan the filesystem** for plugins. Discovery is driven entirely by `.kb/marketplace.lock`, written by the marketplace service when you run `kb marketplace install @scope/plugin` or `kb marketplace link <path>`.
+The platform **does not scan the filesystem** for plugins. Discovery is driven entirely by `.kb/marketplace.lock`, written by the marketplace service when you run `kb marketplace install @scope/plugin` or `kb marketplace plugins add <path>`.
 
 The lock file ([schema `kb.marketplace/2`](core/discovery/src/types.ts)) records, for each installed entity:
 
@@ -191,7 +191,7 @@ If your plugin built but doesn't show up in `kb --help`, clear the registry cach
 
 ### Local development
 
-When you run `kb marketplace link <path>`, the lock entry gets `source: 'local'`. Local entries behave almost identically to marketplace ones except integrity mismatches don't block loading — the discovery manager silently rewrites the stored hash because local packages change every build. This is what lets `pnpm install` in a plugin immediately reflect in the CLI without fighting the integrity check.
+When you run `kb marketplace plugins add <path>`, the lock entry gets `source: 'local'`. Local entries behave almost identically to marketplace ones except integrity mismatches don't block loading — the discovery manager silently rewrites the stored hash because local packages change every build. This is what lets `pnpm install` in a plugin immediately reflect in the CLI without fighting the integrity check.
 
 ## Execution
 
@@ -298,7 +298,7 @@ When a handler is triggered, the runner creates a context, enforces permissions 
 - [ ] Write `manifest.ts` with your `id`, a minimal `cli.commands[0]`, and `permissions: combinePermissions().with(minimalPreset).build()`.
 - [ ] Implement the handler with `defineCommand({ id, handler: { async execute(ctx, input) { ... } } })`.
 - [ ] Build: `pnpm --filter your-plugin run build`.
-- [ ] Link: `kb marketplace link ./path/to/your-plugin`.
+- [ ] Link: `kb marketplace plugins add ./path/to/your-plugin`.
 - [ ] Run: `pnpm kb your-plugin:your-command`.
 
 If step 6 or 8 fail, check [Troubleshooting](/guides/troubleshooting) — the top three entries cover 90% of first-plugin friction.

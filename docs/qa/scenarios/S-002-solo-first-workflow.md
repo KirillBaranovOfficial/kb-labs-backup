@@ -24,7 +24,7 @@ A developer creates the documented local workflow example in a registered projec
 
 | # | Action | Expected |
 |---|---|---|
-| S-002.1 | From the registered project directory, run `kb workflow init` | CLI reports `Created .kb/workflows/hello.yml` and prints `Next: kb workflow lint && kb workflow run --workflow-id=hello`. The file contains the manual `hello` workflow and a `builtin:shell` step whose command is `echo hello-workflow`. |
+| S-002.1 | From the registered project directory, run `kb workflow create` | CLI reports `Created .kb/workflows/hello.yml` and prints `Next: kb workflow lint && kb workflow run --workflow-id=hello`. The file contains the manual `hello` workflow and a `builtin:shell` step whose command is `echo hello-workflow`. |
 | S-002.2 | Run `kb workflow lint` | CLI reports `.kb/workflows/hello.yml` as valid and exits 0. |
 | S-002.3 | Run `kb workflow run --workflow-id=hello` | Within 30 seconds, CLI returns a non-empty run ID for workflow `hello`. |
 | S-002.4 | Run `kb workflow runs view <run-id>`, replacing the placeholder with the returned ID | Within 60 seconds, detail reports status `success`; the `hello` step output contains `hello-workflow`. |

@@ -3,36 +3,36 @@ import { defineCommand, validationError, handleError, type PluginCommandContextV
 import { post } from '../../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../../scope.js';
 
-interface UnlinkFlags {
+interface RemoveFlags {
   json?: boolean;
   scope?: string;
   'dry-run'?: boolean;
 }
 
-interface UnlinkInput {
+interface RemoveInput {
   argv?: string[];
-  flags?: UnlinkFlags;
+  flags?: RemoveFlags;
 }
 
-export default defineCommand<unknown, UnlinkInput, { packageId: string; scope: string }>({
-  id: 'marketplace:plugins:unlink',
-  description: 'Unlink a plugin',
+export default defineCommand<unknown, RemoveInput, { packageId: string; scope: string }>({
+  id: 'marketplace:plugins:remove',
+  description: 'Remove a local project plugin registration',
 
   handler: {
-    async intent(_ctx: PluginCommandContextV3, input: UnlinkInput) {
+    async intent(_ctx: PluginCommandContextV3, input: RemoveInput) {
       const packageId = input.argv?.[0] ?? '(unknown)';
       return {
-        summary: `Unlink plugin "${packageId}"`,
+        summary: `Remove plugin registration "${packageId}"`,
         operations: [{ type: 'delete' as const, resource: 'plugin-link', details: { packageId } }],
       };
     },
 
-    async execute(ctx: PluginCommandContextV3, input: UnlinkInput): Promise<CommandResult<{ packageId: string; scope: string }>> {
+    async execute(ctx: PluginCommandContextV3, input: RemoveInput): Promise<CommandResult<{ packageId: string; scope: string }>> {
       const packageId = input.argv?.[0];
-      const flags = (input.flags ?? input) as UnlinkFlags;
+      const flags = (input.flags ?? input) as RemoveFlags;
 
       if (!packageId) {
-        return validationError('Specify a package ID to unlink', 'Usage: kb marketplace plugins unlink <plugin-id>');
+        return validationError('Specify a package ID to remove', 'Usage: kb marketplace plugins remove <plugin-id>');
       }
 
       let scopeCtx;
@@ -51,7 +51,7 @@ export default defineCommand<unknown, UnlinkInput, { packageId: string; scope: s
         if (flags.json) {
           return { packageId, scope: scopeCtx.scope };
         } else {
-          ctx.ui?.success?.(`Unlinked ${packageId} (${scopeCtx.scope})`);
+          ctx.ui?.success?.(`Removed ${packageId} (${scopeCtx.scope})`);
         }
         return { packageId, scope: scopeCtx.scope };
       } catch (err) {

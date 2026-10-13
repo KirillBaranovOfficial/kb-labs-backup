@@ -222,15 +222,15 @@ def _workflow_logs_data(value: object, command: str = "kb workflow runs logs --j
 def _solo_workflow_case(journey: Journey, *, env: dict[str, str], project: Path,
                         clock: Callable[[], float], sleep: Callable[[float], None]) -> None:
     def initialize() -> None:
-        result = _case_cli("S-002.1", ["workflow", "init"], env=env, cwd=project)
+        result = _case_cli("S-002.1", ["workflow", "create"], env=env, cwd=project)
         expected = ("Created .kb/workflows/hello.yml" in result.stdout
                     and "Next: kb workflow lint && kb workflow run --workflow-id=hello" in result.stdout)
         definition = project / ".kb" / "workflows" / "hello.yml"
         if result.returncode or not expected or not definition.is_file():
-            raise AssertionError(f"workflow init did not create the documented hello workflow: {result.stdout!r}")
+            raise AssertionError(f"workflow create did not create the documented hello workflow: {result.stdout!r}")
         content = definition.read_text(encoding="utf-8")
         if "manual: true" not in content or "echo hello-workflow" not in content:
-            raise AssertionError("workflow init created a hello workflow with unexpected trigger or command")
+            raise AssertionError("workflow create created a hello workflow with unexpected trigger or command")
 
     journey.step("initialize solo project workflow", "workflow", initialize, cases=["S-002.1"])
 

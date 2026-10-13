@@ -139,7 +139,7 @@ describe('scaffold:run', () => {
     expect(mockedWriteFiles).toHaveBeenCalled();
   });
 
-  it('prints an explicit marketplace link step after generating files', async () => {
+  it('prints an explicit marketplace plugins add step after generating files', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
@@ -150,7 +150,7 @@ describe('scaffold:run', () => {
 
     expect(result).toMatchObject({ outRoot: MOCK_BUILD_RESULT.outRoot, files: MOCK_BUILD_RESULT.files.length });
     expect(fetch).not.toHaveBeenCalled();
-    expect(JSON.stringify(captured.success)).toContain('kb marketplace link --link');
+    expect(JSON.stringify(captured.success)).toContain('kb marketplace plugins add --link');
   });
 
   it('SS-05: --dry-run returns the plain scaffold result', async () => {

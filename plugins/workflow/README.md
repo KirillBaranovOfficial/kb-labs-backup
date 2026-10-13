@@ -91,7 +91,7 @@ kb workflow run --workflow-id=my-workflow --isolation=strict
 
 ```bash
 kb workflow job status abc123          # job state + timing
-kb workflow job logs abc123            # execution logs
+kb workflow log show abc123            # execution logs
 kb workflow job list                   # active raw jobs
 kb workflow runs list                  # active workflow runs
 kb workflow job run --handler=mind:rag-query --input='{"text":"test"}' --wait
@@ -137,7 +137,7 @@ The handler must be declared in an installed plugin's `jobs.handlers` manifest.
 | `kb workflow health` | Daemon health check |
 | `kb workflow metrics` | Queue statistics |
 | `kb workflow job status <jobId>` | Raw job state + timing |
-| `kb workflow job logs <jobId>` | Raw job execution logs |
+| `kb workflow log show <jobId>` | Raw job execution logs |
 | `kb workflow job list` | List active raw jobs |
 | `kb workflow runs list` | List workflow runs |
 | `kb workflow job run` | Submit a raw job |

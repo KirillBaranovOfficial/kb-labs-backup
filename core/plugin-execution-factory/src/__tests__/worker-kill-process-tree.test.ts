@@ -52,10 +52,19 @@ function isAlive(pid: number): boolean {
 
 describe('Worker.kill() — process-tree cleanup (real detached grandchild)', () => {
   let worker: Worker | undefined;
+  let grandchildPid: number | undefined;
 
   afterEach(() => {
     worker?.kill();
     worker = undefined;
+    if (grandchildPid !== undefined) {
+      try {
+        process.kill(grandchildPid, 'SIGKILL');
+      } catch {
+        // The timeout path may already have killed the child.
+      }
+      grandchildPid = undefined;
+    }
   });
 
   it('kills both the worker process AND a detached grandchild it spawned', async () => {
@@ -66,7 +75,6 @@ describe('Worker.kill() — process-tree cleanup (real detached grandchild)', ()
 
     // Capture the grandchild's real OS pid via the fixture's log message,
     // then let the execution time out — which triggers Worker.kill().
-    let grandchildPid: number | undefined;
     await expect(
       worker.execute(
         makeRequest(),

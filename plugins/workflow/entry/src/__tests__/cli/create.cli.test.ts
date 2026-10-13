@@ -3,9 +3,9 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
-import initCommand from '../../commands/init.js';
+import createCommand from '../../commands/create.js';
 
-describe('workflow:init', () => {
+describe('workflow:create', () => {
   let root: string | undefined;
 
   afterEach(async () => {
@@ -14,12 +14,12 @@ describe('workflow:init', () => {
   });
 
   it('writes a no-network example and refuses to overwrite it', async () => {
-    root = await mkdtemp(join(tmpdir(), 'workflow-init-'));
+    root = await mkdtemp(join(tmpdir(), 'workflow-create-'));
     vi.spyOn(process, 'cwd').mockReturnValue(root);
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const created = await initCommand.execute(ctx, mockCLIInput({ flags: {} }));
+    const created = await createCommand.execute(ctx, mockCLIInput({ flags: {} }));
     const path = join(root, '.kb', 'workflows', 'hello.yml');
     const source = await readFile(path, 'utf8');
     expect(created).toEqual({ path: '.kb/workflows/hello.yml' });
@@ -27,7 +27,7 @@ describe('workflow:init', () => {
     expect(source).toContain('runsOn: local');
     expect(captured.success[0]?.message).toContain('hello.yml');
 
-    const duplicate = await initCommand.execute(ctx, mockCLIInput({ flags: {} }));
+    const duplicate = await createCommand.execute(ctx, mockCLIInput({ flags: {} }));
     expect(duplicate).toMatchObject({ ok: false, error: { message: expect.stringContaining('already exists') } });
     expect(await readFile(path, 'utf8')).toBe(source);
   });

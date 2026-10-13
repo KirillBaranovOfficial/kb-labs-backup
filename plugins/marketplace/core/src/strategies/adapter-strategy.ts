@@ -69,7 +69,7 @@ export class AdapterStrategy implements EntityKindStrategy {
       if (!found) {
         this.logger.warn(
           `Adapter "${packageId}" requires platform slot "${depId}" but no installed adapter manifest provides it.`,
-          { packageId, requiredSlot: depId, nextCommand: `kb marketplace link <adapter-package-that-provides-${depId}>` },
+          { packageId, requiredSlot: depId, nextCommand: `kb marketplace plugins add <adapter-package-that-provides-${depId}>` },
         );
       }
     }
