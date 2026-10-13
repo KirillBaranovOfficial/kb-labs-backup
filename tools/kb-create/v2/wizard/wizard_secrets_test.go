@@ -62,17 +62,19 @@ func wizardSecretsPath(t *testing.T, root string) string {
 }
 
 // custom: project path, channel, profile, Studio access, then (secured only) email, password + confirmation, signing secret.
-func runCustom(t *testing.T, root, input string) (contracts.InstallRequest, string, error) {
+func runCustom(t *testing.T, root, input string) (contracts.InstallRequest, string, map[string]secrets.PendingSecret, error) {
 	t.Helper()
 	var output bytes.Buffer
-	request, err := RequestScenario(gatewaySource(t), root, "custom", "", IO{In: bytes.NewBufferString("\n" + input), Out: &output})
-	return request, output.String(), err
+	pending := map[string]secrets.PendingSecret{}
+	request, err := RequestScenario(gatewaySource(t), root, "custom", "", IO{In: bytes.NewBufferString("\n" + input), Out: &output, PendingSecrets: pending})
+	return request, output.String(), pending, err
 }
 
-func TestSecuredJourneyStoresTypedAndGeneratedSecretsAndNeverEchoesThem(t *testing.T) {
+// case: S-222.13
+func TestSecuredJourneyKeepsPromptSecretsPendingUntilPlanValidation(t *testing.T) {
 	root := t.TempDir()
 	const password = "Sup3r-secret-pw"
-	request, output, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\n"+password+"\n"+password+"\n\n")
+	request, output, pending, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\n"+password+"\n"+password+"\n\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,36 +86,34 @@ func TestSecuredJourneyStoresTypedAndGeneratedSecretsAndNeverEchoesThem(t *testi
 		t.Fatalf("values = %#v", request.Values)
 	}
 
-	stored := storedSecrets(t, root)
-	if stored["gateway.bootstrap.password"] != password {
-		t.Fatalf("typed password not stored: %v", stored)
+	if pending["gateway.bootstrap.password"].Value != password {
+		t.Fatal("typed password was not returned as a pending secret")
 	}
-	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(stored["gateway.jwtSecret"]) {
-		t.Fatalf("a blank signing secret must be generated as 256-bit hex, got %q", stored["gateway.jwtSecret"])
+	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(pending["gateway.jwtSecret"].Value) {
+		t.Fatal("a blank signing secret was not generated as 256-bit hex")
 	}
 
 	// The values exist in exactly one place: the private store.
 	serialized, _ := json.Marshal(request)
-	for name, secret := range stored {
-		if strings.Contains(output, secret) {
+	for name, secret := range pending {
+		if strings.Contains(output, secret.Value) {
 			t.Fatalf("%s leaked to the terminal output", name)
 		}
-		if strings.Contains(string(serialized), secret) {
+		if strings.Contains(string(serialized), secret.Value) {
 			t.Fatalf("%s leaked into the request", name)
 		}
 	}
-	if !strings.Contains(output, "generated a random value") {
-		t.Fatalf("the user is told the secret was generated:\n%s", output)
+	if _, err := os.Stat(wizardSecretsPath(t, root)); !os.IsNotExist(err) {
+		t.Fatal("wizard persisted secrets before the resolved plan accepted them")
 	}
-	info, err := os.Stat(wizardSecretsPath(t, root))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("secret store must be private: %v / %v", info, err)
+	if !strings.Contains(output, "generated a random value (not shown)") {
+		t.Fatalf("the user is told the secret was generated:\n%s", output)
 	}
 }
 
 func TestSecuredJourneyWithBlankPasswordGeneratesFirstAdminCredential(t *testing.T) {
 	root := t.TempDir()
-	request, output, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\n\n\n")
+	request, output, pending, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\n\n\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,23 +123,28 @@ func TestSecuredJourneyWithBlankPasswordGeneratesFirstAdminCredential(t *testing
 	if request.Values["gateway.bootstrap.adminEmail"] != `"admin@example.com"` {
 		t.Fatalf("admin email = %#v", request.Values)
 	}
-	stored := storedSecrets(t, root)
-	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(stored["gateway.bootstrap.password"]) {
-		t.Fatalf("blank admin password was not generated and stored: %v", stored)
+	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(pending["gateway.bootstrap.password"].Value) {
+		t.Fatal("blank admin password was not generated")
 	}
-	if strings.Contains(output, stored["gateway.bootstrap.password"]) {
+	if strings.Contains(output, pending["gateway.bootstrap.password"].Value) {
 		t.Fatal("wizard disclosed the generated password before installation succeeded")
+	}
+	if _, err := os.Stat(wizardSecretsPath(t, root)); !os.IsNotExist(err) {
+		t.Fatal("wizard persisted its generated password before apply")
 	}
 }
 
 func TestLocalJourneyAsksForNoAdminAndStoresNothing(t *testing.T) {
 	root := t.TempDir()
-	request, output, err := runCustom(t, root, "\n\nlocal\n")
+	request, output, pending, err := runCustom(t, root, "\n\nlocal\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(request.SecretInputs) != 0 {
 		t.Fatalf("secret inputs = %v", request.SecretInputs)
+	}
+	if len(pending) != 0 {
+		t.Fatal("local access collected secret values")
 	}
 	if strings.Contains(output, "Admin") || strings.Contains(output, "signing") {
 		t.Fatalf("admin questions must not appear for local access:\n%s", output)
@@ -151,7 +156,7 @@ func TestLocalJourneyAsksForNoAdminAndStoresNothing(t *testing.T) {
 
 func TestSecuredChoiceOnTheSamePageOpensTheAdminQuestions(t *testing.T) {
 	// custom defaults to local; choosing secured must reveal the admin page.
-	_, output, err := runCustom(t, t.TempDir(), "\n\nsecured\nadmin@example.com\n\n\n\n\n")
+	_, output, _, err := runCustom(t, t.TempDir(), "\n\nsecured\nadmin@example.com\n\n\n\n\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +170,12 @@ func TestSecuredChoiceOnTheSamePageOpensTheAdminQuestions(t *testing.T) {
 func TestSecretsWithJSONSpecialCharactersRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	const password = `pa"ss\wörd-🔑-1234`
-	if _, _, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\n"+password+"\n"+password+"\n\n"); err != nil {
+	_, _, pending, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\n"+password+"\n"+password+"\n\n")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := storedSecrets(t, root)["gateway.bootstrap.password"]; got != password {
-		t.Fatalf("password = %q, want %q", got, password)
+	if got := pending["gateway.bootstrap.password"].Value; got != password {
+		t.Fatal("special-character password was not preserved in pending input")
 	}
 }
 
@@ -177,12 +183,12 @@ func TestMismatchedConfirmationAndShortPasswordsAreReAskedNotFatal(t *testing.T)
 	root := t.TempDir()
 	// 1st: entries differ; 2nd: too short (confirmation matches); 3rd: valid.
 	input := "\n\nsecured\nadmin@example.com\n\n" + "Aaaaaaaa1\nBbbbbbbb2\n" + "short\nshort\n" + "Valid-pass-1\nValid-pass-1\n" + "\n"
-	request, output, err := runCustom(t, root, input)
+	request, output, pending, err := runCustom(t, root, input)
 	if err != nil {
 		t.Fatalf("recoverable mistakes must not abort the journey: %v", err)
 	}
-	if storedSecrets(t, root)["gateway.bootstrap.password"] != "Valid-pass-1" || !contains(request.SecretInputs, "gateway.bootstrap.password") {
-		t.Fatalf("stored = %v, inputs = %v", storedSecrets(t, root), request.SecretInputs)
+	if pending["gateway.bootstrap.password"].Value != "Valid-pass-1" || !contains(request.SecretInputs, "gateway.bootstrap.password") {
+		t.Fatalf("pending secret missing; declared inputs = %v", request.SecretInputs)
 	}
 	for _, want := range []string{"do not match", "at least 8 characters"} {
 		if !strings.Contains(output, want) {
@@ -199,7 +205,7 @@ func TestMismatchedConfirmationAndShortPasswordsAreReAskedNotFatal(t *testing.T)
 func TestGivesUpAfterRepeatedBadSecretsAndStoresNothing(t *testing.T) {
 	root := t.TempDir()
 	input := "\n\nsecured\n\n\n" + "short\nshort\n" + "short\nshort\n" + "short\nshort\n"
-	if _, _, err := runCustom(t, root, input); err == nil {
+	if _, _, _, err := runCustom(t, root, input); err == nil {
 		t.Fatal("three invalid entries must fail the journey")
 	}
 	if got := storedSecrets(t, root); len(got) != 0 {
@@ -211,10 +217,11 @@ func TestInjectedSecretReaderIsUsedForSecretsOnly(t *testing.T) {
 	root := t.TempDir()
 	var asked int
 	var output bytes.Buffer
+	pending := map[string]secrets.PendingSecret{}
 	_, err := RequestScenario(gatewaySource(t), root, "custom", "", IO{
 		// Everything except secrets comes from In.
 		In:  bytes.NewBufferString("\n\n\nsecured\nadmin@example.com\n\n"),
-		Out: &output,
+		Out: &output, PendingSecrets: pending,
 		ReadSecret: func() (string, error) {
 			asked++
 			switch asked {
@@ -231,8 +238,8 @@ func TestInjectedSecretReaderIsUsedForSecretsOnly(t *testing.T) {
 	if asked != 3 {
 		t.Fatalf("secret reader asked %d times, want 3 (password, confirmation, signing secret)", asked)
 	}
-	if storedSecrets(t, root)["gateway.bootstrap.password"] != "Injected-pass-1" {
-		t.Fatalf("stored = %v", storedSecrets(t, root))
+	if pending["gateway.bootstrap.password"].Value != "Injected-pass-1" {
+		t.Fatal("injected password was not returned as pending input")
 	}
 }
 
@@ -287,10 +294,22 @@ func TestGeneratedSecretsAreRandomAndLongEnough(t *testing.T) {
 
 func TestSecretsAreStoredUnderRequirementIDsThatTheLauncherVerifies(t *testing.T) {
 	root := t.TempDir()
-	if _, _, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\nPassw0rd-ok\nPassw0rd-ok\n\n"); err != nil {
+	_, _, pending, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\nPassw0rd-ok\nPassw0rd-ok\n\n")
+	if err != nil {
 		t.Fatal(err)
 	}
 	store := secrets.Store{PlatformRoot: root}
+	for id, input := range pending {
+		var err error
+		if id == secrets.BootstrapPassword {
+			err = store.PutBootstrapPassword(input.Value, input.Origin)
+		} else {
+			err = store.Put(id, input.Value)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, id := range []string{"gateway.bootstrap.password", "gateway.jwtSecret"} {
 		if ok, err := store.Exists(id); err != nil || !ok {
 			t.Fatalf("%s must be verifiable by the launcher: %v / %v", id, ok, err)

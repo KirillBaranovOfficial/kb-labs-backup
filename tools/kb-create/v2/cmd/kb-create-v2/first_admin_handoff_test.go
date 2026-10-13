@@ -22,7 +22,7 @@ func TestFirstAdminDisclosureMarkerFollowsSuccessfulResultWrite(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
 	const password = "handoff-test-password-sentinel"
-	if err := store.Put(secrets.BootstrapCompleted, "provisioned"); err != nil {
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Put("gateway.bootstrap.password", password); err != nil {
@@ -40,7 +40,7 @@ func TestFirstAdminDisclosureMarkerFollowsSuccessfulResultWrite(t *testing.T) {
 	if written || failure == nil || failure.Code != contracts.CodeApplyFailed {
 		t.Fatalf("failed output emission = written %v, diagnostic %#v; want typed output failure", written, failure)
 	}
-	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || disclosed {
 		t.Fatalf("failed result write recorded disclosure = %v, err %v", disclosed, err)
 	}
 
@@ -52,7 +52,7 @@ func TestFirstAdminDisclosureMarkerFollowsSuccessfulResultWrite(t *testing.T) {
 	if !written || failure != nil || output.String() != password {
 		t.Fatalf("successful output emission did not preserve the result write; written=%v failure=%v", written, failure)
 	}
-	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || !disclosed {
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || !disclosed {
 		t.Fatalf("successful result write disclosure marker = %v, err %v; want recorded", disclosed, err)
 	}
 	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
@@ -61,6 +61,92 @@ func TestFirstAdminDisclosureMarkerFollowsSuccessfulResultWrite(t *testing.T) {
 		}
 	}
 	assertSecretAbsentFromTree(t, root, password)
+}
+
+// case: S-222.13
+func TestBootstrapLifecycleFactsHaveOnlyTypedStoreWriters(t *testing.T) {
+	dir := filepath.Join("..", "..", "secrets")
+	packages, err := parser.ParseDir(token.NewFileSet(), dir, func(info os.FileInfo) bool {
+		return !strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packages) != 1 {
+		t.Fatalf("parsed secrets packages = %d; want 1", len(packages))
+	}
+	allowed := map[string]bool{
+		"PutBootstrapPassword":   true,
+		"MarkBootstrapCompleted": true,
+		"MarkBootstrapDisclosed": true,
+	}
+	var lifecycleWriters []string
+	fieldWriters := map[string]int{}
+	for _, parsed := range packages {
+		for _, file := range parsed.Files {
+			for _, declaration := range file.Decls {
+				function, ok := declaration.(*ast.FuncDecl)
+				if !ok || function.Body == nil {
+					continue
+				}
+				ast.Inspect(function.Body, func(node ast.Node) bool {
+					switch value := node.(type) {
+					case *ast.CallExpr:
+						selector, ok := value.Fun.(*ast.SelectorExpr)
+						if ok && selector.Sel.Name == "writeLifecycle" {
+							lifecycleWriters = append(lifecycleWriters, function.Name.Name)
+						}
+					case *ast.AssignStmt:
+						for _, expression := range value.Lhs {
+							selector, ok := expression.(*ast.SelectorExpr)
+							if !ok {
+								continue
+							}
+							switch selector.Sel.Name {
+							case "BootstrapCompleted", "BootstrapPasswordOrigin", "BootstrapPasswordDisclosed":
+								fieldWriters[function.Name.Name+"."+selector.Sel.Name]++
+							}
+						}
+					case *ast.CompositeLit:
+						name, ok := value.Type.(*ast.Ident)
+						if !ok || name.Name != "lifecycleRecord" {
+							break
+						}
+						for _, element := range value.Elts {
+							field, ok := element.(*ast.KeyValueExpr)
+							if !ok {
+								continue
+							}
+							key, ok := field.Key.(*ast.Ident)
+							if ok {
+								switch key.Name {
+								case "BootstrapCompleted", "BootstrapPasswordOrigin", "BootstrapPasswordDisclosed":
+									fieldWriters[function.Name.Name+"."+key.Name]++
+								}
+							}
+						}
+					}
+					return true
+				})
+			}
+		}
+	}
+	for _, owner := range lifecycleWriters {
+		if !allowed[owner] {
+			t.Fatalf("typed lifecycle write added in %s", owner)
+		}
+	}
+	if len(lifecycleWriters) != len(allowed) {
+		t.Fatalf("typed lifecycle write owners = %v", lifecycleWriters)
+	}
+	wantFieldWriters := map[string]int{
+		"PutBootstrapPassword.BootstrapPasswordOrigin":      1,
+		"MarkBootstrapCompleted.BootstrapCompleted":         1,
+		"MarkBootstrapDisclosed.BootstrapPasswordDisclosed": 1,
+	}
+	if !reflect.DeepEqual(fieldWriters, wantFieldWriters) {
+		t.Fatalf("bootstrap lifecycle fact writers = %v; want %v", fieldWriters, wantFieldWriters)
+	}
 }
 
 func assertSecretAbsentFromTree(t *testing.T, root, secret string) {

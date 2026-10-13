@@ -179,12 +179,10 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		t.Fatalf("first secured registration Gateway calls = login %d, register %d; want one each", requestCounts["login"], requestCounts["register"])
 	}
 	secretStore := secrets.Store{PlatformRoot: root}
-	for name, value := range map[string]string{secrets.BootstrapGenerated: "true"} {
-		if err := secretStore.Put(name, value); err != nil {
-			t.Fatal(err)
-		}
+	if err := secretStore.PutBootstrapPassword(password, secrets.BootstrapOriginGenerated); err != nil {
+		t.Fatal(err)
 	}
-	if err := secretStore.Put(secrets.BootstrapCompleted, "true"); err != nil {
+	if err := secretStore.MarkBootstrapCompleted("true"); err != nil {
 		t.Fatal(err)
 	}
 	if err := readBootstrapOutcome(context.Background(), realGateway+"/health", secretStore); err != nil {
@@ -601,8 +599,8 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	}
 	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
 		if present, err := (secrets.Store{PlatformRoot: root}).Exists(name); err != nil || present {
-			completed, completedErr := (secrets.Store{PlatformRoot: root}).Exists(secrets.BootstrapCompleted)
-			disclosed, disclosedErr := (secrets.Store{PlatformRoot: root}).Exists(secrets.BootstrapDisclosed)
+			completed, completedErr := (secrets.Store{PlatformRoot: root}).BootstrapCompleted()
+			disclosed, disclosedErr := (secrets.Store{PlatformRoot: root}).BootstrapDisclosed()
 			t.Fatalf("repeat install restored disclosed bootstrap secret %q: present %v, err %v; completed=%v/%v disclosed=%v/%v", name, present, err, completed, completedErr, disclosed, disclosedErr)
 		}
 	}

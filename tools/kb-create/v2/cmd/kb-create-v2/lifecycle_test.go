@@ -324,7 +324,7 @@ func TestStatusReportsTheHostAndTheInstalledVersion(t *testing.T) {
 	if code != 0 || payload["host"].(map[string]any)["state"] != "stopped" || payload["bootstrapCompleted"] != false {
 		t.Fatalf("status: %d %s", code, raw)
 	}
-	if err := (secrets.Store{PlatformRoot: platformRootForTest(t, inst.root)}).Put(secrets.BootstrapCompleted, "provisioned"); err != nil {
+	if err := (secrets.Store{PlatformRoot: platformRootForTest(t, inst.root)}).MarkBootstrapCompleted("provisioned"); err != nil {
 		t.Fatal(err)
 	}
 	payload, code, raw = invoke(t, operationTestSetup{Operation: "status", PlatformRoot: inst.root, JSON: true})
@@ -598,7 +598,7 @@ func TestGeneratedRecoveryCredentialIsShownWithoutStorage(t *testing.T) {
 	inst, _ := recoverInstallation(t, true)
 	root := platformRootForTest(t, inst.root)
 	store := secrets.Store{PlatformRoot: root}
-	if err := store.Put(secrets.BootstrapCompleted, "provisioned"); err != nil {
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkBootstrapDisclosed(); err != nil {

@@ -226,7 +226,8 @@ func install(t *testing.T, answers string) journeyResult {
 	source := sealedGatewayCatalog(t)
 	primeOfflineCatalog(t, root, &source)
 	var terminal bytes.Buffer
-	request, err := wizard.RequestScenario(source, root, "custom", "", wizard.IO{In: bytes.NewBufferString("\n" + answers), Out: &terminal})
+	pending := map[string]secrets.PendingSecret{}
+	request, err := wizard.RequestScenario(source, root, "custom", "", wizard.IO{In: bytes.NewBufferString("\n" + answers), Out: &terminal, PendingSecrets: pending})
 	if err != nil {
 		t.Fatalf("wizard: %v\n%s", err, terminal.String())
 	}
@@ -234,6 +235,16 @@ func install(t *testing.T, answers string) journeyResult {
 	plan, err := resolve.Plan(request, source)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
+	}
+	for id, input := range pending {
+		if id == secrets.BootstrapPassword {
+			err = (secrets.Store{PlatformRoot: root}).PutBootstrapPassword(input.Value, input.Origin)
+		} else {
+			err = (secrets.Store{PlatformRoot: root}).Put(id, input.Value)
+		}
+		if err != nil {
+			t.Fatal("persist resolved wizard secret")
+		}
 	}
 	layout, stage := prepareFreshContainer(t, root)
 	plan.Request.PlatformRoot = stage

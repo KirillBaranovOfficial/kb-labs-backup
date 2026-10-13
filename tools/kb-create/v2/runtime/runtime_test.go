@@ -143,7 +143,7 @@ func TestUpdateAndRollbackCannotRestoreDisclosedBootstrapPassword(t *testing.T) 
 			if err := store.Put(secrets.BootstrapPasswordEnvironment, password); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.Put(secrets.BootstrapCompleted, "provisioned"); err != nil {
+			if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
 				t.Fatal(err)
 			}
 			if err := store.MarkBootstrapDisclosed(); err != nil {
