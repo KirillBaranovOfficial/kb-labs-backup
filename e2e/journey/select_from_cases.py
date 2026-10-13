@@ -7,7 +7,6 @@ state and FlowGraph state remain outside this lint. Runtime JourneyMemory
 checks apply to the keys explicitly routed through that container.
 """
 from __future__ import annotations
-from journey_values import journey_value
 
 import json
 import os
@@ -21,6 +20,7 @@ from invocations import (decode_ux_success_result, describe_cli_failure, invocat
                          print_report_text, read_ux_cli_result)
 from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
 from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
+from journey_selection import read_journey_selection, read_requested_cases
 
 
 RUNNER_CONTEXT_NAMES = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
@@ -985,7 +985,9 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)
     resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name,
-                                 owners_by_step, journey_value("KB_JOURNEY_ONLY", ""), ineligible_by_step)
+                                 owners_by_step, read_journey_selection(
+                                     os.environ, default_runner_selector="").requested_runners,
+                                 ineligible_by_step)
     return {"selection": sorted(set(tokens)), **resolved}
 
 
@@ -996,13 +998,14 @@ def main() -> int:
         return 0
     results = []
     for mode in ("local", "secured"):
-        command = ["pnpm", "-s", "kb", "qa", "coverage", "show", "--level", "all", "--mode", mode, "--json"]
+        command = ["node", "./cli/bin/dist/bin.js", "qa", "coverage", "show",
+                   "--level", "all", "--mode", mode, "--json"]
         with invocation_context(step_id="journey.case-selection"):
             result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120)
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
         results.append(read_coverage_result(result.stdout, result.returncode))
-    requested = journey_value("KB_JOURNEY_CASES", "")
+    requested = ",".join(read_requested_cases(os.environ))
     if requested:
         print_report_text(json.dumps(selection_from_coverage(results, requested)), flush=True)
     else:

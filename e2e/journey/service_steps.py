@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Small named-step framework shared by installed service journeys."""
 from __future__ import annotations
-from journey_values import journey_value
-
 import json
 import time
 import traceback
@@ -16,6 +14,9 @@ from typing import Any, Callable, Iterable, Mapping
 from invocations import invocation_context, invocation_link, write_report_json, write_report_text
 from journey_dependencies import Dependency
 from journey_values import MissingJourneyState
+from journey_values import journey_value
+from journey_selection import (JourneySelection, active_journey_selection,
+                               read_journey_selection)
 
 
 class JourneyContractError(RuntimeError):
@@ -133,35 +134,31 @@ class Journey:
     def run_instances(cls) -> tuple["Journey", ...]:
         return tuple(cls._instances)
 
-    def __init__(self, mode: str, run_id: str = "local", *, parent: "Journey | None" = None):
+    def __init__(self, mode: str, run_id: str = "local", *, parent: "Journey | None" = None,
+                 selection: JourneySelection | None = None):
         if mode not in {"local", "secured"}:
             raise ValueError(f"unsupported access mode: {mode}")
         self.mode = mode
         self.run_id = run_id
         self.parent = parent
+        inherited_selection = parent.selection_boundary if parent is not None else active_journey_selection()
+        self.selection_boundary = selection or inherited_selection or read_journey_selection(os.environ)
         self.state_graph: FlowGraph | None = None
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.started = time.monotonic()
         self.steps: list[StepResult] = []
-        self.selected_steps = set(filter(None, journey_value("KB_JOURNEY_SELECTED_STEPS", "").split(",")))
+        self.selected_steps = set(self.selection_boundary.claims)
         self.selected_claims = set(self.selected_steps)
-        self.selected_owning_steps = json.loads(journey_value("KB_JOURNEY_SELECTED_OWNING_STEPS", "{}"))
-        self.selected_capabilities = set(filter(None, journey_value("KB_JOURNEY_SELECTED_CAPABILITIES", "").split(",")))
-        self.prerequisite_steps = self._json_name_set("KB_JOURNEY_PREREQUISITE_STEPS")
-        self.prerequisite_flows = self._json_name_set("KB_JOURNEY_PREREQUISITE_FLOWS")
+        self.selected_owning_steps = self.selection_boundary.owning_steps
+        self.selected_capabilities = set(self.selection_boundary.capabilities)
+        self.prerequisite_steps = set(self.selection_boundary.prerequisite_steps)
+        self.prerequisite_flows = set(self.selection_boundary.prerequisite_flows)
         self.flows: dict[str, tuple[str, str]] = {}
-        self.selection = list(filter(None, journey_value("KB_JOURNEY_CASES", "").split(",")))
-        self.runner_selector = journey_value("KB_JOURNEY_RUNNER_SELECTOR", "")
+        self.selection = list(self.selection_boundary.requested)
+        self.runner_selector = self.selection_boundary.runner_selector
         self.step_guard: Callable[[str, Callable[[], str | None]], str | None] | None = None
         self.memory = parent.memory if parent is not None else JourneyMemory({})
         self._instances.append(self)
-
-    @staticmethod
-    def _json_name_set(key: str) -> set[str]:
-        value = json.loads(journey_value(key, "[]"))
-        if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
-            raise ValueError(f"{key} must be a JSON array of non-empty names")
-        return set(value)
 
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
              details: Callable[[], dict[str, Any]] | None = None, *,

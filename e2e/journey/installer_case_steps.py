@@ -1,5 +1,7 @@
 """Additional install, repair, and request-selection case claims."""
 from __future__ import annotations
+
+from kb_invocation import kb_command
 from journey_values import journey_value
 
 import json
@@ -197,7 +199,7 @@ def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandR
     executable = active_platform_root(platform_root) / ".kb/v2/bin/kb"
     if not executable.is_file():
         raise RuntimeError(f"platform CLI is missing for {platform_root}: {executable}")
-    return run_command([str(executable), *args])
+    return run_command(kb_command(args, executable=executable))
 
 
 def installer_primary_host_guard(root: Path, launcher: str,
@@ -786,16 +788,16 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
         if (failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
                 or "path spelling differs" not in failure.get("message", "")
                 or "different project" in failure.get("message", "").lower()
-                or not _hint_has_argv(failure.get("hint", ""), ["kb", "project", "add"])
-                or not _hint_has_argv(failure.get("hint", ""), ["kb", "project", "show"])
+                or not _hint_has_argv(failure.get("hint", ""), kb_command([ "project", "add"]))
+                or not _hint_has_argv(failure.get("hint", ""), kb_command([ "project", "show"]))
                 or receipt_path.read_bytes() != before or snapshot_tree(platform_root) != before_root):
             raise RuntimeError("changed project selection was not refused before the active receipt changed")
         apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                     "--platform-root", str(platform_root), "--project-root", str(selected)])
         _, apply_failure = _diagnostic(apply_result, "apply with a changed project selection")
         if (apply_failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
-                or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "project", "add"])
-                or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "project", "show"])
+                or not _hint_has_argv(apply_failure.get("hint", ""), kb_command([ "project", "add"]))
+                or not _hint_has_argv(apply_failure.get("hint", ""), kb_command([ "project", "show"]))
                 or receipt_path.read_bytes() != before or snapshot_tree(platform_root) != before_root):
             raise RuntimeError("apply changed the active receipt instead of refusing the selection")
 
@@ -862,7 +864,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
                                   "--project-root", str(project_alias)])
             if result.returncode != 0 or "First administrator credentials (shown once)" not in result.stdout:
                 raise RuntimeError("secured install did not complete or disclose the first administrator once")
-            if not _hint_has_argv(result.stdout, ["kb", "project", "show", canonical_path]):
+            if not _hint_has_argv(result.stdout, kb_command([ "project", "show", canonical_path])):
                 raise RuntimeError("secured install omitted its project verification command")
             registry_path = Path.home() / ".kb/projects.json"
             registry = json.loads(registry_path.read_text())
@@ -884,9 +886,9 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
             gateway_url = receipt.get("verification", {}).get("hostHealthUrl", "")
             gateway_origin = urlsplit(gateway_url)
             gateway_url = f"{gateway_origin.scheme}://{gateway_origin.netloc}"
-            login = evidence_run_command([str(active_root / ".kb/v2/bin/kb"), "auth", "login",
+            login = evidence_run_command(kb_command([ "auth", "login",
                                           "--gateway-url", gateway_url, "--email", "x18-admin@example.test",
-                                          "--password-stdin"], input=admin_password + "\n")
+                                          "--password-stdin"], executable=str(active_root / ".kb/v2/bin/kb")), input=admin_password + "\n")
             if login.returncode != 0 or not (Path.home() / ".kb/session.json").is_file():
                 raise RuntimeError("explicit administrator login did not create a CLI session")
             shown = _data(run_platform_cli(root, ["project", "show", str(project), "--json"], run_command),
@@ -931,18 +933,18 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
             if (failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
                     or "path spelling differs" not in failure.get("message", "")
                     or "different project" in failure.get("message", "").lower()
-                    or not _hint_has_argv(failure.get("hint", ""), ["kb", "auth", "login", "--gateway-url"])
-                    or not _hint_has_argv(failure.get("hint", ""), ["kb", "project", "add"])
-                    or not _hint_has_argv(failure.get("hint", ""), ["kb", "project", "show"])
+                    or not _hint_has_argv(failure.get("hint", ""), kb_command([ "auth", "login", "--gateway-url"]))
+                    or not _hint_has_argv(failure.get("hint", ""), kb_command([ "project", "add"]))
+                    or not _hint_has_argv(failure.get("hint", ""), kb_command([ "project", "show"]))
                     or receipt_path.read_bytes() != before or snapshot_tree(root) != before_root):
                 raise RuntimeError("secured changed project selection was not refused before apply")
             apply_refusal = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                          "--platform-root", str(root), "--project-root", str(changed)])
             _, apply_failure = _diagnostic(apply_refusal, "secured apply with changed project selection")
             if (apply_failure.get("code") != "KB_INSTALL_PROJECT_SELECTION_CHANGED"
-                    or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "auth", "login", "--gateway-url"])
-                    or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "project", "add"])
-                    or not _hint_has_argv(apply_failure.get("hint", ""), ["kb", "project", "show"])
+                    or not _hint_has_argv(apply_failure.get("hint", ""), kb_command([ "auth", "login", "--gateway-url"]))
+                    or not _hint_has_argv(apply_failure.get("hint", ""), kb_command([ "project", "add"]))
+                    or not _hint_has_argv(apply_failure.get("hint", ""), kb_command([ "project", "show"]))
                     or receipt_path.read_bytes() != before or snapshot_tree(root) != before_root):
                 raise RuntimeError("secured apply changed the active receipt instead of refusing the selection")
         finally:
@@ -1848,7 +1850,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         root = scratch / "s187-no-project"
         try:
             result = run_command([launcher, "install", "--index", str(stable_index), "--platform-root", str(root)])
-            if result.returncode != 0 or not _hint_has_argv(result.stdout, ["kb", "project", "add", "<path>"]):
+            if result.returncode != 0 or not _hint_has_argv(result.stdout, kb_command([ "project", "add", "<path>"])):
                 raise RuntimeError("install without a project omitted the exact `kb project add <path>` next step")
             receipt = json.loads((active_platform_root(root) / ".kb/v2/receipt.json").read_text())
             if receipt.get("project") or receipt.get("projects"):

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Probe fresh-install service capabilities and emit machine-readable results."""
 from __future__ import annotations
+
+from kb_invocation import kb_command
 from journey_values import MissingJourneyState, journey_value
 
 from project_service_path import project_service_path
@@ -114,7 +116,7 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
 
     def run_cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return run_command(
-            [cli, *args], cwd=cwd, env=os.environ.copy(), capture_output=True,
+            kb_command([ *args], executable=cli), cwd=cwd, env=os.environ.copy(), capture_output=True,
             text=True, check=False, timeout=90,
         )
 
@@ -868,9 +870,9 @@ def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runne
     password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
     if not email or not password:
         raise RuntimeError("secured service journey needs admin credentials; rerun with KB_JOURNEY_ADMIN_EMAIL and KB_JOURNEY_ADMIN_PASSWORD")
-    command = [str(kb_path), "auth", "login", "--gateway-url",
+    command = kb_command([ "auth", "login", "--gateway-url",
                env.get("KB_JOURNEY_BASE_URL", BASE_URL), "--email", email,
-               "--password-stdin"]
+               "--password-stdin"], executable=str(kb_path))
     result = run_with_runner(runner, command, cwd=env.get("HOME"), env=env, timeout=90,
                              input=password + "\n")
     if result.returncode != 0:
@@ -1045,7 +1047,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     project_a = Path(project_root).resolve()
     package = "@kb-labs/commit-entry"
     version = _registry_version(package, registry, env, runner)
-    install = ["kb", "marketplace", "install", f"{package}@{version}", "--json"]
+    install = kb_command([ "marketplace", "install", f"{package}@{version}", "--json"])
     installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
                        text=True, timeout=300)
     _output(installed, install)
@@ -1060,7 +1062,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
         raise subprocess.CalledProcessError(result.returncode,
                                             ["git", "init", "-q", str(project_b)],
                                             output=result.stdout, stderr=result.stderr)
-    register = ["kb", "project", "add", str(project_b), "--json"]
+    register = kb_command([ "project", "add", str(project_b), "--json"])
     result = runner(register, cwd=str(project_b), env=env, capture_output=True,
                     text=True, timeout=120)
     raw = _output(result, register)
@@ -1073,7 +1075,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
         raise RuntimeError("registering MCP isolation project B returned no project ID and canonical path")
     review_package = "@kb-labs/review-entry"
     review_version = _registry_version(review_package, registry, env, runner)
-    review_install = ["kb", "marketplace", "install", f"{review_package}@{review_version}", "--json"]
+    review_install = kb_command([ "marketplace", "install", f"{review_package}@{review_version}", "--json"])
     review_installed = runner(review_install, cwd=str(project_b), env=env, capture_output=True,
                               text=True, timeout=300)
     _output(review_installed, review_install)
@@ -1116,7 +1118,7 @@ def install_project_agents_plugin(project_root: str, registry: str, env: dict[st
         return run_with_runner(command_runner, command, timeout=timeout, **options)
 
     version = _registry_version(package, registry, env, run)
-    install = ["kb", "marketplace", "install", f"{package}@{version}", "--json"]
+    install = kb_command([ "marketplace", "install", f"{package}@{version}", "--json"])
     result = run(install, cwd=str(Path(project_root).resolve()), env=env,
                  capture_output=True, text=True, timeout=300)
     _output(result, install)

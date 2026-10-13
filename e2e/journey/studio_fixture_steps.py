@@ -1,6 +1,8 @@
 """Prepare real project attachments used by the Studio browser journey."""
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 import json
 import os
 import subprocess
@@ -37,7 +39,7 @@ def _cli(command: list[str], *, cwd: Path, env: dict[str, str], runner) -> subpr
 
 
 def _install(package: str, *, cwd: Path, env: dict[str, str], runner) -> None:
-    command = ["kb", "marketplace", "install", package, "--json"]
+    command = kb_command([ "marketplace", "install", package, "--json"])
     result = _cli(command, cwd=cwd, env=env, runner=runner)
     try:
         payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
@@ -51,7 +53,7 @@ def _install(package: str, *, cwd: Path, env: dict[str, str], runner) -> None:
 
 
 def _verify_greet(*, cwd: Path, env: dict[str, str], runner) -> None:
-    command = ["kb", "workflow", "defs", "list", "--json"]
+    command = kb_command([ "workflow", "defs", "list", "--json"])
     result = _cli(command, cwd=cwd, env=env, runner=runner)
     try:
         payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
@@ -64,7 +66,7 @@ def _verify_greet(*, cwd: Path, env: dict[str, str], runner) -> None:
 
 
 def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner) -> None:
-    list_command = ["kb", "marketplace", "plugins", "list", "--json"]
+    list_command = kb_command([ "marketplace", "plugins", "list", "--json"])
     listed = _cli(list_command, cwd=cwd, env=env, runner=runner)
     try:
         payload = decode_ux_success_result(read_ux_cli_result(listed.stdout, listed.returncode))
@@ -78,7 +80,7 @@ def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner)
         installed_id = entry["id"]
         if installed_id == package:
             continue
-        uninstall = ["kb", "marketplace", "uninstall", installed_id, "--json"]
+        uninstall = kb_command([ "marketplace", "uninstall", installed_id, "--json"])
         removed = _cli(uninstall, cwd=cwd, env=env, runner=runner)
         try:
             envelope = read_ux_cli_result(removed.stdout, removed.returncode)

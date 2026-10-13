@@ -1,6 +1,8 @@
 """Installed-platform update and rollback journey steps."""
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 import hashlib
 import json
 import os
@@ -184,7 +186,7 @@ def run_platform_update_steps(
             if login.returncode != 0:
                 raise RuntimeError(f"initial admin login failed: {' '.join(login.stdout.split())[-400:]}")
             saved_user_session_established = True
-            protected = run_command([kb_binary, "project", "list", "--json"])
+            protected = run_command(kb_command([ "project", "list", "--json"], executable=kb_binary))
             try:
                 protected_result = read_ux_cli_result(protected.stdout, protected.returncode)
                 if protected.returncode != 0:
@@ -356,7 +358,7 @@ def run_platform_update_steps(
                 "installation-secret fingerprint changed during update: "
                 f"beforeUpdate={before_secret}, afterUpdateBeforeRestart={after_secret}"
             )
-        _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after update")
+        _json_command(run_command, kb_command([ "adapter", "list", "--json"], executable=kb_binary), "adapter list after update")
 
     journey.step("verify installed version and pending restart while old host serves", "platform.update", verify_updated_install,
                  cases=["S-023.4", "PC-001.13"],
@@ -364,7 +366,7 @@ def run_platform_update_steps(
 
     def project_command() -> None:
         nonlocal saved_session_succeeded_after_update
-        result = run_command([kb_binary, "project", "list", "--json"])
+        result = run_command(kb_command([ "project", "list", "--json"], executable=kb_binary))
         try:
             envelope = read_ux_cli_result(result.stdout, result.returncode)
             if result.returncode != 0:
@@ -554,7 +556,7 @@ def run_platform_update_steps(
                 raise RuntimeError("saved user session was not established before update")
             if not saved_session_succeeded_after_update:
                 raise RuntimeError("saved user session did not run a protected command successfully after update")
-        command = run_command([kb_binary, "project", "list", "--json"])
+        command = run_command(kb_command([ "project", "list", "--json"], executable=kb_binary))
         try:
             envelope = read_ux_cli_result(command.stdout, command.returncode)
             if command.returncode != 0:
@@ -565,7 +567,7 @@ def run_platform_update_steps(
             raise RuntimeError(f"project list after rollback returned an invalid UX result: {error}") from error
         if not isinstance(payload, dict) or not isinstance(payload.get("projects"), list):
             raise RuntimeError("project list after rollback did not return a projects payload")
-        _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after rollback")
+        _json_command(run_command, kb_command([ "adapter", "list", "--json"], executable=kb_binary), "adapter list after rollback")
 
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
                  cases=["S-024.3", "S-041.4", "PC-001.14"] if verify_user is not None else ["S-024.3", "PC-001.14"],
@@ -599,7 +601,7 @@ def run_platform_update_steps(
         if receipt.get("verification", {}).get("hostHealthUrl") != gateway_url:
             raise RuntimeError("Gateway address changed during restart")
         assert_service_ports_preserved(initial_plan, receipt.get("plan", {}), "restart")
-        _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after restart")
+        _json_command(run_command, kb_command([ "adapter", "list", "--json"], executable=kb_binary), "adapter list after restart")
 
     journey.step("restart the installed host and run an adapter command", "platform.restart",
                  restart_and_verify_identity, cases=["PC-001.15"])

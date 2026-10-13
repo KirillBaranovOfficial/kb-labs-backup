@@ -1,6 +1,8 @@
 """Secured API journey for tenant roles, invite lifetime, and personal tokens."""
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 import time
 import json
 import http.cookiejar
@@ -84,13 +86,13 @@ def run_password_and_session_steps(base_url: str, email: str, password: str) -> 
 
 def run_cli_logout_steps(cli_path: str, env: dict[str, str]) -> None:
     def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return run_command([cli_path, *args], env=env)
+        return run_command(kb_command([ *args], executable=cli_path), env=env)
 
     email = env["KB_JOURNEY_ADMIN_EMAIL"]
     password = env["KB_JOURNEY_ADMIN_PASSWORD"]
     gateway_url = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
-    login = run_command([cli_path, "auth", "login", "--gateway-url", gateway_url,
-                         "--email", email, "--password-stdin", "--json"],
+    login = run_command(kb_command([ "auth", "login", "--gateway-url", gateway_url,
+                         "--email", email, "--password-stdin", "--json"], executable=cli_path),
                         env=env, input=password + "\n")
     try:
         login_payload = decode_ux_success_result(read_ux_cli_result(login.stdout, login.returncode))

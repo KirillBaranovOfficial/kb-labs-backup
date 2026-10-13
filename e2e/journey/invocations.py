@@ -524,6 +524,8 @@ def _run_monitored_command(argv: list[str], *, cwd: str | Path | None,
 def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
                     env: Mapping[str, str] | None = None, timeout: float = 900,
                     on_output: Callable[[str], str | bytes | None] | None = None,
+                    on_idle: Callable[[str, bool], str | bytes | None] | None = None,
+                    idle_interval: float = 0.2,
                     monitor_process: Callable[[int], None] | None = None,
                     start_new_session: bool = False,
                     raise_on_timeout: bool = True) -> tuple[subprocess.CompletedProcess[str], float]:
@@ -533,6 +535,8 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
     process = None
     transcript = bytearray()
     timed_out = False
+    last_output_at = started
+    idle_notified = False
     try:
         process = subprocess.Popen(argv, cwd=str(cwd) if cwd else None,
                                    env=dict(env) if env is not None else None,
@@ -543,8 +547,14 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
         while process.poll() is None and time.monotonic() < deadline:
             if monitor_process:
                 monitor_process(process.pid)
-            readable, _, _ = select.select([master], [], [], 0.2)
+            readable, _, _ = select.select([master], [], [], min(0.2, idle_interval))
             if not readable:
+                now = time.monotonic()
+                if on_idle and not idle_notified and transcript and now - last_output_at >= idle_interval:
+                    answer = on_idle(transcript.decode(errors="replace"), process.poll() is None)
+                    idle_notified = True
+                    if answer:
+                        os.write(master, answer.encode() if isinstance(answer, str) else answer)
                 continue
             try:
                 chunk = os.read(master, 8192)
@@ -558,6 +568,8 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
             if not chunk:
                 continue
             transcript.extend(chunk)
+            last_output_at = time.monotonic()
+            idle_notified = False
             if on_output:
                 answer = on_output(transcript.decode(errors="replace"))
                 if answer:

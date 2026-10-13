@@ -2,6 +2,8 @@
 """Installed-project plugin scaffold, link, edit, and unlink journey."""
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 import json
 import os
 import re
@@ -41,7 +43,7 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str],
 
 
 def _plugins(kb: Path, *, cwd: Path, env: dict[str, str], command_runner) -> list[dict]:
-    output = _run([str(kb), "marketplace", "plugins", "list", "--json"],
+    output = _run(kb_command([ "marketplace", "plugins", "list", "--json"], executable=str(kb)),
                   cwd=cwd, env=env, command_runner=command_runner)
     data = decode_ux_success_result(read_ux_cli_result(output, 0))
     entries = data.get("entries") if isinstance(data, dict) else None
@@ -118,7 +120,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     env["NPM_CONFIG_REGISTRY"] = registry
 
     def cli(args: list[str], *, step_id: str | None = None) -> subprocess.CompletedProcess[str]:
-        command = [str(kb_path), *args]
+        command = kb_command([ *args], executable=str(kb_path))
         context = invocation_context(step_id=step_id) if step_id else invocation_context()
         with context:
             return run_with_runner(command_runner, command, cwd=project, env=env, timeout=180)
@@ -172,7 +174,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def s014_dry_run() -> None:
         command = ["commit", "commit", "--dry-run", "--json"]
         result = cli(command, step_id="S-014.1")
-        payload = _json_payload(result, [str(kb_path), *command])
+        payload = _json_payload(result, kb_command([ *command], executable=str(kb_path)))
         plan = _find_plan(payload)
         after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
         after_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
@@ -186,7 +188,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def s014_provider() -> None:
         adapter_cmd = ["adapter", "list", "--json"]
         adapters_result = cli(adapter_cmd, step_id="S-014.2")
-        payload = _json_payload(adapters_result, [str(kb_path), *adapter_cmd])
+        payload = _json_payload(adapters_result, kb_command([ *adapter_cmd], executable=str(kb_path)))
         raw = json.dumps(payload).lower()
         if "@kb-labs/adapters-openai" not in raw:
             raise RuntimeError("S-014.2 could not identify the configured real LLM provider")
@@ -198,7 +200,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def s014_apply() -> None:
         command = ["commit", "commit", "--json"]
         result = cli(command, step_id="S-014.3")
-        payload = _json_payload(result, [str(kb_path), *command])
+        payload = _json_payload(result, kb_command([ *command], executable=str(kb_path)))
         subject = _git(["log", "-1", "--format=%s"], project=project, env=env).strip()
         if result.returncode != 0 or payload.get("applied") is not True or not subject.startswith(("test(", "chore(", "feat(", "fix(")):
             raise RuntimeError(f"S-014.3 did not create a conventional generated commit: {subject!r}")
@@ -218,7 +220,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def s015_findings() -> None:
         command = ["review", "run", "--mode=heuristic", "--json"]
         result = cli(command, step_id="S-015.2")
-        payload = _json_payload(result, [str(kb_path), *command])
+        payload = _json_payload(result, kb_command([ *command], executable=str(kb_path)))
         findings = payload.get("findings")
         if not isinstance(findings, list):
             raise RuntimeError("S-015.2 review JSON contains no findings array")
@@ -232,7 +234,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def s015_json() -> None:
         command = ["review", "run", "--json"]
         result = cli(command, step_id="S-015.3")
-        payload = _json_payload(result, [str(kb_path), *command])
+        payload = _json_payload(result, kb_command([ *command], executable=str(kb_path)))
         if result.returncode != 0 or not isinstance(payload.get("findings"), list):
             raise RuntimeError("S-015.3 did not return a valid JSON review result")
 
@@ -241,7 +243,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def missing_llm_review() -> None:
         with invocation_context():
             unbind = run_with_runner(command_runner,
-                [str(kb_path), "adapter", "unbind", "llm", "--scope", "platform", "--json"],
+                kb_command([ "adapter", "unbind", "llm", "--scope", "platform", "--json"], executable=str(kb_path)),
                 cwd=project, env=env, timeout=60)
         if unbind.returncode != 0:
             raise RuntimeError("could not remove the platform LLM binding for S-015.4")
@@ -253,7 +255,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError(f"S-015.4 did not return the typed missing-LLM guidance: {output[-800:]}")
         with invocation_context():
             restore = run_with_runner(command_runner,
-                [str(kb_path), "adapter", "bind", "llm", "@kb-labs/adapters-openai", "--scope", "platform", "--json"],
+                kb_command([ "adapter", "bind", "llm", "@kb-labs/adapters-openai", "--scope", "platform", "--json"], executable=str(kb_path)),
                 cwd=project, env=env, timeout=60)
         if restore.returncode != 0:
             raise RuntimeError("could not restore the platform LLM binding after S-015.4")
@@ -268,7 +270,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def s160_dry_run() -> None:
         command = ["commit", "commit", "--dry-run", "--json"]
         result = cli(command, step_id="S-160.1")
-        payload = _json_payload(result, [str(kb_path), *command])
+        payload = _json_payload(result, kb_command([ *command], executable=str(kb_path)))
         plan = _find_plan(payload)
         after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
         after_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
@@ -282,7 +284,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def s160_missing_llm() -> None:
         with invocation_context():
             unbind = run_with_runner(command_runner,
-                [str(kb_path), "adapter", "unbind", "llm", "--scope", "platform", "--json"],
+                kb_command([ "adapter", "unbind", "llm", "--scope", "platform", "--json"], executable=str(kb_path)),
                 cwd=project, env=env, timeout=60)
         if unbind.returncode != 0:
             raise RuntimeError("could not remove the platform LLM binding for S-160.2")
@@ -294,7 +296,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError(f"S-160.2 did not return the typed missing-LLM guidance: {output[-800:]}")
         with invocation_context():
             restore = run_with_runner(command_runner,
-                [str(kb_path), "adapter", "bind", "llm", "@kb-labs/adapters-openai", "--scope", "platform", "--json"],
+                kb_command([ "adapter", "bind", "llm", "@kb-labs/adapters-openai", "--scope", "platform", "--json"], executable=str(kb_path)),
                 cwd=project, env=env, timeout=60)
         if restore.returncode != 0:
             raise RuntimeError("could not restore the deterministic fixture LLM binding after S-160.2")
@@ -307,7 +309,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def s160_apply() -> None:
         command = ["commit", "commit", "--json"]
         result = cli(command, step_id="S-160.3")
-        payload = _json_payload(result, [str(kb_path), *command])
+        payload = _json_payload(result, kb_command([ *command], executable=str(kb_path)))
         subject = _git(["log", "-1", "--format=%s"], project=project, env=env).strip()
         if result.returncode != 0 or payload.get("applied") is not True or subject != "test(journey): verify deterministic commit fixture response":
             raise RuntimeError(f"S-160.3 did not apply the deterministic fixture subject: {subject!r}")
@@ -321,7 +323,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     def s160_no_changes() -> None:
         command = ["commit", "commit", "--json"]
         result = cli(command, step_id="S-160.4")
-        payload = _json_payload(result, [str(kb_path), *command])
+        payload = _json_payload(result, kb_command([ *command], executable=str(kb_path)))
         plan = _find_plan(payload)
         after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
         after_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
@@ -337,7 +339,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     def s030_progress() -> str:
         seen: list[str] = []
-        command = [str(kb_path), "commit", "commit", "--dry-run"]
+        command = kb_command([ "commit", "commit", "--dry-run"], executable=str(kb_path))
         with invocation_context(step_id="S-030.1"):
             result, _ = run_pty_command(command, cwd=project, env=env, timeout=90,
                                         on_output=lambda output: seen.append(output) or None)
@@ -369,7 +371,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     def s030_cancel() -> None:
         sent_interrupt = False
-        command = [str(kb_path), "commit", "commit", "--dry-run"]
+        command = kb_command([ "commit", "commit", "--dry-run"], executable=str(kb_path))
         def interrupt_on_generation(output: str) -> str | None:
             nonlocal sent_interrupt
             if not sent_interrupt and re.search(r"Analyzing with native tools|Re-analyzing with diff context", output, re.I):
@@ -442,8 +444,8 @@ def run_plugin_author_flow(
                             cases=cases).status == "PASS"
 
     def _scaffold() -> None:
-        _run([str(kb_path), "scaffold", "run", "plugin", PLUGIN_NAME,
-              "--mode", "standalone", "--yes"],
+        _run(kb_command([ "scaffold", "run", "plugin", PLUGIN_NAME,
+              "--mode", "standalone", "--yes"], executable=str(kb_path)),
              cwd=project, env=child_env, command_runner=command_runner)
         if not entry.is_dir() or not (entry / "package.json").is_file() or not core_source.is_file():
             raise RuntimeError("kb scaffold run did not create .kb/plugins/demo with entry and core packages")
@@ -466,7 +468,7 @@ def run_plugin_author_flow(
 
     def _link() -> None:
         nonlocal linked
-        _run([str(kb_path), "marketplace", "plugins", "add", "--link", ".kb/plugins/demo/packages/demo-entry"],
+        _run(kb_command([ "marketplace", "plugins", "add", "--link", ".kb/plugins/demo/packages/demo-entry"], executable=str(kb_path)),
              cwd=project, env=child_env, command_runner=command_runner)
         linked = True
         listed = _plugins(kb_path, cwd=project, env=child_env, command_runner=command_runner)
@@ -478,11 +480,11 @@ def run_plugin_author_flow(
             raise RuntimeError("project marketplace.lock does not record demo's local relative link path")
 
     def _invoke_original() -> None:
-        help_output = _run([str(kb_path), "--help"], cwd=project, env=child_env,
+        help_output = _run(kb_command([ "--help"], executable=str(kb_path)), cwd=project, env=child_env,
                            command_runner=command_runner)
         if "demo" not in help_output:
             raise RuntimeError("kb --help did not list the demo command group")
-        output = _run([str(kb_path), "demo", "hello"], cwd=project, env=child_env,
+        output = _run(kb_command([ "demo", "hello"], executable=str(kb_path)), cwd=project, env=child_env,
                       command_runner=command_runner)
         if "Hello, World from demo!" not in output:
             raise RuntimeError("kb demo hello did not print its documented greeting")
@@ -496,13 +498,13 @@ def run_plugin_author_flow(
             raise RuntimeError("generated demo greeting source no longer matches the scaffold template")
         core_source.write_text(source.replace(ORIGINAL_GREETING, EDITED_GREETING, 1), encoding="utf-8")
         _run(["pnpm", "-w", "build"], cwd=plugin_root, env=child_env, command_runner=command_runner)
-        output = _run([str(kb_path), "demo", "hello"], cwd=project, env=child_env,
+        output = _run(kb_command([ "demo", "hello"], executable=str(kb_path)), cwd=project, env=child_env,
                       command_runner=command_runner)
         if "Edited demo greeting for World!" not in output:
             raise RuntimeError("kb demo hello did not show the greeting after rebuilding the edited source")
 
     def _remove() -> None:
-        _run([str(kb_path), "marketplace", "plugins", "remove", PLUGIN_NAME],
+        _run(kb_command([ "marketplace", "plugins", "remove", PLUGIN_NAME], executable=str(kb_path)),
              cwd=project, env=child_env, command_runner=command_runner)
         if any(item.get("id") == PLUGIN_NAME for item in _plugins(
                 kb_path, cwd=project, env=child_env, command_runner=command_runner)

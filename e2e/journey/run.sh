@@ -100,7 +100,7 @@ if (( ! COMPOSE_AVAILABLE )); then
 fi
 
 if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
-  python3 e2e/journey/hermetic_cli.py -- pnpm -s kb qa cases validate
+  python3 e2e/journey/hermetic_cli.py -- node ./cli/bin/dist/bin.js qa cases validate
 fi
 
 if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then

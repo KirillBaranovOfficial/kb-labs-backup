@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
+from kb_invocation import kb_command, kb_login_shell
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
 from invocations import (decode_ux_error_result, invocation_context, read_ux_cli_result,
                          run_command, run_pty_command, write_report_json)
@@ -19,10 +20,7 @@ from invocations import (decode_ux_error_result, invocation_context, read_ux_cli
 def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120,
             input_text: str | None = None):
     cli_path = env.get("KB_JOURNEY_CLI_PATH")
-    if cli_path:
-        command = [cli_path, *args]
-    else:
-        command = ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"', "kb", *args]
+    command = kb_login_shell(args) if not cli_path else kb_command(args, executable=cli_path)
     result = run_command(command, env=env, cwd=cwd, timeout=timeout, input=input_text)
     return subprocess.CompletedProcess(command, result.returncode,
                                         stdout=result.stdout or "",
@@ -537,9 +535,8 @@ def _live_progress_case(journey: Journey, *, env: dict[str, str], project: Path)
     journey.step("start live progress workflow", "workflow", start, cases=["S-027.1"])
 
     cli_path = env.get("KB_JOURNEY_CLI_PATH")
-    command = ([cli_path, "workflow", "runs", "watch", run_id[0]] if cli_path else
-               ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"',
-                "kb", "workflow", "runs", "watch", run_id[0]])
+    watch_args = ["workflow", "runs", "watch", run_id[0]]
+    command = kb_command(watch_args, executable=cli_path) if cli_path else kb_login_shell(watch_args)
     seen: set[str] = set()
     watched = [None]
 

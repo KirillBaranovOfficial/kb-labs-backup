@@ -1,5 +1,7 @@
 """Gateway configuration, adapter-call and telemetry claims."""
 from __future__ import annotations
+
+from kb_invocation import kb_command
 from journey_values import journey_value
 
 import json
@@ -127,18 +129,18 @@ def run_llm_provider_steps(journey: Journey, *, project_id: str, project_root: s
     def cli(command: list[str], step_id: str, command_runner=runner, *, cwd: str | None = None):
         return _cli(command, step_id, command_runner, cwd=cwd or project_root)
 
-    adapter = cli(["kb", "config", "set", "--scope", "platform", "platform.adapters.llm",
-                    "@kb-labs/adapters-openai", "--json"], "S-017.1", runner)
+    adapter = cli(kb_command([ "config", "set", "--scope", "platform", "platform.adapters.llm",
+                    "@kb-labs/adapters-openai", "--json"]), "S-017.1", runner)
     journey.step("configure platform OpenAI adapter", "gateway", lambda: (
         None if adapter.returncode == 0 else "could not select @kb-labs/adapters-openai at platform scope"
     ), cases=["S-017.1", "S-018.1"])
 
-    secret_ref = cli(["kb", "config", "set", "--scope", "platform",
-                       "platform.adapterOptions.llm.apiKey", "${OPENAI_API_KEY}", "--json"], "S-017.2", runner)
+    secret_ref = cli(kb_command([ "config", "set", "--scope", "platform",
+                       "platform.adapterOptions.llm.apiKey", "${OPENAI_API_KEY}", "--json"]), "S-017.2", runner)
     project_config = Path(project_root) / ".kb" / "kb.config.jsonc"
     project_config_before = project_config.read_bytes() if project_config.is_file() else None
-    openai_base = cli(["kb", "config", "set", "--scope", "platform",
-                        "platform.adapterOptions.llm.baseURL", f"{mock_base}/v1", "--json"], "S-017.2", runner)
+    openai_base = cli(kb_command([ "config", "set", "--scope", "platform",
+                        "platform.adapterOptions.llm.baseURL", f"{mock_base}/v1", "--json"]), "S-017.2", runner)
     base_result_error = None
     try:
         base_result = _json_object(openai_base)
@@ -150,9 +152,9 @@ def run_llm_provider_steps(journey: Journey, *, project_id: str, project_root: s
     scope_ok = (base_result_error is None and base_result.get("file") == expected_platform_config
                 and project_config_before == (project_config.read_bytes() if project_config.is_file() else None)
                 and base_result.get("nextCommand") == f"kb-create restart --platform-root {json.dumps(str(platform_root))}")
-    openai_model = cli(["kb", "config", "set", "--scope", "platform",
-                         "platform.adapterOptions.llm.model", "journey-mock-model", "--json"], "S-017.2", runner)
-    inspect = cli(["kb", "config", "get", "platform.adapterOptions.llm.apiKey", "--json"], "S-017.4", runner)
+    openai_model = cli(kb_command([ "config", "set", "--scope", "platform",
+                         "platform.adapterOptions.llm.model", "journey-mock-model", "--json"]), "S-017.2", runner)
+    inspect = cli(kb_command([ "config", "get", "platform.adapterOptions.llm.apiKey", "--json"]), "S-017.4", runner)
     secret_safe = (secret_ref.returncode == 0 and openai_base.returncode == 0
                    and openai_model.returncode == 0 and inspect.returncode == 0
                    and "${OPENAI_API_KEY}" in inspect.stdout
@@ -175,7 +177,7 @@ def run_llm_provider_steps(journey: Journey, *, project_id: str, project_root: s
 
     project_a = project_root
     project_b = project_b_root
-    fixture_command = ["kb", "journey", "llm", "complete", "--json"]
+    fixture_command = kb_command([ "journey", "llm", "complete", "--json"])
 
     openai_a = cli([*fixture_command, "--marker=provider-openai-project-a"], "S-017.3", runner, cwd=project_a) if project_a else None
     openai_content = openai_a is not None and _json_contains(openai_a, "OPENAI_MOCK_RESPONSE")
@@ -197,8 +199,8 @@ def run_llm_provider_steps(journey: Journey, *, project_id: str, project_root: s
         else "both registered project roots must return the deterministic OpenAI mock response"
     ), cases=["S-018.2"])
 
-    vibe_install = cli(["kb", "marketplace", "install", "@kb-labs/adapters-vibeproxy",
-                         "--scope", "platform", "--json"], "setup-vibeproxy-install", runner)
+    vibe_install = cli(kb_command([ "marketplace", "install", "@kb-labs/adapters-vibeproxy",
+                         "--scope", "platform", "--json"]), "setup-vibeproxy-install", runner)
     install_error = _install_error(vibe_install) if vibe_install.returncode != 0 else ""
     journey.step("install VibeProxy adapter prerequisite", "gateway", lambda: (
         None if vibe_install.returncode == 0 else f"VibeProxy install failed: {install_error}"
@@ -208,14 +210,14 @@ def run_llm_provider_steps(journey: Journey, *, project_id: str, project_root: s
                      lambda: f"prerequisite not met: {install_error}", cases=["S-018.3"])
         return
 
-    vibe_adapter = cli(["kb", "config", "set", "--scope", "platform", "platform.adapters.llm",
-                         "@kb-labs/adapters-vibeproxy", "--json"], "S-018.3", runner)
-    vibe_url = cli(["kb", "config", "set", "--scope", "platform", "platform.adapterOptions.llm.baseURL",
-                     mock_base, "--json"], "S-018.3", runner)
-    vibe_key = cli(["kb", "config", "set", "--scope", "platform", "platform.adapterOptions.llm.apiKey",
-                     "${VIBEPROXY_API_KEY}", "--json"], "S-018.3", runner)
-    vibe_model = cli(["kb", "config", "set", "--scope", "platform", "platform.adapterOptions.llm.model",
-                       "journey-mock-model", "--json"], "S-018.3", runner)
+    vibe_adapter = cli(kb_command([ "config", "set", "--scope", "platform", "platform.adapters.llm",
+                         "@kb-labs/adapters-vibeproxy", "--json"]), "S-018.3", runner)
+    vibe_url = cli(kb_command([ "config", "set", "--scope", "platform", "platform.adapterOptions.llm.baseURL",
+                     mock_base, "--json"]), "S-018.3", runner)
+    vibe_key = cli(kb_command([ "config", "set", "--scope", "platform", "platform.adapterOptions.llm.apiKey",
+                     "${VIBEPROXY_API_KEY}", "--json"]), "S-018.3", runner)
+    vibe_model = cli(kb_command([ "config", "set", "--scope", "platform", "platform.adapterOptions.llm.model",
+                       "journey-mock-model", "--json"]), "S-018.3", runner)
     vibe_restart = cli(shlex.split(str(_json_object(vibe_adapter).get("nextCommand", "kb-create restart"))),
                         "S-018.3", runner)
     vibe_projects = [

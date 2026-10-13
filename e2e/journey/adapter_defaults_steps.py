@@ -1,6 +1,8 @@
 """Installed-platform journeys for adapter defaults and platform-only bindings."""
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 import json
 import os
 import re
@@ -224,7 +226,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         snapshot["contents"] = original_platform_config
 
     def cli(args: list[str], cwd: Path = project_a) -> subprocess.CompletedProcess[str]:
-        return _run(runner, ["kb", *args], cwd, base_env)
+        return _run(runner, kb_command([ *args]), cwd, base_env)
 
     def list_adapters(cwd: Path = project_a) -> dict:
         command = ["adapter", "list", "--json"]
@@ -244,7 +246,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         if not isinstance(run_id, str) or not run_id:
             raise RuntimeError("`kb workflow run --workflow-id=e2e-hello --json` returned no runId")
         watch_command = ["workflow", "runs", "watch", run_id]
-        watched = _run(runner, ["kb", *watch_command], cwd, base_env)
+        watched = _run(runner, kb_command([ *watch_command]), cwd, base_env)
         if watched.returncode != 0 or "Run SUCCESS." not in watched.stdout:
             detail = " ".join((watched.stderr or watched.stdout).split())[-300:]
             raise RuntimeError(f"workflow run {run_id} did not complete successfully: {detail}")
@@ -560,8 +562,8 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         analytics_db = project_state / "analytics" / "analytics.sqlite"
         previous_data = analytics_db.read_bytes()
         replacement = "@kb-labs/adapters-analytics-file"
-        install = ["kb", "marketplace", "install", replacement, "--scope", "platform", "--json"]
-        command = ["kb", "adapter", "bind", "analytics", replacement, "--json"]
+        install = kb_command([ "marketplace", "install", replacement, "--scope", "platform", "--json"])
+        command = kb_command([ "adapter", "bind", "analytics", replacement, "--json"])
         sealed_platform_before = _platform_snapshot(platform_root)
         install_payload = _json(_run(runner, install, project_a, base_env), install)
         if install_payload.get("ok") is not True:
@@ -612,7 +614,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         before = _platform_snapshot(platform_root)
         workspace_file.write_text(without_pin)
         before_missing_pins = workspace_file.read_bytes()
-        command = ["kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"]
+        command = kb_command([ "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"])
         try:
             result = runner(command, cwd=str(project_a), env=base_env,
                             capture_output=True, text=True, timeout=300)
@@ -733,7 +735,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                     {"adapters": {"storage": "@kb-labs/adapters-fs"}},
                 ):
                     write_config(project_a, project_config)
-                    result = runner(["kb", "adapter", "list", "--json"], cwd=str(project_a), env=base_env,
+                    result = runner(kb_command([ "adapter", "list", "--json"]), cwd=str(project_a), env=base_env,
                                     capture_output=True, text=True, timeout=300)
                     payload = _json(result, ["adapter", "list", "--json"])
                     error = payload.get("error")
@@ -807,7 +809,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 if _json(cli(command, platform_root), command).get("ok") is not True:
                     raise RuntimeError("could not set the invalid platform data path for validation")
                 probe = ["adapter", "list", "--json"]
-                result = runner(["kb", *probe], cwd=str(project_a), env=base_env,
+                result = runner(kb_command([ *probe]), cwd=str(project_a), env=base_env,
                                 capture_output=True, text=True, timeout=300)
                 payload = _json(result, probe)
                 error = payload.get("error")
@@ -915,7 +917,7 @@ def _assert_missing_llm(runner: CommandRunner, env: dict[str, str], project: Pat
         config_command = ["config", "set", "commit.llm.enabled", "true", "--json"]
         _json(cli(config_command), config_command)
         command = ["commit", "generate", "--json"]
-        result = runner(["kb", *command], cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
+        result = runner(kb_command([ *command]), cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
         if result.returncode == 0 or _json(result, command).get("error", {}).get("code") != "KB_ADAPTER_CREDENTIALS_MISSING":
             raise RuntimeError("implicit OpenAI LLM did not return KB_ADAPTER_CREDENTIALS_MISSING without a key")
     finally:
@@ -935,7 +937,7 @@ def _assert_missing_openai_key(runner: CommandRunner, env: dict[str, str], proje
     enable = ["config", "set", "commit.llm.enabled", "true", "--json"]
     _json(cli(enable), enable)
     command = ["commit", "generate", "--json"]
-    result = runner(["kb", *command], cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
+    result = runner(kb_command([ *command]), cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
     if result.returncode == 0:
         raise RuntimeError("bound OpenAI LLM unexpectedly generated a commit plan without an API key")
     payload = _json(result, command)
@@ -975,7 +977,7 @@ def _assert_adapter_error(
     args: list[str],
     slot: str,
 ) -> None:
-    command = ["kb", *args]
+    command = kb_command([ *args])
     result = runner(command, cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
     try:
         payload = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))

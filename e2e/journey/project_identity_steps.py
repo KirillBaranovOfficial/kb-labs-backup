@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 from project_service_path import project_service_path
 
 import json
@@ -29,7 +31,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
 
     def run(cwd: Path, *args: str, step_id: str) -> subprocess.CompletedProcess[str]:
         with invocation_context(step_id=step_id):
-            return run_with_runner(command_runner, [cli, *args], cwd=cwd, env=env, timeout=180)
+            return run_with_runner(command_runner, kb_command([ *args], executable=cli), cwd=cwd, env=env, timeout=180)
 
     with tempfile.TemporaryDirectory(prefix="kb-project-registry-", dir=env.get("HOME")) as directory:
         fixture_root = Path(directory)
@@ -204,7 +206,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
 
         def project_plugin_commands() -> str | None:
             commands = ((projects[0], ("workflow", "defs", "list", "--json"), "@kb-labs/workflow-entry"),
-                        (projects[1], ("commit", "--help"), "@kb-labs/commit-entry"))
+                        (projects[1], ("commit", "open", "--help"), "@kb-labs/commit-entry"))
             for project, args, package in commands:
                 result = run(project, *args, step_id="S-043.6")
                 if result.returncode != 0:
@@ -224,7 +226,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                 return "could not inspect the project and platform plugin scopes"
             if "@kb-labs/workflow" not in project_plugins or "@kb-labs/workflow" not in platform_plugins:
                 return "the same Workflow plugin ID was not installed at both project and platform scope"
-            result = run(projects[0], "workflow", "--help", step_id="S-043.7")
+            result = run(projects[0], "workflow", "defs", "list", "--help", step_id="S-043.7")
             if result.returncode != 0:
                 return f"the shared Workflow command was unavailable from project A: {(result.stderr or result.stdout).strip()}"
             return None
@@ -259,7 +261,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                 }])
                 with invocation_context(step_id="journey.setup"):
                     configured = run_with_runner(command_runner,
-                        [cli, "config", "set", "plugins.commit.scope.scopes", value, "--json"],
+                        kb_command([ "config", "set", "plugins.commit.scope.scopes", value, "--json"], executable=cli),
                         cwd=project, env=env, timeout=180)
                 if configured.returncode != 0:
                     return f"could not prepare a project-specific config fixture for {project.name}"

@@ -1,5 +1,7 @@
 """Installed-platform analytics API claims for S-191 and S-201."""
 from __future__ import annotations
+
+from kb_invocation import kb_command
 from journey_values import journey_value
 
 from project_service_path import project_service_path
@@ -80,14 +82,14 @@ def run_analytics_steps(journey: Journey, *, token: str, project_id: str, projec
     project_a = project_root
     project_b = project_b_root
     fixture_install = _run_fixture_command(
-        ["kb", "marketplace", "install", "@kb-labs/e2e-analytics-emitter", "--scope", "platform", "--json"],
+        kb_command([ "marketplace", "install", "@kb-labs/e2e-analytics-emitter", "--scope", "platform", "--json"]),
         step_id="S-191.1", runner=runner, cwd=project_a,
     ) if project_a else None
     marker_a = f"{journey.run_id}:project-a"
-    emit_a = _run_fixture_command(["kb", "journey", "analytics", "emit", f"--marker={marker_a}", "--json"],
+    emit_a = _run_fixture_command(kb_command([ "journey", "analytics", "emit", f"--marker={marker_a}", "--json"]),
                                   step_id="S-191.1", runner=runner, cwd=project_a) if project_a and fixture_install and fixture_install.returncode == 0 else None
     marker_b = f"{journey.run_id}:project-b"
-    emit_b = _run_fixture_command(["kb", "journey", "analytics", "emit", f"--marker={marker_b}", "--json"],
+    emit_b = _run_fixture_command(kb_command([ "journey", "analytics", "emit", f"--marker={marker_b}", "--json"]),
                                   step_id="S-191.1", runner=runner, cwd=project_b) if project_b and fixture_install and fixture_install.returncode == 0 else None
     journey.step("track local analytics event", "analytics", lambda: (
         None if fixture_install is not None and fixture_install.returncode == 0

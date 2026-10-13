@@ -10,6 +10,7 @@ from typing import Callable
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
                          run_command)
 from service_steps import Journey
+from kb_invocation import kb_shell_text
 
 
 def _git(args: list[str], cwd: Path) -> None:
@@ -46,7 +47,7 @@ def run_worktree_steps(
                 "  probe:\n    runsOn: local\n    steps:\n"
                 "      - name: Check roots\n        id: roots\n"
                 "        uses: builtin:shell\n        with:\n"
-                "          command: 'kb workflow defs list --json >/dev/null && test -n \"$KB_PLATFORM_ROOT\" && test \"$KB_WORKSPACE_ROOT\" = \"$PWD\"'\n",
+                f"          command: '{kb_shell_text(['workflow', 'defs', 'list', '--json'])} >/dev/null && test -n \"$KB_PLATFORM_ROOT\" && test \"$KB_WORKSPACE_ROOT\" = \"$PWD\"'\n",
                 encoding="utf-8",
             )
             _git(["init", "-b", "main"], repo)
