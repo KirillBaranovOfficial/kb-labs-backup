@@ -10,6 +10,21 @@ import (
 	"github.com/kb-labs/clikit/result"
 )
 
+func TestFinishUsesCataloguedFailureStatus(t *testing.T) {
+	var output bytes.Buffer
+	writer := New(&output)
+	failure := diag.New("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE", "index unavailable", diag.WithProcessExitCode(diag.ExitInput))
+	if err := writer.Fail(failure); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Finish(diag.ExitInput); err != nil {
+		t.Fatal(err)
+	}
+	if writer.ExitCode() != diag.ExitError {
+		t.Fatalf("stream exit = %d, want catalogued status %d", writer.ExitCode(), diag.ExitError)
+	}
+}
+
 // case: S-203.7
 func TestStreamWritesEnvelopeEventsAndTerminalRecord(t *testing.T) {
 	var output bytes.Buffer

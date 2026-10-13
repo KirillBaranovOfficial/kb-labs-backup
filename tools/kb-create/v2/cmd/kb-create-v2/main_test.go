@@ -252,8 +252,62 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	registryPath := filepath.Join(launcherState.Dir, "gateway-roots.json")
+	activeReceiptPath := receipt.Path(physicalRoot)
+	receiptBefore, err := os.ReadFile(activeReceiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(registryPath, []byte(`{"schema":1,"roots":[]}`), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	for _, operation := range []string{"plan", "apply", "status", "doctor", "uninstall"} {
+		args := []string{operation, "--platform-root", root, "--json"}
+		if operation == "plan" || operation == "apply" {
+			args = append(args, "--index", indexPath)
+		}
+		if operation == "uninstall" {
+			args = append(args, "--yes")
+		}
+		var stdout, stderr bytes.Buffer
+		code := clikitcommand.Execute(newRootCommandWithDependencyFactory(commandFactory), args, &stdout, &stderr)
+		if code != diag.ExitError {
+			t.Fatalf("schema-1 %s exit=%d, want %d: stdout=%s stderr=%s", operation, code, diag.ExitError, stdout.String(), stderr.String())
+		}
+		var failureRecord struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if operation == "apply" {
+			lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))
+			if len(lines) != 2 {
+				t.Fatalf("schema-1 apply stream has %d records: %s", len(lines), stdout.String())
+			}
+			var terminal struct {
+				Meta struct {
+					Stream struct {
+						ExitCode int `json:"exitCode"`
+					} `json:"stream"`
+				} `json:"meta"`
+			}
+			if err := json.Unmarshal(lines[0], &failureRecord); err != nil {
+				t.Fatalf("schema-1 apply failure is not JSON: %v; %s", err, lines[0])
+			}
+			if err := json.Unmarshal(lines[1], &terminal); err != nil || terminal.Meta.Stream.ExitCode != diag.ExitError {
+				t.Fatalf("schema-1 apply terminal = %s (%v)", lines[1], err)
+			}
+		} else if err := json.Unmarshal(stdout.Bytes(), &failureRecord); err != nil {
+			t.Fatalf("schema-1 %s failure is not JSON: %v; %s", operation, err, stdout.String())
+		}
+		if failureRecord.Error.Code != contracts.CodeGatewayIndexUnavailable {
+			t.Fatalf("schema-1 %s code = %q, want %s: %s", operation, failureRecord.Error.Code, contracts.CodeGatewayIndexUnavailable, stdout.String())
+		}
+		if current, err := os.ReadFile(registryPath); err != nil || string(current) != `{"schema":1,"roots":[]}` {
+			t.Fatalf("schema-1 %s changed the read-only index: %s (%v)", operation, current, err)
+		}
+		if current, err := os.ReadFile(activeReceiptPath); err != nil || !bytes.Equal(current, receiptBefore) {
+			t.Fatalf("schema-1 %s changed the installation receipt: %s (%v)", operation, current, err)
+		}
 	}
 	var planOut, planErr bytes.Buffer
 	planCode := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath, "--platform-root", root}, &planOut, &planErr)
@@ -262,7 +316,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 			Code, Message, Hint string
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(planOut.Bytes(), &failedPlan); err != nil || planCode == 0 || failedPlan.Error.Code != contracts.CodeGatewayIndexUnavailable {
+	if err := json.Unmarshal(planOut.Bytes(), &failedPlan); err != nil || planCode != diag.ExitError || failedPlan.Error.Code != contracts.CodeGatewayIndexUnavailable {
 		t.Fatalf("schema-1 plan result code=%d output=%s stderr=%s decode=%v", planCode, planOut.String(), planErr.String(), err)
 	}
 	removeCommand := contracts.ShellCommand("rm", "--", registryPath)
@@ -276,7 +330,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	var humanOut, humanErr bytes.Buffer
-	if code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--index", indexPath, "--platform-root", root}, &humanOut, &humanErr); code == 0 ||
+	if code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--index", indexPath, "--platform-root", root}, &humanOut, &humanErr); code != diag.ExitError ||
 		!strings.Contains(humanOut.String()+humanErr.String(), registryPath) || !strings.Contains(humanOut.String()+humanErr.String(), "unsupported schema 1") || !strings.Contains(humanOut.String()+humanErr.String(), repairCommand) {
 		t.Fatalf("human schema-1 plan code/output/stderr = %d / %s / %s", code, humanOut.String(), humanErr.String())
 	}

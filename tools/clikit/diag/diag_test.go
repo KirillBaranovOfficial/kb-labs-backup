@@ -148,6 +148,13 @@ func TestExitCodePreservesWrappedOperationStatus(t *testing.T) {
 	}
 }
 
+func TestExitCodeUsesCataloguedStatusBeforeCommandStatus(t *testing.T) {
+	d := New("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE", "index unavailable", WithProcessExitCode(ExitInput))
+	if got := ExitCode(d); got != ExitError {
+		t.Fatalf("ExitCode() = %d, want catalogued status %d", got, ExitError)
+	}
+}
+
 func TestDiag_AsError(t *testing.T) {
 	var err error = New("KB_RUNTIME_INPUT_INVALID", "invalid")
 	var d *Diag

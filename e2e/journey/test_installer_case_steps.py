@@ -210,11 +210,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
         error = json.loads(plan_stdout)["error"]
         document = json.dumps({"ok": False, "error": error})
         outputs = {
-            "plan": (plan_stdout, 2),
-            "apply": (apply_stdout, 2),
-            "status": (document, 2),
-            "doctor": (document, 2),
-            "uninstall": (document, 2),
+            "plan": (plan_stdout, 1),
+            "apply": (kb_create_stream({"ok": False, "error": error}, 1), 1),
+            "status": (document, 1),
+            "doctor": (document, 1),
+            "uninstall": (document, 1),
             "rm": ("", 0),
             "doctor-fix": (json.dumps({"ok": True, "data": {"operation": "doctor-fix"}}), 0),
         }
