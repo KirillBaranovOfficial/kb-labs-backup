@@ -38,7 +38,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             (project / ".kb" / "workflows").mkdir(parents=True)
 
             def fake_run(args, *, env, cwd, timeout=120, input_text=None):
-                if args == ["workflow", "init"]:
+                if args == ["workflow", "create"]:
                     (cwd / ".kb" / "workflows" / "hello.yml").write_text(
                         "on:\n  manual: true\ncommand: echo hello-workflow\n", encoding="utf-8")
                     return CompletedProcess(args, 0,
@@ -238,7 +238,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                 if args[:2] == ["marketplace", "install"]:
                     marketplace_install_calls.append(args)
                     output = {"ok": True, "data": {"installed": [{"id": "@kb-labs/steward-entry"}]}}
-                elif args == ["workflow", "init"]:
+                elif args == ["workflow", "create"]:
                     target = cwd / ".kb" / "workflows" / "hello.yml"
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text("name: hello\non:\n  manual: true\ncommand: echo hello-workflow\n")

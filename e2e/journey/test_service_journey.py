@@ -537,7 +537,7 @@ raise SystemExit(1)
             journey.write_json(run_file)
 
             # Load through the real consumer CLI
-            command = [node, str(cli_bin), "qa", "cases", "coverage", "--mode", "local",
+            command = [node, str(cli_bin), "qa", "coverage", "show", "--mode", "local",
                        "--run", str(run_file), "--json"]
             env = dict(os.environ)
             env["HOME"] = directory
@@ -546,7 +546,7 @@ raise SystemExit(1)
             env.pop("KB_NET_OFFSET", None)
             from hermetic_cli import run_hermetic_cli
             proc = run_hermetic_cli(command, cwd=root, env=env, timeout=120)
-            self.assertEqual(proc.returncode, 0, f"qa cases coverage failed: {proc.stderr or proc.stdout}")
+            self.assertEqual(proc.returncode, 0, f"qa coverage show failed: {proc.stderr or proc.stdout}")
             payload = json.loads(proc.stdout)
             self.assertTrue(payload.get("ok"), payload)
             coverage_data = payload.get("data", {})
@@ -565,7 +565,7 @@ raise SystemExit(1)
             corrupted_data["case_run"]["claims"].append({"claimId": "PC-001.3", "kind": "journey", "status": "BLOCKED"})
             corrupted_run_file.write_text(json.dumps(corrupted_data))
 
-            corrupted_proc = run_hermetic_cli([node, str(cli_bin), "qa", "cases", "coverage", "--mode", "local",
+            corrupted_proc = run_hermetic_cli([node, str(cli_bin), "qa", "coverage", "show", "--mode", "local",
                                               "--run", str(corrupted_run_file), "--json"], cwd=root, env=env, timeout=120)
             self.assertIn("claims[2].status must be PASS or FAIL", corrupted_proc.stdout + corrupted_proc.stderr)
 

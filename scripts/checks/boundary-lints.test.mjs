@@ -441,6 +441,10 @@ describe('manifest-command-naming (0.5)', () => {
     assert.equal(v[0].target, 'foo frobnicate');
   });
 
+  test('accepts validate as the reviewed static-check verb', () => {
+    assert.deepEqual(validateManifest(manifest([{ path: 'qa cases validate' }])), []);
+  });
+
   test('failing fixture: path segments must be lowercase kebab-case', () => {
     const rules = (p) => validateManifest(manifest([{ path: p }])).map((x) => x.rule);
     assert.ok(rules('foo Bar list').includes('command-path-case'));

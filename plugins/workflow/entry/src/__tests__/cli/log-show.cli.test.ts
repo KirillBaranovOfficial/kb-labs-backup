@@ -7,7 +7,7 @@ vi.mock('../../http-client.js', () => ({
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
-import logsCommand from '../../commands/logs.js';
+import logsCommand from '../../commands/log-show.js';
 
 const MockedClient = vi.mocked(WorkflowDaemonClient);
 
@@ -21,7 +21,7 @@ beforeEach(() => {
   MockedClient.mockReset();
 });
 
-describe('workflow job logs', () => {
+describe('workflow log show', () => {
   // case: S-185.4
   it('CLG-01: positional job ID outputs log lines via job endpoint', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
