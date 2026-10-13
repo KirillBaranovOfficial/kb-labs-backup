@@ -26,6 +26,7 @@ from select_from_cases import (read_coverage_result, selection_from_coverage,
                                full_runner_plans, resolve_selection, journey_source_group_declaration)
 from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
+from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
 from service_steps import FlowGraph, Journey
 
 
@@ -230,7 +231,7 @@ class DispatchRegistryTests(unittest.TestCase):
 
             with patch.dict("os.environ", {
                     "KB_JOURNEY_SELECTED_STEPS": "TEST-CLAIM.1",
-                    "KB_JOURNEY_PREREQUISITE_STEPS": "fixture producer",
+                    "KB_JOURNEY_PREREQUISITE_STEPS": '["fixture producer"]',
             }, clear=True):
                 journey = Journey("local", "fixture-group-selection")
                 graph = FlowGraph(journey, {}, groups={
@@ -525,7 +526,12 @@ class DispatchRegistryTests(unittest.TestCase):
                     for selector in resolved["runners"]:
                         self.assertIn(step_id, resolved["owners"].get(selector, []),
                                       f"plan routed {step_id} to {selector} without its emitter")
-                    direct_prerequisites = set().union(*(set(item.get("requires", [])) for item in declarations))
+                    direct_prerequisites = {
+                        str(dependency)
+                        for item in declarations
+                        for reference in item.get("requires", [])
+                        if (dependency := Dependency.parse(reference)).kind in {"step", "flow"}
+                    }
                     prerequisites = {f"step:{name}" for name in resolved["prerequisiteSteps"]}
                     prerequisites.update(f"flow:{name}" for name in resolved["prerequisiteFlows"])
                     self.assertTrue(direct_prerequisites.issubset(prerequisites))
@@ -534,8 +540,14 @@ class DispatchRegistryTests(unittest.TestCase):
                         with self.subTest(mode=mode, step_id=step_id, prerequisite=name):
                             self.assertIn(name, graph, f"declared prerequisite {name!r} has no step declaration")
                             self.assertTrue(graph[name]["sources"].intersection(resolved["stepSources"]))
-                            self.assertTrue(set(graph[name]["requires"]).issubset(prerequisites),
+                            required = {Dependency.parse(reference)
+                                        for reference in graph[name]["requires"]}
+                            self.assertTrue({str(item) for item in required if item.kind in {"step", "flow"}}
+                                            .issubset(prerequisites),
                                             f"prerequisite closure omitted a dependency of {name!r}")
+                            self.assertTrue({item.name for item in required if item.kind == "state"}
+                                            .issubset(FLOW_GRAPH_STATE_PRODUCERS),
+                                            f"prerequisite closure names an unregistered state of {name!r}")
 
         for mode, claims_by_step in registered.items():
             print(f"whole-coverage resolution {mode}: {len(claims_by_step)} claims, "
@@ -582,7 +594,7 @@ class DispatchRegistryTests(unittest.TestCase):
         with patch.dict(os.environ, {
                 "KB_JOURNEY_SELECTED_STEPS": "S-023.2",
                 "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps({"plan the newer sealed release": ["S-023.2"]}),
-                "KB_JOURNEY_PREREQUISITE_STEPS": "candidate provenance",
+                "KB_JOURNEY_PREREQUISITE_STEPS": '["candidate provenance"]',
         }, clear=True):
             journey = Journey("local", "update-step-selection")
             graph = FlowGraph(journey, {}, groups={"update": {
@@ -631,8 +643,8 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertIn("start platform host", base_update["prerequisiteFlows"])
         env = {
             "KB_JOURNEY_SELECTED_STEPS": ",".join(base_update["steps"]),
-            "KB_JOURNEY_PREREQUISITE_STEPS": ",".join(base_update["prerequisiteSteps"]),
-            "KB_JOURNEY_PREREQUISITE_FLOWS": ",".join(base_update["prerequisiteFlows"]),
+            "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(base_update["prerequisiteSteps"]),
+            "KB_JOURNEY_PREREQUISITE_FLOWS": json.dumps(base_update["prerequisiteFlows"]),
         }
         with patch.dict(os.environ, env, clear=False):
             journey = Journey("local", "selected-flow-closure")
@@ -666,6 +678,35 @@ class DispatchRegistryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, r"fixture_steps.py:1: 'step:typo'.*does not resolve"):
                     validate_dependency_declarations({"fixture_steps.py"}, root)
 
+    def test_static_dependency_rail_rejects_runner_conditional_step_prerequisite(self):
+        with tempfile.TemporaryDirectory(prefix="journey-conditional-prerequisite-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'def register(journey, check):\n'
+                '    if FRONT == "agent":\n'
+                '        journey.step("conditional project registration", "test", lambda: None)\n'
+                '    journey.step("consumer", "test", lambda: None, requires=("step:conditional project registration",))\n',
+                encoding="utf-8",
+            )
+            with patch("select_from_cases.RUNNERS", {
+                    "fixture": SimpleNamespace(journey_sources=("fixture_steps.py",))}):
+                with self.assertRaisesRegex(
+                        ValueError,
+                        r"fixture_steps.py:3: step prerequisite 'conditional project registration'.*runner condition"):
+                    validate_dependency_declarations({"fixture_steps.py"}, root)
+
+    def test_static_dependency_rail_resolves_registered_flow_graph_state(self):
+        with tempfile.TemporaryDirectory(prefix="journey-state-prerequisite-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'journey.step("consumer", "test", lambda: None, requires=("state:project-registered",))\n',
+                encoding="utf-8",
+            )
+            with patch("select_from_cases.RUNNERS", {
+                    "fixture": SimpleNamespace(journey_sources=("fixture_steps.py",))}):
+                declarations = validate_dependency_declarations({"fixture_steps.py"}, root)
+            self.assertIn("step:consumer", declarations)
+
     def test_static_dependency_rail_rejects_untyped_dependency_names(self):
         with tempfile.TemporaryDirectory(prefix="journey-untyped-dependency-rail-") as directory:
             root = Path(directory)
@@ -677,7 +718,7 @@ class DispatchRegistryTests(unittest.TestCase):
                     "fixture": SimpleNamespace(journey_sources=("fixture_steps.py",))}):
                 with self.assertRaisesRegex(
                         ValueError,
-                        r"fixture_steps.py:1: invalid journey dependency.*use 'step:<name>' or 'flow:<name>'"):
+                        r"fixture_steps.py:1: invalid journey dependency.*use 'step:<name>'.*'state:<name>'"):
                     validate_dependency_declarations({"fixture_steps.py"}, root)
 
     def test_static_dependency_rail_checks_edges_when_step_name_is_dynamic(self):

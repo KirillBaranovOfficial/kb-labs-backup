@@ -175,7 +175,7 @@ class RunnerInstallFailureTests(unittest.TestCase):
                            update_variant_runner=None, selector: str | None = None,
                            scenario: str = "explore", selected_owners: dict | None = None,
                            extra_update_group: dict | None = None,
-                           update_runner=None) -> tuple[int, str, dict, dict, dict]:
+                           update_runner=None, service_profile: str = "nightly") -> tuple[int, str, dict, dict, dict]:
         runner = importlib.import_module("runner")
         summary = root / "reports" / "journey-summary.md"
         summary.parent.mkdir(parents=True)
@@ -233,6 +233,7 @@ class RunnerInstallFailureTests(unittest.TestCase):
             elif "status" in argv:
                 output = json.dumps({"ok": True, "data": {"installed": True, "running": True,
                                     "reachable": True, "host": {"state": "running"},
+                                    "bootstrapCompleted": True,
                                     "installation": {"receiptId": "receipt-main"}}})
             elif "project show" in " ".join(argv):
                 output = json.dumps({"ok": True, "data": {"project": {"id": "prj_main", "name": "fresh-project"}}})
@@ -258,11 +259,10 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 states = {"service-api-session": {"passed": True, "value": None},
                           "project-registered": {"passed": True,
                               "value": {"id": "prj_main", "root": str(project), "name": "fresh-project"}}}
-                if not selection or "S-002.1" in selection or "S-140.5" in selection:
-                    project_b = root / "project-b"
-                    project_b.mkdir()
-                    states["fixtures-installed"] = {"passed": True, "evidence": "fixture project registered",
-                        "value": {"projectBId": "prj_b", "projectBRoot": str(project_b)}}
+                project_b = root / "project-b"
+                project_b.mkdir(exist_ok=True)
+                states["fixtures-installed"] = {"passed": True, "evidence": "fixture project registered",
+                    "value": {"projectBId": "prj_b", "projectBRoot": str(project_b)}}
                 payload = {"status": "PASS", "steps": service_steps, "states": states}
                 output_path.write_text(json.dumps(payload), encoding="utf-8")
                 output = "service runner passed"
@@ -282,16 +282,19 @@ class RunnerInstallFailureTests(unittest.TestCase):
 
         def fake_http(_opener, request, **_kwargs):
             url = request.full_url
+            if url.endswith("/health/auth"):
+                return 200, json.dumps({"data": {"ok": True, "activeAdmins": 1}}).encode(), None
             if url.endswith("/ready"):
                 return 200, b"ok", None
             return 200, json.dumps({"channels": {"stable": "2.120.2", "canary": "2.120.3"}}).encode(), None
 
         base_env = {
             **runner.BASE_ENV,
-            "KB_JOURNEY_SERVICE_PROFILE": "nightly",
+            "KB_JOURNEY_SERVICE_PROFILE": service_profile,
             "KB_JOURNEY_SUMMARY": str(summary),
             "KB_JOURNEY_SELECTED_STEPS": selection,
             "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selected_owners or {}),
+            "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(list(selected_owners or {})),
             "KB_JOURNEY_SELECTED_CAPABILITIES": (
                 "workflow" if "S-002.1" in selection else
                 "mcp" if "S-140.5" in selection else "platform.install,gateway,projects"),
@@ -337,6 +340,10 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 ("service_runner.restore_secured_cli_login", {"return_value": None}),
                 ("runner.login_and_configure_secured_admin", {"return_value": None}),
                 ("runner.run_local_auth_steps", {"return_value": Journey(mode, "local-auth")}),
+                ("runner.run_secured_auth_steps", {"return_value": Journey(mode, "secured-auth")}),
+                ("runner.create_studio_member", {"return_value": ("member@example.test", "JourneyMember123!")}),
+                ("runner.create_studio_access_tokens", {"return_value": (
+                    "admin-token-value-123", "member-token-value-456")}),
                 ("runner.verify_broken_install_doctor", {}),
                 ("runner.verify_listener_ownership", {}),
                 ("runner.run_installer_case_steps", {"side_effect": lambda **_kwargs:
@@ -463,6 +470,136 @@ class RunnerInstallFailureTests(unittest.TestCase):
         self.assertEqual(observed["events"], [
             "host:stop", "host:start", "host:stop", *isolated_groups, "host:start",
         ])
+
+    def test_main_selected_update_runs_only_the_declared_rollback_scan_chain(self):
+        runner = importlib.import_module("runner")
+        selected_name = "verify disclosed bootstrap credential absent after update and rollback"
+        prerequisite_names = [
+            "save installed receipt, config, and host status",
+            "stage update and leave the running host on its current version",
+            "explicitly restart services onto the installed version",
+            "roll back to version N with explicit non-TTY confirmation",
+            "verify restored receipt, config, host, and project command",
+        ]
+        owning = {selected_name: ["S-100.1"], **{name: ["S-100.1"] for name in prerequisite_names}}
+        executions = []
+        results = []
+        prerequisite_sets = []
+
+        def selected_update(**kwargs):
+            executions.append(kwargs)
+            journey = Journey("secured", "selected-update", parent=kwargs["parent_journey"])
+            prerequisite_sets.append(sorted(journey.prerequisite_steps))
+            for name in prerequisite_names:
+                requires = ()
+                if name == prerequisite_names[1]:
+                    requires = (f"step:{prerequisite_names[0]}",)
+                elif name == prerequisite_names[2]:
+                    requires = (f"step:{prerequisite_names[1]}",)
+                elif name == prerequisite_names[3]:
+                    requires = (f"step:{prerequisite_names[2]}",)
+                elif name == prerequisite_names[4]:
+                    requires = (f"step:{prerequisite_names[3]}",)
+                if name == prerequisite_names[0]:
+                    requires = ("state:project-registered",)
+                journey.step(name, "platform.update", lambda: None,
+                             cases=["S-023.1"], requires=requires)
+            journey.step(selected_name, "platform.rollback", lambda: None,
+                         cases=["S-100.1"], requires=(f"step:{prerequisite_names[-1]}",))
+            journey.step("unselected update claim", "platform.update", lambda: "must not run",
+                         cases=["S-023.2"])
+            results.append(journey.result().__dict__)
+            return journey
+
+        with tempfile.TemporaryDirectory(prefix="journey-main-selected-update-") as temporary:
+            with patch("runner.project_b_fixture_from_state",
+                       return_value={"projectBId": "prj_b",
+                                     "projectBRoot": str(Path(temporary) / "project-b")}):
+                code, output, _service, outer, _observed = self._run_selected_main(
+                    Path(temporary), "secured", selection="S-100.1",
+                    selector="service-secured:explore", selected_owners=owning,
+                    update_runner=selected_update, update_variant_runner=lambda **_kwargs: Journey(
+                        "secured", "fake-variants"),
+                )
+        self.assertNotIn("platform update journey", output)
+        self.assertNotIn("unknown journey prerequisite", output)
+        self.assertEqual(len(executions), 1)
+        self.assertEqual(results[0]["status"], "PASS")
+        self.assertEqual(next(step["status"] for step in results[0]["steps"]
+                              if step["name"] == "unselected update claim"), "SKIPPED")
+        self.assertNotIn("unselected update claim", output)
+        self.assertEqual(outer["status"], "PASS")
+
+    def test_main_selected_update_blocks_rollback_scan_when_declared_prerequisite_fails(self):
+        selected_name = "verify disclosed bootstrap credential absent after update and rollback"
+        first_prerequisite = "roll back to version N with explicit non-TTY confirmation"
+        owning = {selected_name: ["S-100.1"], first_prerequisite: ["S-100.1"]}
+
+        def failed_update(**kwargs):
+            journey = Journey("secured", "selected-update-failure", parent=kwargs["parent_journey"])
+            journey.step(first_prerequisite, "platform.rollback", lambda: "rollback command failed",
+                         cases=["S-024.2"])
+            journey.step(selected_name, "platform.rollback", lambda: None, cases=["S-100.1"],
+                         requires=(f"step:{first_prerequisite}",))
+            failed_results.append(journey.result().__dict__)
+            return journey
+
+        failed_results = []
+        with tempfile.TemporaryDirectory(prefix="journey-main-selected-update-failure-") as temporary:
+            code, output, _service, outer, _observed = self._run_selected_main(
+                Path(temporary), "secured", selection="S-100.1",
+                selector="service-secured:explore", selected_owners=owning,
+                update_runner=failed_update,
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("platform update journey", output)
+        self.assertIn(first_prerequisite, output)
+        scan = next(step for step in failed_results[0]["steps"] if step["name"] == selected_name)
+        self.assertEqual(scan["status"], "BLOCKED")
+        self.assertIn(f"step:{first_prerequisite} ended FAIL", scan["details"]["prerequisiteFailures"][0])
+
+    def test_main_full_secured_update_has_project_registration_state_without_conditional_step(self):
+        runner = importlib.import_module("runner")
+        captured = []
+
+        def full_update(**kwargs):
+            captured.append(kwargs)
+            return Journey("secured", "full-update", parent=kwargs["parent_journey"])
+
+        def full_variants(**_kwargs):
+            return Journey("secured", "full-update-variants")
+
+        with tempfile.TemporaryDirectory(prefix="journey-main-full-secured-update-") as temporary:
+            with patch("runner.project_b_fixture_from_state",
+                       return_value={"projectBId": "prj_b",
+                                     "projectBRoot": str(Path(temporary) / "project-b")}):
+                code, output, _service, _outer, _observed = self._run_selected_main(
+                    Path(temporary), "secured", selection="", selector="service-secured:explore",
+                    update_runner=full_update, update_variant_runner=full_variants,
+                )
+        self.assertNotIn("platform update journey", output)
+        self.assertNotIn("unknown journey prerequisite", output)
+        self.assertEqual(len(captured), 1)
+        state = runner.ACTIVE_OUTER_GRAPH.states.get("project-registered")
+        self.assertIsNotNone(state)
+        self.assertTrue(state["passed"])
+
+    def test_selected_step_is_blocked_by_failed_flow_graph_state_prerequisite(self):
+        with patch.dict("os.environ", {
+                "KB_JOURNEY_SELECTED_STEPS": "S-100.1",
+                "KB_JOURNEY_PREREQUISITE_STEPS": "[]",
+                "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
+                "KB_JOURNEY_SELECTED_OWNING_STEPS": "{}",
+        }, clear=False):
+            parent = Journey("secured", "state-dependent-parent")
+            graph = FlowGraph(parent, {}, states={"project-registered": {
+                "passed": False, "evidence": "project registration failed",
+            }})
+            journey = Journey("secured", "state-dependent-child", parent=parent)
+            result = journey.step("rollback scan", "platform.rollback", lambda: None,
+                                  cases=["S-100.1"], requires=("state:project-registered",))
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertIn("state:project-registered ended FAIL", result.message)
 
     def test_main_selected_installer_claim_runs_only_its_fixture_group_and_host_cycle(self):
         runner = importlib.import_module("runner")

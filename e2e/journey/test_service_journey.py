@@ -721,7 +721,7 @@ raise SystemExit(1)
         def selection_environment(*, cases):
             return {
                 "KB_JOURNEY_SELECTED_STEPS": cases[0],
-                "KB_JOURNEY_PREREQUISITE_STEPS": "candidate provenance,launcher version,start host",
+                "KB_JOURNEY_PREREQUISITE_STEPS": '["candidate provenance", "launcher version", "start host"]',
             }
 
         env = selection_environment(cases=["S-023.9"])
@@ -791,7 +791,7 @@ raise SystemExit(1)
 
         with patch.dict(os.environ, {
             "KB_JOURNEY_SELECTED_STEPS": "S-042.1",
-            "KB_JOURNEY_PREREQUISITE_STEPS": "",
+            "KB_JOURNEY_PREREQUISITE_STEPS": "[]",
         }, clear=False):
             journey = Journey("local", "selected-closure-state-missing-edge")
             producer = journey.step("closure state producer", "test", produce_state)
@@ -811,7 +811,7 @@ raise SystemExit(1)
         def selection_environment(*, cases):
             return {
                 "KB_JOURNEY_SELECTED_STEPS": cases[0],
-                "KB_JOURNEY_PREREQUISITE_STEPS": "project registration",
+                "KB_JOURNEY_PREREQUISITE_STEPS": '["project registration"]',
             }
 
         with patch.dict(os.environ, selection_environment(cases=["S-042.1"]), clear=False):
@@ -862,8 +862,8 @@ raise SystemExit(1)
     def test_failed_host_start_blocks_nested_update_in_full_run(self):
         with patch.dict(os.environ, {
             "KB_JOURNEY_SELECTED_STEPS": "",
-            "KB_JOURNEY_PREREQUISITE_STEPS": "",
-            "KB_JOURNEY_PREREQUISITE_FLOWS": "",
+            "KB_JOURNEY_PREREQUISITE_STEPS": "[]",
+            "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
         }, clear=False):
             parent = Journey("local", "full-update-parent")
             graph = FlowGraph(parent, {})
@@ -1000,7 +1000,7 @@ raise SystemExit(1)
     def test_failed_registered_setup_blocks_selected_service_claim(self):
         with patch.dict(os.environ, {
                 "KB_JOURNEY_SELECTED_STEPS": "PC-002.3",
-                "KB_JOURNEY_PREREQUISITE_STEPS": "registered project setup",
+                "KB_JOURNEY_PREREQUISITE_STEPS": '["registered project setup"]',
         }, clear=False):
             journey = Journey("local", "service-setup-prerequisite")
             journey.step("registered project setup", "journey.setup",
