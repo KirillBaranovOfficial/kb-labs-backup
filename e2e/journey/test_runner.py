@@ -11,6 +11,145 @@ from service_steps import Journey
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
+    def _run_node_guard_terminal_path(self, *, execute_selected: bool) -> tuple[int, str, str, bool]:
+        with tempfile.TemporaryDirectory(prefix="journey-final-outcome-") as temporary:
+            root = Path(temporary)
+            report = root / "summary" / "journey-summary.md"
+            with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as import_home:
+                with patch("tempfile.mkdtemp", return_value=import_home):
+                    runner = importlib.import_module("runner")
+
+            selection = "S-042.1,S-042.2"
+            completed = runner.subprocess.CompletedProcess(
+                ["install.sh", "--version"], 0,
+                stdout="KB_INSTALL_NODE_VERSION Node.js 24", stderr="",
+            )
+
+            def run_node_guard(*_args, **_kwargs):
+                if execute_selected:
+                    for claim_id in selection.split(","):
+                        runner.CASE_JOURNEY.step(
+                            f"claim {claim_id}", "test", lambda: None, cases=[claim_id])
+                return completed, 0.0
+
+            with patch.dict("os.environ", {
+                    "KB_JOURNEY_SELECTED_STEPS": selection,
+                    "KB_JOURNEY_SUMMARY": str(report),
+                    "HOME": str(root),
+                }, clear=False), \
+                 patch.object(runner, "HOME", root), \
+                 patch.object(runner, "BIN", root / "missing-bin"), \
+                 patch.object(runner, "PLATFORM", root / "platform"), \
+                 patch.object(runner, "VARIANT", "wrong-node"), \
+                 patch.object(runner, "BASE_ENV", {
+                     **runner.BASE_ENV,
+                     "KB_CREATE_DOWNLOAD_BASE_URL": "http://journey.invalid/candidate",
+                 }), \
+                 patch.object(runner, "FIRST_FAILURE", ""), \
+                 patch.object(runner, "run", side_effect=run_node_guard), \
+                 patch.object(runner, "write_scoreboards"), \
+                 patch.object(runner, "dump_failure_state") as dump_failure_state:
+                exit_code = runner.main()
+                summary = report.read_text(encoding="utf-8")
+                return exit_code, summary, runner.FIRST_FAILURE, dump_failure_state.called
+
+    def test_main_terminal_outcome_fails_exit_and_summary_for_missing_selection(self):
+        exit_code, summary, first_failure, dumped_state = self._run_node_guard_terminal_path(
+            execute_selected=False)
+
+        self.assertEqual(exit_code, 1)
+        self.assertTrue(dumped_state)
+        self.assertIn("| FAIL |", summary)
+        self.assertIn(
+            "selected claim steps did not execute: S-042.1, S-042.2; "
+            "the selected runner did not call their registered step functions",
+            summary,
+        )
+        self.assertEqual(
+            first_failure,
+            "selected claim steps did not execute: S-042.1, S-042.2; "
+            "the selected runner did not call their registered step functions",
+        )
+
+    def test_main_terminal_outcome_passes_when_all_selected_claims_executed(self):
+        exit_code, summary, _first_failure, dumped_state = self._run_node_guard_terminal_path(
+            execute_selected=True)
+
+        self.assertEqual(exit_code, 0)
+        self.assertFalse(dumped_state)
+        self.assertIn("| PASS |", summary)
+
+    def test_capture_case_failure_can_read_before_claims_split_across_journeys_run(self):
+        with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as temporary:
+            with patch("tempfile.mkdtemp", return_value=temporary):
+                runner = importlib.import_module("runner")
+
+        with patch.dict("os.environ", {"KB_JOURNEY_SELECTED_STEPS": "S-042.1,S-042.2"}, clear=False):
+            installer_journey = Journey("local", "installer-local-service-explore")
+            service_journey = Journey("local", "service-local")
+            installer_journey.step("candidate provenance", "journey.setup", lambda: None, role="lifecycle")
+            with patch.object(runner, "CASE_JOURNEY", installer_journey), patch.object(runner, "FIRST_FAILURE", ""):
+                runner.capture_case_failure()
+                self.assertEqual(runner.FIRST_FAILURE, "")
+            installer_journey.step("installer claim", "install", lambda: None, cases=["S-042.1"])
+            service_journey.step("service claim", "gateway", lambda: None, cases=["S-042.2"])
+            self.assertEqual(installer_journey.result().status, "PASS")
+            self.assertEqual(service_journey.result().status, "PASS")
+
+    def test_run_level_selection_completion_merges_journeys(self):
+        with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as temporary:
+            with patch("tempfile.mkdtemp", return_value=temporary):
+                runner = importlib.import_module("runner")
+
+        selected = "S-042.1,S-042.2,S-042.3"
+        Journey.reset_run_registry()
+        try:
+            with patch.dict("os.environ", {"KB_JOURNEY_SELECTED_STEPS": selected}, clear=False):
+                first = Journey("local", "first-journey")
+                first.step("first claim", "test", lambda: None, cases=["S-042.1"])
+                second = Journey("local", "second-journey")
+                second.step("second claim", "test", lambda: None, cases=["S-042.2"])
+                second.step("third claim", "test", lambda: None, cases=["S-042.3"])
+            results = [journey.result().__dict__ for journey in Journey.run_instances()]
+            with patch.object(runner, "FIRST_FAILURE", ""):
+                self.assertEqual(runner.check_selected_claim_completion(results, selected), [])
+                self.assertEqual(runner.FIRST_FAILURE, "")
+        finally:
+            Journey.reset_run_registry()
+
+    def test_run_level_selection_completion_fails_only_missing_claims(self):
+        with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as temporary:
+            with patch("tempfile.mkdtemp", return_value=temporary):
+                runner = importlib.import_module("runner")
+
+        with patch.object(runner, "FIRST_FAILURE", ""):
+            runner.check_selected_claim_completion(
+                [{"steps": [{"status": "PASS", "cases": ["S-042.1"]}]}],
+                "S-042.1,S-042.2,S-042.3",
+            )
+            self.assertEqual(
+                runner.FIRST_FAILURE,
+                "selected claim steps did not execute: S-042.2, S-042.3; "
+                "the selected runner did not call their registered step functions",
+            )
+
+    def test_real_failure_remains_first_when_selection_claims_never_execute(self):
+        with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as temporary:
+            with patch("tempfile.mkdtemp", return_value=temporary):
+                runner = importlib.import_module("runner")
+
+        with patch.dict("os.environ", {"KB_JOURNEY_SELECTED_STEPS": "S-042.1,S-042.2"}, clear=False):
+            journey = Journey("local", "aborted-run")
+            journey.step("install", "platform.install", lambda: "install command failed", cases=["S-042.1"])
+            result = journey.result()
+        with patch.object(runner, "FIRST_FAILURE", "install command failed: exit 1"):
+            missing = runner.check_selected_claim_completion([result.__dict__], "S-042.1,S-042.2")
+            self.assertEqual(missing, ["S-042.2"])
+            self.assertEqual(runner.FIRST_FAILURE, "install command failed: exit 1")
+        self.assertEqual(result.case_run["claims"], [
+            {"claimId": "S-042.1", "kind": "journey", "status": "FAIL"},
+        ])
+
     def test_json_install_refusal_branch_records_j55_envelope_as_case_fail(self):
         with tempfile.TemporaryDirectory(prefix="journey-runner-import-") as temporary:
             with patch("tempfile.mkdtemp", return_value=temporary):
