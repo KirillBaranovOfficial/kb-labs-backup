@@ -84,6 +84,20 @@ func TestExistingPlatformRootHasOnlyNotInstalledOrValidatedStates(t *testing.T) 
 	}
 }
 
+func TestForPlatformPathResolvesInstallContainerFromEveryActiveRootSpelling(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "install")
+	layout, active := initialLayout(t, root, "1.0.0")
+	for _, spelling := range []string{root, layout.PlatformRoot(), active} {
+		resolved, err := ForPlatformPath(spelling)
+		if err != nil || resolved.InstallRoot() != layout.InstallRoot() {
+			t.Fatalf("ForPlatformPath(%q) = %q, %v; want install root %q", spelling, resolved.InstallRoot(), err, layout.InstallRoot())
+		}
+		if err := resolved.Validate(); err != nil {
+			t.Fatalf("validated path %q failed layout validation: %v", spelling, err)
+		}
+	}
+}
+
 // case: S-024.7
 func TestRollbackSnapshotSurvivesVersionRootPruning(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "platform")
@@ -262,6 +276,66 @@ func TestActivationRefusalLeavesActiveRootUntouched(t *testing.T) {
 	}
 	if got, err := os.ReadFile(marker); err != nil || string(got) != "original" {
 		t.Fatalf("active marker = %q, %v", got, err)
+	}
+}
+
+// case: S-223.6
+func TestActivationRejectsEveryDeclaredSharedRuntimeEntryInStagedTree(t *testing.T) {
+	for _, shared := range contracts.SharedRuntimePaths() {
+		t.Run(shared.PlatformPath, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "platform")
+			layout, active := initialLayout(t, root, "1.0.0")
+			stage := stageVersion(t, layout, "2.0.0")
+			conflict := filepath.Join(stage, filepath.FromSlash(shared.PlatformPath))
+			if shared.Kind == "directory" {
+				if err := os.MkdirAll(conflict, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.MkdirAll(filepath.Dir(conflict), 0o700); err != nil {
+				t.Fatal(err)
+			} else if err := os.WriteFile(conflict, []byte("unexpected shared state"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			currentBefore, err := os.Readlink(layout.PlatformRoot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			metadataBefore, err := os.ReadFile(layout.metadataPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			receiptBefore, err := os.ReadFile(receipt.Path(active))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := layout.Activate(stage, "2.0.0", "plan-2", ""); err == nil || !strings.Contains(err.Error(), shared.PlatformPath) {
+				t.Fatalf("activation error = %v, want conflict at %s", err, shared.PlatformPath)
+			}
+			currentAfter, err := os.Readlink(layout.PlatformRoot())
+			if err != nil || currentAfter != currentBefore {
+				t.Fatalf("current changed from %q to %q: %v", currentBefore, currentAfter, err)
+			}
+			metadataAfter, err := os.ReadFile(layout.metadataPath())
+			if err != nil || !bytes.Equal(metadataAfter, metadataBefore) {
+				t.Fatalf("layout metadata changed before activation refusal: %v", err)
+			}
+			receiptAfter, err := os.ReadFile(receipt.Path(active))
+			if err != nil || !bytes.Equal(receiptAfter, receiptBefore) {
+				t.Fatalf("active receipt changed before activation refusal: %v", err)
+			}
+			if resolved, err := layout.Active(); err != nil || resolved != active {
+				t.Fatalf("active root = %q, %v; want %q", resolved, err, active)
+			}
+			if _, err := os.Stat(stage); err != nil {
+				t.Fatalf("rejected stage was unexpectedly removed: %v", err)
+			}
+			if err := os.RemoveAll(conflict); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := layout.Activate(stage, "2.0.0", "plan-2", ""); err != nil {
+				t.Fatalf("activation after correcting staged tree: %v", err)
+			}
+		})
 	}
 }
 
