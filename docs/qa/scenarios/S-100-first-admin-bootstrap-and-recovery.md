@@ -33,12 +33,12 @@ A secured installation has a usable first administrator, and an administrator ca
 
 The bootstrap password is kept only until successful handoff. For a generated
 password, the first successful result discloses it; for a supplied password,
-the result reports its origin without disclosing the value. The completion,
-disclosure, and origin markers and both stored password names live in the
-single shared secret file, so the result records disclosure and erases the
-password atomically. `gateway.bootstrap.password` is also bound to
-`GATEWAY_BOOTSTRAP_ADMIN_PASSWORD`; both entries are erased together. Version
-updates and rollback share this file and cannot restore an older password copy.
+the result reports its origin without disclosing the value. Requirement values
+and typed bootstrap facts live in one private state record. A single atomic
+replacement updates the password and its origin together, or records handoff
+and erases both password names together. Operator requirement IDs address only
+the values map, never the typed bootstrap facts. Version updates and rollback
+share this record and cannot restore an older password copy.
 
 For a supplied password, `firstAdmin.state` is `supplied` and the email remains
 available, but the result has no password field. The supplied value and its
@@ -54,10 +54,24 @@ report the supplied state without reading or printing a password.
 
 The only interrupted handoff states are: (1) completion is recorded before
 disclosure, so the stored password remains the only copy and a retry shows it;
-(2) the disclosure result was written but the atomic marker-and-erasure write
-did not commit, so retry may show it again; or (3) that atomic write committed,
-so the marker exists and both password entries are absent. There is no persisted
-state with a disclosure marker and an unerased password from the current write:
-marker and erasure are one atomic secret-file replacement. If a marker and
-password entries are found together, opening the shared secret store runs the
-same atomic marker-and-erasure operation before returning any values.
+(2) the disclosure result was written but the atomic state replacement did not
+commit, so retry may show it again; or (3) that replacement committed, so the
+disclosure marker exists and both password entries are absent. A value and its
+origin can never be committed separately. Existing flat or sidecar stores from
+earlier builds are preserved and diagnosed as unsupported; this build does not
+read or migrate them.
+
+Bootstrap password replacement follows the readiness boundary in S-222.8:
+
+| Current origin | Requested origin | Bootstrap completed | Outcome |
+|---|---|---:|---|
+| Generated | Supplied | No | Accept one atomic replacement; the current value is supplied and can never be disclosed. A successful result reports `firstAdmin.state="supplied"` and erases both password names. |
+| Supplied | Generated | No | Accept one atomic replacement; the new generated value may be disclosed once because it is the value the installer generated. |
+| Generated | Generated | No | Accept one atomic rotation; only the replacement value may be disclosed once. |
+| Supplied | Supplied | No | Accept one atomic replacement; the current value remains non-disclosable. |
+| Any origin | Any different value or origin | Yes | Refuse with `KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED`; preserve the current value and facts. Use the documented stopped-host recovery flow to change the active credential. |
+
+If an atomic replacement fails before rename, a fresh read observes the entire
+old record; if rename commits but directory sync reports an error, a fresh read
+observes the entire new record. Neither outcome can pair a value with another
+value's origin.
