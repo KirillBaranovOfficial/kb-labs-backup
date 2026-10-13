@@ -117,6 +117,16 @@ def verify_installation_spellings(*, launcher: str, index: Path, install_root: P
             else:
                 raise ValueError(f"unsupported installation spelling operation: {operation}")
 
+            if operation in ("plan", "update"):
+                status_args = [launcher, "status", "--json", "--platform-root", str(spelling)]
+                status = _data(run_command(status_args), f"{channel} status after {operation} through {spelling}")
+                expected_owner = str(Path(shim_owner_root).resolve())
+                expected_linked = expected_owner == str(install_root.resolve())
+                if status.get("shim") != {"linked": expected_linked, "owner": expected_owner}:
+                    raise RuntimeError(
+                        f"status after {operation} through {spelling} did not report the scenario's kb owner: "
+                        f"{status.get('shim')!r}")
+
         if registry_path.read_bytes() != registry_before:
             raise RuntimeError(f"{channel} {spelling} changed or duplicated the Gateway registry row")
         after_shim = shim_path.readlink() if shim_path.is_symlink() else None

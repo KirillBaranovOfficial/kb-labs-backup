@@ -9,6 +9,7 @@ import os
 import pty
 from pathlib import Path
 import re
+import shlex
 import select
 import signal
 import subprocess
@@ -194,10 +195,17 @@ def read_kb_create_cli_result(command: str, stdout: str, returncode: int) -> dic
 def describe_cli_failure(command: str, stdout: str, stderr: str, returncode: int) -> str:
     """Describe a failed CLI invocation using its typed error when available."""
     detail = " ".join(f"{stdout} {stderr}".split())
-    try:
-        value = json.loads(stdout)
-    except json.JSONDecodeError:
-        value = None
+    words = shlex.split(command)
+    if len(words) > 1 and words[0] == "kb-create":
+        try:
+            value = read_kb_create_cli_result(words[1], stdout, returncode)
+        except ValueError:
+            value = None
+    else:
+        try:
+            value = read_ux_cli_result(stdout, returncode)
+        except ValueError:
+            value = None
     if isinstance(value, dict) and isinstance(value.get("error"), dict):
         error = value["error"]
         detail = "; ".join(part for part in (

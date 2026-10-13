@@ -29,12 +29,24 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	}
 	platformRoot := layout.PlatformRoot()
 	active, receiptErr := receipt.Read(platformRoot)
+	var shimState map[string]any
+	if inv.Executable != "" {
+		classification, classifyErr := shim.Classify(inv.Executable, platformRoot)
+		if classifyErr != nil {
+			return nil, asDiag(classifyErr)
+		}
+		shimState = map[string]any{"linked": classification.Kind == shim.ClassificationOwned, "owner": classification.Owner}
+	}
 	if receiptErr == nil && active.Plan.ServiceGraph.Profile == "client" {
 		completed, err := (secrets.Store{PlatformRoot: platformRoot}).Exists(secrets.BootstrapCompleted)
 		if err != nil {
 			return nil, asDiag(err)
 		}
-		return map[string]any{"ok": true, "operation": "status", "installed": true, "running": false, "reachable": false, "bootstrapCompleted": completed, "profile": "client", "services": []contracts.Service{}}, nil
+		payload := map[string]any{"ok": true, "operation": "status", "installed": true, "running": false, "reachable": false, "bootstrapCompleted": completed, "profile": "client", "services": []contracts.Service{}}
+		if shimState != nil {
+			payload["shim"] = shimState
+		}
+		return payload, nil
 	}
 	runner, err := host.NewRecordedRunner(root)
 	if err != nil {
@@ -92,6 +104,7 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	payload["next"] = next
 	if inv.Executable != "" {
 		payload["kbShimCorrect"] = shim.Correct(inv.Executable, platformRoot)
+		payload["shim"] = shimState
 	}
 	if installed {
 		payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion, "platformChannel": active.Plan.PlatformChannel}

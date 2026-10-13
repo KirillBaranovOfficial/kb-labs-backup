@@ -966,13 +966,13 @@ def main(*, update_variant_runner=None):
     identity, _ = run([launcher, "version", "--json"], env=env, timeout=30)
     if identity.returncode == 0:
         try:
-            envelope = json.loads(identity.stdout)
-            data = envelope.get("data", {})
+            envelope = read_kb_create_cli_result("version", identity.stdout, identity.returncode)
+            data = decode_ux_success_result(envelope)
             if envelope.get("ok") is True and isinstance(data, dict):
                 candidate = {key: value for key, value in data.items() if isinstance(value, str)}
             else:
                 candidate["identityError"] = "version --json returned no success data"
-        except json.JSONDecodeError as error:
+        except ValueError as error:
             candidate["identityError"] = f"version --json returned invalid JSON: {error}"
     else:
         candidate["identityError"] = (

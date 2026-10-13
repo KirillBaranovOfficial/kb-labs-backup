@@ -19,7 +19,8 @@ from marketplace_steps import _platform_snapshot
 from platform_update_steps import _changed_paths
 from invocations import (decode_ux_error_result, decode_ux_success_result,
                          export_project_identity_to_child_environment, open_http,
-                         read_ux_cli_result, read_ux_http_result, run_command, run_with_runner)
+                         read_kb_create_cli_result, read_ux_cli_result,
+                         read_ux_http_result, run_command, run_with_runner)
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -34,8 +35,11 @@ def _run(runner: CommandRunner, command: list[str], cwd: Path, env: dict[str, st
 
 def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
     try:
-        value = read_ux_cli_result(result.stdout, result.returncode)
-    except json.JSONDecodeError as error:
+        if command[0] == "kb-create":
+            value = read_kb_create_cli_result(command[1], result.stdout, result.returncode)
+        else:
+            value = read_ux_cli_result(result.stdout, result.returncode)
+    except ValueError as error:
         raise RuntimeError(f"`{' '.join(command)}` did not return JSON") from error
     if not isinstance(value, dict):
         raise RuntimeError(f"`{' '.join(command)}` returned a non-object JSON value")
