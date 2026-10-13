@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
-import { execFileSync } from 'node:child_process'
 import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
+import { runKbCommand } from '../../../kb-command'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 
@@ -402,7 +402,7 @@ test('Studio schedules @S-055.2 toggles a project cron', async ({ page }) => {
 test('Studio schedules @S-055.3 reflects a CLI disable', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the fresh-install journey hook')
   await openCrons(page)
-  execFileSync('kb', ['workflow', 'crons', 'disable', process.env.KB_STUDIO_CRON_ID!], {
+  runKbCommand(['workflow', 'crons', 'disable', process.env.KB_STUDIO_CRON_ID!], {
     cwd: process.env.KB_STUDIO_CRON_PROJECT_ROOT,
     env: process.env,
     stdio: 'pipe',

@@ -492,7 +492,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:3] == ["marketplace", "update", "@kb-labs/not-published"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"scope": "project",
                         "warnings": ["Plugin @kb-labs/not-published was not found in the registry."]}}), "")
-                elif args[:2] == ["commit", "--help"]:
+                elif args[:3] == ["commit", "open", "--help"]:
                     if lock(cwd_path)["plugins"].get("@kb-labs/commit", {}).get("enabled") is False:
                         return subprocess.CompletedProcess(command, 1, "", "Command not found: commit")
                     stdout = "Commands: commit open"

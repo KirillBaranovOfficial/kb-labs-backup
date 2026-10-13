@@ -64,6 +64,54 @@ def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
+    def test_main_rejects_missing_or_malformed_ownership_before_running_steps(self):
+        from journey_selection import JourneySelectionError
+        runner = importlib.import_module("runner")
+        valid = {
+            "KB_JOURNEY_CASES": "S-100.1",
+            "KB_JOURNEY_SELECTED_STEPS": "S-100.1",
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "auth.accounts",
+            "KB_JOURNEY_PREREQUISITE_STEPS": "[]",
+            "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
+            "KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore",
+        }
+        invalid_owners = (
+            (None, r"KB_JOURNEY_SELECTED_OWNING_STEPS is missing"),
+            ("[]", r"KB_JOURNEY_SELECTED_OWNING_STEPS must be a JSON object"),
+            ('{"rollback scan":"S-100.1"}', r"values must be non-empty arrays of claim IDs"),
+        )
+        for owner_value, message in invalid_owners:
+            with self.subTest(owner_value=owner_value), patch.dict(os.environ, valid, clear=True):
+                if owner_value is not None:
+                    os.environ["KB_JOURNEY_SELECTED_OWNING_STEPS"] = owner_value
+                Journey.reset_run_registry()
+                with patch.object(runner, "run", side_effect=AssertionError("step ran before validation")):
+                    with self.assertRaisesRegex(JourneySelectionError, message):
+                        runner.main()
+                self.assertEqual(Journey.run_instances(), ())
+
+    def test_container_entry_records_selection_boundary_failure_before_dispatch(self):
+        import entrypoint
+        with tempfile.TemporaryDirectory(prefix="journey-missing-selection-owner-") as temporary:
+            summary = Path(temporary) / "journey-summary.md"
+            with patch.dict(os.environ, {
+                    "HOME": temporary,
+                    "KB_JOURNEY_CASES": "S-100.1",
+                    "KB_JOURNEY_SELECTED_STEPS": "S-100.1",
+                    "KB_JOURNEY_SELECTED_CAPABILITIES": "auth.accounts",
+                    "KB_JOURNEY_PREREQUISITE_STEPS": "[]",
+                    "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
+                    "KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore",
+                    "KB_JOURNEY_VARIANT": "secured",
+                    "KB_JOURNEY_SUMMARY": str(summary),
+            }, clear=True), patch("entrypoint.run_runner") as dispatch:
+                code = entrypoint.main()
+            self.assertEqual(code, 1)
+            dispatch.assert_not_called()
+            report = json.loads((Path(temporary) / "service-secured.json").read_text())
+            self.assertEqual(report["status"], "FAIL")
+            self.assertIn("KB_JOURNEY_SELECTED_OWNING_STEPS", report["first_failure"]["message"])
+
     def test_ordered_prompt_responder_consumes_new_pty_output_once(self):
         runner = importlib.import_module("runner")
         responder = runner.OrderedPromptResponder([
@@ -71,12 +119,12 @@ class RunnerInstallFailureTests(unittest.TestCase):
             (r"Platform channel", "stable"),
         ])
         transcript = "Project directory:"
-        self.assertEqual(responder(transcript), "/tmp/project\n")
+        self.assertIsNone(responder(transcript))
+        self.assertEqual(responder.on_idle(transcript, True), "/tmp/project\n")
         self.assertIsNone(responder(transcript))
         transcript += "\rPlatform channel [stable]:"
-        self.assertEqual(responder(transcript), "stable\n")
-        transcript += "\rPlatform channel [stable]:"
         self.assertIsNone(responder(transcript))
+        self.assertEqual(responder.on_idle(transcript, True), "stable\n")
         responder.finish()
 
     def test_ordered_prompt_responder_rejects_unexpected_prompt(self):
@@ -85,8 +133,12 @@ class RunnerInstallFailureTests(unittest.TestCase):
             (r"Project directory", "/tmp/project"),
             (r"Platform channel", "stable"),
         ])
-        with self.assertRaisesRegex(RuntimeError, "unexpected wizard prompt"):
-            responder("Unexpected choice [yes/no]:")
+        output = "Choose access mode:"
+        responder(output)
+        with self.assertRaisesRegex(
+                RuntimeError,
+                r"output tail 'Choose access mode:'; expected prompt 'Project directory'"):
+            responder.on_idle(output, True)
 
     def test_ordered_prompt_responder_rejects_missing_expected_prompt(self):
         runner = importlib.import_module("runner")
@@ -94,9 +146,30 @@ class RunnerInstallFailureTests(unittest.TestCase):
             (r"Project directory", "/tmp/project"),
             (r"Platform channel", "stable"),
         ])
+        progress = runner.OrderedPromptResponder([(r"Project directory", "/tmp/project")])
+        progress("Downloading? 40%")
+        with self.assertRaisesRegex(RuntimeError, r"output tail 'Downloading\? 40%'; expected prompt 'Project directory'"):
+            progress.on_idle("Downloading? 40%", True)
         responder("Project directory:")
-        with self.assertRaisesRegex(RuntimeError, "ended before expected prompt: Platform channel"):
+        responder.on_idle("Project directory:", True)
+        with self.assertRaisesRegex(
+                RuntimeError,
+                r"wizard ended with output tail ''; expected prompt 'Platform channel'"):
             responder.finish()
+
+    def test_ordered_prompt_responder_handles_split_prompt_and_cr_redraw_without_guessing(self):
+        runner = importlib.import_module("runner")
+        responder = runner.OrderedPromptResponder([
+            (r"Project directory", "/tmp/project"),
+            (r"Platform channel", "stable"),
+        ])
+        responder("Progress 50%?\rProject dire")
+        responder("Progress 50%?\rProject directory:")
+        self.assertEqual(responder.on_idle("Progress 50%?\rProject directory:", True), "/tmp/project\n")
+        repeated = "Progress 50%?\rProject directory:\rProject directory:"
+        responder(repeated)
+        with self.assertRaisesRegex(RuntimeError, r"output tail 'Project directory:'; expected prompt 'Platform channel'"):
+            responder.on_idle(repeated, True)
 
     def test_pty_prompt_responder_handles_redraws_and_stops_on_unexpected_prompt(self):
         runner = importlib.import_module("runner")
@@ -106,29 +179,28 @@ class RunnerInstallFailureTests(unittest.TestCase):
         ])
         child = (
             "import os; "
-            "os.write(1, b'Project directory:'); os.read(0, 4096); "
-            "os.write(1, b'\\rProject directory:'); "
-            "os.write(1, b'\\rPlatform channel [stable]:'); os.read(0, 4096); "
-            "os.write(1, b'\\rPlatform channel [stable]:'); "
-            "os.write(1, b'\\rUnexpected prompt [yes/no]:'); os.read(0, 4096)"
+            "os.write(1, b'Progress? 50%\\rProject dire'); os.write(1, b'ctory:'); "
+            "os.read(0, 4096); "
+            "os.write(1, b'\\rChoose access mode:'); os.read(0, 4096)"
         )
-        with self.assertRaisesRegex(RuntimeError, "unexpected wizard prompt"):
+        with self.assertRaisesRegex(RuntimeError, r"output tail 'Choose access mode:'; expected prompt 'Platform channel'"):
             runner.run_pty_command([sys.executable, "-c", child], timeout=5,
-                                   on_output=responder, start_new_session=True)
+                                   on_output=responder, on_idle=responder.on_idle,
+                                   idle_interval=0.02, start_new_session=True)
 
     def test_secured_commit_scenario_installs_commit_through_marketplace_and_checks_its_group(self):
         runner = importlib.import_module("runner")
         setup = runner.runner_scenario("commit", secured=True)
         self.assertEqual(setup["installer"], "custom")
         self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit-entry",))
-        self.assertEqual(setup["command_groups"], ("commit",))
+        self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
 
     def test_local_commit_scenario_uses_commit_installer_scenario(self):
         runner = importlib.import_module("runner")
         setup = runner.runner_scenario("commit", secured=False)
         self.assertEqual(setup["installer"], "commit")
         self.assertEqual(setup["marketplace_packages"], ())
-        self.assertEqual(setup["command_groups"], ("commit",))
+        self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
 
     def test_selected_step_completion_names_unrun_step_and_claim(self):
         runner = importlib.import_module("runner")
@@ -203,6 +275,17 @@ class RunnerInstallFailureTests(unittest.TestCase):
                                                                "version": "1.0.0"}]}}),
                            encoding="utf-8")
         selection = selection if selection is not None else "PC-001.2,PC-002.3,PC-002.8"
+        if selected_owners is None:
+            selected_owners = {
+                "PC-001.2,PC-002.3,PC-002.8": {
+                    "candidate provenance": ["PC-001.2", "PC-002.3", "PC-002.8"],
+                    "clean install leaves a running host and reports its resolved plan": ["PC-001.2"],
+                    "platform readiness (gateway + project workflow)": ["PC-002.3"],
+                    "registered project runtime identity": ["PC-002.8"],
+                },
+                "S-140.5": {"project MCP cross-project isolation": ["S-140.5"]},
+                "PC-001.4": {"selected isolated installer claim": ["PC-001.4"]},
+            }.get(selection, {})
         mode_variant = "default" if mode == "local" else "human-secured"
         front = "agent" if mode == "local" else "human"
         fixture_calls = []
@@ -292,9 +375,11 @@ class RunnerInstallFailureTests(unittest.TestCase):
             **runner.BASE_ENV,
             "KB_JOURNEY_SERVICE_PROFILE": service_profile,
             "KB_JOURNEY_SUMMARY": str(summary),
+            "KB_JOURNEY_CASES": selection,
             "KB_JOURNEY_SELECTED_STEPS": selection,
             "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selected_owners or {}),
             "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(list(selected_owners or {})),
+            "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
             "KB_JOURNEY_SELECTED_CAPABILITIES": (
                 "workflow" if "S-002.1" in selection else
                 "mcp" if "S-140.5" in selection else "platform.install,gateway,projects"),
@@ -357,7 +442,8 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 ("runner.run_missing_project_request_steps", {"side_effect": lambda **_kwargs:
                     fixture_result("run_missing_project_request_steps")}),
                 ("runner.run_cli_auth_status", {"return_value": None}),
-                ("runner.run_platform_update_steps", {"side_effect": update_runner} if update_runner else {}),
+                ("runner.run_platform_update_steps", {
+                    "side_effect": update_runner or (lambda **_kwargs: Journey(mode, "platform-update"))}),
                 ("runner.run_platform_channel_steps", {"return_value": Journey(mode, "platform-channel")}),
                 ("runner.verify_project_mcp", {}),
                 ("runner.prepare_workflow_fixtures", {}),
@@ -389,7 +475,7 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 service_claims = {claim for step in service["steps"] for claim in step.get("cases", [])}
                 self.assertTrue({"PC-002.3", "PC-002.8"}.issubset(service_claims))
                 self.assertIn("SKIPPED workflow execution journey: not selected", summary)
-                self.assertEqual(summary.count("SKIPPED platform update journey: not selected"), 1)
+                self.assertNotIn("SKIPPED platform update journey: not selected", summary)
                 self.assertIn("SKIPPED installed platform bootstrap: not selected; the install operation ran earlier; this flow is only a selection marker", summary)
                 self.assertEqual(observed["fixture_calls"], [])
                 self.assertEqual(observed["host_cycle"], ["stop", "start"])
@@ -723,6 +809,8 @@ class RunnerInstallFailureTests(unittest.TestCase):
                     runner = importlib.import_module("runner")
 
             selection = "S-042.1,S-042.2"
+            selected_claims = selection.split(",")
+            selected_owners = {f"claim {claim_id}": [claim_id] for claim_id in selected_claims}
             completed = runner.subprocess.CompletedProcess(
                 ["install.sh", "--version"], 0,
                 stdout="KB_INSTALL_NODE_VERSION Node.js 24", stderr="",
@@ -736,7 +824,13 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 return completed, 0.0
 
             with patch.dict("os.environ", {
+                    "KB_JOURNEY_CASES": selection,
                     "KB_JOURNEY_SELECTED_STEPS": selection,
+                    "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selected_owners),
+                    "KB_JOURNEY_SELECTED_CAPABILITIES": "platform.install",
+                    "KB_JOURNEY_PREREQUISITE_STEPS": "[]",
+                    "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
+                    "KB_JOURNEY_RUNNER_SELECTOR": "agent:commit",
                     "KB_JOURNEY_SUMMARY": str(report),
                     "HOME": str(root),
                 }, clear=False), \
@@ -763,15 +857,10 @@ class RunnerInstallFailureTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertTrue(dumped_state)
         self.assertIn("| FAIL |", summary)
-        self.assertIn(
-            "selected claim steps did not execute: S-042.1, S-042.2; "
-            "the selected runner did not call their registered step functions",
-            summary,
-        )
+        self.assertIn("selected step never ran: claim S-042.1 (claim S-042.1)", summary)
         self.assertEqual(
             first_failure,
-            "selected claim steps did not execute: S-042.1, S-042.2; "
-            "the selected runner did not call their registered step functions",
+            "selected step never ran: claim S-042.1 (claim S-042.1)",
         )
 
     def test_main_terminal_outcome_passes_when_all_selected_claims_executed(self):

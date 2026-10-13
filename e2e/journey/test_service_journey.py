@@ -1312,7 +1312,7 @@ raise SystemExit(1)
 
         self.assertIsNone(result)
         self.assertEqual(len(commands), 1)
-        self.assertIn("kb auth login", commands[0][0][2])
+        self.assertEqual(commands[0][0][3:6], ["kb", "auth", "login"])
         self.assertEqual(commands[0][1], project)
 
     def test_secured_admin_signs_in_before_authenticated_provider_config(self):
@@ -1337,7 +1337,7 @@ raise SystemExit(1)
 
         self.assertIsNone(result)
         self.assertEqual(len(commands), 3)
-        self.assertIn("kb auth login", commands[0][0][2])
+        self.assertEqual(commands[0][0][3:6], ["kb", "auth", "login"])
         self.assertIn("gateway.auth.providers", commands[1][0])
         self.assertEqual(commands[1][1], home)
         self.assertEqual(commands[2][0], ["kb-create", "restart", "--platform-root", str(root / "platform")])
@@ -1362,7 +1362,7 @@ raise SystemExit(1)
 
         self.assertEqual(result[0], "kb auth login")
         self.assertEqual(len(commands), 1)
-        self.assertIn("kb auth login", commands[0][2])
+        self.assertEqual(commands[0][3:6], ["kb", "auth", "login"])
 
     def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
         import json
