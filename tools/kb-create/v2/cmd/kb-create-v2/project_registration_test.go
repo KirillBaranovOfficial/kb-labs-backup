@@ -89,7 +89,7 @@ func (host *projectRegistrationTestHost) running() bool {
 	return host.server != nil
 }
 
-// case: S-187.12
+// case: S-187.12, S-222.12
 func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testing.T) {
 	project := t.TempDir()
 	selected := filepath.Join(t.TempDir(), "selected-project")
@@ -157,6 +157,12 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		}},
 		Verification: contracts.Verification{HostHealthURL: proxyServer.URL + "/health"},
 	}
+	active.Schema = contracts.ReceiptSchema
+	active.Plan.Schema = contracts.ResolvedPlanSchema
+	active.Plan.PlatformChannel = "stable"
+	active.Plan.ServiceGraph = contracts.ServiceGraph{PlatformVersion: "2.0.0"}
+	active.Plan.Artifacts = []contracts.Artifact{{ID: "platform", Kind: "platform", Package: "@kb/platform", Version: "2.0.0"}}
+	active.Plan.Host = testHostOnFreePort(t)
 	writeVersionedReceipt(t, root, active)
 	const password = "bootstrap-password-for-test"
 	if err := (secrets.Store{PlatformRoot: root}).Put("gateway.bootstrap.password", password); err != nil {
@@ -396,6 +402,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		t.Fatal(err)
 	}
 	unregistered.ProjectSelectedPath, unregistered.ProjectID, unregistered.ProjectCanonicalPath = "", "", ""
+	unregistered.Plan.Request.ProjectRoot = selected
 	if err := receipt.Write(activeRoot, unregistered); err != nil {
 		t.Fatal(err)
 	}
@@ -597,6 +604,120 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 			completed, completedErr := (secrets.Store{PlatformRoot: root}).Exists(secrets.BootstrapCompleted)
 			disclosed, disclosedErr := (secrets.Store{PlatformRoot: root}).Exists(secrets.BootstrapDisclosed)
 			t.Fatalf("repeat install restored disclosed bootstrap secret %q: present %v, err %v; completed=%v/%v disclosed=%v/%v", name, present, err, completed, completedErr, disclosed, disclosedErr)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".kb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(activeRoot, ".kb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(activeRoot, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, commandName := range []string{"install", "apply", "update", "rollback"} {
+		for _, recorded := range []bool{true, false} {
+			label := commandName + "/unregistered"
+			identity := unregistered
+			if recorded {
+				label = commandName + "/registered"
+				identity = identityBefore
+			}
+			t.Run(label, func(t *testing.T) {
+				if testHost.running() {
+					testHost.stop()
+				}
+				identity.Plan.ServiceGraph.Services = []contracts.Service{{ID: "gateway", Command: "gateway"}}
+				if err := receipt.Write(activeRoot, identity); err != nil {
+					t.Fatal(err)
+				}
+				var snapshotID string
+				if commandName == "rollback" {
+					snapshot, err := receipt.CreateSnapshot(activeRoot, activeLayout.SnapshotsDir(), clock.now)
+					if err != nil {
+						t.Fatal(err)
+					}
+					snapshotID = snapshot.ID
+				}
+				requestsMu.Lock()
+				requestCounts["login"], requestCounts["register"] = 0, 0
+				gatewayRequests = nil
+				requestsMu.Unlock()
+				args := []string{commandName, "--json", "--platform-root", root}
+				switch commandName {
+				case "install", "apply":
+					args = []string{commandName, "--json", "--index", indexPath, "--input", requestPath}
+				case "update":
+					args = append(args, "--index", indexPath, "--input", requestPath)
+				case "rollback":
+					args = append(args, "--snapshot", snapshotID, "--yes")
+				}
+				command := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
+					deps := productionCommandDependencies(cmd)
+					deps.NodeCheck = func() error { return nil }
+					deps.Executable = launcher
+					deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: testHost, Clock: clock}
+					return deps
+				})
+				var stdout, stderr bytes.Buffer
+				code := clikitcommand.Execute(command, args, &stdout, &stderr)
+				output := stdout.String() + stderr.String()
+				if code != 0 {
+					t.Fatalf("completed %s exit=%d output=%s", label, code, output)
+				}
+				if recorded && strings.Contains(output, `"projectRegistrationNotice"`) {
+					t.Fatalf("completed %s returned a project registration notice", label)
+				}
+				if !recorded {
+					notice := ""
+					if commandName == "install" || commandName == "apply" {
+						notice = applyResultFromStream(t, output).ProjectRegistrationNotice
+					} else {
+						var envelope struct {
+							Data struct {
+								ProjectRegistrationNotice string `json:"projectRegistrationNotice"`
+							} `json:"data"`
+						}
+						if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+							t.Fatalf("completed %s result is not a JSON result: %v", label, err)
+						}
+						notice = envelope.Data.ProjectRegistrationNotice
+					}
+					current, err := receipt.Read(projectReceiptRoot(root))
+					if err != nil {
+						t.Fatal(err)
+					}
+					noticeGateway, err := gateway.OriginFromHealthURL(current.Verification.HostHealthURL)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, command := range []string{
+						contracts.ShellCommand("kb", "auth", "login", "--gateway-url", noticeGateway, "--email", "admin@example.test"),
+						contracts.ShellCommand("kb", "project", "add", selected),
+						contracts.ShellCommand("kb", "project", "show", selected),
+					} {
+						if !strings.Contains(notice, command) {
+							t.Fatalf("completed %s notice omitted owner command %q: %s", label, command, notice)
+						}
+					}
+				}
+				requestsMu.Lock()
+				loginCalls, registrationCalls := requestCounts["login"], requestCounts["register"]
+				requests := append([]string(nil), gatewayRequests...)
+				requestsMu.Unlock()
+				if loginCalls != 0 || registrationCalls != 0 || len(requests) != 0 {
+					t.Fatalf("completed %s made forbidden Gateway requests: login=%d registration=%d requests=%v", label, loginCalls, registrationCalls, requests)
+				}
+				for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+					if present, err := secretStore.Exists(name); err != nil || present {
+						t.Fatalf("completed %s left bootstrap secret %s present=%v err=%v", label, name, present, err)
+					}
+				}
+				assertSecretAbsentFromTree(t, root, password)
+			})
 		}
 	}
 }
