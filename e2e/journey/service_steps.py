@@ -365,7 +365,9 @@ class FlowGraph:
         self.selected_groups = {
             group for group, spec in self.groups.items()
             if (self.journey.selected_capabilities.intersection(spec.get("capabilities", ()))
-                or self.journey.selected_sources.intersection(spec.get("claim_sources", ())))
+                or self.journey.selected_sources.intersection(spec.get("claim_sources", ()))
+                or self.journey.selected_claims.intersection(spec.get("cases", ()))
+                or self.journey.prerequisite_steps.intersection(spec.get("steps", ())))
         }
         self.needed_states = set(filter(None, journey_value("KB_JOURNEY_NEEDED_STATES", "").split(",")))
         for group in self.selected_groups:
@@ -385,6 +387,10 @@ class FlowGraph:
     @property
     def selection_active(self) -> bool:
         return bool(self.journey.selected_claims)
+
+    def group_selected(self, group: str) -> bool:
+        """Return whether selection or its declared prerequisites include a graph group."""
+        return not self.selection_active or group in self.selected_groups
 
     def _group_produces_needed_state(self, group: str) -> bool:
         return bool(set(self.groups.get(group, {}).get("produces", ())) & self.needed_states)
@@ -484,7 +490,8 @@ class FlowGraph:
         case_ids = list(cases)
         prerequisite = name in self.journey.prerequisite_flows
         lifecycle = role == "lifecycle"
-        selected_owner = self._flow_owns_selected_claim(group, case_ids, owner_sources)
+        selected_owner = (group in self.selected_groups
+                          or self._flow_owns_selected_claim(group, case_ids, owner_sources))
         producer = self._group_produces_needed_state(group)
         selected_by_flow_rule = selected_owner or prerequisite or producer
         if (self.selection_active and not selected_by_flow_rule):
