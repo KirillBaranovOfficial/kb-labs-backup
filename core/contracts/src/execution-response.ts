@@ -36,7 +36,6 @@ export type ExecutionErrorCode =
   | 'TIMEOUT'
   | 'ABORTED'
   | 'PERMISSION_DENIED'
-  | 'HANDLER_ERROR'
   | 'HANDLER_CONTRACT_ERROR'
   | 'HANDLER_NOT_FOUND'
   | 'WORKSPACE_ERROR'
@@ -50,7 +49,8 @@ export type ExecutionErrorCode =
 
 export interface ExecutionError {
   message: string;
-  code?: ExecutionErrorCode;
+  /** Handler errors can carry the platform or product code used by the shared UX contract. */
+  code?: string;
   stack?: string;
   details?: Record<string, unknown>;
   [key: string]: unknown;

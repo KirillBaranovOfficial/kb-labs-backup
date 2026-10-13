@@ -1054,6 +1054,15 @@
       "hint": "Retry the command. If cancellation was unexpected, inspect the plugin logs and retry."
     },
     {
+      "code": "KB_PLUGIN_COMMAND_FAILED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin command {command} in {plugin} failed unexpectedly.",
+      "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack, then fix the reported plugin issue."
+    },
+    {
       "code": "KB_PLUGIN_COMMAND_SHADOWED",
       "area": "plugin",
       "stage": "run",

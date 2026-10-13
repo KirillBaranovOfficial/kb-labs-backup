@@ -11,7 +11,7 @@ import type {
   PlatformServices,
 } from "@kb-labs/plugin-contracts";
 import { wrapCliResult } from "@kb-labs/plugin-runtime";
-import { toErrorEnvelope } from "@kb-labs/core-platform";
+import { createErrorEnvelope, toErrorEnvelope } from "@kb-labs/core-platform";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import type { ExecutionRequest } from "@kb-labs/plugin-execution-factory";
 import * as path from "node:path";
@@ -30,6 +30,9 @@ export interface ExecuteCommandV3Options {
    * Plugin version
    */
   pluginVersion: string;
+
+  /** Registered CLI path used in actionable unexpected-failure messages. */
+  commandPath: string;
 
   /**
    * Path to command handler file
@@ -158,6 +161,7 @@ export async function executeCommandV3(
     pluginVersion,
     handlerPath,
     argv,
+    commandPath,
     flags,
     config: _config,
     permissions = {},
@@ -234,7 +238,7 @@ export async function executeCommandV3(
 
     // Handle execution result
     if (!result.ok) {
-      presentExecutionError(platform, ui, result.error, requestId, Boolean(flags.json));
+      presentExecutionError(platform, ui, result.error, requestId, pluginId, commandPath, Boolean(flags.json));
       return 1;
     }
 
@@ -268,7 +272,7 @@ export async function executeCommandV3(
     // Return exit code from wrapped result
     return cliResult.exitCode;
   } catch (error) {
-    presentExecutionError(platform, ui, error, requestId, Boolean(flags.json));
+    presentExecutionError(platform, ui, error, requestId, pluginId, commandPath, Boolean(flags.json));
     return 1;
   }
 }
@@ -278,11 +282,33 @@ function presentExecutionError(
   ui: UIFacade,
   cause: unknown,
   requestId: string,
+  pluginId: string,
+  commandPath: string,
   jsonMode: boolean,
 ): void {
-  const error = toErrorEnvelope(cause, { correlationId: requestId });
-  if (error.code === 'KB_RUNTIME_UNEXPECTED') {
-    const loggedCause = cause instanceof Error ? cause : new Error(String(cause));
+  const envelopeInput = typeof cause === 'object' && cause !== null && 'stack' in cause &&
+    'code' in cause && typeof cause.code === 'string'
+    ? {
+        ...Object.fromEntries(Object.entries(cause).filter(([key]) => key !== 'stack')),
+        ...('message' in cause && typeof cause.message === 'string' ? { message: cause.message } : {}),
+      }
+    : cause;
+  const normalized = toErrorEnvelope(envelopeInput, { correlationId: requestId });
+  const error = normalized.code === 'KB_RUNTIME_UNEXPECTED'
+    ? createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+        correlationId: normalized.correlationId ?? requestId,
+        details: {
+          plugin: pluginId,
+          command: commandPath,
+          correlationId: normalized.correlationId ?? requestId,
+        },
+      })
+    : normalized;
+  if (error.code === 'KB_PLUGIN_COMMAND_FAILED') {
+    const loggedCause = cause instanceof Error ? cause : new Error(error.message);
+    if (!(cause instanceof Error) && typeof cause === 'object' && cause !== null && 'stack' in cause && typeof cause.stack === 'string') {
+      loggedCause.stack = cause.stack;
+    }
     platform.logger.error('Plugin command failed unexpectedly', loggedCause, {
       correlationId: error.correlationId,
       requestId,
