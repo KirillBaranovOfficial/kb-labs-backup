@@ -12,18 +12,18 @@ import (
 
 // Writer emits contract records followed by exactly one terminal record.
 type Writer struct {
-	output   io.Writer
-	finished bool
-	result   bool
-	exitCode int
-	failure  *diag.Diag
+	output     io.Writer
+	finished   bool
+	result     bool
+	exitStatus diag.ExitStatus
+	failure    *diag.Diag
 }
 
 // New creates a JSONL writer for one command invocation.
 func New(output io.Writer) *Writer { return &Writer{output: output} }
 
-// ExitCode returns the terminal status selected for this stream.
-func (w *Writer) ExitCode() int { return w.exitCode }
+// ExitStatus returns the typed terminal status selected for this stream.
+func (w *Writer) ExitStatus() diag.ExitStatus { return w.exitStatus }
 
 // Event writes one successful event record.
 func (w *Writer) Event(data any) error {
@@ -66,28 +66,27 @@ func (w *Writer) Fail(d *diag.Diag) error {
 	}
 	d = diag.FromError(d)
 	w.failure = d
-	w.exitCode = diag.ExitCode(d)
+	w.exitStatus = diag.ExitCode(d)
 	return json.NewEncoder(w.output).Encode(result.FailureEnvelope(d))
 }
 
 // Finish writes the terminal success envelope and closes the stream.
-func (w *Writer) Finish() error {
+func (w *Writer) Finish(status diag.ExitStatus) error {
 	if w.finished {
 		return fmt.Errorf("stream already has a terminal record")
 	}
-	exitCode := diag.ExitOK
-	if w.failure != nil {
-		exitCode = diag.ExitCode(w.failure)
+	if status != w.exitStatus {
+		return fmt.Errorf("terminal status does not match the stream diagnostic")
 	}
 	record := map[string]any{
 		"ok":   true,
 		"data": nil,
-		"meta": map[string]any{"stream": map[string]any{"terminal": true, "exitCode": exitCode}},
+		"meta": map[string]any{"stream": map[string]any{"terminal": true, "exitCode": status.Code()}},
 	}
 	if err := json.NewEncoder(w.output).Encode(record); err != nil {
 		return err
 	}
-	w.exitCode = exitCode
+	w.exitStatus = status
 	w.finished = true
 	return nil
 }

@@ -249,10 +249,10 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 		if err := writer.Fail(failure); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 		}
-		if err := writer.Finish(); err != nil {
+		if err := writer.Finish(writer.ExitStatus()); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 		}
-		return streamCompletion{ExitCode: writer.ExitCode()}, nil
+		return streamCompletion{ExitStatus: writer.ExitStatus()}, nil
 	}
 	request := result.Receipt.Plan.Request
 	if projectRegistrationRequired(request.ProjectRoot, existingSelection) {
@@ -262,10 +262,10 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 			if writeErr := writer.Fail(failure); writeErr != nil {
 				return streamCompletion{}, diag.Wrap(writeErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 			}
-			if finishErr := writer.Finish(); finishErr != nil {
+			if finishErr := writer.Finish(writer.ExitStatus()); finishErr != nil {
 				return streamCompletion{}, diag.Wrap(finishErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 			}
-			return streamCompletion{ExitCode: writer.ExitCode()}, nil
+			return streamCompletion{ExitStatus: writer.ExitStatus()}, nil
 		}
 		result.Receipt, err = recordProjectIdentity(request.PlatformRoot, request.ProjectRoot, registered)
 		if err != nil {
@@ -273,19 +273,19 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 			if writeErr := writer.Fail(failure); writeErr != nil {
 				return streamCompletion{}, diag.Wrap(writeErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 			}
-			if finishErr := writer.Finish(); finishErr != nil {
+			if finishErr := writer.Finish(writer.ExitStatus()); finishErr != nil {
 				return streamCompletion{}, diag.Wrap(finishErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 			}
-			return streamCompletion{ExitCode: writer.ExitCode()}, nil
+			return streamCompletion{ExitStatus: writer.ExitStatus()}, nil
 		}
 	}
 	if written, emitFailure := emitFirstAdminResult(result, "install", func() error { return writer.Result(result) }); emitFailure != nil {
 		return finishFirstAdminResultFailure(writer, deps.Command, written, emitFailure)
 	}
-	if err := writer.Finish(); err != nil {
+	if err := writer.Finish(writer.ExitStatus()); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
-	return streamCompletion{ExitCode: writer.ExitCode()}, nil
+	return streamCompletion{ExitStatus: writer.ExitStatus()}, nil
 }
 
 func finishFirstAdminResultFailure(writer *stream.Writer, command *cobra.Command, written bool, failure *diag.Diag) (streamCompletion, *diag.Diag) {
@@ -295,20 +295,20 @@ func finishFirstAdminResultFailure(writer *stream.Writer, command *cobra.Command
 	} else if err := writer.Fail(failure); err != nil {
 		return streamCompletion{}, failure
 	}
-	if err := writer.Finish(); err != nil {
+	if err := writer.Finish(writer.ExitStatus()); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
-	return streamCompletion{ExitCode: writer.ExitCode()}, nil
+	return streamCompletion{ExitStatus: writer.ExitStatus()}, nil
 }
 
 func finishInstallStreamFailure(writer *stream.Writer, failure *diag.Diag) (streamCompletion, *diag.Diag) {
 	if err := writer.Fail(failure); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 	}
-	if err := writer.Finish(); err != nil {
+	if err := writer.Finish(writer.ExitStatus()); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
-	return streamCompletion{ExitCode: writer.ExitCode()}, nil
+	return streamCompletion{ExitStatus: writer.ExitStatus()}, nil
 }
 
 func executeApplyPlanJSON(ctx context.Context, input installCommandInput, resolved resolvedPlan, deps commandDependencies) (applyCommandResult, *diag.Diag) {

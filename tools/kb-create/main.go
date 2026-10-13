@@ -15,5 +15,5 @@ var (
 
 func main() {
 	v2cli.SetVersionInfo(version, commit, date)
-	os.Exit(v2cli.Execute())
+	os.Exit(v2cli.Execute().Code())
 }

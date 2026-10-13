@@ -61,10 +61,10 @@ func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps 
 	} else if written, emitFailure := emitFirstAdminResult(result, "apply", func() error { return writer.Result(result) }); emitFailure != nil {
 		return finishFirstAdminResultFailure(writer, deps.Command, written, emitFailure)
 	}
-	if err := writer.Finish(); err != nil {
+	if err := writer.Finish(writer.ExitStatus()); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
-	return streamCompletion{ExitCode: writer.ExitCode()}, nil
+	return streamCompletion{ExitStatus: writer.ExitStatus()}, nil
 }
 
 func applyPlan(ctx context.Context, input applyCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/dev/internal/config"
 	"github.com/spf13/cobra"
@@ -71,8 +72,8 @@ Examples:
 }
 
 // Execute is the main entry point called from main.go.
-func Execute() {
-	os.Exit(clikitcommand.Execute(rootCmd, os.Args[1:], os.Stdout, os.Stderr))
+func Execute() diag.ExitStatus {
+	return clikitcommand.Execute(rootCmd, os.Args[1:], os.Stdout, os.Stderr)
 }
 
 func init() {

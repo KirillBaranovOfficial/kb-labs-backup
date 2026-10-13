@@ -92,7 +92,7 @@ func SetVersionInfo(version, commit, _ string) {
 }
 
 // Execute runs the public kb-create Cobra tree through the shared clikit boundary.
-func Execute() int {
+func Execute() diag.ExitStatus {
 	root := newRootCommand()
 	root.Version = buildVersion
 	root.SetVersionTemplate("kb-create {{.Version}}\n")

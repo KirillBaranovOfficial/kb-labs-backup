@@ -54,7 +54,7 @@ func Execute() {
 	}
 	d := diag.FromError(err)
 	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
-	os.Exit(code)
+	os.Exit(code.Code())
 }
 
 func init() {

@@ -18,6 +18,8 @@ import (
 var (
 	applyYes    bool
 	applyDryRun bool
+	// This is the documented non-error status owned by `kb-deploy apply`.
+	applyChangesStatus = diag.DeployChangesAppliedStatus()
 )
 
 var applyCmd = &cobra.Command{
@@ -29,9 +31,8 @@ is consulted to detect drift; the new lock is written on success.
 
 Exit codes:
   0  no changes applied (or dry-run complete)
-  1  changes applied successfully
-  2  error (validation, SSH, build)
-  3  rollback fired and succeeded
+  1  changes applied successfully, or a catalogued operation failure (inspect the result envelope)
+  2  catalogued input refusal (inspect the result envelope)
 
 Examples:
   kb-deploy apply                  # uses .kb/deploy.yaml
@@ -125,7 +126,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 			diag.WithReason(err.Error()))
 	}
 	emit(cmd, result.Success("apply successful; lock updated", planData), mode)
-	return nil
+	return result.StreamComplete(applyChangesStatus)
 }
 
 // emit renders a successful CommandOutput. In human mode the inline progress was

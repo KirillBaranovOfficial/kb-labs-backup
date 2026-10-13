@@ -3,8 +3,8 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/spf13/cobra"
 )
 
@@ -45,10 +45,10 @@ Examples:
 }
 
 // Execute is the main entry point called from main.go.
-func Execute() {
+func Execute() diag.ExitStatus {
 	err := rootCmd.Execute()
 	if err == nil {
-		return
+		return diag.SuccessStatus()
 	}
 	if jsonMode {
 		if err.Error() != "" {
@@ -58,7 +58,7 @@ func Execute() {
 		out := newOutput()
 		out.Err(err.Error())
 	}
-	os.Exit(1)
+	return diag.ExitCode(diag.FromError(err))
 }
 
 func init() {

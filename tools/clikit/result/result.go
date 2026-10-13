@@ -91,17 +91,13 @@ func EmitReturned(err error, write func() error) *diag.Diag {
 // Streamed marks a command whose shared stream writer emitted its own terminal
 // record. The dispatcher must not append a second result.
 type Streamed struct {
-	ExitCode int
+	ExitStatus diag.ExitStatus
 }
 
 func (s *Streamed) Error() string { return "stream complete" }
 
-func StreamComplete(exitCode ...int) error {
-	code := diag.ExitOK
-	if len(exitCode) > 0 {
-		code = exitCode[0]
-	}
-	return &Streamed{ExitCode: code}
+func StreamComplete(exitStatus diag.ExitStatus) error {
+	return &Streamed{ExitStatus: exitStatus}
 }
 
 func IsStreamComplete(err error) bool {
@@ -109,12 +105,12 @@ func IsStreamComplete(err error) bool {
 	return errors.As(err, &streamed)
 }
 
-func StreamExitCode(err error) (int, bool) {
+func StreamExitCode(err error) (diag.ExitStatus, bool) {
 	var streamed *Streamed
 	if errors.As(err, &streamed) && streamed != nil {
-		return streamed.ExitCode, true
+		return streamed.ExitStatus, true
 	}
-	return diag.ExitOK, false
+	return diag.SuccessStatus(), false
 }
 
 // Success builds a successful CommandOutput.

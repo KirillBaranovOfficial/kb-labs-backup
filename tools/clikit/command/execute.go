@@ -129,7 +129,7 @@ func StreamWriter(command *cobra.Command) io.Writer {
 }
 
 // Execute runs a Cobra tree and renders its outcome exactly once.
-func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
+func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) diag.ExitStatus {
 	InstallInputBoundary(root)
 	if err := resetFlags(root); err != nil {
 		return result.RenderDiag(stdout, stderr, diag.FromError(err), modeForArgs(args))
@@ -160,7 +160,7 @@ func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
 		human := captured.String()
 		if mode == result.ModeHuman && strings.TrimSpace(human) == "" {
 			if interaction.hasStreamed() {
-				return diag.ExitOK
+				return diag.SuccessStatus()
 			}
 			encoded, marshalErr := json.MarshalIndent(data, "", "  ")
 			if marshalErr != nil {
@@ -173,7 +173,7 @@ func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
 		}); failure != nil {
 			return result.RenderDiag(stderr, stderr, failure, result.ModeHuman)
 		}
-		return diag.ExitOK
+		return diag.SuccessStatus()
 	}
 	if err != nil {
 		diagnostic := diag.FromError(err)
@@ -190,7 +190,7 @@ func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
 		data = human
 	}
 	result.Render(stdout, result.Success(human, data), mode)
-	return diag.ExitOK
+	return diag.SuccessStatus()
 }
 
 func modeForArgs(args []string) result.Mode {

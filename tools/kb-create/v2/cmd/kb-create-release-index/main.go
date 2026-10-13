@@ -19,6 +19,10 @@ import (
 )
 
 func main() {
+	os.Exit(execute().Code())
+}
+
+func execute() diag.ExitStatus {
 	input := flag.String("input", "", "normalized V2 release-index export JSON")
 	output := flag.String("output", "", "sealed immutable release-index JSON")
 	manifestRoot := flag.String("manifest-root", "", "staging root containing exact V2 package manifests")
@@ -26,14 +30,17 @@ func main() {
 	flag.Var(&historyIndexes, "history-index", "previously sealed release index to carry into this candidate")
 	flag.Parse()
 	if err := run(*input, *output, *manifestRoot, historyIndexes...); err != nil {
-		failure, envelopeErr := sealingFailureEnvelope(err)
+		failure, status, envelopeErr := sealingFailureResult(err)
 		if envelopeErr != nil {
 			fmt.Fprintf(os.Stderr, "kb-create-release-index: failed to format diagnostic: %v\n", envelopeErr)
-			os.Exit(2)
+			return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The release-index failure could not be formatted.",
+				diag.WithCauseAndReason(envelopeErr.Error()),
+				diag.WithHint("Check the release-index diagnostic and rerun release-index preparation.")))
 		}
 		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"ok": false, "error": failure})
-		os.Exit(2)
+		return status
 	}
+	return diag.SuccessStatus()
 }
 
 type sealingFailure struct {
@@ -45,6 +52,11 @@ func (failure *sealingFailure) Error() string { return failure.err.Error() }
 func (failure *sealingFailure) Unwrap() error { return failure.err }
 
 func sealingFailureEnvelope(err error) (diag.Envelope, error) {
+	envelope, _, envelopeErr := sealingFailureResult(err)
+	return envelope, envelopeErr
+}
+
+func sealingFailureResult(err error) (diag.Envelope, diag.ExitStatus, error) {
 	var failure *sealingFailure
 	if !errors.As(err, &failure) {
 		failure = &sealingFailure{
@@ -56,7 +68,8 @@ func sealingFailureEnvelope(err error) (diag.Envelope, error) {
 	diagnostic := contracts.NewDiag(contracts.CodeReleaseIndexSealFailed, "could not seal V2 release index", failure.hint, failure.err)
 	diagnostic.Cause = failure.rule
 	diagnostic.Meta = map[string]any{"gate": failure.gate, "rule": failure.rule}
-	return diag.ToEnvelope(diagnostic)
+	envelope, envelopeErr := diag.ToEnvelope(diagnostic)
+	return envelope, diag.ExitCode(diagnostic), envelopeErr
 }
 
 type stringList []string
