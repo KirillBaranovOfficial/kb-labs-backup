@@ -1,9 +1,13 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/secretstate"
 )
 
 // ── expandString ─────────────────────────────────────────────────────────────
@@ -175,7 +179,13 @@ func TestExpandEnvFromV2LauncherSecretStore(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"schema":1,"requirements":{"V2_LAUNCHER_TOKEN":"private"},"bootstrap":{}}`), 0o600); err != nil {
+	record := secretstate.NewRecord()
+	record.SetRequirement("V2_LAUNCHER_TOKEN", "private")
+	data, err := secretstate.Encode(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	yf := minimalYAMLWithEnvVar("${V2_LAUNCHER_TOKEN}")
@@ -193,13 +203,38 @@ func TestExpandEnvDoesNotInjectBootstrapPasswordAfterCompletion(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	state := `{"schema":1,"requirements":{"GATEWAY_BOOTSTRAP_ADMIN_PASSWORD":"private"},"bootstrap":{"bootstrapCompleted":"provisioned"}}`
-	if err := os.WriteFile(path, []byte(state), 0o600); err != nil {
+	record := secretstate.NewRecord()
+	record.SetRequirement(secretstate.BootstrapPasswordEnvironment, "private")
+	record.MarkBootstrapCompleted("provisioned")
+	data, err := secretstate.Encode(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	yf := minimalYAMLWithEnvVar("${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD}")
 	if err := expandEnv(yf, dir); err == nil {
 		t.Fatal("completed bootstrap password was injected into the host configuration")
+	}
+}
+
+func TestExpandEnvReturnsSharedSecretStateDiagnosis(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".kb", "v2", "secret-state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema":99,"requirements":{},"bootstrap":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := expandEnv(minimalYAMLWithEnvVar("${ANY_VALUE}"), dir)
+	var failure *diag.Diag
+	if !errors.As(err, &failure) {
+		t.Fatalf("load error = %T; want shared catalogued diagnosis", err)
+	}
+	if failure.Code != secretstate.UnsupportedCode {
+		t.Fatalf("diagnosis code = %q", failure.Code)
 	}
 }
 

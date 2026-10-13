@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/secretstate"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
@@ -280,13 +281,11 @@ func readInstall(t *testing.T, root string, plan contracts.ResolvedInstallPlan) 
 	}
 	result.environment = environment.Values
 	if data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "secret-state.json")); err == nil {
-		var record struct {
-			Requirements map[string]string `json:"requirements"`
-		}
-		if err := json.Unmarshal(data, &record); err != nil {
+		record, err := secretstate.Decode(data)
+		if err != nil {
 			t.Fatal("decode private secret state")
 		}
-		result.secrets = record.Requirements
+		result.secrets = record.Requirements()
 	}
 	return result
 }

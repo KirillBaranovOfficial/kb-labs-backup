@@ -112,17 +112,15 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
 
 
 def _write_secret_fingerprints(source: Path, target: Path) -> int:
-    """Record secret names and one-way fingerprints without copying secret values."""
+    """Record a one-way fingerprint without parsing the private secret state."""
     try:
-        state = json.loads(source.read_text())
-        entries = [{"name": name, "sha256": hashlib.sha256(value.encode()).hexdigest()}
-                   for name, value in state.get("requirements", {}).items() if name and value]
-        if not entries:
+        data = source.read_bytes()
+        if not data:
             return 0
         target.parent.mkdir(parents=True, exist_ok=True)
-        _write_evidence_json(target, {"entries": entries})
+        _write_evidence_json(target, {"sha256": hashlib.sha256(data).hexdigest()})
         return target.stat().st_size
-    except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+    except OSError:
         return 0
 
 

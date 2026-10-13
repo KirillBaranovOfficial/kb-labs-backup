@@ -117,7 +117,7 @@ func TestBootstrapLifecycleFactsHaveOnlyTypedStoreWriters(t *testing.T) {
 		"MarkBootstrapDisclosed": true,
 	}
 	var lifecycleWriters []string
-	fieldWriters := map[string]int{}
+	factWriters := map[string]int{}
 	for _, parsed := range packages {
 		for _, file := range parsed.Files {
 			for _, declaration := range file.Decls {
@@ -129,37 +129,14 @@ func TestBootstrapLifecycleFactsHaveOnlyTypedStoreWriters(t *testing.T) {
 					switch value := node.(type) {
 					case *ast.CallExpr:
 						selector, ok := value.Fun.(*ast.SelectorExpr)
-						if ok && selector.Sel.Name == "writeRecord" {
-							lifecycleWriters = append(lifecycleWriters, function.Name.Name)
-						}
-					case *ast.AssignStmt:
-						for _, expression := range value.Lhs {
-							selector, ok := expression.(*ast.SelectorExpr)
-							if !ok {
-								continue
-							}
-							switch selector.Sel.Name {
-							case "BootstrapCompleted", "BootstrapPasswordOrigin", "BootstrapPasswordDisclosed":
-								fieldWriters[function.Name.Name+"."+selector.Sel.Name]++
-							}
-						}
-					case *ast.CompositeLit:
-						name, ok := value.Type.(*ast.Ident)
-						if !ok || name.Name != "lifecycleRecord" {
+						if !ok {
 							break
 						}
-						for _, element := range value.Elts {
-							field, ok := element.(*ast.KeyValueExpr)
-							if !ok {
-								continue
-							}
-							key, ok := field.Key.(*ast.Ident)
-							if ok {
-								switch key.Name {
-								case "BootstrapCompleted", "BootstrapPasswordOrigin", "BootstrapPasswordDisclosed":
-									fieldWriters[function.Name.Name+"."+key.Name]++
-								}
-							}
+						switch selector.Sel.Name {
+						case "writeRecord":
+							lifecycleWriters = append(lifecycleWriters, function.Name.Name)
+						case "SetBootstrapPassword", "MarkBootstrapCompleted", "MarkBootstrapDisclosed":
+							factWriters[function.Name.Name+"."+selector.Sel.Name]++
 						}
 					}
 					return true
@@ -175,13 +152,13 @@ func TestBootstrapLifecycleFactsHaveOnlyTypedStoreWriters(t *testing.T) {
 	if len(lifecycleWriters) != len(allowed) {
 		t.Fatalf("typed lifecycle write owners = %v", lifecycleWriters)
 	}
-	wantFieldWriters := map[string]int{
-		"PutBootstrapPassword.BootstrapPasswordOrigin":      1,
-		"MarkBootstrapCompleted.BootstrapCompleted":         1,
-		"MarkBootstrapDisclosed.BootstrapPasswordDisclosed": 1,
+	wantFactWriters := map[string]int{
+		"PutBootstrapPassword.SetBootstrapPassword":     1,
+		"MarkBootstrapCompleted.MarkBootstrapCompleted": 1,
+		"MarkBootstrapDisclosed.MarkBootstrapDisclosed": 1,
 	}
-	if !reflect.DeepEqual(fieldWriters, wantFieldWriters) {
-		t.Fatalf("bootstrap lifecycle fact writers = %v; want %v", fieldWriters, wantFieldWriters)
+	if !reflect.DeepEqual(factWriters, wantFactWriters) {
+		t.Fatalf("bootstrap lifecycle fact writers = %v; want %v", factWriters, wantFactWriters)
 	}
 }
 
