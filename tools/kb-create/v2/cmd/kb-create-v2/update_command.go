@@ -266,7 +266,11 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	offline := plan.Request.Source == contracts.SourceOffline
-	installer := artifacts.Composite{Packages: artifacts.Pnpm{Root: stage, Registry: input.Registry, Offline: offline, Log: transcript}, Binaries: artifacts.Binaries{Root: stage, Offline: offline}}
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "the shared artifact cache path could not be resolved", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the update", err)
+	}
+	installer := artifacts.Composite{Packages: artifacts.Pnpm{Root: stage, Registry: input.Registry, Offline: offline, Log: transcript}, Binaries: artifacts.Binaries{Root: stage, CacheRoot: cacheRoot, Offline: offline}}
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: correlationID, Secrets: &store}
 	deps.PreserveGeneratedConfig = true
 	deps.VerificationConfigRoot = activeRoot

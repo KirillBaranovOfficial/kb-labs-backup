@@ -764,7 +764,8 @@ func TestFreshInstallWritesCompleteRunningIdentityBeforeFirstUpdate(t *testing.T
 	}
 }
 
-func TestFreshContainerInstallUpdateUpdateRestartUninstallWritesStayInsideRoot(t *testing.T) {
+// case: PC-001.17, S-023.17, S-223.4
+func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWritesStayInsideRoot(t *testing.T) {
 	launcher, fakehost := binaries(t)
 	base := t.TempDir()
 	parent := filepath.Join(base, "parent")
@@ -809,12 +810,20 @@ func TestFreshContainerInstallUpdateUpdateRestartUninstallWritesStayInsideRoot(t
 	processID = int(status["host"].(map[string]any)["pid"].(float64))
 	assertContainerParent(t, parent)
 
+	var rollbackSnapshot string
 	for _, version := range []string{"2.0.0", "3.0.0"} {
 		target := updatePlan(t, root, port)
 		target.PlanHash = "container-" + version
 		target.ServiceGraph.PlatformVersion = version
-		if _, code, output := inst.update(t, target, &recordingInstaller{}); code != 0 {
+		updated, code, output := inst.update(t, target, &recordingInstaller{})
+		if code != 0 {
 			t.Fatalf("update to %s: %d %s", version, code, output)
+		}
+		if version == "2.0.0" {
+			rollbackSnapshot = updated["snapshot"].(map[string]any)["id"].(string)
+			if rollbackSnapshot == "" {
+				t.Fatalf("update to %s omitted its rollback snapshot: %#v", version, updated)
+			}
 		}
 		assertContainerParent(t, parent)
 	}
@@ -827,7 +836,33 @@ func TestFreshContainerInstallUpdateUpdateRestartUninstallWritesStayInsideRoot(t
 	}
 	assertContainerParent(t, parent)
 	if _, code, output := inst.run("stop", "--json"); code != 0 {
-		t.Fatalf("stop before uninstall: %s", output)
+		t.Fatalf("stop before rollback: %s", output)
+	}
+	rollback, rollbackCode, rollbackOutput := invoke(t, operationTestSetup{Operation: "rollback", PlatformRoot: root, Snapshot: rollbackSnapshot,
+		Yes: true, JSON: true, RuntimeDeps: &runtime.Dependencies{Artifacts: &recordingInstaller{}}})
+	if rollbackCode != 0 || rollback["hostRestarted"] != false {
+		var details map[string]any
+		if failure, ok := rollback["error"].(map[string]any); ok {
+			details, _ = failure["details"].(map[string]any)
+		}
+		var evidence []string
+		for _, key := range []string{"logPath", "diagnosticPath"} {
+			if path, ok := details[key].(string); ok {
+				if data, readErr := os.ReadFile(path); readErr == nil {
+					evidence = append(evidence, key+": "+string(data))
+				}
+			}
+		}
+		t.Fatalf("rollback after restart: %d %s\n%s", rollbackCode, rollbackOutput, strings.Join(evidence, "\n"))
+	}
+	status, code, output := inst.run("status", "--json")
+	if code != 0 || status["host"].(map[string]any)["state"] != host.StateStopped || status["installedVersion"] != "1.0.0" {
+		t.Fatalf("status after rollback: %d %#v %s", code, status, output)
+	}
+	repeat := updatePlan(t, root, port)
+	repeat.PlanHash, repeat.ServiceGraph.PlatformVersion = "container-after-rollback", "2.0.0"
+	if _, code, output := inst.update(t, repeat, &recordingInstaller{}); code != 0 {
+		t.Fatalf("repeat update after rollback: %d %s", code, output)
 	}
 	installed = false
 	if !waitHostExit(processID, 5*time.Second) {

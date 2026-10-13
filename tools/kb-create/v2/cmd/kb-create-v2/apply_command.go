@@ -295,7 +295,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	applyCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	offline := planned.Request.Source == contracts.SourceOffline
-	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: operationRoot, Registry: input.Registry, Offline: offline, Log: transcript, Runner: deps.ArtifactRunner}, Binaries: artifacts.Binaries{Root: operationRoot, Offline: offline}}
+	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: operationRoot, Registry: input.Registry, Offline: offline, Log: transcript, Runner: deps.ArtifactRunner}, Binaries: artifacts.Binaries{Root: operationRoot, CacheRoot: filepath.Join(operationRoot, ".kb", "v2", "cache"), Offline: offline}}
 	prober := host.Prober{PlatformRoot: installRoot, Operation: "apply"}
 	runtimeDeps := runtime.Dependencies{Artifacts: artifactExecutor, CorrelationID: correlationID, Secrets: &store, Progress: input.Progress}
 	if deps.Runtime != nil {
