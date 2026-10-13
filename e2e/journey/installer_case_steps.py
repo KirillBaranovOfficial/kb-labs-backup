@@ -19,7 +19,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from platform_update_steps import _json_command
-from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
+from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_failure, read_ux_cli_result,
                          read_ux_cli_stream, run_command as evidence_run_command)
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
                                active_platform_root, create_fixture_install_container,
@@ -196,6 +196,15 @@ def assert_gateway_index_diagnosis(data: dict, path: Path, root: Path) -> None:
         raise RuntimeError(f"Gateway index diagnostic lacks path, reason, or ordered recovery commands: {data}")
 
 
+def read_gateway_index_refusal(result: subprocess.CompletedProcess, label: str,
+                               path: Path, root: Path) -> dict:
+    error, exit_code = read_ux_cli_failure(result.stdout, result.returncode)
+    if exit_code != 2:
+        raise RuntimeError(f"{label}: expected input-refusal exit 2, got {exit_code}")
+    assert_gateway_index_diagnosis({"error": error}, path, root)
+    return error
+
+
 class InstallerHostLifecycle:
     """Single owner for inspecting, changing, and restoring fixture host state."""
 
@@ -269,10 +278,16 @@ def _assert_repeat_install_applied(result: subprocess.CompletedProcess, *, launc
 
 
 def _payload(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dict]:
+    if result.returncode != 0:
+        try:
+            error, _ = read_ux_cli_failure(result.stdout, result.returncode)
+        except ValueError as failure:
+            raise RuntimeError(f"{label}: expected a structured CLI failure: {failure}") from failure
+        return {"ok": False, "error": error}, error
+
     try:
         envelope = read_ux_cli_result(result.stdout, result.returncode)
-        data = (decode_ux_success_result(envelope) if result.returncode == 0
-                else decode_ux_error_result(envelope))
+        data = decode_ux_success_result(envelope)
     except ValueError as error:
         try:
             records = read_ux_cli_stream(result.stdout, result.returncode)
@@ -284,11 +299,6 @@ def _payload(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dic
             if envelope is None:
                 raise RuntimeError(f"{label}: successful CLI stream omitted its result record")
             data = decode_ux_success_result(envelope)
-        else:
-            envelope = next((record for record in records[:-1] if record.get("ok") is False), None)
-            if envelope is None:
-                raise RuntimeError(f"{label}: failed CLI stream omitted its error result")
-            data = decode_ux_error_result(envelope)
     return envelope, data if isinstance(data, dict) else {}
 
 
@@ -1720,18 +1730,21 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 if operation == "uninstall":
                     args.append("--yes")
                 result = run_command(args)
-                envelope = read_ux_cli_result(result.stdout, result.returncode)
-                payload = decode_ux_error_result(envelope)
-                assert_gateway_index_diagnosis({"error": payload}, registry_path, root)
+                payload = read_gateway_index_refusal(result, f"{operation} unusable Gateway index",
+                                                     registry_path, root)
                 if registry_path.read_text(encoding="utf-8") != invalid_data:
                     raise RuntimeError(f"{operation} changed the unsupported Gateway index")
                 if not receipt_path.is_file() or receipt_path.read_bytes() != receipt_before:
                     raise RuntimeError(f"{operation} changed the installation before registry repair")
 
-            remove_command = f"'rm' '--' '{registry_path}'"
-            if remove_command not in payload.get("hint", ""):
+            hinted_commands = [shlex.split(command) for command in re.findall(r"`([^`]*)`", payload.get("hint", ""))]
+            remove_argv = next((argv for argv in hinted_commands
+                                if argv[:2] == ["rm", "--"] and argv[2:] == [str(registry_path)]), None)
+            if remove_argv is None:
                 raise RuntimeError("the diagnostic did not print the exact index removal command")
-            registry_path.unlink()
+            removed = run_command(remove_argv)
+            if removed.returncode != 0:
+                raise RuntimeError(f"the hinted Gateway index removal command failed: {' '.join(remove_argv)}")
             repaired = _data(run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"]),
                              "doctor fix after removing the unusable Gateway index")
             rebuilt = json.loads(registry_path.read_text(encoding="utf-8"))

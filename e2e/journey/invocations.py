@@ -162,6 +162,28 @@ def read_ux_cli_stream(stdout: str, returncode: int) -> list[dict[str, Any]]:
     return records
 
 
+def read_ux_cli_failure(stdout: str, returncode: int) -> tuple[dict[str, Any], int]:
+    """Read a typed CLI failure from either a result document or JSONL stream."""
+    try:
+        envelope = read_ux_cli_result(stdout, returncode)
+    except ValueError as document_error:
+        try:
+            records = read_ux_cli_stream(stdout, returncode)
+        except ValueError as stream_error:
+            raise stream_error from document_error
+        failures = [record for record in records[:-1] if record.get("ok") is False]
+        if len(failures) != 1:
+            _invalid_ux_result("failed CLI stream must contain exactly one error result")
+        terminal = records[-1]
+        terminal_meta = terminal.get("meta", {})
+        stream = terminal_meta.get("stream", {}) if isinstance(terminal_meta, dict) else {}
+        return decode_ux_error_result(failures[0]), stream["exitCode"]
+
+    if returncode == 0:
+        _invalid_ux_result("CLI command succeeded when a failure was expected")
+    return decode_ux_error_result(envelope), returncode
+
+
 def describe_cli_failure(command: str, stdout: str, stderr: str, returncode: int) -> str:
     """Describe a failed CLI invocation using its typed error when available."""
     detail = " ".join(f"{stdout} {stderr}".split())
