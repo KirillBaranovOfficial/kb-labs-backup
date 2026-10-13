@@ -21,7 +21,7 @@ func TestConfirmWritesPromptBeforeReadingAnswer(t *testing.T) {
 	interaction := newInteraction(command, &terminal, true, false)
 
 	confirmed, failure := interaction.Confirm("Remove installation? [y/N] ", "rerun `kb-create uninstall --yes`")
-	if confirmed || failure == nil || failure.Code != "KB_INSTALL_OPERATION_CANCELLED" {
+	if confirmed || failure == nil || failure.Code != "KB_INSTALL_OPERATION_CANCELLED" || diag.ExitCode(failure) != diag.ExitError {
 		t.Fatalf("Confirm() = (%v, %v), want catalogued cancellation", confirmed, failure)
 	}
 	if got := terminal.String(); got != "Remove installation? [y/N] " {

@@ -116,10 +116,11 @@ func assertEqualVersionUpdateDoesNotRequireProjectDirectory(t *testing.T) {
 func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 	for _, test := range []struct {
 		name, installed, target, kind, componentRange, wantCode string
+		wantExit                                                int
 	}{
-		{"downgrade", "3.2.0", "3.1.0", "", "", "KB_UPDATE_DOWNGRADE_REFUSED"},
-		{"installed plugin range", "3.0.0", "3.2.0", "plugin", "<3.2.0", "KB_UPDATE_INCOMPATIBLE"},
-		{"installed adapter range", "3.0.0", "3.2.0", "adapter", "<3.2.0", "KB_UPDATE_INCOMPATIBLE"},
+		{"downgrade", "3.2.0", "3.1.0", "", "", "KB_UPDATE_DOWNGRADE_REFUSED", 2},
+		{"installed plugin range", "3.0.0", "3.2.0", "plugin", "<3.2.0", "KB_UPDATE_INCOMPATIBLE", 1},
+		{"installed adapter range", "3.0.0", "3.2.0", "adapter", "<3.2.0", "KB_UPDATE_INCOMPATIBLE", 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			inst := newInstallation(t)
@@ -170,7 +171,7 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 				NodePreflight: func() error { return nil },
 			})
 			payload := diagValue(t, failure)
-			if code != 2 || errorCode(payload) != test.wantCode {
+			if code != test.wantExit || errorCode(payload) != test.wantCode {
 				t.Fatalf("update = code %d, error %s: %#v", code, errorCode(payload), payload)
 			}
 			if test.kind != "" {
@@ -227,7 +228,7 @@ func TestUpdateMapsTargetPlanCompatibilityToUpdateCode(t *testing.T) {
 		NodePreflight: func() error { return nil },
 	})
 	payload := diagValue(t, failure)
-	if code != 2 || errorCode(payload) != "KB_UPDATE_INCOMPATIBLE" {
+	if code != 1 || errorCode(payload) != "KB_UPDATE_INCOMPATIBLE" {
 		t.Fatalf("update target plan = code %d, error %s: %#v", code, errorCode(payload), payload)
 	}
 	errorValue := payload["error"].(map[string]any)

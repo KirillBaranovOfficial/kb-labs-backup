@@ -1429,14 +1429,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(journey.steps[0].status, "FAIL")
 
     # case: S-050.3
-    def test_uninstall_decline_claim_accepts_catalogued_input_refusal(self):
+    def test_uninstall_decline_claim_accepts_catalogued_operation_failure(self):
         with tempfile.TemporaryDirectory(prefix="journey-uninstall-decline-") as temp:
             receipt = Path(temp) / "receipt.json"
             receipt.write_text('{"id":"unchanged"}')
 
             def fake_pty(args, *, on_output):
                 self.assertEqual(on_output("Continue? [y/N] "), "n\n")
-                return subprocess.CompletedProcess(args, 2, "KB_INSTALL_OPERATION_CANCELLED", ""), 0.0
+                return subprocess.CompletedProcess(args, 1, "KB_INSTALL_OPERATION_CANCELLED", ""), 0.0
 
             journey = run_uninstall_decline_step(mode="local", args=["kb-create", "uninstall"],
                                                  receipt_path=receipt, run_pty=fake_pty)
