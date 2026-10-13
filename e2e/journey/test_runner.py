@@ -531,7 +531,11 @@ class RunnerInstallFailureTests(unittest.TestCase):
         }
         result = runner.subprocess.CompletedProcess(
             ["kb-create", "install", "--json"], 2,
-            stdout=json.dumps({"ok": False, "error": envelope}) + "\n", stderr="",
+            stdout="\n".join((
+                json.dumps({"ok": False, "error": envelope}),
+                json.dumps({"ok": True, "data": None,
+                            "meta": {"stream": {"terminal": True, "exitCode": 2}}}),
+            )) + "\n", stderr="",
         )
         with patch.object(runner, "CASE_JOURNEY", journey), patch.object(runner, "FIRST_FAILURE", ""):
             handled = runner.handle_json_install_failure("install", result)

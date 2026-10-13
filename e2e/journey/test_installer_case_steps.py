@@ -30,12 +30,18 @@ from installer_case_steps import (_data, _seed_doctor_fixture,
 from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
                                   verify_stable_installation_spellings)
-from invocations import PtyCommandTimeout, read_ux_cli_failure
+from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_create_cli_result
 from journey_resources import (active_platform_root, case_catalog_root,
                                create_fixture_install_container)
 from test_install_layout import create_test_install_container, move_test_platform_into_container
 from service_steps import Journey, record_candidate_provenance
 from service_port_assertions import assert_service_ports_preserved
+
+
+def kb_create_stream(envelope: dict, exit_code: int) -> str:
+    terminal = {"ok": True, "data": None,
+                "meta": {"stream": {"terminal": True, "exitCode": exit_code}}}
+    return "\n".join((json.dumps(envelope), json.dumps(terminal))) + "\n"
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
@@ -177,13 +183,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
             "'kb-create' 'doctor' '--fix' '--platform-root' "
             "'/tmp/kb-journey-home-utz9qm1f/pc001-explicit-gateway-root'` to rebuild it from the installation receipt."
         )
-        for fixture, expected_exit in (("gateway-index-plan-refusal.json", 2),
-                                       ("gateway-index-apply-refusal.jsonl", 2)):
+        for command, fixture, expected_exit in (("plan", "gateway-index-plan-refusal.json", 2),
+                                                ("apply", "gateway-index-apply-refusal.jsonl", 2)):
             with self.subTest(fixture=fixture):
-                error, exit_code = read_ux_cli_failure((fixtures / fixture).read_text(), expected_exit)
+                envelope = read_kb_create_cli_result(command, (fixtures / fixture).read_text(), expected_exit)
+                error = decode_ux_error_result(envelope)
                 self.assertEqual(error["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
                 self.assertEqual(error["hint"], expected_hint)
-                self.assertEqual(exit_code, expected_exit)
+                self.assertEqual(expected_exit, 2)
 
     def test_s025_gateway_index_refusals_follow_each_command_output_form(self):
         fixtures = Path(__file__).parent / "testdata"
@@ -222,7 +229,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(parsed["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
         self.assertEqual([name for name, _ in calls],
                          ["plan", "apply", "status", "doctor", "uninstall"])
-        self.assertEqual(read_ux_cli_failure(outputs["apply"][0], outputs["apply"][1])[1], 2)
+        apply_failure = decode_ux_error_result(read_kb_create_cli_result(
+            "apply", outputs["apply"][0], outputs["apply"][1]))
+        self.assertEqual(apply_failure["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
 
         hinted_commands = [shlex.split(command) for command in re.findall(r"`([^`]*)`", error["hint"])]
         remove_argv = next(argv for argv in hinted_commands if argv[:2] == ["rm", "--"])
@@ -237,9 +246,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
         journey = Journey("local")
         envelope = {"code": "KB_INSTALL_LAYOUT_UNSUPPORTED", "message": "foreign target",
                     "cause": "foreign bytes found", "hint": "choose a fresh writable path"}
-        stdout = json.dumps({"ok": False, "error": envelope}) + "\n"
+        stdout = "\n".join((
+            json.dumps({"ok": False, "error": envelope}),
+            json.dumps({"ok": True, "data": None,
+                        "meta": {"stream": {"terminal": True, "exitCode": 2}}}),
+        )) + "\n"
 
-        parsed = installer_case_steps.parse_install_refusal(stdout)
+        parsed = installer_case_steps.parse_install_refusal(stdout, 2)
         self.assertIsNotNone(parsed)
         message = (f"{parsed['code']}: {parsed['message']}; cause={parsed.get('cause', '')}; "
                    f"hint={parsed.get('hint', '')}")
@@ -401,12 +414,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 calls.append(args)
                 error = {"code": "KB_INSTALL_INPUT_REQUIRED", "message": "project directory must exist",
                          "hint": "Run mkdir -p 'missing-project' or pass an existing project directory."}
-                records = [
-                    {"ok": False, "error": error},
-                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 2}}},
-                ]
-                return subprocess.CompletedProcess(args, 2,
-                    "\n".join(json.dumps(record) for record in records) + "\n", "")
+                envelope = {"ok": False, "error": error}
+                output = (kb_create_stream(envelope, 2) if args[1] in {"install", "apply"}
+                          else json.dumps(envelope))
+                return subprocess.CompletedProcess(args, 2, output, "")
 
             journey = run_missing_project_request_steps(mode="local", launcher=str(launcher), stable_index=index,
                                                         home=root, run_command=run_command)
@@ -584,13 +595,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         if selected and selected_path not in {
                                 previous_receipt.get("projectSelectedPath"),
                                 previous_receipt.get("projectCanonicalPath")}:
-                            return subprocess.CompletedProcess(args, 1,
-                                '{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
+                            refusal = ('{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
                                 '"area":"install","stage":"resolve","severity":"error",'
                                 '"retryable":false,"message":"The selected project path spelling differs from the project selection recorded by this installation.",'
                                 "\"hint\":\"Run `'kb' 'auth' 'login' '--gateway-url' 'URL' '--email' 'EMAIL'`, "
                                 "then `'kb' 'project' 'add' 'PATH'`, then `'kb' 'project' 'show' 'PATH'`.\","
-                                '"correlationId":"fixture"}}', "")
+                                '"correlationId":"fixture"}}')
+                            return subprocess.CompletedProcess(args, 1,
+                                kb_create_stream(json.loads(refusal), 1), "")
                     active_root = active_platform_root(install_root)
                     (active_root / ".kb/v2/bin").mkdir(parents=True, exist_ok=True)
                     selected = args[args.index("--project-root") + 1] if "--project-root" in args else ""
@@ -625,18 +637,19 @@ class InstallerCaseStepsTest(unittest.TestCase):
                             f"Verification: project registered. Next: run `'kb-create' 'status'` and "
                             f"`'kb' 'project' 'show' '{selected_path}'`.\n", "")
                     result_data = {"operation": "apply" if not first_install else "install", "receipt": receipt_data}
-                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": result_data}), "")
+                    result = {"ok": True, "data": result_data, "meta": {"stream": {"result": True}}}
+                    return subprocess.CompletedProcess(args, 0, kb_create_stream(result, 0), "")
                 if args[1] == "update":
                     return subprocess.CompletedProcess(args, 0,
                         '{"ok":true,"data":{"ok":true,"alreadyUpToDate":true}}', "")
                 if args[1] == "apply":
-                    return subprocess.CompletedProcess(args, 1,
-                        '{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
+                    error = ('{"ok":false,"error":{"code":"KB_INSTALL_PROJECT_SELECTION_CHANGED",'
                         '"area":"install","stage":"resolve","severity":"error",'
                         '"retryable":false,"message":"The selected project path spelling differs from the project selection recorded by this installation.",'
                         "\"hint\":\"Run `'kb' 'auth' 'login' '--gateway-url' 'URL' '--email' 'EMAIL'`, "
                         "then `'kb' 'project' 'add' 'PATH'`, then `'kb' 'project' 'show' 'PATH'`.\","
-                        '"correlationId":"fixture"}}', "")
+                        '"correlationId":"fixture"}}')
+                    return subprocess.CompletedProcess(args, 1, kb_create_stream(json.loads(error), 1), "")
                 if args[1] == "project":
                     if len(args) > 2 and args[2] == "show":
                         registry_path = Path.home() / ".kb/projects.json"
@@ -742,11 +755,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     payload = {"ok": True, "data": {"host": {"state": "stopped"},
                               "running": False, "reachable": False}}
                 elif args[1] == "apply":
-                    payload = {"ok": True, "data": {"operation": "apply"}}
+                    payload = {"ok": True, "data": {"operation": "apply"},
+                               "meta": {"stream": {"result": True}}}
                 else:
                     payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"},
                               "artifacts": [{"resolvedFrom": "cache"}]}}}
-                return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+                output = kb_create_stream(payload, 0) if args[1] == "apply" else json.dumps(payload)
+                return subprocess.CompletedProcess(args, 0, output, "")
 
             journey = run_offline_plan_step(mode="local", launcher="kb-create", stable_index=index,
                                             platform_root=root, run_command=run_command)
@@ -934,7 +949,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                          "severity": "error", "retryable": False, "message": "port is in use",
                          "hint": "Stop process 42 (fixture) and rerun `kb-create apply`.",
                          "details": {"port": "4173", "pid": "42", "command": "fixture"}}
-                return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": error}), "")
+                return subprocess.CompletedProcess(args, 1,
+                    kb_create_stream({"ok": False, "error": error}, 1), "")
 
             with patch("installer_case_steps.socket.socket") as socket_factory:
                 journey = run_port_conflict_step(mode="local", launcher="kb-create", stable_index=index,
@@ -1220,11 +1236,17 @@ class InstallerCaseStepsTest(unittest.TestCase):
             index.write_text("{}")
 
             def run_command(args):
-                payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"}, "artifacts": [
-                    {"id": "platform", "resolvedFrom": "cache"},
-                    {"id": "kb-dev", "resolvedFrom": "registry", "resolvedUrl": "https://example.test/kb-dev"},
-                ]}}}
-                return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+                if args[1] == "apply":
+                    payload = {"ok": True, "data": {"operation": "apply"},
+                               "meta": {"stream": {"result": True}}}
+                    output = kb_create_stream(payload, 0)
+                else:
+                    payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"}, "artifacts": [
+                        {"id": "platform", "resolvedFrom": "cache"},
+                        {"id": "kb-dev", "resolvedFrom": "registry", "resolvedUrl": "https://example.test/kb-dev"},
+                    ]}}}
+                    output = json.dumps(payload)
+                return subprocess.CompletedProcess(args, 0, output, "")
 
             journey = run_offline_plan_step(mode="local", launcher="kb-create", stable_index=index,
                                             platform_root=root, run_command=run_command)

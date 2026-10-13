@@ -6,8 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from platform_channel_steps import run_platform_channel_steps
+from platform_channel_steps import decode_canary_apply_result, run_platform_channel_steps
 from test_install_layout import create_test_install_container
+
+def apply_stream(record: dict, exit_code: int) -> str:
+    terminal = {"ok": True, "data": None,
+                "meta": {"stream": {"terminal": True, "exitCode": exit_code}}}
+    return "\n".join([json.dumps(record), json.dumps(terminal)]) + "\n"
 
 
 class PlatformChannelStepsTest(unittest.TestCase):
@@ -23,6 +28,7 @@ class PlatformChannelStepsTest(unittest.TestCase):
         self.fresh_root = self.root / "fresh"
         self.commands: list[list[str]] = []
         self.fail_canary_preflight = False
+        self.record_apply_refusal = False
 
     def tearDown(self):
         self.temp.cleanup()
@@ -40,20 +46,25 @@ class PlatformChannelStepsTest(unittest.TestCase):
         if args[1] in {"stop", "start", "uninstall"}:
             return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}), "")
         if args[1] == "apply":
+            if self.record_apply_refusal:
+                fixture = Path(__file__).parent / "testdata/gateway-index-apply-refusal.jsonl"
+                return subprocess.CompletedProcess(args, 2, fixture.read_text(), "")
             if self.fail_canary_preflight:
-                return subprocess.CompletedProcess(args, 2, json.dumps({"ok": False, "error": {
+                return subprocess.CompletedProcess(args, 2, apply_stream({"ok": False, "error": {
                     "code": "KB_INSTALL_MEMORY_INSUFFICIENT",
                     "message": "The platform install needs at least 1228.80 MiB of available memory; 1200.00 MiB is available.",
                     "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.",
                     "meta": {"minimum": "1228.80 MiB", "available": "1200.00 MiB"}, "correlationId": "c-memory",
-                }}), "")
+                }}, 2), "")
             fresh_active_root = create_test_install_container(self.fresh_root)
             (fresh_active_root / ".kb/v2").mkdir(parents=True, exist_ok=True)
             plan = {"platformChannel": "canary", "serviceGraph": {"platformVersion": "3.0.2-canary.1"},
                     "artifacts": [{"kind": "platform", "version": "3.0.2-canary.1", "sha256": "platform"},
                                   {"kind": "sdk", "version": "3.0.2-canary.1", "sha256": "sdk"}]}
             (fresh_active_root / ".kb/v2/receipt.json").write_text(json.dumps({"plan": plan}))
-            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"receipt": {"plan": plan}}}), "")
+            result = {"ok": True, "data": {"receipt": {"plan": plan}},
+                      "meta": {"stream": {"result": True}}}
+            return subprocess.CompletedProcess(args, 0, apply_stream(result, 0), "")
         if args[1] == "update" and str(self.root / "canary-index.json") in args:
             self._write_receipt("3.0.2-canary.1", "canary")
             if "--json" not in args:
@@ -123,6 +134,29 @@ class PlatformChannelStepsTest(unittest.TestCase):
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
         self.assertNotIn("S-052.2", claims)
         self.assertEqual([command[1] for command in self.commands], ["plan", "stop", "apply", "start"])
+
+    def test_s053_canary_apply_refusal_reads_recorded_apply_stream(self):
+        fixture = Path(__file__).parent / "testdata/gateway-index-apply-refusal.jsonl"
+        command = subprocess.CompletedProcess(["kb-create", "apply", "--json"], 2, fixture.read_text(), "")
+        error = decode_canary_apply_result(command)
+        self.assertEqual(error["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
+        self.assertIn("rm", error["hint"])
+        self.assertIn("doctor", error["hint"])
+
+    def test_s053_canary_step_decodes_recorded_stream_refusal(self):
+        self.record_apply_refusal = True
+        result = run_platform_channel_steps(
+            mode="local", launcher="kb-create", platform_root=self.root,
+            stable_index=self.root / "stable-index.json", canary_index=self.root / "canary-index.json",
+            request_file=self.request, stable_version="3.0.0", canary_version="3.0.2-canary.1",
+            fresh_root=self.fresh_root, project_root=self.root / "project",
+            run_command=self.fake_kb,
+        ).result()
+        apply_step = next(step for step in result.steps
+                          if step["name"] == "apply a fresh installation from the sealed canary channel")
+        self.assertEqual(apply_step["status"], "FAIL")
+        self.assertIn("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE", apply_step["message"])
+        self.assertNotIn("CLI response is not JSON", apply_step["message"])
 
 
 if __name__ == "__main__":

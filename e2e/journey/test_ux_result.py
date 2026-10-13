@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+import re
 
 from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
+                         KB_CREATE_JSON_STREAM_COMMANDS, read_kb_create_cli_result,
                          read_ux_cli_result, read_ux_cli_stream)
 
 
@@ -55,6 +58,30 @@ class UxResultDecodeTests(unittest.TestCase):
         output = '{"error":{"code":"KB_DOCTOR_INVALID","message":"Manifest scan failed.","hint":"Run `kb-create doctor --fix` and retry."}}'
         detail = describe_cli_failure("kb-create doctor", output, "", 2)
         self.assertEqual(detail, "kb-create doctor exited 2: KB_DOCTOR_INVALID; Manifest scan failed.; hint: Run `kb-create doctor --fix` and retry.")
+
+    def test_kb_create_output_forms_match_registered_command_dispatch(self):
+        root = Path(__file__).resolve().parents[2]
+        registry = (root / "tools/kb-create/v2/cmd/kb-create-v2/root.go").read_text()
+        descriptors = re.findall(
+            r'(?ms)^\s*\{Name: "([^"]+)"(.*?)(?=^\s*\{Name: "|^\s*\})', registry
+        )
+        stream_commands = {
+            name for name, body in descriptors
+            if re.search(r"if jsonMode\(cmd\)\s*\{\s*return execute\w+Stream\(", body)
+        }
+        self.assertTrue(descriptors, "could not read kb-create operation descriptors from root.go")
+        self.assertEqual(stream_commands, KB_CREATE_JSON_STREAM_COMMANDS)
+
+    def test_command_reader_enforces_document_and_stream_forms(self):
+        fixtures = Path(__file__).parent / "testdata"
+        document = (fixtures / "gateway-index-plan-refusal.json").read_text()
+        stream = (fixtures / "gateway-index-apply-refusal.jsonl").read_text()
+        self.assertEqual(read_kb_create_cli_result("plan", document, 2)["ok"], False)
+        self.assertEqual(read_kb_create_cli_result("apply", stream, 2)["ok"], False)
+        with self.assertRaisesRegex(ValueError, "not JSON"):
+            read_kb_create_cli_result("plan", stream, 2)
+        with self.assertRaisesRegex(ValueError, "non-JSON record"):
+            read_kb_create_cli_result("apply", document, 2)
 
 
 if __name__ == "__main__":
