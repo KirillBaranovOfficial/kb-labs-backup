@@ -23,7 +23,7 @@ A secured installation has a usable first administrator, and an administrator ca
 
 | # | Action | Expected |
 |---|---|---|
-| S-100.1 | Capture the email and generated password from a successful fresh secured install result, verify it is absent from install-owned files, sign in to the gateway with it, then run `kb auth status --json`; after the secured update and rollback, verify install-owned files again | The successful result contains the first-administrator email and password. The password is absent from every file under the install root and from installer-declared outside-root files, including the secret store, plans, receipts, logs, version roots, snapshots, and temporary or backup files. The same remains true after update and rollback. Login succeeds, and JSON is an ADR-0049 success envelope whose `data.session.authenticated` is `true` and whose session reports the expected gateway URL and admin email. After that result is written, one atomic secret-store update records disclosure and removes both stored password entries. Later install or apply results omit the password. If output succeeds but the process stops before the atomic write, a retry may show the password again. |
+| S-100.1 | Capture the email and generated password from a successful fresh secured install result, verify it is absent from install-owned files, sign in to the gateway with it, then run `kb auth status --json`; after the secured update and rollback, verify install-owned files again. Separately run the supplied-password apply in S-181.3, then repeat install/apply and inspect status, doctor, update, rollback, and recovery output | The successful generated-password result contains the first-administrator email and password. The password is absent from every file under the install root and from installer-declared outside-root files, including the secret store, plans, receipts, logs, version roots, snapshots, and temporary or backup files. The same remains true after update and rollback. Login succeeds, and JSON is an ADR-0049 success envelope whose `data.session.authenticated` is `true` and whose session reports the expected gateway URL and admin email. After that result is written, one atomic secret-store update records disclosure and removes both stored password entries. If output succeeds but the process stops before the atomic write, a retry may show the generated password again. For S-181.3's operator-supplied password, `firstAdmin.state` is `supplied` and the email remains available, but no result contains a password value. The supplied value and its environment-variable name are absent from stdout, stderr, plans, requests, receipts, rendered config, registry, logs, and files under the install root or `$KB_HOME`; repeat install/apply, status, doctor, update, rollback, and recovery output never prints either one. Recovery may show only its newly generated replacement once. |
 | S-100.2 | Stop the host, then run `kb-create doctor --platform-root <platform-root> --recover --email admin@example.test --tenant <tenant-id> --password-stdin --yes` and pipe a new password to stdin, with no registered project for the platform root | Recovery exits with status 0 and does not echo the password; it uses the explicit platform root without resolving a project. |
 | S-100.3 | Start the host and sign in with the recovered password | Login succeeds and `GET /auth/me` returns the bootstrap admin's email and tenant ID. |
 | S-100.4 | Run the same recovery command while the host is running | Command exits unsuccessfully with a typed `KB_*` error and actionable hint that recovery requires a stopped host and instructs `kb-create stop`, recovery, then `kb-create start`. |
@@ -31,12 +31,20 @@ A secured installation has a usable first administrator, and an administrator ca
 
 ## Bootstrap credential lifecycle
 
-The bootstrap password is kept only until its first successful disclosure. The
-completion and disclosure markers and both stored password names live in the
-single shared secret file, so disclosure writes the marker and erases the
+The bootstrap password is kept only until successful handoff. For a generated
+password, the first successful result discloses it; for a supplied password,
+the result reports its origin without disclosing the value. The completion,
+disclosure, and origin markers and both stored password names live in the
+single shared secret file, so the result records disclosure and erases the
 password atomically. `gateway.bootstrap.password` is also bound to
 `GATEWAY_BOOTSTRAP_ADMIN_PASSWORD`; both entries are erased together. Version
 updates and rollback share this file and cannot restore an older password copy.
+
+For a supplied password, `firstAdmin.state` is `supplied` and the email remains
+available, but the result has no password field. The supplied value and its
+environment-variable name are absent from output and persisted artifacts. The
+origin marker survives erasure, so retries and later commands continue to
+report the supplied state without reading or printing a password.
 
 | Bootstrap completed | Credential disclosed | Password present in store | First `install` / `apply` | Repeat `install` / `apply` | `update` | `rollback` | `start` | `doctor` | `doctor --recover --generate` |
 |---|---|---|---|---|---|---|---|---|---|
