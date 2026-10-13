@@ -34,16 +34,17 @@ import (
 )
 
 type applyCommandInput struct {
-	Plan                   planInput
-	Resolved               *resolvedPlan
-	Registry               string
-	SecretEnv              string
-	Executable             string
-	Progress               runtime.ProgressSink
-	JSON                   bool
-	TelemetryEndpoint      string
-	TelemetryConsent       bool
-	AdminPasswordGenerated bool
+	Plan                       planInput
+	Resolved                   *resolvedPlan
+	Registry                   string
+	SecretEnv                  string
+	Executable                 string
+	Progress                   runtime.ProgressSink
+	JSON                       bool
+	TelemetryEndpoint          string
+	TelemetryConsent           bool
+	AdminPasswordGenerated     bool
+	AllowBootstrapRegistration bool
 }
 
 func executeApply(ctx context.Context, applyInput applyCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
@@ -210,6 +211,13 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	defer transcript.Close()
 	store := secrets.Store{PlatformRoot: operationRoot}
 	if err := populateSecrets(store, input.SecretEnv); err != nil {
+		if errors.Is(err, secrets.ErrBootstrapPasswordDisclosed) {
+			adminEmail, _ := configuredFirstAdmin(planned.Request)
+			recovery := buildFirstAdminRecoveryCommands(root, adminEmail)
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired,
+				"the first-administrator password was already disclosed and cannot be stored again",
+				"Run `"+recovery.Stop+"`, then `"+recovery.Doctor+"`, then `"+recovery.Start+"` to generate and disclose a replacement.", nil)
+		}
 		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SECRET_INPUT_INVALID", "secret input could not be stored", "use --secret-env requirement=ENV_VAR and set the environment variable", err)
 	}
 	adminEmail, securedAdmin := configuredFirstAdmin(planned.Request)
@@ -219,7 +227,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		var existsErr error
 		bootstrapCompleted, existsErr = store.Exists(secrets.BootstrapCompleted)
 		if existsErr == nil && !bootstrapCompleted {
-			adminPasswordPresent, existsErr = store.Exists("gateway.bootstrap.password")
+			adminPasswordPresent, existsErr = store.Exists(secrets.BootstrapPassword)
 		}
 		if existsErr != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read from the secret store", "check that the platform root is writable, then rerun `kb-create install`", existsErr)
@@ -377,9 +385,15 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			return applyCommandResult{}, failure
 		}
 	}
+	registrationNotice, noticeErr := completedBootstrapProjectNotice(applied, applied.Plan.Request.ProjectRoot, input.AllowBootstrapRegistration)
+	if noticeErr != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the project registration state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "apply", "--platform-root", root)+"`", noticeErr)
+	}
 	return applyCommandResult{OK: true, Operation: "apply", Receipt: applied, LogPath: logPath,
 		Profile: applied.Plan.ServiceGraph.Profile, Services: applied.Plan.ServiceGraph.Services,
-		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, disclosureStoreRoot: store.PlatformRoot}, nil
+		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, ProjectRegistrationNotice: registrationNotice,
+		disclosureStoreRoot: store.PlatformRoot}, nil
 }
 
 func unsupportedPlatformLayout(root string, cause error) *diag.Diag {

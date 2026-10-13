@@ -32,7 +32,8 @@ type IO struct {
 	// ReadSecret reads one line of secret input without echoing it. When nil, a
 	// real terminal is read with echo disabled and any other input (a pipe, a
 	// test) is read as a plain line.
-	ReadSecret func() (string, error)
+	ReadSecret       func() (string, error)
+	SkipRequirements []string
 }
 
 // secretAttempts bounds how often a hidden, unverifiable answer is re-asked
@@ -132,6 +133,9 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 	definition, err := scenario.Load(scenarioID)
 	if err != nil {
 		return contracts.InstallRequest{}, err
+	}
+	if len(terminal.SkipRequirements) > 0 {
+		definition = withoutRequirements(definition, terminal.SkipRequirements)
 	}
 	channels := availableChannels(source)
 	channel, err := choose(reader, terminal.Out, "Platform channel", channels, string(contracts.ChannelStable))
@@ -251,13 +255,37 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		if err := store.Put(id, value); err != nil {
 			return contracts.InstallRequest{}, fmt.Errorf("store secret %s: %w", id, err)
 		}
-		if id == "gateway.bootstrap.password" && generatedValues[id] {
+		if id == secrets.BootstrapPassword && generatedValues[id] {
 			if err := store.Put(secrets.BootstrapGenerated, "true"); err != nil {
 				return contracts.InstallRequest{}, fmt.Errorf("record generated bootstrap secret: %w", err)
 			}
 		}
 	}
 	return request, nil
+}
+
+func withoutRequirements(definition scenario.Scenario, requirements []string) scenario.Scenario {
+	skipped := make(map[string]struct{}, len(requirements))
+	for _, requirement := range requirements {
+		skipped[requirement] = struct{}{}
+	}
+	filter := func(fields []scenario.Field) []scenario.Field {
+		result := fields[:0]
+		for _, field := range fields {
+			if _, skip := skipped[field.Requirement]; !skip {
+				result = append(result, field)
+			}
+		}
+		return result
+	}
+	definition.Fields = filter(definition.Fields)
+	for pageIndex := range definition.Pages {
+		for sectionIndex := range definition.Pages[pageIndex].Sections {
+			section := &definition.Pages[pageIndex].Sections[sectionIndex]
+			section.Fields = filter(section.Fields)
+		}
+	}
+	return definition
 }
 
 // askSecret collects one secret field. Input is hidden on a terminal. A blank

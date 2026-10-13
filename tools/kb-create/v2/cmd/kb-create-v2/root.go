@@ -206,17 +206,28 @@ func executeVersion(_ context.Context, _ versionCommandInput) (map[string]any, *
 }
 func renderUpdate(value any) string {
 	if result, ok := value.(updateCommandResult); ok {
+		message := "Platform update completed."
+		if result.ProjectRegistrationNotice != "" {
+			message += "\n" + result.ProjectRegistrationNotice
+		}
 		if result.AlreadyUpToDate {
-			return "Platform is already up to date."
+			message = "Platform is already up to date."
 		}
 		if result.PendingRestart != nil {
-			return "Platform update completed.\n" + renderPendingRestart(result.PendingRestart)
+			message += "\n" + renderPendingRestart(result.PendingRestart)
 		}
+		return message
 	}
 	return "Platform update completed."
 }
 
-func renderRollback(any) string { return "Platform rollback completed." }
+func renderRollback(value any) string {
+	result, ok := value.(recoveryCommandResult)
+	if !ok || result.ProjectRegistrationNotice == "" {
+		return "Platform rollback completed."
+	}
+	return "Platform rollback completed.\n" + result.ProjectRegistrationNotice
+}
 func renderUninstall(value any) string {
 	result, ok := value.(recoveryCommandResult)
 	if !ok || len(result.PreservedEntries) == 0 {
@@ -237,6 +248,9 @@ func renderApply(value any) string {
 	message := "Platform installation completed."
 	if payload.Shim != nil && !payload.Shim.Linked {
 		message += fmt.Sprintf("\nThe kb command is owned by %s; run %s to use this platform.", payload.Shim.Owner, shim.Target(payload.Receipt.Plan.Request.PlatformRoot))
+	}
+	if payload.ProjectRegistrationNotice != "" {
+		message += "\n" + payload.ProjectRegistrationNotice
 	}
 	return withFirstAdmin(message, payload.FirstAdmin)
 }

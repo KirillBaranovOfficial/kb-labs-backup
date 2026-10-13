@@ -165,7 +165,7 @@ func firstAdminResult(store secrets.Store, adminEmail string, platformRoot strin
 	if disclosed {
 		return previouslyDisclosedFirstAdmin(adminEmail, platformRoot), nil
 	}
-	password, passwordPresent, passwordErr := store.Get("gateway.bootstrap.password")
+	password, passwordPresent, passwordErr := store.Get(secrets.BootstrapPassword)
 	if passwordErr != nil {
 		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read", "check that the platform root is writable, then rerun `kb-create install`", passwordErr)
 	}
@@ -176,7 +176,7 @@ func firstAdminResult(store secrets.Store, adminEmail string, platformRoot strin
 }
 
 func setBootstrapDisclosed(store secrets.Store) error {
-	return store.Put(secrets.BootstrapDisclosed, "true")
+	return store.MarkBootstrapDisclosed()
 }
 
 func emitFirstAdminResult(value applyCommandResult, operation string, emit func() error) (bool, *diag.Diag) {

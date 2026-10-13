@@ -26,15 +26,16 @@ import (
 )
 
 type updateCommandResult struct {
-	OK              bool                      `json:"ok"`
-	Operation       string                    `json:"operation"`
-	Receipt         contracts.InstallReceipt  `json:"receipt"`
-	Snapshot        map[string]any            `json:"snapshot"`
-	HostRestarted   bool                      `json:"hostRestarted"`
-	AlreadyUpToDate bool                      `json:"alreadyUpToDate,omitempty"`
-	UpdateSummary   *contracts.UpdateSummary  `json:"updateSummary,omitempty"`
-	PendingRestart  *contracts.PendingRestart `json:"pendingRestart,omitempty"`
-	LogPath         string                    `json:"logPath"`
+	OK                        bool                      `json:"ok"`
+	Operation                 string                    `json:"operation"`
+	Receipt                   contracts.InstallReceipt  `json:"receipt"`
+	Snapshot                  map[string]any            `json:"snapshot"`
+	HostRestarted             bool                      `json:"hostRestarted"`
+	AlreadyUpToDate           bool                      `json:"alreadyUpToDate,omitempty"`
+	UpdateSummary             *contracts.UpdateSummary  `json:"updateSummary,omitempty"`
+	PendingRestart            *contracts.PendingRestart `json:"pendingRestart,omitempty"`
+	LogPath                   string                    `json:"logPath"`
+	ProjectRegistrationNotice string                    `json:"projectRegistrationNotice,omitempty"`
 }
 
 type updateCommandInput struct {
@@ -89,7 +90,13 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		return updateCommandResult{}, inputFailure(updateCompatibilityDiag(asDiag(err)))
 	}
 	if disposition == resolve.UpdateAlreadyUpToDate {
-		return updateCommandResult{OK: true, Operation: "update", Receipt: active, HostRestarted: false, AlreadyUpToDate: true}, nil
+		registrationNotice, noticeErr := completedBootstrapProjectNotice(active, active.Plan.Request.ProjectRoot, false)
+		if noticeErr != nil {
+			return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+				"the project registration state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", platformRoot)+"`", noticeErr)
+		}
+		return updateCommandResult{OK: true, Operation: "update", Receipt: active, HostRestarted: false, AlreadyUpToDate: true,
+			ProjectRegistrationNotice: registrationNotice}, nil
 	}
 	request, changed, err := requestWithGeneratedSecrets(plan.Request, plan.Artifacts)
 	if err != nil {
@@ -190,7 +197,8 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The install root cannot use the required atomic layout.", "Run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"` on Linux or macOS.", err)
 	}
 	root := layout.PlatformRoot()
-	if _, err := receipt.Read(root); err != nil {
+	previousReceipt, err := receipt.Read(root)
+	if err != nil {
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
 		failure.ProcessExitCode = diag.ExitInput
 		return updateCommandResult{}, failure
@@ -314,6 +322,11 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		}
 	}
 	outcome, errorCode = "success", ""
+	registrationNotice, noticeErr := completedBootstrapProjectNotice(previousReceipt, previousReceipt.Plan.Request.ProjectRoot, false)
+	if noticeErr != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the project registration state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"`", noticeErr)
+	}
 	runner, err = host.NewRunner(installRoot)
 	if err != nil {
 		return updateCommandResult{}, asDiag(err)
@@ -326,5 +339,6 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	}
 	outcome, errorCode = "success", ""
 	return updateCommandResult{OK: true, Operation: "update", Receipt: updated, Snapshot: snapshotSummary(snapshot), HostRestarted: false,
-		PendingRestart: pendingRestart(updated, running, installRoot), LogPath: transcriptPath}, nil
+		PendingRestart: pendingRestart(updated, running, installRoot), LogPath: transcriptPath,
+		ProjectRegistrationNotice: registrationNotice}, nil
 }

@@ -38,15 +38,16 @@ type projectRegistrationResult struct {
 }
 
 type applyCommandResult struct {
-	OK                  bool                     `json:"ok"`
-	Operation           string                   `json:"operation"`
-	Receipt             contracts.InstallReceipt `json:"receipt"`
-	LogPath             string                   `json:"logPath"`
-	Profile             string                   `json:"profile"`
-	Services            []contracts.Service      `json:"services"`
-	Shim                *shim.EnsureResult       `json:"shim,omitempty"`
-	FirstAdmin          *firstAdminCredential    `json:"firstAdmin,omitempty"`
-	disclosureStoreRoot string
+	OK                        bool                     `json:"ok"`
+	Operation                 string                   `json:"operation"`
+	Receipt                   contracts.InstallReceipt `json:"receipt"`
+	LogPath                   string                   `json:"logPath"`
+	Profile                   string                   `json:"profile"`
+	Services                  []contracts.Service      `json:"services"`
+	Shim                      *shim.EnsureResult       `json:"shim,omitempty"`
+	FirstAdmin                *firstAdminCredential    `json:"firstAdmin,omitempty"`
+	ProjectRegistrationNotice string                   `json:"projectRegistrationNotice,omitempty"`
+	disclosureStoreRoot       string
 }
 
 type firstAdminState string

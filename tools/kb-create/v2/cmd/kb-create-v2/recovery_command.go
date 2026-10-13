@@ -26,12 +26,13 @@ import (
 )
 
 type recoveryCommandResult struct {
-	OK               bool           `json:"ok"`
-	Operation        string         `json:"operation"`
-	Snapshot         map[string]any `json:"snapshot"`
-	HostRestarted    bool           `json:"hostRestarted"`
-	LogPath          string         `json:"logPath"`
-	PreservedEntries []string       `json:"preservedEntries,omitempty"`
+	OK                        bool           `json:"ok"`
+	Operation                 string         `json:"operation"`
+	Snapshot                  map[string]any `json:"snapshot"`
+	HostRestarted             bool           `json:"hostRestarted"`
+	LogPath                   string         `json:"logPath"`
+	ProjectRegistrationNotice string         `json:"projectRegistrationNotice,omitempty"`
+	PreservedEntries          []string       `json:"preservedEntries,omitempty"`
 }
 
 type uninstallCommandInput struct {
@@ -192,6 +193,14 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	if failure != nil {
 		return recoveryCommandResult{}, failure
 	}
+	registrationNotice := ""
+	if restored, readErr := receipt.Read(platformRoot); readErr == nil {
+		registrationNotice, err = completedBootstrapProjectNotice(restored, restored.Plan.Request.ProjectRoot, false)
+		if err != nil {
+			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+				"the project registration state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "rollback", "--platform-root", root)+"`", err)
+		}
+	}
 	if restored, readErr := receipt.Read(platformRoot); readErr == nil && restored.Plan.Host != nil {
 		origin, originErr := gateway.OriginFromHealthURL(restored.Verification.HostHealthURL)
 		if originErr != nil {
@@ -201,7 +210,8 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the rollback succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create rollback`", err)
 		}
 	}
-	return recoveryCommandResult{OK: true, Operation: "rollback", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: result.WasRunning, LogPath: result.LogPath}, nil
+	return recoveryCommandResult{OK: true, Operation: "rollback", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: result.WasRunning, LogPath: result.LogPath,
+		ProjectRegistrationNotice: registrationNotice}, nil
 }
 
 type recoveryMutationResult struct {

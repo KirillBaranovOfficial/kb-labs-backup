@@ -16,6 +16,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/preflight"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/kb-labs/create/v2/wizard"
@@ -27,6 +28,7 @@ type installCommandInput struct {
 	TelemetryEndpoint                                                        string
 	Direct                                                                   directRequest
 	Resume, JSON, TelemetryConsent                                           bool
+	BootstrapRegistrationWindow                                              bool
 }
 
 func executeInstall(ctx context.Context, installInput installCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
@@ -84,7 +86,17 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		inputReader = clikitcommand.FromCommand(deps.Command).Input()
 	}
 	generatedSecrets := map[string]string{}
-	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, wizard.IO{In: inputReader, Out: out, Generated: generatedSecrets})
+	bootstrapCompleted, err := (secrets.Store{PlatformRoot: root}).Exists(secrets.BootstrapCompleted)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first-administrator bootstrap state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "install", "--platform-root", root)+"`", err)
+	}
+	skipRequirements := []string(nil)
+	if bootstrapCompleted {
+		skipRequirements = []string{secrets.BootstrapPassword}
+	}
+	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, wizard.IO{
+		In: inputReader, Out: out, Generated: generatedSecrets, SkipRequirements: skipRequirements,
+	})
 	if err != nil {
 		var validation *contracts.RequestValidationError
 		if errors.As(err, &validation) {
@@ -135,7 +147,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	deps.Runtime.Progress = &humanProgress{out: out, started: map[string]time.Time{}}
 	result, failure := executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
 		Executable: input.Executable, Progress: deps.Runtime.Progress, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent,
-		AdminPasswordGenerated: generatedSecrets["gateway.bootstrap.password"] != ""}, deps)
+		AdminPasswordGenerated: generatedSecrets[secrets.BootstrapPassword] != "", AllowBootstrapRegistration: !bootstrapCompleted}, deps)
 	if failure != nil {
 		return applyCommandResult{}, failure
 	}
@@ -148,6 +160,9 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		if _, err := fmt.Fprintf(out, "\nKB Labs is installed at %s.\nNext: register a project with `%s`.\n", root, contracts.ShellCommand("kb", "project", "add", "<path>")); err != nil {
 			return applyCommandResult{}, progressWriteFailure(err, "install")
 		}
+		return result, nil
+	}
+	if result.ProjectRegistrationNotice != "" {
 		return result, nil
 	}
 	if !projectRegistrationRequired(plan.Request.ProjectRoot, existingSelection) {
@@ -246,6 +261,11 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 		selectionFailure.ProcessExitCode = diag.ExitInput
 		return finishInstallStreamFailure(writer, selectionFailure)
 	}
+	bootstrapCompleted, stateErr := (secrets.Store{PlatformRoot: resolved.Plan.Request.PlatformRoot}).Exists(secrets.BootstrapCompleted)
+	if stateErr != nil {
+		return finishInstallStreamFailure(writer, contracts.NewDiag(contracts.CodeApplyFailed, "the first-administrator bootstrap state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "install", "--platform-root", resolved.Plan.Request.PlatformRoot)+"`", stateErr))
+	}
+	input.BootstrapRegistrationWindow = !bootstrapCompleted
 	deps.Runtime.Progress = streamProgress{writer: writer}
 	result, failure := executeApplyPlanJSON(ctx, input, resolved, deps)
 	if failure != nil {
@@ -259,7 +279,7 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 		return streamCompletion{ExitCode: writer.ExitCode()}, nil
 	}
 	request := result.Receipt.Plan.Request
-	if projectRegistrationRequired(request.ProjectRoot, existingSelection) {
+	if projectRegistrationRequired(request.ProjectRoot, existingSelection) && result.ProjectRegistrationNotice == "" {
 		registered, err := deps.ProjectRegistrar(request.PlatformRoot, request.ProjectRoot)
 		if err != nil {
 			failure := projectRegistrationFailure(request.PlatformRoot, request.ProjectRoot, err)
@@ -319,7 +339,8 @@ func finishInstallStreamFailure(writer *stream.Writer, failure *diag.Diag) (stre
 
 func executeApplyPlanJSON(ctx context.Context, input installCommandInput, resolved resolvedPlan, deps commandDependencies) (applyCommandResult, *diag.Diag) {
 	return executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
-		Executable: input.Executable, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent}, deps)
+		Executable: input.Executable, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent,
+		AllowBootstrapRegistration: input.BootstrapRegistrationWindow}, deps)
 }
 
 func projectRegistrationRequired(projectRoot string, existingSelection bool) bool {

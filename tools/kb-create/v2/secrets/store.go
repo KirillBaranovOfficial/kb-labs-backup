@@ -6,6 +6,7 @@ package secrets
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,14 +17,23 @@ import (
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
+var ErrBootstrapPasswordDisclosed = errors.New("bootstrap password has already been disclosed")
+
 // EnsureGenerated fills every selected artifact's generated secret requirements
 // with a fresh per-install value unless one already exists. Generated secrets
 // are installer-owned and do not require a user secret input. Values stay in the
 // private store and are never added to the plan or receipt.
 func EnsureGenerated(plan *contracts.ResolvedInstallPlan, store Store) error {
+	bootstrapCompleted, err := store.Exists(BootstrapCompleted)
+	if err != nil {
+		return fmt.Errorf("check first-administrator bootstrap completion: %w", err)
+	}
 	for _, artifact := range plan.Artifacts {
 		for _, requirement := range artifact.Config {
 			if !requirement.Secret || !requirement.Generate {
+				continue
+			}
+			if bootstrapCompleted && requirement.ID == BootstrapPassword {
 				continue
 			}
 			exists, err := store.Exists(requirement.ID)
@@ -51,6 +61,7 @@ type Store struct {
 }
 
 const (
+	BootstrapPassword            = "gateway.bootstrap.password"
 	BootstrapCompleted           = "gateway.bootstrap.completed"
 	BootstrapGenerated           = "gateway.bootstrap.generated"
 	BootstrapDisclosed           = "gateway.bootstrap.disclosed"
@@ -69,6 +80,18 @@ func (store Store) Put(name, value string) error {
 	if err := validate(name); err != nil {
 		return err
 	}
+	if name == BootstrapDisclosed {
+		return errors.New("bootstrap disclosure must atomically erase the password")
+	}
+	if name == BootstrapPassword || name == BootstrapPasswordEnvironment {
+		disclosed, err := store.Exists(BootstrapDisclosed)
+		if err != nil {
+			return err
+		}
+		if disclosed {
+			return ErrBootstrapPasswordDisclosed
+		}
+	}
 	if value == "" {
 		return fmt.Errorf("secret %q is empty", name)
 	}
@@ -84,6 +107,39 @@ func (store Store) Put(name, value string) error {
 		return err
 	}
 	values[name] = value
+	return store.write(values)
+}
+
+// MarkBootstrapDisclosed atomically records disclosure and removes every
+// stored representation of the one-time bootstrap password. Both values are
+// in the shared runtime secret file, so an interrupted write leaves either
+// the undisclosed password or the committed marker without the password.
+func (store Store) MarkBootstrapDisclosed() error {
+	if store.ReadOnly {
+		return fmt.Errorf("secret store is read-only during staged update verification")
+	}
+	values, err := store.readRaw()
+	if err != nil {
+		return err
+	}
+	return store.commitBootstrapDisclosure(values)
+}
+
+func (store Store) commitBootstrapDisclosure(values map[string]string) error {
+	values[BootstrapDisclosed] = "true"
+	delete(values, BootstrapPassword)
+	delete(values, BootstrapPasswordEnvironment)
+	return store.write(values)
+}
+
+func (store Store) write(values map[string]string) error {
+	path, err := store.path()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
 	data := make([]string, 0, len(values))
 	for key, item := range values {
 		data = append(data, key+"="+item)
@@ -202,6 +258,20 @@ func (store Store) path() (string, error) {
 	return layout.SharedRuntimePath(".kb/v2/secrets.env")
 }
 func (store Store) read() (map[string]string, error) {
+	values, err := store.readRaw()
+	if err != nil {
+		return nil, err
+	}
+	if values[BootstrapDisclosed] == "true" && (values[BootstrapPassword] != "" || values[BootstrapPasswordEnvironment] != "") {
+		if err := store.commitBootstrapDisclosure(values); err != nil {
+			return nil, err
+		}
+		return store.readRaw()
+	}
+	return values, nil
+}
+
+func (store Store) readRaw() (map[string]string, error) {
 	path, err := store.path()
 	if err != nil {
 		return nil, err
