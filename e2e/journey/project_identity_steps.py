@@ -95,7 +95,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
         def install_scoped_plugins() -> str | None:
             for project, package in ((projects[0], "@kb-labs/workflow-entry"),
                                      (projects[1], "@kb-labs/commit-entry")):
-                version = _registry_version(package, registry, env, command_runner)
+                version = _registry_version(package, registry, project, env, command_runner)
                 args = ["marketplace", "install", f"{package}@{version}", "--json"]
                 result = run(project, *args, step_id="S-043.3")
                 if result.returncode != 0:
@@ -118,7 +118,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
 
         def mind_plugin_scope() -> str | None:
             package = "@kb-labs/mind-entry"
-            version = _registry_version(package, registry, env, command_runner)
+            version = _registry_version(package, registry, projects[0], env, command_runner)
             result = run(projects[0], "marketplace", "install", f"{package}@{version}", "--json",
                          step_id="S-199.1")
             if result.returncode != 0:
