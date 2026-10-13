@@ -1,16 +1,104 @@
 from __future__ import annotations
 
 import importlib
+import io
 import json
+import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from service_steps import Journey
+from service_steps import FlowGraph, Journey
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
+    @staticmethod
+    def _project_command(command, **_kwargs):
+        if command[0] == "bash":
+            payload = {"ok": True, "data": {"project": {"id": "prj_selected", "name": "selected"}}}
+        else:
+            payload = {"ok": True, "data": {"projects": [{"id": "prj_selected"}]}}
+        return importlib.import_module("subprocess").CompletedProcess(command, 0, json.dumps(payload), ""), 0.0
+
+    def _project_graph(self, *, selected, capabilities):
+        runner = importlib.import_module("runner")
+        service_runner = importlib.import_module("service_runner")
+        env = {"KB_JOURNEY_SELECTED_STEPS": selected,
+               "KB_JOURNEY_SELECTED_CAPABILITIES": capabilities}
+        with patch.dict(os.environ, env, clear=True):
+            journey = Journey("local", "project-registration-state")
+            groups = runner.outer_selection_groups()
+            states = {"host-running": {"passed": True, "evidence": "host running"},
+                      "platform-version-known": {"passed": True, "evidence": "version known"}}
+            graph = FlowGraph(journey, runner.OUTER_GROUP_DEPENDENCIES, groups=groups, states=states)
+        return runner, service_runner, journey, graph
+
+    def test_selected_project_claims_run_the_registered_project_state_producer(self):
+        runner, _service_runner, _journey, graph = self._project_graph(
+            selected="PC-002.3,PC-002.8", capabilities="gateway,projects")
+        with patch("runner.run", side_effect=self._project_command):
+            runner.establish_project_registration(graph, Path("/tmp/project"), {})
+
+        self.assertTrue(graph.states["project-registered"]["passed"])
+        self.assertEqual(graph.state_value("project-registered"), {
+            "id": "prj_selected", "root": str(Path("/tmp/project").resolve()), "name": "selected",
+        })
+        child_env = {}
+        self.assertEqual(runner.project_environment_from_state(graph, child_env), graph.state_value("project-registered"))
+        self.assertEqual(child_env["KB_JOURNEY_PROJECT_ID"], "prj_selected")
+        self.assertEqual(child_env["KB_JOURNEY_PROJECT_ROOT"], str(Path("/tmp/project").resolve()))
+        self.assertEqual(graph.journey.flows["verify installed project registration"][0], "PASS")
+
+    def test_failed_project_registration_blocks_both_selected_service_claims(self):
+        runner, service_runner, journey, graph = self._project_graph(
+            selected="PC-002.3,PC-002.8", capabilities="gateway,projects")
+
+        def failed_show(command, **_kwargs):
+            return importlib.import_module("subprocess").CompletedProcess(
+                command, 7, "project show refused", ""), 0.0
+
+        with patch("runner.run", side_effect=failed_show):
+            runner.establish_project_registration(graph, Path("/tmp/project"), {})
+        service_journey = Journey("local", "project-registration-consumers")
+        service_graph = FlowGraph(
+            service_journey,
+            {name: spec["depends_on"] for name, spec in service_runner.SERVICE_GROUPS.items()},
+            groups=service_runner.SERVICE_GROUPS,
+            states={**graph.states,
+                    "service-api-session": {"passed": True, "evidence": "local mode", "value": None}},
+        )
+        for claim, group, capability in (("PC-002.3", "platform", "gateway"),
+                                         ("PC-002.8", "projects", "projects")):
+            service_graph.step(claim, group, capability, lambda: None, cases=[claim])
+
+        self.assertEqual([step.status for step in service_journey.steps], ["BLOCKED", "BLOCKED"])
+        self.assertTrue(all("project-registered" in step.message and "kb project show exited 7" in step.message
+                            for step in service_journey.steps))
+        self.assertEqual(journey.result().status, "FAIL")
+        self.assertEqual(journey.result().first_failure["name"], "verify installed project registration")
+
+    def test_project_registration_is_not_needed_for_install_only_selection_and_skip_is_visible(self):
+        runner, _service_runner, _journey, graph = self._project_graph(
+            selected="PC-001.2", capabilities="platform.install")
+        output = io.StringIO()
+        with redirect_stdout(output), patch("runner.run", side_effect=self._project_command):
+            runner.establish_project_registration(graph, Path("/tmp/project"), {})
+
+        self.assertNotIn("project-registered", graph.states)
+        self.assertIn("SKIPPED verify installed project registration: not selected", output.getvalue())
+        self.assertEqual(graph.journey.flows["verify installed project registration"][0], "SKIPPED")
+
+    def test_blocked_summary_names_its_row_without_changing_first_failure_contract(self):
+        runner = importlib.import_module("runner")
+        journey = Journey("local", "blocked-verdict-format")
+        journey.blocked("resource preflight", "platform.update", "not enough memory", cases=["S-052.1"])
+        result = journey.result()
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertIsNone(result.first_failure)
+        self.assertEqual(runner.journey_verdict_detail(result.__dict__), "resource preflight: not enough memory")
+
     def _run_node_guard_terminal_path(self, *, execute_selected: bool) -> tuple[int, str, str, bool]:
         with tempfile.TemporaryDirectory(prefix="journey-final-outcome-") as temporary:
             root = Path(temporary)

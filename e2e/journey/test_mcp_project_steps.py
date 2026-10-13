@@ -17,7 +17,7 @@ from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_ar
                                project_readonly_tool_isolation,
                                run_agent_session_steps,
                                secured_auth, secured_project_catalog_isolation, unknown_tool)
-from service_steps import Journey
+from service_steps import FlowGraph, Journey
 import service_runner
 from service_runner import checks
 
@@ -192,16 +192,19 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         self.assertEqual(secured[step], ["S-203.2", "S-203.6", "S-045.6", "S-140.7"])
 
     def test_platform_readiness_claims_both_gateway_and_project_workflow_checks(self):
-        with patch("service_runner.PROJECT_ID", "prj_registered"):
-            name, capability, check, cases, requires, runners = next(
-                row for row in checks("local") if row[0] == "platform readiness (gateway + project workflow)")
+        journey = Journey("local", "readiness-registered-project-state")
+        graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in service_runner.SERVICE_GROUPS.items()},
+                          groups=service_runner.SERVICE_GROUPS)
+        graph.probe_state("project-registered", "project", "test registration probe", lambda: None,
+                          value=lambda: {"id": "prj_registered", "root": "/tmp/project"})
+        service_runner.prepare_service_api_session(graph, "local")
+        name, capability, check, cases, requires, runners = next(
+            row for row in checks("local", graph) if row[0] == "platform readiness (gateway + project workflow)")
         self.assertEqual((name, capability, cases), (
             "platform readiness (gateway + project workflow)", "gateway", ["PC-002.3"]))
-        self.assertEqual(requires, ("step:registered project setup",))
+        self.assertEqual(requires, ())
         self.assertEqual(runners, ())
-        with patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": "test-token"}), \
-                patch("service_runner.PROJECT_ID", "prj_registered"), \
-                patch("service_runner.expect_json", return_value=None) as expect_json, \
+        with patch("service_runner.expect_json", return_value=None) as expect_json, \
                 patch("service_runner.expect_project_service_health", return_value=None) as expect_health:
             self.assertIsNone(check())
 
@@ -209,7 +212,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         expect_health.assert_called_once_with(
             "/api/v1/projects/prj_registered/workflow/health",
             "workflow",
-            token="test-token",
+            token=None,
         )
 
     def test_secured_platform_readiness_reads_the_probed_service_api_session(self):
@@ -225,11 +228,11 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         journey = service_runner.Journey("secured", "readiness-service-session")
         graph = service_runner.FlowGraph(journey, {}, states={})
+        graph.probe_state("project-registered", "project", "test registration probe", lambda: None,
+                          value=lambda: {"id": "prj_registered", "root": "/tmp/project"})
         with patch("service_runner.ADMIN_PASSWORD", "synthetic-admin-password"), \
                 patch("service_runner.ADMIN_EMAIL", "admin@example.test"), \
-                patch("service_runner.PROJECT_ID", "prj_registered"), \
                 patch("service_runner.project_service_path", return_value="/api/v1/projects/prj_registered/workflow/health"), \
-                patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": ""}), \
                 patch("service_runner.request", side_effect=request), \
                 patch("service_runner.expect_json", return_value=None) as expect_json, \
                 patch("service_runner.expect_project_service_health", return_value=None) as expect_health:
@@ -249,16 +252,18 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def test_missing_project_id_blocks_readiness_before_building_a_request(self):
         journey = Journey("local", "missing-project-id")
-        with patch("service_runner.PROJECT_ID", ""), \
-                patch("service_runner.expect_json", return_value=None), \
+        graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in service_runner.SERVICE_GROUPS.items()},
+                          groups=service_runner.SERVICE_GROUPS)
+        graph.probe_state("host-running", "host", "test host probe", lambda: None)
+        service_runner.prepare_service_api_session(graph, "local")
+        with patch("service_runner.expect_json", return_value=None), \
                 patch("service_runner.expect_project_service_health") as expect_health:
             name, capability, check, cases, _requires, _runners = next(
-                row for row in checks("local") if row[0] == "platform readiness (gateway + project workflow)")
-            journey.step(name, capability, check, cases)
+                row for row in checks("local", graph) if row[0] == "platform readiness (gateway + project workflow)")
+            graph.step(name, "platform", capability, check, cases)
 
-        self.assertEqual(journey.steps[0].status, "BLOCKED")
-        self.assertIn("KB_JOURNEY_PROJECT_ID", journey.steps[0].message)
-        self.assertEqual(journey.steps[0].details["missingStateKey"], "KB_JOURNEY_PROJECT_ID")
+        blocked = next(step for step in journey.steps if step.status == "BLOCKED")
+        self.assertIn("project-registered", blocked.message)
         prerequisite = Journey("local", "missing-project-prerequisite")
         prerequisite.step("prior", "fixture", lambda: "BLOCKED: failed prerequisite")
         blocked = prerequisite.step("dependent", "fixture", lambda: None, requires={"step:prior"})
@@ -275,10 +280,14 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (200, {"projectRuntimes": {"runtimes": [{"projectId": "prj_a", "state": "ready"}]}}, {}),
             (200, {"status": "healthy"}, {}),
         ]
-        checks_by_name = {name: check for name, _, check, _, _, _ in checks("local")}
-        with patch("service_runner.PROJECT_ID", "prj_a"), \
-                patch.dict(os.environ, {"KB_JOURNEY_PROJECT_ROOT": project_root}), \
-                patch("service_runner.request_ux_success", side_effect=responses) as request:
+        journey = Journey("local", "runtime-identity-registered-project-state")
+        graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in service_runner.SERVICE_GROUPS.items()},
+                          groups=service_runner.SERVICE_GROUPS)
+        graph.probe_state("project-registered", "project", "test registration probe", lambda: None,
+                          value=lambda: {"id": "prj_a", "root": project_root})
+        service_runner.prepare_service_api_session(graph, "local")
+        checks_by_name = {name: check for name, _, check, _, _, _ in checks("local", graph)}
+        with patch("service_runner.request_ux_success", side_effect=responses) as request:
             self.assertIsNone(checks_by_name["registered project runtime identity"]())
 
         self.assertEqual(

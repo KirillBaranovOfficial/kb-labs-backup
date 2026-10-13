@@ -86,7 +86,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 "owners": {"service-local:explore": ["S-042.1"],
                            "service-secured:explore": ["S-042.1"]},
                 "runners": ["service-local:explore", "service-secured:explore"],
-                "prerequisiteSteps": ["registered project setup"], "prerequisiteFlows": [],
+                "prerequisiteSteps": [], "prerequisiteFlows": [],
                 "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
             })
 
@@ -137,7 +137,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             "owners": {"service-local:explore": ["S-042.1"],
                        "service-secured:explore": ["S-042.1"]},
             "runners": ["service-local:explore", "service-secured:explore"],
-            "prerequisiteSteps": ["registered project setup"], "prerequisiteFlows": [],
+            "prerequisiteSteps": [], "prerequisiteFlows": [],
             "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
         })
 
