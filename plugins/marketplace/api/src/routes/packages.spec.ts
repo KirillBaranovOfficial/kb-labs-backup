@@ -55,6 +55,8 @@ function createFailingSource(failure: Error, throwsDuringResolve: boolean): Pack
       return { id: pkg.id, version: pkg.version, packageRoot: '/unused', integrity: '' };
     },
     async remove(): Promise<void> {},
+    async commitInstall() {},
+    async rollbackInstall() {},
   };
 }
 
@@ -382,6 +384,59 @@ describe('Marketplace API error boundary', () => {
     expect(response.body).not.toContain('private adapter loader detail');
     expect(errors).toHaveLength(1);
     expect(errors[0]?.error?.message).toContain('private adapter loader detail');
-    expect(errors[0]?.fields).toMatchObject({ requestId: correlationId, errorCode: 'KB_RUNTIME_UNEXPECTED' });
+    expect(errors[0]?.error?.stack).toContain('private adapter loader detail');
+    expect(errors[0]?.fields).toMatchObject({ correlationId, requestId: correlationId, errorCode: 'KB_RUNTIME_UNEXPECTED' });
+  });
+
+  // case: S-220.11
+  it('catalogues a broken installed adapter manifest and rolls back the platform install', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-adapter-rollback-'));
+    roots.push(root);
+    const packageRoot = path.join(root, 'package');
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@kb-labs/test-adapter', version: '1.0.0', type: 'module', kb: { manifest: './manifest.mjs' },
+    }));
+    await writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = { schema: "kb.adapter/1", implements: "ICache" };');
+    let packageInstalled = false;
+    let packageCommitted = false;
+    const source: PackageSource = {
+      async resolve() {
+        return { id: '@kb-labs/test-adapter', version: '1.0.0', integrity: 'sha256-test', source: 'marketplace', primaryKind: 'adapter' };
+      },
+      async install(pkg) {
+        packageInstalled = true;
+        return { id: pkg.id, version: pkg.version, packageRoot, integrity: pkg.integrity };
+      },
+      async remove() {},
+      async commitInstall() { packageCommitted = true; },
+      async rollbackInstall() { packageInstalled = false; },
+    };
+    const { logger, errors } = makeContextLogger();
+    const service = new MarketplaceService({ platformRoot: root, logger, source });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      payload: { specs: ['@kb-labs/test-adapter'], scope: 'platform' },
+    });
+    const result = response.json();
+    const correlationId = result.error?.correlationId;
+
+    expect(response.statusCode).toBe(422);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_ADAPTER_MANIFEST_LOAD',
+        correlationId: expect.any(String),
+        hint: expect.stringContaining('kb marketplace plugins doctor --scope platform'),
+      },
+    });
+    expect(packageInstalled).toBe(false);
+    expect(packageCommitted).toBe(false);
+    expect(errors[0]?.fields).toMatchObject({ correlationId, errorCode: 'KB_ADAPTER_MANIFEST_LOAD' });
+    expect(errors[0]?.error?.stack).toContain('AdapterManifestLoadError');
   });
 });

@@ -51,7 +51,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
 
     let roots: Awaited<ReturnType<typeof resolveConfigRoots>>;
     try {
-      roots = await resolveConfigRoots(getContextCwd(ctx));
+      roots = await resolveConfigRoots(getContextCwd(ctx), 'platform');
     } catch (error) {
       throwSystemCataloguedError(configErrorEnvelope(error));
     }

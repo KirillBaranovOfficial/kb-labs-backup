@@ -44,7 +44,7 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
     }
 
     try {
-      const roots = await resolveConfigRoots(getContextCwd(ctx));
+      const roots = await resolveConfigRoots(getContextCwd(ctx), 'platform');
       const filePath = await userConfigFileForScope(roots, 'platform');
       const binding = await unsetUserConfigValue({
         filePath,

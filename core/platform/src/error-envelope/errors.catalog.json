@@ -19,6 +19,7 @@
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
+      "httpStatus": 422,
       "message": "The adapter package manifest could not be loaded.",
       "hint": "Correct the adapter manifest, rebuild the adapter package, then run `kb marketplace plugins doctor --scope platform` to verify it."
     },

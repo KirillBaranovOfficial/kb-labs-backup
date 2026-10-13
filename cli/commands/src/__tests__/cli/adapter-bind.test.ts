@@ -25,7 +25,7 @@ let sandbox: string;
 let platformRoot: string;
 let projectRoot: string;
 
-function context() {
+function context(cwd = projectRoot) {
   const outputs: unknown[] = [];
   const errors: string[] = [];
   const hints: string[] = [];
@@ -34,7 +34,7 @@ function context() {
     requestId: 'adapter-bind-test',
     pluginId: '@kb-labs/system',
     pluginVersion: '1.0.0',
-    cwd: projectRoot,
+    cwd,
     ui: {
       ...noopUI,
       json: (data: unknown) => outputs.push(data),
@@ -281,6 +281,40 @@ describe('kb adapter list', () => {
       credentialsStatus: 'missing', missingCredentials: ['OPENAI_API_KEY'],
     });
     expect(JSON.stringify(outputs[0])).not.toContain('configured-secret-value');
+  });
+});
+
+describe('platform adapter commands from unregistered directories', () => {
+  // case: S-048.7
+  it('lists, binds, and unbinds platform adapters without requiring project registration', async () => {
+    const cwd = join(sandbox, 'outside-projects');
+    await mkdir(cwd, { recursive: true });
+    await writeMarketplaceLock(platformRoot, {
+      schema: 'kb.marketplace/3', plugins: {},
+      adapters: {
+        '@kb-labs/adapters-fs': {
+          version: '2.120.1', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-fs',
+          enabled: true, source: 'platform',
+        },
+      },
+    });
+    const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-fs');
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-fs', type: 'module', kb: { manifest: './manifest.js' } }));
+    await writeFile(join(packageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({
+      schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fs', name: 'Filesystem', version: '1.0.0',
+      type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: ['storage'],
+    })};`);
+    const { ctx, outputs } = context(cwd);
+    mockAdapterHealth(ctx, [{ slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs' }]);
+
+    expect(await adapterList.run(ctx, [], { json: true })).toBe(0);
+    expect(outputs[0]).toMatchObject({ ok: true });
+    expect(await adapterBind.run(ctx, ['storage', '@kb-labs/adapters-fs'], { json: true })).toBe(0);
+    expect(await adapterUnbind.run(ctx, ['storage'], { json: true })).toBe(0);
+    expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8')))
+      .not.toHaveProperty('platform.adapters.storage');
+    expect(await createProjectRegistry({ env: process.env }).list()).toHaveLength(1);
   });
 });
 

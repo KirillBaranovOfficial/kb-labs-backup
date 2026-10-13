@@ -84,6 +84,8 @@ describe('Marketplace → Discovery Integration', () => {
         removedPackages.push(packageName);
         await fs.rm(dir, { recursive: true, force: true });
       },
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
 
     const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
@@ -142,6 +144,8 @@ describe('Marketplace → Discovery Integration', () => {
       },
       async install(): Promise<InstalledPackage> { throw new Error('store install should be used'); },
       async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
     const storeOne = createExtensionStore({ root: storeOneRoot, installer });
     const marketplace = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source, extensionStore: storeOne });
@@ -181,6 +185,8 @@ describe('Marketplace → Discovery Integration', () => {
       },
       async install(): Promise<InstalledPackage> { throw new Error('platform plugin must use the extension store'); },
       async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
     const store = createExtensionStore({ root: path.join(tmpDir, 'machine-store'), installer });
     const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
@@ -214,6 +220,8 @@ describe('Marketplace → Discovery Integration', () => {
         return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity: pkg.integrity };
       },
       async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
 
     const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
@@ -244,6 +252,8 @@ describe('Marketplace → Discovery Integration', () => {
         return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity: pkg.integrity };
       },
       async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
 
     const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
@@ -274,6 +284,8 @@ describe('Marketplace → Discovery Integration', () => {
       async resolve(): Promise<ResolvedPackage> { throw new Error('unused'); },
       async install(): Promise<InstalledPackage> { throw new Error('unused'); },
       async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
     };
 
     const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });

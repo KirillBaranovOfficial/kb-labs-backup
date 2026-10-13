@@ -11,12 +11,12 @@ import {
   type ObservabilityCollectorLike,
 } from '@kb-labs/shared-http';
 import type { IContextLogger } from '@kb-labs/core-platform';
-import { createErrorEnvelope, getCatalogEntry, type ErrorCode } from '@kb-labs/core-platform';
+import { createErrorEnvelope, getCatalogEntry, isErrorCode, toErrorEnvelope, type ErrorCode } from '@kb-labs/core-platform';
 import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/core-contracts';
 import { registerRoutes } from './routes/index.js';
-import { MarketplaceVersionError, type MarketplaceService } from '@kb-labs/marketplace-core';
+import { MarketplaceInstallRollbackError, MarketplaceVersionError, type MarketplaceService } from '@kb-labs/marketplace-core';
 import { ScopeResolutionError, AdapterScopeError, InvalidEntityError, PackageClassificationError } from '@kb-labs/marketplace-core';
-import { PackageInstallError, PackageMetadataError, PlatformArtifactPinsError } from '@kb-labs/marketplace-npm';
+import { PackageInstallError, PackageMetadataError } from '@kb-labs/marketplace-npm';
 import { ScopeRequestError } from './scope-parser.js';
 
 export interface CreateServerOptions {
@@ -86,7 +86,7 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
         logger.forOperation('marketplace.api.request', { requestId: correlationId }).error(
           'Marketplace API request failed',
           err,
-          { correlationId, errorCode: mapped.envelope.code, statusCode: mapped.statusCode },
+          { correlationId, requestId: correlationId, errorCode: mapped.envelope.code, statusCode: mapped.statusCode },
         );
         return reply.code(mapped.statusCode).send({ ok: false, error: mapped.envelope });
       });
@@ -106,6 +106,25 @@ function asError(value: unknown): Error {
 }
 
 function mapMarketplaceError(err: Error, correlationId: string, scope: string): { statusCode: number; envelope: ReturnType<typeof createErrorEnvelope> } {
+  if (err instanceof MarketplaceInstallRollbackError) {
+    const entry = getCatalogEntry('KB_MARKETPLACE_INSTALL_FAILED');
+    return {
+      statusCode: entry?.httpStatus ?? 500,
+      envelope: createErrorEnvelope('KB_MARKETPLACE_INSTALL_FAILED', {
+        correlationId,
+        message: err.message,
+        hint: err.hint,
+        details: { package: err.packageId, scope: err.scope },
+      }),
+    };
+  }
+
+  const catalogued = toErrorEnvelope(err, { correlationId });
+  if (catalogued.code !== 'KB_RUNTIME_UNEXPECTED' && isErrorCode(catalogued.code)) {
+    const catalogEntry = getCatalogEntry(catalogued.code);
+    if (catalogEntry?.httpStatus) {return { statusCode: catalogEntry.httpStatus, envelope: catalogued };}
+  }
+
   let code: ErrorCode = 'KB_RUNTIME_UNEXPECTED';
   let message: string | undefined;
   let hint: string | undefined;
@@ -165,10 +184,6 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
       message = err.message;
       hint = `Check the registry version metadata for ${err.packageId}, then retry the Marketplace operation.`;
     }
-  } else if (err instanceof PlatformArtifactPinsError) {
-    code = 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING';
-    message = err.message;
-    hint = err.hint;
   }
 
   const entry = getCatalogEntry(code);

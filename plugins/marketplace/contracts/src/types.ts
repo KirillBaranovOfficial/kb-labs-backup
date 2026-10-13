@@ -97,6 +97,10 @@ export interface PackageSource {
   /** Install a resolved package into the workspace */
   install(pkg: ResolvedPackage, root: string, opts?: { dev?: boolean }): Promise<InstalledPackage>;
 
+  /** Commit or restore the package-manager mutation after Marketplace validation and lock updates. */
+  commitInstall(packageId: string, root: string): Promise<void>;
+  rollbackInstall(packageId: string, root: string): Promise<void>;
+
   /** Remove a package from the workspace */
   remove(packageId: string, root: string): Promise<void>;
 
