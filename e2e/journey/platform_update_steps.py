@@ -202,7 +202,7 @@ def run_platform_update_steps(
                  cases=["S-023.1"], details=checkpoint_details,
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def plan_new_release() -> None:
         index = json.loads(update_index.read_text())
@@ -298,7 +298,8 @@ def run_platform_update_steps(
             raise RuntimeError("update changed a path outside the installation container")
 
     journey.step("stage update and leave the running host on its current version", "platform.update", update,
-                 cases=["S-023.3", "S-023.7", "S-024.1", "S-203.10"], details=checkpoint_details)
+                 cases=["S-023.3", "S-023.7", "S-024.1", "S-203.10"], details=checkpoint_details,
+                 requires=("step:plan the newer sealed release",))
 
 
     def verify_updated_install() -> None:
@@ -359,7 +360,7 @@ def run_platform_update_steps(
 
     journey.step("verify installed version and pending restart while old host serves", "platform.update", verify_updated_install,
                  cases=["S-023.4", "PC-001.13"],
-                 requires=("step:save installed receipt, config, and host status",))
+                 requires=("step:stage update and leave the running host on its current version",))
 
     def project_command() -> None:
         nonlocal saved_session_succeeded_after_update
@@ -446,7 +447,8 @@ def run_platform_update_steps(
         record_secret_checkpoint("afterUpdateRestart")
 
     journey.step("explicitly restart services onto the installed version", "platform.restart",
-                 restart_updated_host, cases=["S-023.8", "S-023.10"])
+                 restart_updated_host, cases=["S-023.8", "S-023.10"],
+                 requires=("step:verify installed version and pending restart while old host serves",))
 
     def rollback() -> None:
         if not snapshot_id:
@@ -466,7 +468,8 @@ def run_platform_update_steps(
         record_secret_checkpoint("afterRollbackHostRestart")
 
     journey.step("roll back to version N with explicit non-TTY confirmation", "platform.rollback", rollback,
-                 cases=["S-024.2", "S-203.10"], details=checkpoint_details)
+                 cases=["S-024.2", "S-203.10"], details=checkpoint_details,
+                 requires=("step:explicitly restart services onto the installed version",))
 
     def reject_unknown_snapshot() -> None:
         before = receipt_path.read_bytes()
@@ -487,7 +490,8 @@ def run_platform_update_steps(
         record_secret_checkpoint("afterMissingSnapshotRecovery")
 
     journey.step("reject a missing snapshot without changing the active install", "platform.rollback",
-                 reject_unknown_snapshot, cases=["S-024.4", "S-203.11"], details=checkpoint_details)
+                 reject_unknown_snapshot, cases=["S-024.4", "S-203.11"], details=checkpoint_details,
+                 requires=("step:roll back to version N with explicit non-TTY confirmation",))
 
     def verify_rollback() -> str | None:
         receipt = json.loads(receipt_path.read_text())
@@ -566,7 +570,7 @@ def run_platform_update_steps(
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
                  cases=["S-024.3", "S-041.4", "PC-001.14"] if verify_user is not None else ["S-024.3", "PC-001.14"],
                  details=checkpoint_details,
-                 requires=("step:save installed receipt, config, and host status",))
+                 requires=("step:reject a missing snapshot without changing the active install",))
 
     if verify_user is not None:
         def login_after_rollback() -> None:

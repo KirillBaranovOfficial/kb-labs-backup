@@ -20,7 +20,11 @@ from hermetic_cli import run_hermetic_cli
 from invocations import (decode_ux_success_result, describe_cli_failure, invocation_context,
                          print_report_text, read_ux_cli_result)
 from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
-from journey_dependencies import Dependency
+from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
+
+
+RUNNER_CONTEXT_NAMES = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
+                        "local_service_journey", "secured_service_journey", "BASE_ENV"}
 
 
 def _call_name(call: ast.Call) -> str:
@@ -447,7 +451,7 @@ def _validate_dependency_declarations_cached(sources: tuple[str, ...], root: Pat
     declarations = _source_step_declarations(set(sources), root)
     graphs = {entry: _source_step_declarations_cached(tuple(sorted(graph)), root)
               for entry, graph in reachable.items()}
-    validate_dependency_edges(declarations, reachable, graphs)
+    validate_dependency_edges(declarations, reachable, graphs, root)
     reachable_sources = set().union(*reachable.values()) if reachable else set()
     lint_direct_module_global_state_handoffs(reachable_sources, root)
     validate_journey_environment_reads(reachable_sources, root)
@@ -702,8 +706,6 @@ def write_full_runner_plan_baseline(root: Path) -> Path:
 
 def validate_runner_conditions(sources: set[str], root: Path) -> None:
     """Require variant ownership on registrations nested under runner-context branches."""
-    dimensions = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
-                  "local_service_journey", "secured_service_journey", "BASE_ENV"}
     for source in sorted(sources):
         if not source.endswith(".py"):
             continue
@@ -723,7 +725,7 @@ def validate_runner_conditions(sources: set[str], root: Path) -> None:
             while current is not None:
                 if isinstance(current, ast.If):
                     referenced = {node.id for node in ast.walk(current.test) if isinstance(node, ast.Name)}
-                    if referenced.intersection(dimensions):
+                    if referenced.intersection(RUNNER_CONTEXT_NAMES):
                         raise ValueError(
                             f"{source}:{call.lineno}: claim registration is conditional on runner context; "
                             "declare its executable runners= variants"
@@ -732,15 +734,55 @@ def validate_runner_conditions(sources: set[str], root: Path) -> None:
 
 
 def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str, set[str]],
-                              graphs: dict[str, dict[str, dict]]) -> None:
+                              graphs: dict[str, dict[str, dict]], root: Path) -> None:
+    required_step_names = {
+        dependency.name
+        for declaration in declarations.values()
+        for _source, _line, references in declaration["locations"]
+        for reference in references
+        if (dependency := Dependency.parse(reference)).kind == "step"
+    }
+    for source in sorted(set().union(*reachable.values()) if reachable else set()):
+        if not source.endswith(".py"):
+            continue
+        tree = _source_tree(source, root)
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or _call_name(call) not in {"step", "claim_step"}:
+                continue
+            name_node = call.args[0] if call.args else None
+            if not isinstance(name_node, ast.Constant) or name_node.value not in required_step_names:
+                continue
+            current = parents.get(call)
+            conditional = False
+            while current is not None:
+                if isinstance(current, ast.If) and RUNNER_CONTEXT_NAMES.intersection(
+                        node.id for node in ast.walk(current.test) if isinstance(node, ast.Name)):
+                    conditional = True
+                    break
+                current = parents.get(current)
+            if conditional and not any(keyword.arg == "runners" for keyword in call.keywords):
+                raise ValueError(
+                    f"{source}:{call.lineno}: step prerequisite {name_node.value!r} is registered only "
+                    "under a runner condition; declare its executable runners= variants or depend on its state")
+
     for dependency_key, declaration in declarations.items():
         for source, line, references in declaration["locations"]:
             owners = [entry for entry, source_set in reachable.items()
                       if source in source_set and (declaration.get("producer") is False
                                                    or dependency_key in graphs[entry])]
             for reference in references:
-                key = str(Dependency.parse(reference))
-                if not owners or not any(key in graphs[entry] for entry in owners):
+                dependency = Dependency.parse(reference)
+                key = str(dependency)
+                if dependency.kind == "state":
+                    if dependency.name not in FLOW_GRAPH_STATE_PRODUCERS:
+                        raise ValueError(
+                            f"{source}:{line}: {reference!r} does not resolve to a registered FlowGraph state")
+                    if not owners:
+                        raise ValueError(f"{source}:{line}: {reference!r} has no runner that can execute its owner")
+                    continue
+                resolved = [(entry, graphs[entry].get(key)) for entry in owners]
+                if not owners or not any(target is not None for _entry, target in resolved):
                     raise ValueError(f"{source}:{line}: {reference!r} does not resolve to a declared, reachable step or flow")
 
 
@@ -767,6 +809,8 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
     while pending:
         name = pending.pop()
         dependency = Dependency.parse(name)
+        if dependency.kind == "state":
+            continue
         key = str(dependency)
         if key in names:
             continue

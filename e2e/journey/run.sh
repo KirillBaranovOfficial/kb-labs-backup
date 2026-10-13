@@ -106,8 +106,8 @@ fi
 if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
   selection_json="$(python3 e2e/journey/select_from_cases.py)"
   export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
-  export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
-  export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
+  export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
+  export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
   export KB_JOURNEY_SELECTED_OWNING_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["selectedOwningSteps"], separators=(",",":")))' <<< "$selection_json")"
   export KB_JOURNEY_SELECTED_CAPABILITIES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<< "$selection_json")"
   selected_selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["runners"]))' <<< "$selection_json")"

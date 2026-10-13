@@ -33,6 +33,7 @@ from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, record_candidate_provenance, record_runner_failure,
                            record_runner_exception, replay_steps)
+from journey_dependencies import FLOW_GRAPH_STATE_PRODUCERS
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
 from select_from_cases import fixture_group_declarations, journey_source_group_declaration
 from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status,
@@ -99,7 +100,7 @@ OUTER_GROUP_DEPENDENCIES = {
     "install": (),
     "host": ("platform-installed",),
     "auth": ("host-running",),
-    "update": ("host-running", "platform-version-known"),
+    "update": ("host-running", "platform-version-known", "project-registered"),
     "update-variants": ("host-running", "platform-version-known", "project-registered", "fixtures-installed"),
     "project": ("host-running", "platform-version-known"),
     "marketplace": ("host-running", "project-registered"),
@@ -112,8 +113,9 @@ OUTER_GROUP_DEPENDENCIES = {
     "uninstall": (),
 }
 OUTER_GROUP_PRODUCES = {
-    "host": ("host-running",),
-    "project": ("project-registered",),
+    group: tuple(state for state, producer in FLOW_GRAPH_STATE_PRODUCERS.items()
+                 if producer == group)
+    for group in dict.fromkeys(FLOW_GRAPH_STATE_PRODUCERS.values())
 }
 def block_outer_dependents(graph: FlowGraph, groups: list[str]) -> None:
     for group in groups:
@@ -1349,11 +1351,7 @@ def main(*, update_variant_runner=None):
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":
-        prior_failure = FIRST_FAILURE
         verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local")
-        registration_failure = FIRST_FAILURE if FIRST_FAILURE != prior_failure else None
-        CASE_JOURNEY.step("verify installed project registration", "platform.project",
-                          lambda: registration_failure)
 
     update_group_selected = outer_graph.group_selected("update")
     update_journey = update_group_selected and (
@@ -1364,6 +1362,9 @@ def main(*, update_variant_runner=None):
     if not update_journey and outer_graph.selection_active and not update_group_selected:
         outer_graph.skip_unselected("platform update journey", "platform.update")
     if update_journey:
+        if outer_graph.states.get("project-registered") is None:
+            establish_project_registration(outer_graph, PROJECT, env)
+            capture_case_failure()
         try:
             receipt_path = PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json"
             active = json.loads(receipt_path.read_text())
@@ -1709,7 +1710,8 @@ def main(*, update_variant_runner=None):
             "        with:\n          command: echo hello-workflow\n",
             encoding="utf-8",
         )
-        establish_project_registration(outer_graph, PROJECT, env)
+        if outer_graph.states.get("project-registered") is None:
+            establish_project_registration(outer_graph, PROJECT, env)
         capture_case_failure()
         project_result = project_registration_from_state(outer_graph)
         project_id = project_result["id"]

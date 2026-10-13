@@ -196,7 +196,7 @@ def run_platform_update_variant_steps(
                  plan_multi_release_notes, cases=["S-023.2", "S-214.10"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def refuse_bad_checksum() -> None:
         target = _target(bad_checksum_index)
@@ -224,7 +224,7 @@ def run_platform_update_variant_steps(
                  cases=["S-023.12"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def reject_staged_config_and_doctor_failures() -> None:
         for label, index in (("config", config_failure_index), ("doctor", doctor_failure_index)):
@@ -256,7 +256,7 @@ def run_platform_update_variant_steps(
                  reject_staged_config_and_doctor_failures, cases=["S-023.12"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def kill_during_staging() -> None:
         target = _target(next_index)
@@ -286,7 +286,7 @@ def run_platform_update_variant_steps(
                  kill_during_staging, cases=["S-023.13"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
 
     def start_long_workflow() -> None:
@@ -333,7 +333,7 @@ def run_platform_update_variant_steps(
                  update_while_work_is_active, cases=["S-023.14"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def refuse_restart_with_work() -> None:
         result = cli([launcher, "restart", "--platform-root", root, "--json"])
@@ -370,7 +370,7 @@ def run_platform_update_variant_steps(
                  refuse_restart_with_work, cases=["S-023.8", "S-194.7"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
 
     def update_stopped_to_jump() -> None:
@@ -401,7 +401,7 @@ def run_platform_update_variant_steps(
                  update_stopped_to_jump, cases=["S-023.9"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def verify_preservation_matrix() -> None:
         after_files = _file_fingerprints(platform_root, (project_a, project_b))
@@ -435,7 +435,7 @@ def run_platform_update_variant_steps(
                  verify_preservation_matrix, cases=["S-023.10"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def verify_clients() -> None:
         with urlopen("http://127.0.0.1:3000/", timeout=20) as response:
@@ -496,7 +496,7 @@ def run_platform_update_variant_steps(
                  verify_clients, cases=["S-023.11"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def recover_failed_host() -> None:
         v1 = _target(jump_index)
@@ -566,7 +566,7 @@ def run_platform_update_variant_steps(
                  recover_failed_host, cases=["S-023.15", "S-024.6", "S-024.7"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def verify_retention_and_disk_use() -> None:
         result = cli([launcher, "doctor", "--platform-root", root, "--json"])
@@ -585,5 +585,5 @@ def run_platform_update_variant_steps(
                  verify_retention_and_disk_use, cases=["S-023.15"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
     return journey
