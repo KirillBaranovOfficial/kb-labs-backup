@@ -339,8 +339,8 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the applied Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", root)+"` after checking the receipt", originErr)
 		}
 		roots = append(roots, gateway.Root{PlatformRoot: platformRoot, URL: origin})
-		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).RegisterMany(roots); err != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installation succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create apply`", err)
+		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}).RegisterMany(roots); err != nil {
+			return applyCommandResult{}, asDiag(err)
 		}
 	}
 	var shimResult shim.EnsureResult

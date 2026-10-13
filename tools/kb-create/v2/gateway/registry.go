@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
@@ -32,7 +33,10 @@ type file struct {
 // Registry is the machine-level index of installed host roots. Each receipt is
 // still authoritative; this index lets a fresh root find receipts belonging to
 // roots whose paths are otherwise unknown to the launcher.
-type Registry struct{ Path string }
+type Registry struct {
+	Path          string
+	OperationRoot string
+}
 
 func (r Registry) Read() ([]Root, error) {
 	data, err := os.ReadFile(r.Path)
@@ -40,26 +44,40 @@ func (r Registry) Read() ([]Root, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read installed Gateway root index %s: %w", r.Path, err)
+		return nil, r.unavailable(err)
 	}
 	var value file
 	if err := json.Unmarshal(data, &value); err != nil || value.Schema != registrySchema || value.Roots == nil {
 		if err == nil {
-			err = fmt.Errorf("unsupported or incomplete schema")
+			err = fmt.Errorf("unsupported schema %d (this launcher requires schema %d)", value.Schema, registrySchema)
 		}
-		return nil, fmt.Errorf("installed Gateway root index %s is invalid: %w", r.Path, err)
+		return nil, r.unavailable(err)
 	}
 	for index, root := range value.Roots {
 		if !filepath.IsAbs(root.PlatformRoot) || !validOrigin(root.URL) || !validInstallationID(root.InstallationID) {
-			return nil, fmt.Errorf("installed Gateway root index %s contains an invalid root or URL", r.Path)
+			return nil, r.unavailable(fmt.Errorf("root %d has an invalid platform root, installation identity, or Gateway origin", index))
 		}
 		for _, previous := range value.Roots[:index] {
 			if previous.InstallationID == root.InstallationID {
-				return nil, fmt.Errorf("installed Gateway root index %s contains duplicate root %s", r.Path, root.PlatformRoot)
+				return nil, r.unavailable(fmt.Errorf("duplicate installation identity for root %s", root.PlatformRoot))
 			}
 		}
 	}
 	return value.Roots, nil
+}
+
+func (r Registry) unavailable(reason error) error {
+	root := r.OperationRoot
+	if root == "" {
+		root = "<affected-platform-root>"
+	}
+	remove := contracts.ShellCommand("rm", "--", r.Path)
+	repair := contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root)
+	failure := contracts.NewDiag(contracts.CodeGatewayIndexUnavailable,
+		fmt.Sprintf("The Gateway address index at %s cannot be used: %s.", r.Path, reason),
+		fmt.Sprintf("Remove the derived index with `%s`, then run `%s` to rebuild it from the installation receipt.", remove, repair), reason)
+	failure.Meta = map[string]any{"path": r.Path, "reason": reason.Error()}
+	return failure
 }
 
 func OriginFromHealthURL(value string) (string, error) {
@@ -81,6 +99,7 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 	if explicitURL != "" {
 		return explicitURL, nil
 	}
+	r.OperationRoot = platformRoot
 	roots, err := r.Read()
 	if err != nil {
 		return "", err
@@ -127,6 +146,7 @@ func (r Registry) Claimant(platformRoot, gatewayURL string) (Root, bool, error) 
 }
 
 func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (Root, bool, error) {
+	r.OperationRoot = platformRoot
 	roots, err := r.Read()
 	if err != nil {
 		return Root{}, false, err
@@ -147,6 +167,9 @@ func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (
 }
 
 func (r Registry) RegisterMany(values []Root) error {
+	if r.OperationRoot == "" && len(values) > 0 {
+		r.OperationRoot = values[0].PlatformRoot
+	}
 	roots, err := r.Read()
 	if err != nil {
 		return err
@@ -178,6 +201,7 @@ func (r Registry) RegisterMany(values []Root) error {
 }
 
 func (r Registry) Register(platformRoot, gatewayURL string) error {
+	r.OperationRoot = platformRoot
 	if !filepath.IsAbs(platformRoot) || !validOrigin(gatewayURL) {
 		return fmt.Errorf("platform root and Gateway URL must be absolute and valid")
 	}
@@ -205,6 +229,7 @@ func (r Registry) Register(platformRoot, gatewayURL string) error {
 }
 
 func (r Registry) Remove(platformRoot string) error {
+	r.OperationRoot = platformRoot
 	installationID, err := validatedInstallationID(platformRoot)
 	if err != nil {
 		return err

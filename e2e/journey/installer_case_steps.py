@@ -51,14 +51,18 @@ def _hint_has_argv(text: str, expected: list[str]) -> bool:
     return False
 
 
-def shim_owner_matches(data: dict, linked: bool, install_root: Path) -> bool:
-    return data.get("shim") == {"linked": linked, "owner": str(install_root.resolve())}
+def shim_owner_matches(data: dict, install_root: Path) -> bool:
+    owner = data.get("shim", {}).get("owner")
+    if not owner:
+        return False
+    owns_shim = Path(owner).resolve() == Path(install_root).resolve()
+    return data.get("shim") == {"linked": owns_shim, "owner": str(Path(owner).resolve())}
 
 
 def verify_installation_spellings(*, launcher: str, index: Path, install_root: Path,
                                   channel: str, version: str, gateway_url: str,
                                   installation_id: str,
-                                  shim_owner: Path, run_command: CommandRunner) -> None:
+                                  run_command: CommandRunner) -> None:
     """Prove the installed root's aliases keep one receipt, Gateway row, and shim."""
     install_root = Path(install_root)
     spellings = (install_root, install_root / "current", active_platform_root(install_root))
@@ -91,7 +95,7 @@ def verify_installation_spellings(*, launcher: str, index: Path, install_root: P
         if (applied.get("operation") != "apply"
                 or applied_receipt.get("installationId") != installation_id
                 or applied_receipt.get("plan", {}).get("request", {}).get("gatewayUrl") != gateway_url
-                or not shim_owner_matches(applied, linked=False, install_root=shim_owner)):
+                or not shim_owner_matches(applied, install_root=install_root)):
             raise RuntimeError(f"apply through {spelling} changed the installation, Gateway, or shim owner: {applied}")
         receipt_id = applied_receipt.get("id", "")
 
@@ -148,6 +152,18 @@ def assert_other_shim_diagnosis(data: dict, human_output: str, link: Path,
         positions = [output.find(fragment) for fragment in expected]
         if any(position < 0 for position in positions) or positions != sorted(positions):
             raise RuntimeError(f"doctor did not explain the other shim owner and deliberate switch: {output}")
+
+
+def assert_gateway_index_diagnosis(data: dict, path: Path, root: Path) -> None:
+    error = data.get("error", {})
+    hint = error.get("hint", "")
+    remove = f"'rm' '--' '{path}'"
+    repair = f"'kb-create' 'doctor' '--fix' '--platform-root' '{root}'"
+    expected = ("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE", str(path), "unsupported schema 1", remove, repair)
+    text = " ".join((error.get("code", ""), error.get("message", ""), hint))
+    positions = [text.find(part) for part in expected]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        raise RuntimeError(f"Gateway index diagnostic lacks path, reason, or ordered recovery commands: {data}")
 
 
 class InstallerHostLifecycle:
@@ -784,7 +800,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
                                   "--gateway-url", "http://127.0.0.1:4200"])
             explicit_installed = (active_platform_root(explicit_root) / ".kb/v2/receipt.json").is_file()
             data = _data(result, "explicit Gateway apply")
-            if not shim_owner_matches(data, linked=False, install_root=primary_root):
+            if not shim_owner_matches(data, install_root=explicit_root):
                 raise RuntimeError(f"explicit secondary apply reported the wrong shim owner: {data.get('shim')}")
             explicit_receipt = data.get("receipt", {})
             explicit_url = explicit_receipt.get("verification", {}).get("hostHealthUrl", "")
@@ -824,7 +840,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
             version=plan.get("serviceGraph", {}).get("platformVersion", ""),
             gateway_url=f"{origin.scheme}://{origin.netloc}",
             installation_id=receipt.get("installationId", ""),
-            shim_owner=primary_root, run_command=run_command)
+            run_command=run_command)
 
     journey.step("plan, apply, status, and update the primary install through all root spellings",
                  "platform.install", verify_primary_spellings, cases=["PC-001.10"])
@@ -1557,7 +1573,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                      "--platform-channel", channel, "--policy", "compatible",
                                      "--platform-root", str(platform_root.parent / root_name)]),
                         f"{channel} apply")
-        if not shim_owner_matches(applied, linked=False, install_root=platform_root):
+        if not shim_owner_matches(applied, install_root=platform_root.parent / root_name):
             raise RuntimeError(f"{channel} apply changed the live command owner: {applied.get('shim')}")
         status = _json_command(run_command, [launcher, "status", "--json", "--platform-root",
                                              str(platform_root.parent / root_name)], f"{channel} status")
@@ -1577,7 +1593,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             launcher=launcher, index=stable_index, install_root=stable_root,
             channel="stable", version=plan["serviceGraph"]["platformVersion"],
             gateway_url=plan["request"]["gatewayUrl"],
-            installation_id=receipt["installationId"], shim_owner=platform_root,
+            installation_id=receipt["installationId"],
             run_command=run_command)
 
     journey.step("plan, apply, status, and update stable install through all root spellings", "platform.install",
@@ -1597,7 +1613,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                                 "admin.tenant": "journey"}),
                                     "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
         payload = _data(apply_result, "secret apply")
-        if not shim_owner_matches(payload, linked=False, install_root=platform_root):
+        if not shim_owner_matches(payload, install_root=secret_root):
             raise RuntimeError(f"secret apply changed the live command owner: {payload.get('shim')}")
         secondary_receipt = json.loads((active_platform_root(secret_root) / ".kb/v2/receipt.json").read_text())
         if secondary_receipt.get("verification", {}).get("hostHealthUrl") != "http://127.0.0.1:4100/health":
@@ -1663,6 +1679,48 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     journey.step("diagnose and repair a dangling managed kb command", "platform.install",
                  repair_dangling_shim, cases=["S-025.9"])
+
+    def repair_gateway_index() -> None:
+        registry_path = Path(launcher).absolute().parents[2] / ".kb" / "launcher" / "gateway-roots.json"
+        root = explicit_gateway_root
+        registry_before = registry_path.read_bytes()
+        receipt_path = active_platform_root(root) / ".kb/v2/receipt.json"
+        receipt_before = receipt_path.read_bytes()
+        try:
+            invalid_data = '{"schema":1,"roots":[]}'
+            registry_path.write_text(invalid_data, encoding="utf-8")
+            for operation in ("plan", "apply", "status", "doctor", "uninstall"):
+                args = [launcher, operation, "--platform-root", str(root), "--json"]
+                if operation in ("plan", "apply"):
+                    args += ["--index", str(stable_index)]
+                if operation == "uninstall":
+                    args.append("--yes")
+                result = run_command(args)
+                envelope = read_ux_cli_result(result.stdout, result.returncode)
+                payload = decode_ux_error_result(envelope)
+                assert_gateway_index_diagnosis({"error": payload}, registry_path, root)
+                if registry_path.read_text(encoding="utf-8") != invalid_data:
+                    raise RuntimeError(f"{operation} changed the unsupported Gateway index")
+                if not receipt_path.is_file() or receipt_path.read_bytes() != receipt_before:
+                    raise RuntimeError(f"{operation} changed the installation before registry repair")
+
+            remove_command = f"'rm' '--' '{registry_path}'"
+            if remove_command not in payload.get("hint", ""):
+                raise RuntimeError("the diagnostic did not print the exact index removal command")
+            registry_path.unlink()
+            repaired = _data(run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"]),
+                             "doctor fix after removing the unusable Gateway index")
+            rebuilt = json.loads(registry_path.read_text(encoding="utf-8"))
+            receipt = json.loads(receipt_before)
+            rows = [row for row in rebuilt.get("roots", [])
+                    if row.get("installationId") == receipt.get("installationId")]
+            if repaired.get("operation") != "doctor-fix" or rebuilt.get("schema") != 2 or len(rows) != 1:
+                raise RuntimeError(f"doctor fix did not rebuild this root's schema-2 Gateway row: {rebuilt}")
+        finally:
+            registry_path.write_bytes(registry_before)
+
+    journey.step("diagnose and rebuild an unusable Gateway address index", "platform.install",
+                 repair_gateway_index, cases=["S-025.10"])
 
     def uninstall_non_owner() -> None:
         result = _data(run_command([launcher, "uninstall", "--platform-root", str(secret_root), "--yes", "--json"]),

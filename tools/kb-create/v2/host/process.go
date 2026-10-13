@@ -271,7 +271,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		_ = conn.Close()
 		_, port, _ := net.SplitHostPort(address)
 		owner := listenerOwner(port)
-		return Info{}, portConflictError(port, address, "", owner, r.Operation, nil)
+		return Info{}, portConflictError(port, address, "", owner, r.Operation, r.PlatformRoot, nil)
 	}
 	logFile, err := os.OpenFile(r.State.HostLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -766,9 +766,15 @@ func portInUseError(port, address, purpose string, owner portOwner, operation st
 	return hostError(contracts.CodePortInUse, message, hint, cause, meta)
 }
 
-func portConflictError(port, address, purpose string, owner portOwner, operation string, cause error) *diag.Diag {
+func portConflictError(port, address, purpose string, owner portOwner, operation, platformRoot string, cause error) *diag.Diag {
 	if pid, err := strconv.Atoi(owner.PID); err == nil {
-		if root, staleRecord := registeredGatewayRoot(port, pid); staleRecord != "" {
+		if root, staleRecord, registryErr := registeredGatewayRoot(port, pid, platformRoot); registryErr != nil {
+			var failure *diag.Diag
+			if errors.As(registryErr, &failure) {
+				return failure
+			}
+			return hostError(contracts.CodeOperationFailed, "the Gateway address index could not be checked", "inspect the launcher state before checking this host", registryErr, nil)
+		} else if staleRecord != "" {
 			return StaleProcessIdentityFailure(staleRecord, "host", pid, root, recordedGatewayURL(staleRecord))
 		} else if root != "" {
 			if layout, layoutErr := versionroot.ForPlatformPath(root); layoutErr == nil {
@@ -779,14 +785,14 @@ func portConflictError(port, address, purpose string, owner portOwner, operation
 	return portInUseError(port, address, purpose, owner, operation, cause)
 }
 
-func registeredGatewayRoot(port string, pid int) (string, string) {
+func registeredGatewayRoot(port string, pid int, platformRoot string) (string, string, error) {
 	launcherState, err := StateHome()
 	if err != nil {
-		return "", ""
+		return "", "", nil
 	}
-	roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Read()
+	roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: platformRoot}).Read()
 	if err != nil {
-		return "", ""
+		return "", "", err
 	}
 	for _, candidate := range roots {
 		origin, err := url.Parse(candidate.URL)
@@ -811,13 +817,13 @@ func registeredGatewayRoot(port string, pid int) (string, string) {
 		candidateID, identityErr := versionroot.InstallationIDForPath(candidate.PlatformRoot)
 		identityStatus := ProcessIdentityOf(record.PID, record.ProcessIdentity)
 		if processAlive(record.PID) && (record.InstallationID == "" || identityStatus == ProcessIdentityMismatch || identityStatus == ProcessIdentityUndetermined) {
-			return record.PlatformRoot, rootState.HostPID()
+			return record.PlatformRoot, rootState.HostPID(), nil
 		}
 		if identityErr == nil && record.InstallationID == candidateID && identityStatus == ProcessIdentityMatch {
-			return record.PlatformRoot, ""
+			return record.PlatformRoot, "", nil
 		}
 	}
-	return "", ""
+	return "", "", nil
 }
 
 // RegisteredPortConflict prevents status from reporting a stopped host while
@@ -834,9 +840,13 @@ func RegisteredPortConflict(platformRoot, operation string) *diag.Diag {
 	if resolved, resolveErr := filepath.EvalSymlinks(requested); resolveErr == nil {
 		requested = resolved
 	}
-	roots, err := (gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}).Read()
+	roots, err := (gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json"), OperationRoot: platformRoot}).Read()
 	if err != nil {
-		return nil
+		var failure *diag.Diag
+		if errors.As(err, &failure) {
+			return failure
+		}
+		return hostError(contracts.CodeOperationFailed, "the Gateway address index could not be checked", "inspect the launcher state before checking this host", err, nil)
 	}
 	for _, candidate := range roots {
 		candidateRoot, absErr := filepath.Abs(candidate.PlatformRoot)
@@ -855,7 +865,7 @@ func RegisteredPortConflict(platformRoot, operation string) *diag.Diag {
 		}
 		owner := listenerOwner(origin.Port())
 		if owner.PID != "" || owner.Command != "" {
-			return portConflictError(origin.Port(), origin.Host, "gateway", owner, operation,
+			return portConflictError(origin.Port(), origin.Host, "gateway", owner, operation, platformRoot,
 				fmt.Errorf("the registered Gateway port %s is still occupied", origin.Port()))
 		}
 	}
@@ -927,7 +937,7 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 			owner.PID == strconv.Itoa(active.PID) {
 			continue
 		}
-		failure := portConflictError(port, "", purpose, owner, operation, err)
+		failure := portConflictError(port, "", purpose, owner, operation, plan.Request.PlatformRoot, err)
 		if operation == "plan" || operation == "apply" {
 			if plan.Host != nil {
 				if gatewayURL, suggestionErr := nextGatewayURL(plan.Host.HealthURL); suggestionErr == nil {

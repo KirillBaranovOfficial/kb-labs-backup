@@ -310,11 +310,11 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		}
 		selectedURL, allocErr := registry.AllocateWithKnown(root, defaultURL, requestedURL, known)
 		if allocErr != nil {
-			return resolvedPlan{}, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", allocErr)
+			return resolvedPlan{}, asDiag(allocErr)
 		}
 		claimant, claimed, claimErr := registry.ClaimantAmong(root, selectedURL, known)
 		if claimErr != nil {
-			return resolvedPlan{}, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", claimErr)
+			return resolvedPlan{}, asDiag(claimErr)
 		}
 		if claimed {
 			diagnostic := contracts.NewDiag(contracts.CodePortInUse,

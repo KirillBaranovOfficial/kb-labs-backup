@@ -533,6 +533,15 @@
       "hint": "Run \"kb-create update\"."
     },
     {
+      "code": "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The Gateway address index at {path} cannot be used: {reason}.",
+      "hint": "Remove the derived index with `{removeCommand}`, then run `{repairCommand}` to rebuild it from the installation receipt."
+    },
+    {
       "code": "KB_INSTALL_APPLY_FAILED",
       "area": "install",
       "stage": "apply",

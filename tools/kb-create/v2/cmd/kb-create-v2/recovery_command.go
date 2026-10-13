@@ -114,6 +114,10 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 	if err != nil {
 		return recoveryCommandResult{}, asDiag(err)
 	}
+	registry := gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}
+	if _, err := registry.Read(); err != nil {
+		return recoveryCommandResult{}, asDiag(err)
+	}
 	state, err := host.StateForRoot(root)
 	if err != nil {
 		return recoveryCommandResult{}, asDiag(err)
@@ -144,8 +148,8 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 	} else if shimClassification.Kind == shim.ClassificationForeign {
 		shimAction = "left-foreign"
 	}
-	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).RemoveInstallation(active.InstallationID); err != nil {
-		return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installation was removed but its Gateway address could not be released", "check launcher state permissions, then rerun `kb-create apply` for remaining roots", err)
+	if err := registry.RemoveInstallation(active.InstallationID); err != nil {
+		return recoveryCommandResult{}, asDiag(err)
 	}
 	return recoveryCommandResult{OK: true, Operation: "uninstall", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: false, LogPath: result.LogPath,
 		ShimAction: shimAction, ShimOwner: shimOwner, PreservedEntries: preservedEntries}, nil
@@ -220,8 +224,8 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 		if originErr != nil {
 			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the restored Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "rollback", "--platform-root", root, "--snapshot", target, "--yes")+"`", originErr)
 		}
-		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(platformRoot, origin); err != nil {
-			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the rollback succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create rollback`", err)
+		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: platformRoot}).Register(platformRoot, origin); err != nil {
+			return recoveryCommandResult{}, asDiag(err)
 		}
 	}
 	return recoveryCommandResult{OK: true, Operation: "rollback", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: result.WasRunning, LogPath: result.LogPath}, nil

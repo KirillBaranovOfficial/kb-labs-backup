@@ -2,10 +2,12 @@ package v2cli
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
@@ -36,6 +38,13 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	}
 	runner, err := host.NewRecordedRunner(root)
 	if err != nil {
+		return nil, asDiag(err)
+	}
+	launcherState, err := host.StateHome()
+	if err != nil {
+		return nil, asDiag(err)
+	}
+	if _, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}).Read(); err != nil {
 		return nil, asDiag(err)
 	}
 	state := runner.State

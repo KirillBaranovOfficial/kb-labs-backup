@@ -13,6 +13,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/lifecycle"
@@ -260,6 +261,18 @@ func (i doctorCommandInput) fixDoctor(response doctor.Response) (doctorFixResult
 	})
 	if err != nil {
 		return doctorFixResult{}, operationDiagnostic(root, correlationID, "", asDiag(err), nil)
+	}
+	if active, receiptErr := receipt.Read(platformRoot); receiptErr == nil && active.Plan.Host != nil {
+		if origin := recordedGatewayURL(active); origin != "" {
+			launcherState, stateErr := host.StateHome()
+			if stateErr != nil {
+				return doctorFixResult{}, asDiag(stateErr)
+			}
+			registry := gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: root}
+			if registryErr := registry.Register(platformRoot, origin); registryErr != nil {
+				return doctorFixResult{}, asDiag(registryErr)
+			}
+		}
 	}
 	if filepath.Base(i.Executable) == "kb-create" {
 		if _, shimErr := shim.Ensure(i.Executable, platformRoot); shimErr != nil {

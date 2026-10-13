@@ -309,8 +309,8 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		if originErr != nil {
 			return updateCommandResult{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "the updated Gateway address could not be recorded", "rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"` after checking the receipt", originErr)
 		}
-		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Register(root, origin); err != nil {
-			return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the update succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create update`", err)
+		if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: installRoot}).Register(root, origin); err != nil {
+			return updateCommandResult{}, asDiag(err)
 		}
 	}
 	outcome, errorCode = "success", ""

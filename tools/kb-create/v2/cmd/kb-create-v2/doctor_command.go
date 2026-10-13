@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/receipt"
@@ -96,6 +98,32 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	state, stateErr := host.StateForRoot(root)
 	if stateErr != nil {
 		return nil, asDiag(stateErr)
+	}
+	launcherState, launcherStateErr := host.StateHome()
+	if launcherStateErr != nil {
+		return nil, asDiag(launcherStateErr)
+	}
+	registryPath := filepath.Join(launcherState.Dir, "gateway-roots.json")
+	registryRoots, registryErr := (gateway.Registry{Path: registryPath, OperationRoot: root}).Read()
+	if registryErr != nil {
+		return nil, asDiag(registryErr)
+	}
+	if active, activeErr := receipt.Read(platformRoot); activeErr == nil && active.Plan.Host != nil {
+		origin := recordedGatewayURL(active)
+		registered := false
+		for _, row := range registryRoots {
+			if row.InstallationID == active.InstallationID && row.URL == origin {
+				registered = true
+				break
+			}
+		}
+		if origin != "" && !registered {
+			response.Findings = append(response.Findings, doctor.Finding{Code: contracts.CodeGatewayIndexUnavailable,
+				Severity: doctor.SeverityError, Component: "kb-create", Path: registryPath, SafeFix: true,
+				Action: "gateway-registry-row-from-receipt",
+				Hint:   "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "` to restore this row from the validated installation receipt."})
+			response.Repair = doctor.PlanRepair(response.Findings)
+		}
 	}
 	shimClassification := shim.Classification{Kind: shim.ClassificationAbsent}
 	if in.Executable != "" {
@@ -204,6 +232,35 @@ func otherInstallationShimHint(classification shim.Classification, platformRoot 
 }
 
 func executeDoctorFix(input doctorCommandInput, response doctor.Response) (doctorFixResult, *diag.Diag) {
+	if len(response.Findings) == 1 && response.Findings[0].Action == "gateway-registry-row-from-receipt" {
+		layout, err := versionroot.ForPlatformPath(input.PlatformRoot)
+		if err != nil {
+			return doctorFixResult{}, unsupportedPlatformLayout(input.PlatformRoot, err)
+		}
+		activeRoot, err := layout.Active()
+		if err != nil {
+			return doctorFixResult{}, unsupportedPlatformLayout(input.PlatformRoot, err)
+		}
+		active, err := receipt.Read(activeRoot)
+		if err != nil {
+			return doctorFixResult{}, asDiag(err)
+		}
+		origin := recordedGatewayURL(active)
+		if active.Plan.Host == nil || origin == "" {
+			return doctorFixResult{}, contracts.NewDiag(contracts.CodeGatewayIndexUnavailable,
+				"the validated installation receipt has no Gateway address to restore", "inspect the active receipt before rebuilding the launcher Gateway index", nil)
+		}
+		launcherState, err := host.StateHome()
+		if err != nil {
+			return doctorFixResult{}, asDiag(err)
+		}
+		registry := gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: input.PlatformRoot}
+		if err := registry.Register(activeRoot, origin); err != nil {
+			return doctorFixResult{}, asDiag(err)
+		}
+		return doctorFixResult{OK: true, Operation: "doctor-fix", Findings: []doctor.Finding{},
+			Repair: doctor.PlanRepair(nil), Snapshot: map[string]any{}, HostRestarted: false}, nil
+	}
 	return input.fixDoctor(response)
 }
 
