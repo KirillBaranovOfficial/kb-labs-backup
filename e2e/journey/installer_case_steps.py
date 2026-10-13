@@ -583,7 +583,7 @@ def run_uninstall_decline_step(*, mode: str, args: list[str], receipt_path: Path
             return None
 
         result, _ = run_pty(args, on_output=answer_no)
-        if (not prompt_seen or result.returncode != 2
+        if (not prompt_seen or result.returncode != 1
                 or "KB_INSTALL_OPERATION_CANCELLED" not in result.stdout
                 or receipt_path.read_bytes() != before):
             raise RuntimeError("terminal decline did not preserve the receipt with KB_INSTALL_OPERATION_CANCELLED")

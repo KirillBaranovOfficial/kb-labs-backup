@@ -815,7 +815,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": false,
-      "processExitClass": "input-refusal",
+      "processExitClass": "operation-failure",
       "message": "The operation was cancelled.",
       "hint": "Rerun the command and confirm when prompted to continue."
     },
@@ -2293,7 +2293,7 @@
       "stage": "update",
       "severity": "error",
       "retryable": false,
-      "processExitClass": "input-refusal",
+      "processExitClass": "operation-failure",
       "message": "The update is incompatible with installed {kind} {component} at {version}; its declared compatibility range is {range}.",
       "hint": "Update or remove {kind} {component} first, then rerun `kb-create update`."
     },
