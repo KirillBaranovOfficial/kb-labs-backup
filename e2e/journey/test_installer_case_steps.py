@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import json
 import os
+import re
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
@@ -26,9 +27,10 @@ from installer_case_steps import (_data, _seed_doctor_fixture,
                                   _snapshot_installation_owned_tree, shim_owner_matches,
                                   assert_foreign_shim_diagnosis, assert_other_shim_diagnosis,
                                   assert_gateway_index_diagnosis, verify_installation_spellings)
+from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
                                   verify_stable_installation_spellings)
-from invocations import PtyCommandTimeout
+from invocations import PtyCommandTimeout, read_ux_cli_failure
 from journey_resources import (active_platform_root, case_catalog_root,
                                create_fixture_install_container)
 from test_install_layout import create_test_install_container, move_test_platform_into_container
@@ -166,6 +168,70 @@ class InstallerCaseStepsTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Gateway index diagnostic"):
                 assert_gateway_index_diagnosis({"error": {**error, "message": error["message"].replace("unsupported schema 1", "malformed")}},
                                                index, root)
+
+    def test_gateway_index_refusal_reader_accepts_recorded_document_and_stream(self):
+        fixtures = Path(__file__).parent / "testdata"
+        expected_hint = (
+            "Remove the derived index with `'rm' '--' "
+            "'/tmp/kb-journey-home-utz9qm1f/.kb/launcher/gateway-roots.json'`, then run `"
+            "'kb-create' 'doctor' '--fix' '--platform-root' "
+            "'/tmp/kb-journey-home-utz9qm1f/pc001-explicit-gateway-root'` to rebuild it from the installation receipt."
+        )
+        for fixture, expected_exit in (("gateway-index-plan-refusal.json", 2),
+                                       ("gateway-index-apply-refusal.jsonl", 2)):
+            with self.subTest(fixture=fixture):
+                error, exit_code = read_ux_cli_failure((fixtures / fixture).read_text(), expected_exit)
+                self.assertEqual(error["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
+                self.assertEqual(error["hint"], expected_hint)
+                self.assertEqual(exit_code, expected_exit)
+
+    def test_s025_gateway_index_refusals_follow_each_command_output_form(self):
+        fixtures = Path(__file__).parent / "testdata"
+        plan_stdout = (fixtures / "gateway-index-plan-refusal.json").read_text()
+        apply_stdout = (fixtures / "gateway-index-apply-refusal.jsonl").read_text()
+        root = Path("/tmp/kb-journey-home-utz9qm1f/pc001-explicit-gateway-root")
+        index = Path("/tmp/kb-journey-home-utz9qm1f/.kb/launcher/gateway-roots.json")
+        error = json.loads(plan_stdout)["error"]
+        document = json.dumps({"ok": False, "error": error})
+        outputs = {
+            "plan": (plan_stdout, 2),
+            "apply": (apply_stdout, 2),
+            "status": (document, 2),
+            "doctor": (document, 2),
+            "uninstall": (document, 2),
+            "rm": ("", 0),
+            "doctor-fix": (json.dumps({"ok": True, "data": {"operation": "doctor-fix"}}), 0),
+        }
+        calls = []
+
+        def fake_runner(args):
+            operation = ("rm" if args[0] == "rm" else
+                         "doctor-fix" if args[1] == "doctor" and "--fix" in args else args[1])
+            stdout, returncode = outputs[operation]
+            calls.append((operation, args))
+            return subprocess.CompletedProcess(args, returncode, stdout, "")
+
+        for operation in ("plan", "apply", "status", "doctor", "uninstall"):
+            args = ["kb-create", operation, "--platform-root", str(root), "--json"]
+            if operation in ("plan", "apply"):
+                args += ["--index", str(fixtures / "unused-index.json")]
+            if operation == "uninstall":
+                args.append("--yes")
+            refusal = fake_runner(args)
+            parsed = read_gateway_index_refusal(refusal, operation, index, root)
+            self.assertEqual(parsed["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
+        self.assertEqual([name for name, _ in calls],
+                         ["plan", "apply", "status", "doctor", "uninstall"])
+        self.assertEqual(read_ux_cli_failure(outputs["apply"][0], outputs["apply"][1])[1], 2)
+
+        hinted_commands = [shlex.split(command) for command in re.findall(r"`([^`]*)`", error["hint"])]
+        remove_argv = next(argv for argv in hinted_commands if argv[:2] == ["rm", "--"])
+        self.assertEqual(remove_argv, ["rm", "--", str(index)])
+        removed = fake_runner(remove_argv)
+        self.assertEqual(removed.returncode, 0)
+        repaired = fake_runner(["kb-create", "doctor", "--fix", "--platform-root", str(root), "--json"])
+        self.assertEqual(_data(repaired, "doctor fix after removing index")["operation"], "doctor-fix")
+        self.assertEqual(calls[-1][0], "doctor-fix")
 
     def test_install_refusal_is_a_case_fail_with_the_product_envelope(self):
         journey = Journey("local")
