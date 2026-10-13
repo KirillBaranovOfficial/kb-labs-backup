@@ -17,4 +17,4 @@ This newer broad plugin-author case duplicates the existing granular author loop
 
 ## Supersession
 
-Plugin scaffold, build, `kb marketplace link --link`, invocation, and iteration are covered in S-003. This duplicate is superseded by `S-003`.
+Plugin scaffold, build, `kb marketplace plugins add --link`, invocation, and iteration are covered in S-003. This duplicate is superseded by `S-003`.
