@@ -27,6 +27,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_i
                             PROJECT_ID,
                             _prepare_and_export_mcp_projects,
                             journey_result_exit_code, main as service_main, mcp_probe,
+                            prepare_service_api_session, service_api_token,
                             run_grouped_service_steps, run_service_steps)
 from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
 from invocations import run_pty_command, store_report_secret
@@ -54,6 +55,180 @@ class FakeGitHub:
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def _selected_service_checks(self, mode, responses, *, login_fails=False):
+        selected = "PC-002.3,PC-002.8"
+        requests = []
+
+        def fake_request(path, *, token="", **_kwargs):
+            requests.append((path, token))
+            if path == "/auth/login/cli":
+                if login_fails:
+                    return 401, {"message": "credentials rejected"}, {}
+                return 200, {"accessToken": "synthetic-service-token"}, {}
+            if path == "/auth/me":
+                return 200, {}, {}
+            return responses(path, token)
+
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                     "KB_JOURNEY_CASES": selected,
+                                     "KB_JOURNEY_PROJECT_ROOT": "/work/project",
+                                     "KB_JOURNEY_ADMIN_PASSWORD": "synthetic-password"}), \
+                patch("service_runner.ADMIN_PASSWORD", "synthetic-password"), \
+                patch("service_runner.PROJECT_ID", "project-123"), \
+                patch("service_runner.project_service_path",
+                      side_effect=lambda project_id, service, *parts:
+                      f"/api/v1/projects/{project_id}/{service}/{'/'.join(parts)}"), \
+                patch("service_runner.request", side_effect=fake_request):
+            journey = Journey(mode, "service-api-session-selection")
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                },
+            )
+            journey.step("registered project setup", "journey.setup", lambda: None, role="lifecycle")
+            prepare_service_api_session(graph, mode)
+            run_service_steps(journey, checks(mode, graph), mode, graph=graph)
+        return journey, graph, requests
+
+    # Regression for PC-002.3 and PC-002.8: the selected checks must acquire runner-owned API state.
+    def test_selected_secured_checks_run_after_service_api_session_and_send_token(self):
+        def responses(path, _token):
+            if path == "/ready":
+                return 200, {"status": "ready"}, {}
+            if path.endswith("/workflow/health"):
+                return 200, {"status": "healthy"}, {}
+            if path == "/api/v1/projects/project-123":
+                return 200, {"path": "/work/project"}, {}
+            if path == "/health":
+                return 200, {"projectRuntimes": {"runtimes": [{"projectId": "project-123", "state": "ready"}]}}, {}
+            if path.endswith("/rest/health"):
+                return 200, {"status": "healthy"}, {}
+            self.fail(f"unexpected request {path}")
+
+        journey, graph, requests = self._selected_service_checks("secured", responses)
+        selected = [step for step in journey.steps if step.cases and set(step.cases) & {"PC-002.3", "PC-002.8"}]
+        self.assertEqual([step.status for step in selected], ["PASS", "PASS"])
+        self.assertTrue(graph.states["service-api-session"]["passed"])
+        self.assertIn(("/auth/login/cli", ""), requests)
+        self.assertIn(("/auth/me", "synthetic-service-token"), requests)
+        self.assertTrue(any(token == "synthetic-service-token" for path, token in requests
+                            if path != "/auth/me"))
+
+    def test_selected_secured_checks_block_when_service_api_session_fails(self):
+        journey, _graph, requests = self._selected_service_checks(
+            "secured", lambda path, _token: self.fail(f"check sent unexpected request {path}"),
+            login_fails=True,
+        )
+        selected = [step for step in journey.steps if step.cases and set(step.cases) & {"PC-002.3", "PC-002.8"}]
+        self.assertEqual([step.status for step in selected], ["BLOCKED", "BLOCKED"])
+        self.assertTrue(all("service-api-session" in step.message and "HTTP 401" in step.message
+                            for step in selected))
+        self.assertEqual([path for path, _token in requests], ["/auth/login/cli"])
+        self.assertEqual(journey.result().status, "FAIL")
+
+    def test_selected_local_checks_need_no_service_api_login(self):
+        def responses(path, token):
+            if path == "/ready":
+                return 200, {"status": "ready"}, {}
+            if path.endswith("/workflow/health"):
+                return 200, {"status": "healthy"}, {}
+            if path == "/api/v1/projects/project-123":
+                return 200, {"path": "/work/project"}, {}
+            if path == "/health":
+                return 200, {"projectRuntimes": {"runtimes": [{"projectId": "project-123", "state": "ready"}]}}, {}
+            if path.endswith("/rest/health"):
+                return 200, {"status": "healthy"}, {}
+            self.fail(f"unexpected request {path}")
+
+        journey, graph, requests = self._selected_service_checks("local", responses)
+        self.assertTrue(graph.states["service-api-session"]["passed"])
+        self.assertFalse(any(path == "/auth/login/cli" for path, _token in requests))
+        self.assertTrue(any(path.endswith("/workflow/health") and not token for path, token in requests))
+        selected = [step for step in journey.steps if step.cases and set(step.cases) & {"PC-002.3", "PC-002.8"}]
+        self.assertEqual([step.status for step in selected], ["PASS", "PASS"])
+
+    def test_service_api_token_accessor_fails_before_unauthenticated_request_if_group_gate_is_removed(self):
+        journey = Journey("secured", "service-api-session-missing-dependency")
+        graph = FlowGraph(journey, {"projects": ()}, states={
+            "service-api-session": {"passed": True, "evidence": "session established"},
+        })
+        selected = "PC-002.8"
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                    "KB_JOURNEY_CASES": selected}, clear=True):
+            step = graph.step("project registry check", "projects", "projects",
+                              lambda: service_api_token(graph), cases=["PC-002.8"])
+        self.assertEqual(step.status, "BLOCKED")
+        self.assertIn("service-api-session", step.message)
+
+        flow_journey = Journey("secured", "service-api-flow-missing-dependency")
+        flow_graph = FlowGraph(flow_journey, {"analytics": ()}, states={
+            "service-api-session": {"passed": True, "evidence": "session established"},
+        })
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                    "KB_JOURNEY_CASES": selected}, clear=True):
+            outcome = flow_graph.flow("analytics API flow", "analytics", "analytics",
+                                      lambda: service_api_token(flow_graph), cases=["PC-002.8"])
+        self.assertEqual(outcome, "BLOCKED")
+        self.assertIn("service-api-session", flow_journey.steps[-1].message)
+
+    def test_ordinary_unclaimed_credential_step_is_skipped_and_selected_check_blocks(self):
+        selected = "PC-002.3,PC-002.8"
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                     "KB_JOURNEY_CASES": selected}, clear=True):
+            journey = Journey("secured", "ordinary-unclaimed-session-mutation")
+            graph = FlowGraph(journey, {"projects": ("service-api-session",)}, states={})
+            ordinary = journey.step("service API login", "auth.secured", lambda: None)
+            consumer = graph.step("project registry check", "projects", "projects",
+                                  lambda: service_api_token(graph), cases=["PC-002.8"])
+        self.assertEqual(ordinary.status, "SKIPPED")
+        self.assertEqual(consumer.status, "BLOCKED")
+        self.assertIn("service-api-session", consumer.message)
+
+    def test_service_check_order_changes_only_for_api_credential_lifecycle_row(self):
+        names = [step[0] for step in checks("secured")]
+        self.assertNotIn("secured admin CLI login", names)
+        self.assertEqual(names[0], "platform readiness (gateway + project workflow)")
+        self.assertNotIn("service-api-session", STATE_PRODUCERS)
+
+    def test_auth_group_failure_does_not_invalidate_service_api_session(self):
+        selected = "PC-002.8"
+        sent_headers = []
+
+        def fake_open_http(_opener, request, **_kwargs):
+            sent_headers.append(dict(request.header_items()))
+            return 200, b'{"ok":true,"data":{"projects":[]}}', {"content-type": "application/json"}
+
+        journey = Journey("secured", "auth-failure-preserves-service-api-session")
+        graph = FlowGraph(
+            journey,
+            {"auth": ("host-running",), "projects": ("host-running", "service-api-session")},
+            states={
+                "host-running": {"passed": True, "evidence": "host ready"},
+                "service-api-session": {"passed": True, "evidence": "service API login passed"},
+            },
+            state_producers=STATE_PRODUCERS,
+        )
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                     "KB_JOURNEY_CASES": selected,
+                                     "KB_JOURNEY_SERVICE_TOKEN": "synthetic-service-token"}), \
+                patch("service_runner.open_http", side_effect=fake_open_http):
+            outcome = graph.flow("auth group flow", "auth", "auth.secured",
+                                 lambda: "unrelated auth assertion failed")
+            check = graph.step(
+                "project registry check", "projects", "projects",
+                lambda: (None if request_result("/api/v1/projects", token=service_api_token(graph))[0] == 200
+                         else "project registry request failed"),
+                cases=["PC-002.8"],
+            )
+
+        self.assertEqual(outcome, "FAIL")
+        self.assertTrue(graph.states["service-api-session"]["passed"])
+        self.assertEqual(check.status, "PASS")
+        self.assertEqual(sent_headers[0].get("Authorization"), "Bearer synthetic-service-token")
+
     # case: S-204.1, S-204.2
     def test_repository_status_detects_files_created_by_settings_commands(self):
         with tempfile.TemporaryDirectory(prefix="journey-project-settings-tree-") as temp:
@@ -128,7 +303,7 @@ raise SystemExit(1)
                                          "KB_JOURNEY_FIXTURE_STATE": str(state)}):
                 settings = journey.step(
                     "project plugin settings isolation and clean repositories", "projects",
-                    project_plugin_settings_isolation, cases=settings_cases,
+                    lambda: project_plugin_settings_isolation("synthetic-service-token"), cases=settings_cases,
                 )
                 following = journey.step("workflow discovery", "workflow", lambda: None)
                 self.assertEqual(settings.status, "FAIL")
@@ -227,6 +402,7 @@ raise SystemExit(1)
                     env = {
                         "KB_JOURNEY_PLATFORM_ROOT": str(Path(directory) / "platform"),
                         "KB_JOURNEY_STATES": inherited,
+                        "KB_JOURNEY_SERVICE_TOKEN": "",
                     }
                     if selected:
                         env.update({"KB_JOURNEY_CASES": "S-201.3",
@@ -245,6 +421,9 @@ raise SystemExit(1)
 
                     with patch("service_runner.checks", return_value=iter(declared)), \
                             patch("service_runner.run_service_steps", side_effect=execute_declared_steps), \
+                            patch("service_runner.prepare_service_api_session",
+                                  side_effect=lambda graph, _mode: graph.probe_state(
+                                      "service-api-session", "auth", "service API login", lambda: None)), \
                             patch("service_runner.configure_installed_cli_path"), \
                             patch("service_runner.restore_secured_cli_login", return_value=None), \
                             patch("service_runner.run_analytics_steps"), \
@@ -271,6 +450,7 @@ raise SystemExit(1)
                             "selected analytics check",
                             "state probe: fixtures-installed",
                             "state probe: marketplace-available",
+                            "state probe: service-api-session",
                             "state probe: session",
                             "state probe: agent-plugin-installed",
                             "archive runtime service logs",
@@ -601,6 +781,7 @@ raise SystemExit(1)
         ], states={
             "host-running": {"passed": True, "evidence": "healthy", "group": "install", "step": "start", "claim": "PC-002.1"},
             "project-registered": {"passed": True, "evidence": "registered", "group": "project", "step": "add", "claim": "no case claim"},
+            "service-api-session": {"passed": True, "evidence": "session ready", "group": "auth", "step": "login", "claim": "no case claim"},
         })
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "service-local.json"

@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 import service_runner
-from service_runner import restore_secured_cli_login
+from service_runner import (FlowGraph, Journey, prepare_service_api_session,
+                            restore_secured_cli_login, service_api_token)
 
 
 class SecuredCliLoginTests(unittest.TestCase):
@@ -85,29 +86,32 @@ class AdapterDefaultsProbeTests(unittest.TestCase):
 
 
 class SecuredServiceTokenTests(unittest.TestCase):
-    def _admin_login_check(self):
-        return next(check[2] for check in service_runner._checks("secured")
-                    if check[0] == "secured admin CLI login")
-
     def test_short_login_token_fails_at_acquisition_before_storage(self):
+        journey = Journey("secured", "short-service-token")
+        graph = FlowGraph(journey, {}, states={})
         with patch.dict(os.environ, {}, clear=True), \
                 patch.object(service_runner, "ADMIN_PASSWORD", "synthetic-admin-password"), \
                 patch.object(service_runner, "request", return_value=(200, {"accessToken": "weak"}, None)):
-            with self.assertRaisesRegex(AssertionError, "at least 12 characters"):
-                self._admin_login_check()()
+            prepare_service_api_session(graph, "secured")
 
+            self.assertFalse(graph.states["service-api-session"]["passed"])
+            self.assertIn("at least 12 characters", graph.states["service-api-session"]["evidence"])
             self.assertNotIn("KB_JOURNEY_SERVICE_TOKEN", os.environ)
 
     def test_valid_login_token_is_stored_and_redacted_from_report(self):
         secret = "synthetic-service-access-token-for-tests"
+        journey = Journey("secured", "stored-service-token")
+        graph = FlowGraph(journey, {}, states={})
         with tempfile.TemporaryDirectory(prefix="journey-service-token-") as temp, \
                 patch.dict(os.environ, {}, clear=True), \
                 patch.object(service_runner, "ADMIN_PASSWORD", "synthetic-admin-password"), \
                 patch.object(service_runner, "request", side_effect=[
                     (200, {"accessToken": secret}, None), (200, {}, None),
                 ]):
-            self.assertIsNone(self._admin_login_check()())
+            prepare_service_api_session(graph, "secured")
+            self.assertTrue(graph.states["service-api-session"]["passed"])
             self.assertEqual(os.environ["KB_JOURNEY_SERVICE_TOKEN"], secret)
+            self.assertEqual(service_api_token(graph), secret)
 
             import invocations
             report = Path(temp) / "service-token.json"

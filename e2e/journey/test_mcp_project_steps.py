@@ -212,7 +212,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             token="test-token",
         )
 
-    def test_secured_platform_readiness_logs_in_before_checking_protected_workflow_health(self):
+    def test_secured_platform_readiness_reads_the_probed_service_api_session(self):
         calls = []
 
         def request(path, **kwargs):
@@ -223,19 +223,20 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 return 200, {"userId": "admin"}, {}
             return 200, {"ready": True}, {}
 
+        journey = service_runner.Journey("secured", "readiness-service-session")
+        graph = service_runner.FlowGraph(journey, {}, states={})
         with patch("service_runner.ADMIN_PASSWORD", "synthetic-admin-password"), \
                 patch("service_runner.ADMIN_EMAIL", "admin@example.test"), \
                 patch("service_runner.PROJECT_ID", "prj_registered"), \
+                patch("service_runner.project_service_path", return_value="/api/v1/projects/prj_registered/workflow/health"), \
                 patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": ""}), \
                 patch("service_runner.request", side_effect=request), \
                 patch("service_runner.expect_json", return_value=None) as expect_json, \
                 patch("service_runner.expect_project_service_health", return_value=None) as expect_health:
-            rows = list(checks("secured"))
-            login_name, _, login_check, _, _, _ = rows[0]
+            service_runner.prepare_service_api_session(graph, "secured")
+            rows = list(checks("secured", graph))
             readiness_name, _, readiness_check, _, _, _ = next(
                 row for row in rows if row[0] == "platform readiness (gateway + project workflow)")
-            self.assertEqual(login_name, "secured admin CLI login")
-            self.assertIsNone(login_check())
             self.assertEqual(readiness_name, "platform readiness (gateway + project workflow)")
             self.assertIsNone(readiness_check())
 
