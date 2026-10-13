@@ -126,52 +126,57 @@ func TestUpdateKeepsUserConfigWhenTargetAddsServiceDefault(t *testing.T) {
 
 // case: S-222.12
 func TestUpdateAndRollbackCannotRestoreDisclosedBootstrapPassword(t *testing.T) {
-	root := t.TempDir()
-	if _, err := Apply(context.Background(), planIn(root, "bootstrap-before-update"), Dependencies{Artifacts: &fakeInstaller{}}); err != nil {
-		t.Fatal(err)
-	}
-	store := secrets.Store{PlatformRoot: root}
-	const password = "update-rollback-disclosure-sentinel"
-	for name, value := range map[string]string{
-		"gateway.bootstrap.password":         password,
-		secrets.BootstrapPasswordEnvironment: password,
-	} {
-		if err := store.Put(name, value); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := store.Put(secrets.BootstrapCompleted, "provisioned"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MarkBootstrapDisclosed(); err != nil {
-		t.Fatal(err)
-	}
-	layout, err := versionroot.New(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secretPath, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(secretPath, layout.SharedStateDir()+string(os.PathSeparator)) {
-		t.Fatalf("secret store path %q is not owned by shared state %q", secretPath, layout.SharedStateDir())
-	}
-	updated, snapshot, err := Update(context.Background(), planIn(root, "bootstrap-after-update"), Dependencies{Artifacts: &fakeInstaller{}, Secrets: &store})
-	if err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	if updated.SnapshotID != snapshot.ID {
-		t.Fatalf("update snapshot ID = %q, returned snapshot %q", updated.SnapshotID, snapshot.ID)
-	}
-	if _, err := Rollback(root, snapshot.ID, Dependencies{Artifacts: &fakeInstaller{}, Secrets: &store}); err != nil {
-		t.Fatalf("rollback: %v", err)
-	}
-	assertRuntimeSecretAbsentFromTree(t, root, password)
-	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
-		if present, err := store.Exists(name); err != nil || present {
-			t.Fatalf("update/rollback restored bootstrap secret %q: present=%v err=%v", name, present, err)
-		}
+	for _, origin := range []struct {
+		name   string
+		origin secrets.BootstrapPasswordOrigin
+	}{{name: "generated", origin: secrets.BootstrapOriginGenerated}, {name: "supplied", origin: secrets.BootstrapOriginSupplied}} {
+		t.Run(origin.name, func(t *testing.T) {
+			root := t.TempDir()
+			if _, err := Apply(context.Background(), planIn(root, "bootstrap-before-update"), Dependencies{Artifacts: &fakeInstaller{}}); err != nil {
+				t.Fatal(err)
+			}
+			store := secrets.Store{PlatformRoot: root}
+			const password = "update-rollback-disclosure-sentinel"
+			if err := store.PutBootstrapPassword(password, origin.origin); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Put(secrets.BootstrapPasswordEnvironment, password); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Put(secrets.BootstrapCompleted, "provisioned"); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.MarkBootstrapDisclosed(); err != nil {
+				t.Fatal(err)
+			}
+			layout, err := versionroot.New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secretPath, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(secretPath, layout.SharedStateDir()+string(os.PathSeparator)) {
+				t.Fatalf("secret store path %q is not owned by shared state %q", secretPath, layout.SharedStateDir())
+			}
+			updated, snapshot, err := Update(context.Background(), planIn(root, "bootstrap-after-update"), Dependencies{Artifacts: &fakeInstaller{}, Secrets: &store})
+			if err != nil {
+				t.Fatalf("update: %v", err)
+			}
+			if updated.SnapshotID != snapshot.ID {
+				t.Fatalf("update snapshot ID = %q, returned snapshot %q", updated.SnapshotID, snapshot.ID)
+			}
+			if _, err := Rollback(root, snapshot.ID, Dependencies{Artifacts: &fakeInstaller{}, Secrets: &store}); err != nil {
+				t.Fatalf("rollback: %v", err)
+			}
+			assertRuntimeSecretAbsentFromTree(t, root, password)
+			for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+				if present, err := store.Exists(name); err != nil || present {
+					t.Fatalf("update/rollback restored bootstrap secret %q: present=%v err=%v", name, present, err)
+				}
+			}
+		})
 	}
 }
 

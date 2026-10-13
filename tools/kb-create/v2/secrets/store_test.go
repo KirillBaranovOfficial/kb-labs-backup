@@ -24,7 +24,7 @@ func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 	path := secretsPath(t, root)
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), "super-secret") {
-		t.Fatalf("store/error = %s / %v", data, err)
+		t.Fatalf("secret store write failed: err=%v", err)
 	}
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o600 {
@@ -48,7 +48,7 @@ func TestReadOnlyStoreRejectsStagedWrites(t *testing.T) {
 	}
 	after, err := os.ReadFile(secretsPath(t, root))
 	if err != nil || string(after) != string(before) {
-		t.Fatalf("read-only secret write changed shared state: %q / %v", after, err)
+		t.Fatalf("read-only secret write changed shared state: err=%v", err)
 	}
 }
 
@@ -63,7 +63,7 @@ func TestEnsureGeneratedCreatesPrivateRandomSecretAndPreservesSuppliedValue(t *t
 	}
 	first, present, err := store.Get("gateway.jwtSecret")
 	if err != nil || !present || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(first) {
-		t.Fatalf("generated secret = %q, present=%v, err=%v", first, present, err)
+		t.Fatalf("generated secret availability mismatch: present=%v, err=%v", present, err)
 	}
 	if err := EnsureGenerated(plan, store); err != nil {
 		t.Fatal(err)
@@ -80,7 +80,29 @@ func TestEnsureGeneratedCreatesPrivateRandomSecretAndPreservesSuppliedValue(t *t
 	}
 	got, _, _ := store.Get("gateway.jwtSecret")
 	if got != "operator-selected-secret" {
-		t.Fatalf("operator secret = %q", got)
+		t.Fatal("operator secret was not preserved")
+	}
+}
+
+func TestBootstrapPasswordOriginIsAtomicWithThePassword(t *testing.T) {
+	store := Store{PlatformRoot: t.TempDir()}
+	if err := store.PutBootstrapPassword("generated-test-secret", BootstrapOriginGenerated); err != nil {
+		t.Fatal(err)
+	}
+	password, present, err := store.Get(BootstrapPassword)
+	if err != nil || !present || password != "generated-test-secret" {
+		t.Fatal("generated bootstrap password was not stored")
+	}
+	origin, present, err := store.Get(BootstrapGenerated)
+	if err != nil || !present || origin != "true" {
+		t.Fatal("generated origin was not committed with the bootstrap password")
+	}
+	if err := store.Put(BootstrapPassword, "supplied-test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	origin, present, err = store.Get(BootstrapGenerated)
+	if err != nil || !present || origin != "false" {
+		t.Fatal("supplied origin was not committed with the bootstrap password")
 	}
 }
 
@@ -99,7 +121,7 @@ func TestEnsureGeneratedInternalSecretBindsEveryProtectedService(t *testing.T) {
 	}
 	value, present, err := store.Get("gateway.internalSecret")
 	if err != nil || !present || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(value) {
-		t.Fatalf("generated internal secret = %q, present=%v, err=%v", value, present, err)
+		t.Fatalf("generated internal secret availability mismatch: present=%v, err=%v", present, err)
 	}
 	if err := store.BindEnvironments([]contracts.ConfigPatch{{
 		Owner: "manifest:gateway.internalSecret", Environment: "GATEWAY_INTERNAL_SECRET",
@@ -128,7 +150,7 @@ func TestEnsureGeneratedPreservesInternalSecretDuringUpdate(t *testing.T) {
 	}
 	after, _, _ := store.Get("gateway.internalSecret")
 	if after != before {
-		t.Fatalf("update replaced generated secret: before=%q after=%q", before, after)
+		t.Fatal("update replaced generated secret")
 	}
 }
 func TestStoreRejectsInjectionName(t *testing.T) {
@@ -147,7 +169,7 @@ func TestGetReturnsStoredValueAndReportsAbsence(t *testing.T) {
 	}
 	value, present, err := store.Get("gateway.jwtSecret")
 	if err != nil || !present || value != "value=with=equals" {
-		t.Fatalf("value/present/err = %q / %v / %v", value, present, err)
+		t.Fatalf("secret availability mismatch: present=%v, err=%v", present, err)
 	}
 	if _, _, err := store.Get("bad=name"); err == nil {
 		t.Fatal("an invalid name must be rejected")
@@ -211,14 +233,15 @@ func TestBindEnvironmentsAddsTheBoundEnvironmentKey(t *testing.T) {
 		"gateway.jwtSecret":                "jwt-value",
 		"GATEWAY_JWT_SECRET":               "jwt-value",
 		"gateway.bootstrap.password":       "admin-value",
+		BootstrapGenerated:                 "false",
 		"GATEWAY_BOOTSTRAP_ADMIN_PASSWORD": "admin-value",
 	}
 	if len(got) != len(want) {
-		t.Fatalf("stored keys = %v, want %v", got, want)
+		t.Fatalf("stored secret key set mismatch: got=%v want=%v", got, want)
 	}
 	for key, value := range want {
 		if got[key] != value {
-			t.Fatalf("%s = %q, want %q (all: %v)", key, got[key], value, got)
+			t.Fatalf("stored value mismatch for secret key %s", key)
 		}
 	}
 	if exists, err := store.Exists("gateway.jwtSecret"); err != nil || !exists {
@@ -267,7 +290,7 @@ func TestEnvironmentOmitsBootstrapPasswordAfterCompletion(t *testing.T) {
 	}
 	before, err := store.Environment()
 	if err != nil || before.Values["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"] != "one-time-bootstrap-password" {
-		t.Fatalf("pre-completion environment = %#v, err=%v", before, err)
+		t.Fatalf("pre-completion environment binding mismatch: err=%v", err)
 	}
 	if err := store.Put(BootstrapCompleted, "provisioned"); err != nil {
 		t.Fatal(err)
@@ -277,10 +300,10 @@ func TestEnvironmentOmitsBootstrapPasswordAfterCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, present := after.Values["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"]; present {
-		t.Fatalf("completed host environment still contains bootstrap password: %#v", after)
+		t.Fatal("completed host environment still contains bootstrap password")
 	}
 	if after.Values["GATEWAY_JWT_SECRET"] != strings.Repeat("j", 64) {
-		t.Fatalf("completion removed an unrelated Gateway secret: %#v", after)
+		t.Fatal("completion removed an unrelated Gateway secret")
 	}
 	if password, present, err := store.Get("gateway.bootstrap.password"); err != nil || !present || password != "one-time-bootstrap-password" {
 		t.Fatalf("completion deleted stored bootstrap secret: present=%v err=%v", present, err)

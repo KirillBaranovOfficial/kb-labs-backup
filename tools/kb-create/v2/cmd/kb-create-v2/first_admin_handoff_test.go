@@ -50,7 +50,7 @@ func TestFirstAdminDisclosureMarkerFollowsSuccessfulResultWrite(t *testing.T) {
 		return err
 	})
 	if !written || failure != nil || output.String() != password {
-		t.Fatalf("successful output emission = written %v, failure %v, output %q", written, failure, output.String())
+		t.Fatalf("successful output emission did not preserve the result write; written=%v failure=%v", written, failure)
 	}
 	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || !disclosed {
 		t.Fatalf("successful result write disclosure marker = %v, err %v; want recorded", disclosed, err)
@@ -64,32 +64,108 @@ func TestFirstAdminDisclosureMarkerFollowsSuccessfulResultWrite(t *testing.T) {
 }
 
 func assertSecretAbsentFromTree(t *testing.T, root, secret string) {
+	assertSecretsAbsentFromTrees(t, []string{secret}, root)
+}
+
+func assertSecretsAbsentFromTrees(t *testing.T, secrets []string, roots ...string) {
 	t.Helper()
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for _, secret := range secrets {
+				if secret != "" && bytes.Contains(data, []byte(secret)) {
+					t.Errorf("secret material remains in file %s", path)
+					break
+				}
+			}
 			return nil
-		}
-		info, err := os.Stat(path)
+		})
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
-		if info.IsDir() {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if bytes.Contains(data, []byte(secret)) {
-			t.Errorf("disclosed password remains in install-root file %s", path)
-		}
-		return nil
-	})
+	}
+}
+
+func TestFirstAdminPasswordResultHasSingleProvenanceOwner(t *testing.T) {
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var constructors []string
+	var passwordAssignments []string
+	var passwordFields []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				literal, ok := node.(*ast.CompositeLit)
+				if ok {
+					identifier, ok := literal.Type.(*ast.Ident)
+					if ok && identifier.Name == "firstAdminCredential" {
+						constructors = append(constructors, function.Name.Name)
+						for _, element := range literal.Elts {
+							field, ok := element.(*ast.KeyValueExpr)
+							if !ok {
+								passwordAssignments = append(passwordAssignments, function.Name.Name)
+								continue
+							}
+							key, ok := field.Key.(*ast.Ident)
+							if ok && key.Name == "Password" {
+								passwordFields = append(passwordFields, function.Name.Name)
+								if function.Name.Name != "firstAdminResult" {
+									passwordAssignments = append(passwordAssignments, function.Name.Name)
+								}
+							}
+						}
+					}
+				}
+				assignment, ok := node.(*ast.AssignStmt)
+				if ok {
+					for _, expression := range assignment.Lhs {
+						selector, ok := expression.(*ast.SelectorExpr)
+						if ok && selector.Sel.Name == "Password" && function.Name.Name != "firstAdminResult" {
+							passwordAssignments = append(passwordAssignments, function.Name.Name)
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+	allowed := map[string]int{"firstAdminResult": 2, "previouslyDisclosedFirstAdmin": 1}
+	constructorCounts := map[string]int{}
+	for _, name := range constructors {
+		constructorCounts[name]++
+	}
+	if !reflect.DeepEqual(constructorCounts, allowed) || len(passwordAssignments) != 0 || !reflect.DeepEqual(passwordFields, []string{"firstAdminResult"}) {
+		t.Fatalf("first-admin result construction outside provenance owners: constructors=%v password assignments=%v", constructors, passwordAssignments)
 	}
 }
 

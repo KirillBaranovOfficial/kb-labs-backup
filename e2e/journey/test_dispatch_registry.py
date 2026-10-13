@@ -362,6 +362,18 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertTrue(all("service-secured:explore" in declaration["runners"]
                             for declaration in scans.values()))
 
+    def test_s181_3_selects_the_supplied_password_install_file_scan(self):
+        resolved = selection_from_coverage(self._coverage(), "S-181.3")
+        self.assertEqual(resolved["runners"], ["agent-secured:commit", "agent:commit"])
+        self.assertIn("e2e/journey/bootstrap_secret_steps.py", resolved["stepSources"])
+        self.assertIn("e2e/journey/installer_case_steps.py", resolved["stepSources"])
+        root = Path(__file__).resolve().parents[2]
+        declarations = _case_declarations("e2e/journey/bootstrap_secret_steps.py", root).values()
+        scan = next(declaration for declaration in declarations
+                    if declaration["name"] == "verify supplied bootstrap credential absent from install files")
+        self.assertEqual(scan["cases"], ["S-181.3"])
+        self.assertEqual(scan["runners"], ["agent-secured:commit", "agent:commit"])
+
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         results = []
         root = Path(__file__).resolve().parents[2]
