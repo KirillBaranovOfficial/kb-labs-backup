@@ -16,6 +16,7 @@ from journey_resources import active_platform_root
 from service_steps import Journey
 from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
                          read_ux_cli_result, read_ux_http_result,
+                         export_project_identity_to_child_environment,
                          open_http, run_command, run_with_runner)
 from plugin_author_steps import run_commit_case_steps
 
@@ -88,9 +89,10 @@ def _commit_project_fixture_entry(lock: object, version: str) -> dict | None:
     return None
 
 
-def _registry_version(package_id: str, registry: str, env: dict[str, str], runner: CommandRunner) -> str:
+def _registry_version(package_id: str, registry: str, project: Path, env: dict[str, str],
+                      runner: CommandRunner) -> str:
     command = ["npm", "view", package_id, "version", "--json", f"--registry={registry}"]
-    result = run_with_runner(runner, command, cwd=env["KB_JOURNEY_PROJECT_ROOT"], env=env,
+    result = run_with_runner(runner, command, cwd=project, env=env,
                              timeout=120)
     raw = _output(result, command)
     try:
@@ -153,7 +155,7 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
     config_file = project / ".kb" / "kb.config.json"
 
     def verify() -> None:
-        version = _registry_version(fixture_package, registry, env, runner)
+        version = _registry_version(fixture_package, registry, project, env, runner)
         install = ["marketplace", "install", f"{fixture_package}@{version}", "--json"]
         _json(_run(["kb", *install], cwd=project, env=env, runner=runner), install)
         original = config_file.read_bytes() if config_file.exists() else None
@@ -301,13 +303,13 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
     """Install the exact Commit pin consumed by downstream project fixtures."""
     project = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
-    base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project)
+    export_project_identity_to_child_environment(base_env, project_root=str(project))
 
     captured: dict[str, dict] = {}
 
     def install_fixture() -> None:
         wait_for_marketplace_ready(project, base_env, runner)
-        version = _registry_version("@kb-labs/commit-entry", registry, base_env, runner)
+        version = _registry_version("@kb-labs/commit-entry", registry, project, base_env, runner)
         command = ["marketplace", "install", f"@kb-labs/commit-entry@{version}", "--json"]
         result = _json(_run(["kb", *command], cwd=project, env=base_env, runner=runner), command)
         installed = result.get("installed")
@@ -326,6 +328,7 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
 
 
 def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path, registry: str,
+                          project_id: str,
                           env: dict[str, str] | None = None,
                           runner: CommandRunner = run_command,
                           http_opener: Callable[..., object] = urllib.request.urlopen,
@@ -334,7 +337,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     """Execute S-010 and S-047 in the isolated installed platform."""
     project = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
-    base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project)
+    export_project_identity_to_child_environment(base_env, project_root=str(project))
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
     def cli(args: list[str], cwd: Path = project) -> subprocess.CompletedProcess[str]:
         return _run(["kb", *args], cwd=cwd, env=base_env, runner=runner)
@@ -366,8 +369,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         # The malformed-policy diagnostic is an independent assertion. Its
         # result does not determine whether the marketplace can install the
         # Commit fixture that produces the project lock state.
-        commit_version = _registry_version(commit_install_package, registry, base_env, runner)
-        unrelated_version = _registry_version(unrelated_package, registry, base_env, runner)
+        commit_version = _registry_version(commit_install_package, registry, project, base_env, runner)
+        unrelated_version = _registry_version(unrelated_package, registry, project, base_env, runner)
     # S-047 requires a second project plugin to survive target uninstall.
     install_unrelated = ["marketplace", "install", f"{unrelated_package}@{unrelated_version}", "--json"]
     sealed_platform_before_unrelated = _platform_snapshot(platform_root)
@@ -433,12 +436,11 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                  install_exact_commit, cases=["S-010.1"],
                  requires=("step:prepare clean scopes for the S-010 install",))
 
-    project_id = base_env.get("KB_JOURNEY_PROJECT_ID", "")
     gateway = base_env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
 
     def assert_unknown_service_does_not_start_runtime() -> None:
         if not project_id:
-            raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+            raise RuntimeError("S-192 requires the registered project identity from project-registered state")
         headers = {"Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"}
         unknown_url = f"{gateway}{project_service_path(project_id, 'unknown-service', 'health')}"
         status, raw, _ = open_http(http_opener, urllib.request.Request(unknown_url, headers=headers), timeout=30, env=base_env)
@@ -469,7 +471,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if commit_package in project_lock.get("plugins", {}):
             raise RuntimeError("S-192 requires Commit to be absent from the project marketplace lock before install")
         if not project_id:
-            raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+            raise RuntimeError("S-192 requires the registered project identity from project-registered state")
         request = urllib.request.Request(
             f"{gateway}{project_service_path(project_id, 'rest', 'plugins/commit/status')}",
             headers={"Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"},
@@ -509,7 +511,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
 
     def assert_commit_status_route() -> None:
         if not project_id:
-            raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+            raise RuntimeError("S-192 requires the registered project identity from project-registered state")
         headers = {"Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"}
         request = urllib.request.Request(route, headers=headers)
         status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
@@ -761,7 +763,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             if commit_package in platform_lock.get("plugins", {}):
                 raise RuntimeError("project uninstall changed the S-192 platform prerequisite: Commit is pinned there")
             if not project_id:
-                raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+                raise RuntimeError("S-192 requires the registered project identity from project-registered state")
             request = urllib.request.Request(route, headers={
                 "Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"})
             status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
@@ -816,7 +818,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         ):
             raise RuntimeError("S-192 reinstall did not restore the selected Commit version")
         if not project_id:
-            raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+                raise RuntimeError("S-192 requires the registered project identity from project-registered state")
         request = urllib.request.Request(route, headers={
             "Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"})
         status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
@@ -843,7 +845,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                  requires=("step:reinstall Commit and call its project REST route",))
 
 
-def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: str,
+def run_marketplace_steps(journey: Journey, project_root: str | Path, project_id: str, registry: str,
                           env: dict[str, str] | None = None,
                           runner: CommandRunner = run_command,
                           http_opener: Callable[..., object] = urllib.request.urlopen,
@@ -852,7 +854,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     """Run marketplace assertions and preserve the independent project fixture."""
     project = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
-    base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project)
+    export_project_identity_to_child_environment(base_env, project_root=str(project))
 
     def restore_fixture() -> None:
         if not isinstance(fixture_entry, dict):
@@ -879,7 +881,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             raise RuntimeError("marketplace lifecycle cleanup did not restore the complete captured Commit fixture lock entry")
 
     try:
-        _run_marketplace_lifecycle_steps(journey, project, registry, base_env, runner,
+        _run_marketplace_lifecycle_steps(journey, project, registry, project_id, base_env, runner,
                                          http_opener, commit_case_hook, fixture_entry)
     finally:
         journey.step("restore Commit project fixture after marketplace lifecycle", "marketplace-fixtures",

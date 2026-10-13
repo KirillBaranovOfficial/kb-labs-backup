@@ -102,12 +102,12 @@ def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner)
         raise RuntimeError(f"project plugin attachments do not contain only {package}")
 
 
-def prepare_studio_fixtures(service_env: dict[str, str], *, project_a: Path, project_b: Path,
+def prepare_studio_fixtures(service_env: dict[str, str], *, project_b_id: str,
+                            project_a: Path, project_b: Path,
                             runner=run_command) -> dict[str, str]:
     """Install project plugins and a real active greet workflow via the installed CLI."""
-    project_b_id = service_env.get("KB_JOURNEY_PROJECT_B_ID", "")
     if not project_b_id:
-        raise RuntimeError("KB_JOURNEY_PROJECT_B_ID is required for Studio project fixtures")
+        raise RuntimeError("fixtures-installed state must contain a project B id for Studio project fixtures")
     if not project_a.is_dir() or not project_b.is_dir() or project_a.resolve() == project_b.resolve():
         raise RuntimeError("Studio fixtures require two distinct registered project roots")
 

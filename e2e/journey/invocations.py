@@ -48,6 +48,29 @@ def store_report_secret(env: MutableMapping[str, str], key: str, value: str, sou
     return value
 
 
+def export_project_identity_to_child_environment(
+    env: MutableMapping[str, str], *, project_id: str | None = None, project_root: str | None = None,
+    project_b_id: str | None = None, project_b_root: str | None = None,
+) -> None:
+    """Expose state-backed project identities only to a child process."""
+    if project_id:
+        env["KB_JOURNEY_PROJECT_ID"] = project_id
+    elif project_id == "":
+        env.pop("KB_JOURNEY_PROJECT_ID", None)
+    if project_root:
+        env["KB_JOURNEY_PROJECT_ROOT"] = project_root
+    elif project_root == "":
+        env.pop("KB_JOURNEY_PROJECT_ROOT", None)
+    if project_b_id:
+        env["KB_JOURNEY_PROJECT_B_ID"] = project_b_id
+    elif project_b_id == "":
+        env.pop("KB_JOURNEY_PROJECT_B_ID", None)
+    if project_b_root:
+        env["KB_JOURNEY_PROJECT_B_ROOT"] = project_b_root
+    elif project_b_root == "":
+        env.pop("KB_JOURNEY_PROJECT_B_ROOT", None)
+
+
 def _invalid_ux_result(message: str) -> NoReturn:
     evidence = invocation_link(_STEP_ID.get())
     suffix = f" ({evidence})" if evidence else ""
@@ -308,11 +331,10 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
 
 
 class PtyCommandTimeout(subprocess.TimeoutExpired):
-    """PTY timeout retaining the received terminal output and candidate state."""
+    """PTY timeout retaining the terminal output received before the deadline."""
 
-    def __init__(self, cmd: list[str], timeout: float, transcript: str, candidate_state: str | None):
+    def __init__(self, cmd: list[str], timeout: float, transcript: str):
         super().__init__(cmd, timeout, output=transcript)
-        self.candidate_state = candidate_state
 
     def __str__(self) -> str:
         details = [f"PTY command timed out after {self.timeout}s"]
@@ -320,8 +342,6 @@ class PtyCommandTimeout(subprocess.TimeoutExpired):
             details.append(f"transcript received:\n{self.output}")
         else:
             details.append("no output received before the timeout")
-        if self.candidate_state:
-            details.append(f"candidate state:\n{self.candidate_state}")
         return "\n".join(details)
 
 
@@ -529,16 +549,13 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
         os.close(master)
     rendered = transcript.decode(errors="replace")
     duration = time.monotonic() - started
-    candidate_state = (env if env is not None else os.environ).get("KB_JOURNEY_STATES") if timed_out else None
     error = (f"timed out after {timeout}s" if rendered else
              f"no output received before the timeout ({timeout}s)") if timed_out else None
-    if timed_out and candidate_state:
-        error += f"; candidate state: {candidate_state}"
     record_invocation(kind="command", argv=argv, cwd=cwd, env=env,
                       exit_code=process.returncode, stdout=rendered,
                       duration_seconds=duration, error=error)
     if timed_out and raise_on_timeout:
-        raise PtyCommandTimeout(argv, timeout, rendered, candidate_state)
+        raise PtyCommandTimeout(argv, timeout, rendered)
     return subprocess.CompletedProcess(argv, process.returncode, stdout=rendered, stderr=""), duration
 
 

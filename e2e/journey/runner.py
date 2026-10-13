@@ -123,20 +123,26 @@ def reject_unprepared_studio_flow() -> None:
     raise RuntimeError("Studio browser flow was selected without running its setup")
 
 
-def project_environment_from_state(graph: FlowGraph, env: dict[str, str]) -> dict[str, str]:
-    """Expose a verified project identity to child processes from its state value."""
-    state = graph.states.get("project-registered", {})
-    if state.get("passed") is not True:
-        env.pop("KB_JOURNEY_PROJECT_ID", None)
-        env.pop("KB_JOURNEY_PROJECT_ROOT", None)
-        return {}
+def export_graph_state_to_child_environment(graph: FlowGraph, env: dict[str, str]) -> None:
+    """Serialize graph state once at the child-process boundary."""
+    env["KB_JOURNEY_STATES"] = json.dumps(graph.states)
+
+
+def project_registration_from_state(graph: FlowGraph) -> dict[str, str]:
     project = graph.state_value("project-registered")
     if (not isinstance(project, dict) or not isinstance(project.get("id"), str) or not project["id"]
             or not isinstance(project.get("root"), str) or not project["root"]):
         raise RuntimeError("project-registered state passed without a project id and root")
-    env["KB_JOURNEY_PROJECT_ID"] = project["id"]
-    env["KB_JOURNEY_PROJECT_ROOT"] = project["root"]
     return project
+
+
+def project_b_fixture_from_state(graph: FlowGraph) -> dict[str, str]:
+    fixtures = graph.state_value("fixtures-installed")
+    if (not isinstance(fixtures, dict) or not isinstance(fixtures.get("projectBId"), str)
+            or not fixtures["projectBId"] or not isinstance(fixtures.get("projectBRoot"), str)
+            or not fixtures["projectBRoot"]):
+        raise RuntimeError("fixtures-installed state passed without a registered project B id and root")
+    return fixtures
 
 
 def cleanup_partial_install(graph: FlowGraph, env: dict[str, str], launcher: str) -> None:
@@ -369,7 +375,7 @@ def login_and_configure_secured_admin(
     env: dict[str, str], launcher: str, *, configure_oidc: bool = False, run_command=run,
 ) -> tuple[str, subprocess.CompletedProcess] | None:
     """Sign in the bootstrap admin before making authenticated platform config changes."""
-    project = Path(env["KB_JOURNEY_PROJECT_ROOT"])
+    project = PROJECT
     login, _ = run_command(
         ["bash", "-c", '. "$HOME/.profile"; kb auth login --gateway-url http://127.0.0.1:4000 --email "$1" --password "$2"',
          "journey", env["KB_JOURNEY_ADMIN_EMAIL"], env["KB_JOURNEY_ADMIN_PASSWORD"]],
@@ -394,22 +400,6 @@ def dump_failure_state() -> None:
 def failure_exit() -> int:
     dump_failure_state()
     return 1
-
-
-def project_fixture_handoff(path: Path) -> tuple[str, str] | str:
-    """Read and validate the project B fixture contract written by services."""
-    try:
-        fixtures = json.loads(path.read_text(encoding="utf-8"))
-        project_id = fixtures.get("projectBId")
-        root_value = fixtures.get("projectBRoot")
-        if (not isinstance(project_id, str) or not project_id
-                or not isinstance(root_value, str)
-                or not Path(root_value).is_absolute()
-                or str(Path(root_value).resolve()) != root_value):
-            raise ValueError("registry result omitted a valid project B ID or canonical root")
-    except (OSError, json.JSONDecodeError, AttributeError, ValueError) as error:
-        return f"{error}; rerun the installed journey to register its isolation project"
-    return project_id, root_value
 
 
 def capture_case_failure() -> None:
@@ -851,11 +841,13 @@ def _run_final_uninstall(graph: FlowGraph, env: dict[str, str], launcher: str) -
         lambda: run_uninstall_group(graph, env, launcher),
         cases=["S-050.1", "S-050.4", "S-050.6", "S-050.7"], role="lifecycle",
     )
+    if status == "SKIPPED":
+        return not FIRST_FAILURE
     if status != "PASS":
         fail("uninstall platform group failed; inspect its FAIL/BLOCKED journey rows and journey-diagnostics.log")
     return status == "PASS" and not FIRST_FAILURE
 
-def main():
+def main(*, update_variant_runner=None):
     global FIRST_FAILURE, CASE_JOURNEY, SELECTED_CLAIM_COMPLETION_CHECKED
     global ACTIVE_OUTER_GRAPH, ACTIVE_MAIN_ENV, ACTIVE_LAUNCHER
     STATE_DUMP_GUARD.reset()
@@ -1137,7 +1129,8 @@ def main():
                 except json.JSONDecodeError:
                     fail("kb-create apply --input: output was not one JSON document")
 
-    outer_graph.flow("installed platform bootstrap", "install", "platform.install", lambda: None)
+    outer_graph.flow("installed platform bootstrap", "install", "platform.install", lambda: None,
+                     skip_note="the install operation ran earlier; this flow is only a selection marker")
     capture_case_failure()
     if FIRST_FAILURE:
         first = CASE_JOURNEY.result().first_failure or {}
@@ -1570,8 +1563,8 @@ def main():
         )
         establish_project_registration(outer_graph, PROJECT, env)
         capture_case_failure()
-        project_result = project_environment_from_state(outer_graph, service_env)
-        project_id = project_result.get("id", "") if isinstance(project_result, dict) else ""
+        project_result = project_registration_from_state(outer_graph)
+        project_id = project_result["id"]
         def lint_workflow_fixture() -> str | None:
             lint, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow lint --json'],
                           env=service_env, cwd=PROJECT, timeout=120)
@@ -1762,10 +1755,8 @@ def main():
         project_fixture_file.unlink(missing_ok=True)
         service_env["KB_JOURNEY_STUDIO_FIXTURE_FILE"] = str(studio_fixture_file)
         service_env["KB_JOURNEY_PROJECT_FIXTURES_FILE"] = str(project_fixture_file)
-        service_env["KB_JOURNEY_STATES"] = json.dumps(outer_graph.states)
+        export_graph_state_to_child_environment(outer_graph, service_env)
         service_env["KB_JOURNEY_NEEDED_STATES"] = ",".join(sorted(outer_graph.needed_states))
-        service_env.pop("KB_JOURNEY_PROJECT_B_ID", None)
-        service_env.pop("KB_JOURNEY_PROJECT_B_ROOT", None)
         result, elapsed = run(["python3", str(journey_module("service_runner.py")), "--mode", mode, "--output", str(service_report)],
                              env=service_env, timeout=900)
         TIMES[f"{mode} service journeys"] = elapsed
@@ -1795,22 +1786,28 @@ def main():
             return finalize_run(False)
         fixture_state_needed = (not outer_graph.selection_active
                                 or "fixtures-installed" in outer_graph.needed_states)
+        project_b_consumers_selected = (
+            not outer_graph.selection_active
+            or bool(outer_graph.selected_groups & {"workflow", "studio"})
+            or source_selected(run_platform_update_variant_steps.__code__.co_filename)
+        )
         if fixture_state_needed:
-            handoff = project_fixture_handoff(project_fixture_file)
-            if isinstance(handoff, str):
-                fail(f"project B fixture handoff failed: {handoff}")
+            fixture_state = outer_graph.states.get("fixtures-installed", {})
+            if fixture_state.get("passed") is not True:
+                fail(f"project B fixture handoff failed: {fixture_state.get('evidence', 'fixtures-installed state is missing')}")
                 block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
                                                      "workflow", "analytics", "studio"])
                 _run_final_uninstall(outer_graph, env, launcher)
                 return finalize_run(False)
-            project_b_id, project_b_root_value = handoff
-            service_env["KB_JOURNEY_PROJECT_B_ID"] = project_b_id
-            service_env["KB_JOURNEY_PROJECT_B_ROOT"] = project_b_root_value
+            project_b_id = ""
+            project_b_root_value = ""
+            if project_b_consumers_selected:
+                fixture_projects = project_b_fixture_from_state(outer_graph)
+                project_b_id = fixture_projects["projectBId"]
+                project_b_root_value = fixture_projects["projectBRoot"]
         else:
             project_b_id = ""
             project_b_root_value = ""
-            service_env.pop("KB_JOURNEY_PROJECT_B_ID", None)
-            service_env.pop("KB_JOURNEY_PROJECT_B_ROOT", None)
         workflow_journey = Journey(mode, f"workflow-{mode}")
         def restart_for_workflow_history() -> None:
             restart_host(launcher, env)
@@ -1831,8 +1828,11 @@ def main():
             cases=workflow_claims, record_empty_success=False,
             runners=("service-local:explore", "service-secured:explore"),
         )
-        project_b_root_value = service_env["KB_JOURNEY_PROJECT_B_ROOT"]
-        project_b_id = service_env["KB_JOURNEY_PROJECT_B_ID"]
+        fixture_state = outer_graph.states.get("fixtures-installed", {})
+        if fixture_state.get("passed") is True:
+            fixture_projects = project_b_fixture_from_state(outer_graph)
+            project_b_root_value = fixture_projects["projectBRoot"]
+            project_b_id = fixture_projects["projectBId"]
         if project_b_root_value and project_b_id:
             project_b_fixture_root = Path(project_b_root_value)
             prepare_workflow_fixtures(project_b_fixture_root)
@@ -1942,7 +1942,7 @@ def main():
             else:
                 fail(f"Studio schedule journey could not list project A crons: {project_a_cron_error}")
             if not project_b_root_value or not project_b_id:
-                fail("installed Studio fixture requires registered KB_JOURNEY_PROJECT_B_ROOT and KB_JOURNEY_PROJECT_B_ID")
+                fail("installed Studio fixture requires the fixtures-installed project B state")
             project_b_root = Path(project_b_root_value)
             (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
             (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
@@ -1966,6 +1966,7 @@ def main():
             try:
                 studio_env.update(prepare_studio_fixtures(
                     service_env,
+                    project_b_id=project_b_id,
                     project_a=PROJECT,
                     project_b=project_b_root,
                 ))
@@ -2073,7 +2074,7 @@ def main():
             variant_request = HOME / "platform-update-variant-request.json"
             active_receipt = json.loads((PLATFORM_CURRENT / ".kb/v2/receipt.json").read_text())
             variant_request.write_text(json.dumps(active_receipt["plan"]["request"]) + "\n")
-            project_b_path = Path(service_env["KB_JOURNEY_PROJECT_B_ROOT"])
+            project_b_path = Path(project_b_fixture_from_state(outer_graph)["projectBRoot"])
             def variant_run(args, cwd):
                 result, _ = run(args, env=service_env, cwd=cwd, timeout=1200)
                 return result
@@ -2091,7 +2092,7 @@ def main():
                 return result
             variant_report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 f"platform-update-variants-{mode}.json")
-            variant_journey = run_platform_update_variant_steps(
+            variant_journey = (update_variant_runner or run_platform_update_variant_steps)(
                 mode=mode, launcher=launcher, kb_binary=str(BIN / "kb"), platform_root=PLATFORM,
                 project_a=PROJECT, project_b=project_b_path, request_file=variant_request,
                 base_index=variant_indexes["base"], update_index=variant_indexes["update"],

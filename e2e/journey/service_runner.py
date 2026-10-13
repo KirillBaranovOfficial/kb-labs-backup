@@ -26,7 +26,7 @@ from service_steps import FlowGraph, Journey, JourneyResult
 from journey_dependencies import Dependency
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
                          print_report_text, read_ux_cli_result, read_ux_http_result, run_command,
-                         store_report_secret,
+                         export_project_identity_to_child_environment, store_report_secret,
                          run_with_runner, write_report_json, write_report_text)
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import prepare_commit_project_fixture, run_marketplace_steps
@@ -534,7 +534,7 @@ def _checks(mode: str, graph: FlowGraph | None = None):
                             lambda: apply_commit_plan(pid(), auth_token(), project_root), cases=["S-140.2"])
     else:
         yield service_check("project MCP commit mutation", "mcp",
-                            lambda: "BLOCKED: provide KB_JOURNEY_PROJECT_ROOT for the disposable commit fixture",
+                            lambda: "BLOCKED: project-registered state must provide the disposable commit fixture root",
                             cases=["S-140.2"])
     yield service_check("project MCP unknown tool error", "mcp", lambda: unknown_tool(pid(), auth_token()),
                         cases=["S-140.3"])
@@ -549,8 +549,11 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         yield service_check("MCP UX result contract from live registry", "mcp",
                             lambda: mcp_ux_result_contract(pid(), auth_token(), secured=False),
                             cases=["S-203.2", "S-203.6"], runners=("service-local:explore",))
-    project_b_id = journey_value("KB_JOURNEY_PROJECT_B_ID", "")
-    project_b_root = journey_value("KB_JOURNEY_PROJECT_B_ROOT", "")
+    project_b = {}
+    if graph is not None and graph.states.get("fixtures-installed", {}).get("passed") is True:
+        project_b = service_project_b(graph)
+    project_b_id = project_b.get("projectBId", "")
+    project_b_root = project_b.get("projectBRoot", "")
     if project_b_id and project_b_root:
         yield service_check("project MCP cross-project isolation", "mcp",
                             lambda: project_isolation(pid(), project_b_id, project_b_root, auth_token()),
@@ -567,7 +570,7 @@ def _checks(mode: str, graph: FlowGraph | None = None):
                                 cases=["S-199.5"], runners=("service-secured:explore",))
     else:
         yield service_check("project MCP cross-project isolation", "mcp",
-                            lambda: "BLOCKED: register project B and provide KB_JOURNEY_PROJECT_B_ID and KB_JOURNEY_PROJECT_B_ROOT",
+                            lambda: "BLOCKED: fixtures-installed state did not provide a registered project B",
                             cases=["S-140.5"])
     yield service_check("Studio shell", "studio", lambda: expect_html("/", "Studio shell"))
     yield service_check("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
@@ -587,6 +590,30 @@ def service_api_token(graph: FlowGraph | None) -> str | None:
     if value is None or isinstance(value, str):
         return value
     raise MissingJourneyState("service-api-session")
+
+
+def service_project_b(graph: FlowGraph | None) -> dict:
+    if graph is None:
+        raise MissingJourneyState("fixtures-installed")
+    value = graph.state_value("fixtures-installed")
+    if not isinstance(value, dict):
+        raise MissingJourneyState("fixtures-installed")
+    return value
+
+
+def export_project_state_to_child_environment(graph: FlowGraph) -> None:
+    """Publish registered project identities for CLI subprocesses only."""
+    project_state = graph.states.get("project-registered", {})
+    fixture_state = graph.states.get("fixtures-installed", {})
+    project = graph.state_value("project-registered") if project_state.get("passed") is True else None
+    fixtures = graph.state_value("fixtures-installed") if fixture_state.get("passed") is True else None
+    export_project_identity_to_child_environment(
+        os.environ,
+        project_id=project.get("id", "") if isinstance(project, dict) else "",
+        project_root=project.get("root", "") if isinstance(project, dict) else "",
+        project_b_id=fixtures.get("projectBId", "") if isinstance(fixtures, dict) else "",
+        project_b_root=fixtures.get("projectBRoot", "") if isinstance(fixtures, dict) else "",
+    )
 
 
 def prepare_service_api_session(graph: FlowGraph, mode: str) -> None:
@@ -859,7 +886,8 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                run_workspace_flows,
                cases=["S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
                       "S-142.5", "S-203.1", "S-203.19", "S-204.7"], record_empty_success=False)
-    project_b_root = journey_value("KB_JOURNEY_PROJECT_B_ROOT", "")
+    project_b_root = (service_project_b(graph).get("projectBRoot", "")
+                      if graph.states.get("fixtures-installed", {}).get("passed") is True else "")
     if project_b_root:
         graph.flow("project plugin availability", "plugin-availability", "plugins",
                    lambda: run_project_plugin_availability_steps(
@@ -1033,15 +1061,9 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     return project_b_id, project_b_root
 
 
-def _prepare_and_export_mcp_projects(project_id: str, project_root: str, registry: str, env: dict[str, str],
-                                     runner=run_command) -> tuple[str, str]:
+def _prepare_mcp_projects(project_id: str, project_root: str, registry: str, env: dict[str, str],
+                          runner=run_command) -> tuple[str, str]:
     project_b_id, project_b_root = prepare_mcp_projects(project_root, registry, env, runner)
-    env["KB_JOURNEY_PROJECT_B_ID"] = project_b_id
-    env["KB_JOURNEY_PROJECT_B_ROOT"] = project_b_root
-    os.environ.update({
-        "KB_JOURNEY_PROJECT_B_ID": project_b_id,
-        "KB_JOURNEY_PROJECT_B_ROOT": project_b_root,
-    })
     fixture_path = env.get("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
     if fixture_path:
         output_path = Path(fixture_path)
@@ -1088,6 +1110,7 @@ def main() -> int:
         diagnostics_path=Path(args.output).resolve().with_name("journey-diagnostics.log"),
         states=inherited_states, state_producers=STATE_PRODUCERS, groups=SERVICE_GROUPS,
     )
+    export_project_state_to_child_environment(graph)
     try:
         declared_steps = list(checks(args.mode, graph))
         configure_installed_cli_path()
@@ -1125,7 +1148,7 @@ def main() -> int:
             graph.probe_state("marketplace-available", "marketplace-fixture-producer", "Commit project fixture",
                               marketplace_probe)
             graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
-               lambda: _prepare_and_export_mcp_projects(project_id, project_root, registry, env),
+               lambda: _prepare_mcp_projects(project_id, project_root, registry, env),
                        record_empty_success=False)
             fixture_file = env.get("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
             def fixtures_probe() -> str | None:
@@ -1138,14 +1161,15 @@ def main() -> int:
                 required = ("projectAId", "projectARoot", "projectBId", "projectBRoot")
                 return None if all(fixtures.get(key) for key in required) else "project fixture handoff omitted a registered project field"
             graph.probe_state("fixtures-installed", "marketplace-fixtures", "project fixture handoff",
-                              fixtures_probe)
+                              fixtures_probe,
+                              value=lambda: json.loads(Path(fixture_file).read_text(encoding="utf-8")))
             def marketplace_lifecycle() -> None:
                 flow_env = env.copy()
                 token = service_api_token(graph)
                 if token is not None:
                     store_report_secret(flow_env, "KB_JOURNEY_SERVICE_TOKEN", token,
                                         "marketplace lifecycle service API bearer")
-                run_marketplace_steps(journey, project_root, registry, flow_env,
+                run_marketplace_steps(journey, project_root, project_id, registry, flow_env,
                                       fixture_entry=fixture_entry)
 
             graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
@@ -1161,7 +1185,7 @@ def main() -> int:
             else:
                 graph.probe_state(
                     "agent-plugin-installed", "agent-session", "project Agents plugin",
-                    lambda: "BLOCKED: journey runner did not receive KB_JOURNEY_PROJECT_ROOT",
+                    lambda: "BLOCKED: project-registered state did not provide a project root",
                 )
             graph.flow("project agent session flows", "agent-session", "agent-session",
                        lambda: run_agent_session_steps(
@@ -1169,10 +1193,22 @@ def main() -> int:
                            journey_value("KB_JOURNEY_AGENT_ID", "orchestrator")),
                        cases=["S-141.1", "S-141.2"], record_empty_success=False)
         graph.flow("analytics extras", "analytics", "analytics",
-                   lambda: run_analytics_steps(journey, token=service_api_token(graph)),
+                   lambda: run_analytics_steps(
+                       journey, token=service_api_token(graph), project_id=project_id,
+                       project_root=project_root,
+                       project_b_id=(service_project_b(graph).get("projectBId", "")
+                                     if graph.states.get("fixtures-installed", {}).get("passed") is True else ""),
+                       project_b_root=(service_project_b(graph).get("projectBRoot", "")
+                                       if graph.states.get("fixtures-installed", {}).get("passed") is True else "")),
                    cases=["S-191.1", "S-201.3"], record_empty_success=False)
         graph.flow("gateway extras", "gateway-extra", "gateway-extra",
-                   lambda: run_gateway_steps(journey, token=service_api_token(graph)),
+                   lambda: run_gateway_steps(
+                       journey, token=service_api_token(graph), project_id=project_id,
+                       project_root=project_root,
+                       project_b_id=(service_project_b(graph).get("projectBId", "")
+                                     if graph.states.get("fixtures-installed", {}).get("passed") is True else ""),
+                       project_b_root=(service_project_b(graph).get("projectBRoot", "")
+                                       if graph.states.get("fixtures-installed", {}).get("passed") is True else "")),
                    cases=["S-017.1", "S-017.2", "S-017.3", "S-017.4", "S-017.5",
                           "S-018.1", "S-018.2", "S-018.3", "S-189.2",
                           "S-189.3", "S-189.4", "S-189.5", "S-189.6", "S-189.7", "S-190.1", "S-190.2"],
@@ -1184,7 +1220,7 @@ def main() -> int:
         if project_root:
             _run_installed_flows(journey, project_root, registry, graph)
         else:
-            reason = "journey runner did not receive KB_JOURNEY_PROJECT_ROOT from the installed project setup"
+            reason = "project-registered state did not provide the installed project root"
             journey.blocked("marketplace and adapter user flows", "marketplace", reason,
                             cases=["S-010.1", "S-054.1"])
             journey.blocked("plugin author flow", "plugin-author", reason,

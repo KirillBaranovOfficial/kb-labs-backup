@@ -479,7 +479,7 @@ class FlowGraph:
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object],
              cases: Iterable[str] = (), *, role: str = "step",
              record_empty_success: bool = True, runners: Iterable[str] = (),
-             owner_sources: Iterable[str] = ()) -> str:
+             owner_sources: Iterable[str] = (), skip_note: str | None = None) -> str:
         """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
         case_ids = list(cases)
         prerequisite = name in self.journey.prerequisite_flows
@@ -488,7 +488,8 @@ class FlowGraph:
         producer = self._group_produces_needed_state(group)
         selected_by_flow_rule = selected_owner or prerequisite or producer
         if (self.selection_active and not selected_by_flow_rule):
-            print(f"SKIPPED {name}: not selected", flush=True)
+            suffix = f"; {skip_note}" if skip_note else ""
+            print(f"SKIPPED {name}: not selected{suffix}", flush=True)
             self.journey.skipped(name, capability)
             self.journey.record_flow(name, "SKIPPED", "not selected")
             return "SKIPPED"
