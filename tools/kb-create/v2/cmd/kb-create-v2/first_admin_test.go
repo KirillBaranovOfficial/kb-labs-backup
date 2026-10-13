@@ -27,6 +27,7 @@ import (
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/shim"
 	"github.com/spf13/cobra"
 )
 
@@ -768,6 +769,19 @@ func TestJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
 	root := filepath.Join(home, "platform")
+	testExecutable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownedShim := shim.Path(testExecutable)
+	ownedTarget := shim.Target(platformRootForTest(t, root))
+	t.Cleanup(func() {
+		if target, readErr := os.Readlink(ownedShim); readErr == nil && target == ownedTarget {
+			if err := os.Remove(ownedShim); err != nil {
+				t.Errorf("remove test-owned kb shim: %v", err)
+			}
+		}
+	})
 	project := filepath.Join(home, "project")
 	if err := os.Mkdir(project, 0o755); err != nil {
 		t.Fatal(err)

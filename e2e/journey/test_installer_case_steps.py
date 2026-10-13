@@ -23,7 +23,8 @@ from installer_case_steps import (_data, _seed_doctor_fixture,
                                   assert_root_offset, run_json_install_project_step,
                                   installer_primary_host_guard, run_fixture_group,
                                   run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
-                                  _snapshot_installation_owned_tree)
+                                  _snapshot_installation_owned_tree, shim_owner_matches,
+                                  assert_foreign_shim_diagnosis)
 from invocations import PtyCommandTimeout
 from journey_resources import (active_platform_root, case_catalog_root,
                                create_fixture_install_container)
@@ -33,6 +34,29 @@ from service_port_assertions import assert_service_ports_preserved
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_shim_owner_expectation_uses_the_canonical_install_root(self):
+        with tempfile.TemporaryDirectory(prefix="journey-shim-owner-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir()
+            self.assertTrue(shim_owner_matches({"shim": {"linked": False, "owner": str(root.resolve())}},
+                                               linked=False, install_root=root))
+            self.assertFalse(shim_owner_matches({"shim": {"linked": False, "owner": str(root)}},
+                                                linked=False, install_root=root))
+
+    def test_foreign_shim_expectation_requires_context_and_ordered_commands(self):
+        with tempfile.TemporaryDirectory(prefix="journey-shim-foreign-") as temp:
+            root = Path(temp) / "platform"
+            link = Path(temp) / "bin" / "kb"
+            target = Path(temp) / "removed" / "current" / ".kb/v2/bin/kb"
+            hint = (f"The `kb` link '{link}' points to '{target}'. It cannot be mapped to a validated installation, "
+                    "so KB Labs considers it foreign and will not change it. Inspect the target first, then run "
+                    f"'rm' '--' '{link}' to remove this link and 'kb-create' 'doctor' '--fix' "
+                    f"'--platform-root' '{root}' to recreate the shim.")
+            data = {"findings": [{"code": "KB_INSTALL_SHIM_DANGLING", "path": str(link), "hint": hint}]}
+            assert_foreign_shim_diagnosis(data, hint, link, target, root)
+            with self.assertRaisesRegex(RuntimeError, "ordered cleanup/repair"):
+                assert_foreign_shim_diagnosis(data, hint.replace(str(target), "wrong target"), link, target, root)
+
     def test_install_refusal_is_a_case_fail_with_the_product_envelope(self):
         journey = Journey("local")
         envelope = {"code": "KB_INSTALL_LAYOUT_UNSUPPORTED", "message": "foreign target",
@@ -697,7 +721,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                            })}]}}
                 (active / ".kb/v2/receipt.json").write_text(json.dumps(receipt))
                 return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
-                    "receipt": receipt,
+                    "receipt": receipt, "shim": {"linked": False, "owner": str(primary.resolve())},
                 }}), "")
 
             journey = run_gateway_allocation_step(mode="local", launcher="kb-create", stable_index=index,

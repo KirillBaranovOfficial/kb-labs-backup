@@ -18,7 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
-from runner import login_and_configure_secured_admin
+import runner as journey_runner
+from runner import (login_and_configure_secured_admin,
+                    uninstall_human_summary_has_shim_result,
+                    uninstall_shim_result_matches)
 from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
@@ -33,10 +36,15 @@ from invocations import run_pty_command, store_report_secret
 from steps.auth import run_secured_auth_steps
 
 
+def tearDownModule():
+    journey_runner.cleanup()
+
+
 class FakeGitHub:
     def __init__(self):
         self.issues = [{"number": 10, "title": "Nightly status", "state": "open", "labels": []}]
         self.created = 20
+
 
     def list_open(self):
         return self.issues
@@ -51,6 +59,30 @@ class FakeGitHub:
         issue = next(item for item in self.issues if item["number"] == number)
         issue.update(fields)
         return issue
+
+
+class UninstallShimResultTest(unittest.TestCase):
+    def test_agent_uninstall_requires_shim_disposition_and_canonical_owner_when_left(self):
+        with tempfile.TemporaryDirectory(prefix="journey-uninstall-shim-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir()
+            canonical = str(root.resolve())
+            self.assertTrue(uninstall_shim_result_matches({"shimAction": "removed"}, root))
+            self.assertTrue(uninstall_shim_result_matches(
+                {"shimAction": "left", "shimOwner": canonical}, root))
+            self.assertFalse(uninstall_shim_result_matches({"operation": "uninstall"}, root))
+            self.assertFalse(uninstall_shim_result_matches(
+                {"shimAction": "left", "shimOwner": str(root)}, root))
+
+    def test_human_uninstall_requires_shim_disposition_and_canonical_owner_when_left(self):
+        with tempfile.TemporaryDirectory(prefix="journey-uninstall-shim-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir()
+            self.assertTrue(uninstall_human_summary_has_shim_result(
+                "Platform uninstalled. The kb command was removed.", root))
+            self.assertTrue(uninstall_human_summary_has_shim_result(
+                f"Platform uninstalled. The kb command remains with its owner at {root.resolve()}.", root))
+            self.assertFalse(uninstall_human_summary_has_shim_result("Platform uninstalled.", root))
 
 
 class ServiceJourneyTests(unittest.TestCase):

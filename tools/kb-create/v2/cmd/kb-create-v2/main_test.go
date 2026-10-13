@@ -941,7 +941,9 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 			return commandDependencies{Runtime: &runtime.Dependencies{Artifacts: artifactRunner, Host: installHost{}},
 				NodeCheck: func() error { return nil }, InstallInput: strings.NewReader(strings.Repeat("\n", 12)),
 				InstallOutput: clikitcommand.FromCommand(cmd).ProgressWriter(), Command: cmd, Executable: launcher,
-				ProjectRegistrar: func(string, string) (string, error) { return "prj_fixture", nil }}
+				ProjectRegistrar: func(_ string, projectRoot string) (projectRegistrationResult, error) {
+					return projectRegistrationResult{ID: "prj_fixture", CanonicalPath: projectRoot}, nil
+				}}
 		}
 		var stdout, stderr bytes.Buffer
 		code := clikitcommand.Execute(newRootCommandWithDependencyFactory(depsFactory), args, &stdout, &stderr)
