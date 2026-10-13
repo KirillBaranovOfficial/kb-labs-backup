@@ -30,9 +30,11 @@ def bootstrap_password_file(install_root: Path,
     return None
 
 
-def _password_absence_failure(install_root: Path,
-                              outside_roots: tuple[tuple[str, Path], ...],
-                              password: str) -> str | None:
+def password_absence_failure(install_root: Path,
+                             outside_roots: tuple[tuple[str, Path], ...],
+                             password: str | None) -> str | None:
+    if not password:
+        return "BLOCKED: bootstrap password was unavailable for the post-rollback disk scan"
     location = bootstrap_password_file(install_root, outside_roots, password)
     if location is not None:
         return f"disclosed bootstrap credential remains at {location}"
@@ -43,17 +45,7 @@ def register_install_password_absence_step(
         journey: Journey, install_root: Path,
         outside_roots: tuple[tuple[str, Path], ...], password: str) -> None:
     def check() -> str | None:
-        return _password_absence_failure(install_root, outside_roots, password)
+        return password_absence_failure(install_root, outside_roots, password)
 
     journey.step("verify disclosed bootstrap credential absent after install", "platform.install",
-                 check, cases=["S-100.1"], runners=("service-secured:explore",))
-
-
-def register_rollback_password_absence_step(
-        journey: Journey, install_root: Path,
-        outside_roots: tuple[tuple[str, Path], ...], password: str) -> None:
-    def check() -> str | None:
-        return _password_absence_failure(install_root, outside_roots, password)
-
-    journey.step("verify disclosed bootstrap credential absent after update and rollback", "platform.install",
                  check, cases=["S-100.1"], runners=("service-secured:explore",))

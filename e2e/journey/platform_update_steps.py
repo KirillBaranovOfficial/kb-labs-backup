@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
-from bootstrap_secret_steps import register_rollback_password_absence_step
+from bootstrap_secret_steps import password_absence_failure
 from journey_resources import (active_platform_root, current_link_path,
                                parse_shell_commands, snapshot_state_tree)
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
@@ -571,9 +571,12 @@ def run_platform_update_steps(
                  details=checkpoint_details,
                  requires=("step:save installed receipt, config, and host status",))
 
-    if mode == "secured" and bootstrap_password is not None:
-        register_rollback_password_absence_step(
-            journey, platform_root, bootstrap_outside_roots, bootstrap_password)
+    if mode == "secured":
+        journey.step(
+            "verify disclosed bootstrap credential absent after update and rollback", "platform.install",
+            lambda: password_absence_failure(platform_root, bootstrap_outside_roots, bootstrap_password),
+            cases=["S-100.1"], runners=("service-secured:explore",),
+        )
 
     if verify_user is not None:
         def login_after_rollback() -> None:
