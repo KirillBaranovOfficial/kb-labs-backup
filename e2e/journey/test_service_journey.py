@@ -90,6 +90,45 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_mutated_state_blocks_consumers_until_its_producer_reestablishes_it(self):
+        journey = Journey("secured", "declared-state-mutation")
+        graph = FlowGraph(journey, {"project": (), "projects": ("project-registered",)}, states={
+            "project-registered": {"passed": True, "evidence": "project is registered",
+                                   "value": {"id": "project-1", "root": "/work/project"}},
+        })
+
+        graph.invalidate_state("project-registered", group="auth",
+                               step="bootstrap administrator recovery",
+                               evidence="recovery removed the shared project registration")
+        blocked = graph.step("project API", "projects", "projects", lambda: None,
+                             cases=["PC-002.3"])
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertIn("state project-registered", blocked.message)
+        self.assertIn("recovery removed the shared project registration", blocked.message)
+
+        graph.probe_state("project-registered", "project", "project registration restored",
+                          lambda: None,
+                          value=lambda: {"id": "project-1", "root": "/work/project"})
+        passed = graph.step("project API after restore", "projects", "projects", lambda: None,
+                            cases=["PC-002.3"])
+        self.assertEqual(passed.status, "PASS")
+
+        failed_journey = Journey("secured", "declared-state-mutation-recovery-failed")
+        failed_graph = FlowGraph(failed_journey, {"project": (), "projects": ("project-registered",)},
+                                 states={"project-registered": {
+                                     "passed": True, "evidence": "project is registered",
+                                     "value": {"id": "project-1", "root": "/work/project"},
+                                 }})
+        failed_graph.invalidate_state("project-registered", group="auth",
+                                      step="bootstrap administrator recovery",
+                                      evidence="recovery removed the shared journey project")
+        failed_graph.probe_state("project-registered", "project", "project registration restored",
+                                 lambda: "fresh session was revoked before project re-registration")
+        blocked_recovery = failed_graph.step("project API after failed restore", "projects", "projects",
+                                             lambda: None, cases=["PC-002.3"])
+        self.assertEqual(blocked_recovery.status, "BLOCKED")
+        self.assertIn("fresh session was revoked before project re-registration", blocked_recovery.message)
+
     def _selected_service_checks(self, mode, responses, *, login_fails=False):
         selected = "PC-002.3,PC-002.8"
         requests = []

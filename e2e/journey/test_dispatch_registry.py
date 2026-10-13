@@ -367,6 +367,36 @@ def _unregistered_commands(paths: dict[str, list[str]], registered: set[str]) ->
 
 
 class DispatchRegistryTests(unittest.TestCase):
+    def test_shared_project_and_auth_mutators_declare_state_invalidation(self):
+        runner_source = Path(__file__).with_name("runner.py")
+        tree = ast.parse(runner_source.read_text())
+        mutators = []
+        runner_text = runner_source.read_text()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if any(isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   for statement in node.body):
+                continue
+            source = ast.get_source_segment(runner_text, node) or ""
+            body_text = source.lower()
+            mutates_shared_project_or_auth = (
+                '"project", "remove"' in body_text
+                or "run_bootstrap_recovery_steps(" in source
+                or ("restart_host(" in source and "outer_graph" in source)
+            )
+            if mutates_shared_project_or_auth:
+                mutators.append((node.name, source))
+
+        self.assertTrue(mutators, "shared project/auth mutation scan found no step bodies")
+        for name, source in mutators:
+            self.assertIn("invalidate_state(", source,
+                          f"shared project/auth mutator {name!r} must invalidate affected FlowGraph states")
+        recovery = next(source for name, source in mutators if "run_bootstrap_recovery_steps(" in source)
+        for state in ("project-registered", "session", "host-running"):
+            self.assertIn(f'invalidate_state(\n                    "{state}"', recovery,
+                          f"bootstrap recovery must declare its mutation of {state}")
+
     def test_built_workspace_cli_missing_reports_exact_build_command(self):
         with tempfile.TemporaryDirectory(prefix="journey-missing-cli-build-") as temporary:
             with self.assertRaisesRegex(FileNotFoundError, "kb-devkit run build --affected"):
