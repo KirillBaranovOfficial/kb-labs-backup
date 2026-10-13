@@ -14,26 +14,29 @@ class Runner:
     front_door: str
     scenario: str
     variant: str
+    mode: str
     service_profile: str = ""
     journey_sources: tuple[str, ...] = ("e2e/journey/runner.py",)
+    claim_family: str = ""
 
 
 RUNNERS = {
-    "agent:explore": Runner("agent:explore", "agent", "explore", "default"),
-    "agent:commit": Runner("agent:commit", "agent", "commit", "default"),
-    "agent-secured:commit": Runner("agent-secured:commit", "agent", "commit", "secured"),
-    "agent-input:commit": Runner("agent-input:commit", "agent", "commit", "input"),
-    "agent-relative:commit": Runner("agent-relative:commit", "agent", "commit", "relative-path"),
-    "human:default": Runner("human:default", "human", "explore", "human-default"),
-    "human:nondefault": Runner("human:nondefault", "human", "commit", "human-nondefault"),
-    "negative:wrong-node": Runner("negative:wrong-node", "agent", "explore", "wrong-node"),
-    "negative:occupied-port": Runner("negative:occupied-port", "agent", "explore", "occupied-port"),
+    "agent:explore": Runner("agent:explore", "agent", "explore", "default", "local"),
+    "agent:commit": Runner("agent:commit", "agent", "commit", "default", "local", claim_family="journey"),
+    "agent-secured:commit": Runner("agent-secured:commit", "agent", "commit", "secured",
+                                    "secured", claim_family="journey"),
+    "agent-input:commit": Runner("agent-input:commit", "agent", "commit", "input", "local"),
+    "agent-relative:commit": Runner("agent-relative:commit", "agent", "commit", "relative-path", "local"),
+    "human:default": Runner("human:default", "human", "explore", "human-default", "local"),
+    "human:nondefault": Runner("human:nondefault", "human", "commit", "human-nondefault", "local"),
+    "negative:wrong-node": Runner("negative:wrong-node", "agent", "explore", "wrong-node", "local"),
+    "negative:occupied-port": Runner("negative:occupied-port", "agent", "explore", "occupied-port", "local"),
     "service-local:explore": Runner(
-        "service-local:explore", "agent", "explore", "default", "nightly",
-        ("e2e/journey/runner.py", "e2e/journey/service_runner.py")),
+        "service-local:explore", "agent", "explore", "default", "local", "nightly",
+        ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), claim_family="service"),
     "service-secured:explore": Runner(
-        "service-secured:explore", "human", "explore", "secured", "nightly",
-        ("e2e/journey/runner.py", "e2e/journey/service_runner.py")),
+        "service-secured:explore", "human", "explore", "secured", "secured", "nightly",
+        ("e2e/journey/runner.py", "e2e/journey/service_runner.py"), claim_family="service"),
 }
 RUNNER_GROUPS = {
     "service-modes": ("agent:commit", "service-secured:explore"),
@@ -46,10 +49,13 @@ def runners_for_source(source: str, mode: str) -> set[str]:
         "e2e/journey/steps/accounts.py",
         "e2e/journey/studio_steps.py",
     } or source.startswith("e2e/studio/"):
-        return {"service-local:explore" if mode == "local" else "service-secured:explore"}
-    if source.startswith("e2e/journey/"):
-        return {"agent:commit" if mode == "local" else "agent-secured:commit"}
-    return set()
+        claim_family = "service"
+    elif source.startswith("e2e/journey/"):
+        claim_family = "journey"
+    else:
+        return set()
+    return {selector for selector, runner in RUNNERS.items()
+            if runner.claim_family == claim_family and runner.mode == mode}
 
 
 def selector_supports_claim_sources(selector: str, selected_runners: list[str]) -> bool:

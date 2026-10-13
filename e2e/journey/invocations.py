@@ -304,6 +304,7 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
                       env: Mapping[str, str] | None, exit_code: int | None,
                       stdout: str = "", stderr: str = "", duration_seconds: float,
                       url: str | None = None, request_body: str | None = None,
+                      invocation_evidence: list[str] | None = None,
                       error: str | None = None) -> dict[str, Any] | None:
     root = _REPORT_ROOT.get()
     if root is None:
@@ -326,8 +327,59 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         "error": error,
         "duration_seconds": round(duration_seconds, 3),
     }
+    if invocation_evidence is None and kind == "command" and exit_code not in (None, 0):
+        invocation_evidence = _capture_typed_error_files(stdout, stderr, effective_env)
+    if invocation_evidence:
+        record["invocation_evidence"] = invocation_evidence
     target = root / "invocations" / "calls.jsonl"
     return write_report_json(target, record, env=effective_env, append=True, indent=None, ensure_ascii=False)
+
+
+def _capture_typed_error_files(stdout: str, stderr: str, env: Mapping[str, str] | None) -> list[str]:
+    """Capture bounded tails for existing file paths named by a typed error."""
+    root = _REPORT_ROOT.get()
+    if root is None:
+        configured = journey_value("KB_JOURNEY_INVOCATIONS")
+        root = Path(configured) if configured else None
+    if root is None:
+        return []
+    try:
+        result = json.loads(stdout or stderr)
+    except json.JSONDecodeError:
+        return []
+    error = result.get("error") if isinstance(result, dict) and result.get("ok") is False else None
+    details = error.get("details") if isinstance(error, dict) else None
+    if not isinstance(details, dict):
+        return []
+    paths = []
+    for value in details.values():
+        if not isinstance(value, str):
+            continue
+        candidate = Path(value)
+        try:
+            if candidate.is_file() and candidate not in paths:
+                paths.append(candidate)
+        except OSError:
+            continue
+    if not paths:
+        return []
+    calls = root / "invocations" / "calls.jsonl"
+    try:
+        invocation_number = len(calls.read_text(encoding="utf-8").splitlines()) + 1
+    except OSError:
+        invocation_number = 1
+    references = []
+    for ordinal, source in enumerate(paths, 1):
+        try:
+            lines = source.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        tail = "\n".join(lines[-200:]) + "\n"
+        tail = tail[-256 * 1024:]
+        target = root / "invocations" / "evidence" / f"{invocation_number:04d}-{ordinal:02d}-{source.name}"
+        write_report_text(target, tail, env=env)
+        references.append(str(target.relative_to(root)))
+    return references
 
 
 class PtyCommandTimeout(subprocess.TimeoutExpired):
