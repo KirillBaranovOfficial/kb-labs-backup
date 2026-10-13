@@ -656,7 +656,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                  requires=("step:disable installed Commit plugin",))
 
     def assert_command_hidden() -> None:
-        command = ["commit", "open", "--help"]
+        command = ["commit", "--help"]
         with invocation_context(step_id="S-011.3"):
             result = cli(command)
         if result.returncode == 0:
@@ -678,7 +678,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if (list_result.returncode != 0 or "enabled" not in output.lower()
                 or "✅" not in output or "commit" not in output.lower()):
             raise RuntimeError(f"marketplace list did not show enabled Commit: {output!r}")
-        command = ["commit", "open", "--help"]
+        command = ["commit", "--help"]
         with invocation_context(step_id="S-011.5"):
             help_result = cli(command)
         if help_result.returncode != 0:
@@ -732,7 +732,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                  cases=["S-012.2"], requires=("step:update installed Commit version",))
 
     def assert_updated_command() -> None:
-        command = ["commit", "open", "--help"]
+        command = ["commit", "--help"]
         with invocation_context(step_id="S-012.3"):
             result = cli(command)
         if result.returncode != 0:

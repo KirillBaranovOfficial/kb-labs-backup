@@ -26,7 +26,6 @@ from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import FlowGraph, Journey, JourneyResult
 from select_from_cases import journey_source_group_declaration
-from journey_dependencies import Dependency
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
                          print_report_text, read_ux_cli_result, read_ux_http_result, run_command,
                          export_project_identity_to_child_environment, store_report_secret,
@@ -828,26 +827,7 @@ def run_grouped_service_steps(journey: Journey, steps, mode: str = "local", grou
         groups=group_specs)
     for name, capability, check, cases, requires, runners in steps:
         group = capability_groups.get(capability, capability)
-
-        def prerequisite_failure() -> str | None:
-            for reference in requires:
-                dependency = Dependency.parse(reference)
-                outcome = journey.find_outcome(dependency)
-                if outcome is None:
-                    return f"prerequisite {dependency} did not run before {name}"
-                if outcome[0] != "PASS":
-                    return f"prerequisite {dependency} ended {outcome[0]}: {outcome[1]}"
-            return None
-
-        selected = bool(journey.selected_claims.intersection(cases))
-        prerequisite = name in journey.prerequisite_steps
-        if selected or prerequisite:
-            failure = prerequisite_failure()
-            if failure:
-                journey.step(name, capability, lambda: f"BLOCKED: {failure}", cases=cases, runners=runners)
-                continue
-
-        flow_graph.step(name, group, capability, check, cases=cases, runners=runners)
+        flow_graph.dispatch_step(name, group, capability, check, cases=cases, requires=requires, runners=runners)
 
 
 def run_service_steps(journey: Journey, steps, mode: str = "local", states=None,
@@ -1258,7 +1238,7 @@ def main() -> int:
                           "S-018.1", "S-018.2", "S-018.3", "S-189.2",
                           "S-189.3", "S-189.4", "S-189.5", "S-189.6", "S-189.7", "S-190.1", "S-190.2"],
                    record_empty_success=False)
-        graph.step("discover platform adapter method catalog", "gateway-extra", "gateway-extra",
+        graph.dispatch_step("discover platform adapter method catalog", "gateway-extra", "gateway-extra",
                    lambda: run_adapter_catalog_step(
                        journey, token=service_api_token(graph)),
                    cases=["S-189.1"])

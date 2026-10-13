@@ -164,22 +164,16 @@ class Journey:
              details: Callable[[], dict[str, Any]] | None = None, *,
              requires: Iterable[str] = (), provides: Iterable[str] = (), role: str = "step",
              runners: Iterable[str] = ()) -> StepResult:
+        return self._record_step(name, capability, check, cases, details, requires=requires,
+                                 provides=provides, role=role, runners=runners)
+
+    def _record_step(self, name: str, capability: str, check: Callable[[], str | None],
+                     cases: Iterable[str] = (), details: Callable[[], dict[str, Any]] | None = None, *,
+                     requires: Iterable[str] = (), provides: Iterable[str] = (), role: str = "step",
+                     runners: Iterable[str] = ()) -> StepResult:
         if role not in {"step", "lifecycle"}:
             raise ValueError(f"unsupported journey step role: {role}")
         case_ids = list(cases)
-        required_items = tuple(requires)
-        provided_items = tuple(provides)
-        self.memory.register(name, required_items, provided_items)
-        try:
-            self.memory.validate_requirements(required_items)
-        except JourneyContractError as error:
-            selected = bool(self.selected_steps.intersection(case_ids))
-            details = {"selectionRole": "selected"} if selected else None
-            result = StepResult(name, capability, self.mode, "FAIL", 0.0, str(error), case_ids, details)
-            self.steps.append(result)
-            return result
-        required = {Dependency.parse(item) for item in requires}
-        required_states = {dependency.name for dependency in required if dependency.kind == "state"}
         selected = bool(self.selected_steps.intersection(case_ids))
         eligible_runners = set(runners)
         if selected and eligible_runners and self.runner_selector not in eligible_runners:
@@ -202,6 +196,18 @@ class Journey:
             result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, "not selected", case_ids)
             self.steps.append(result)
             return result
+        required_items = tuple(requires)
+        provided_items = tuple(provides)
+        self.memory.register(name, required_items, provided_items)
+        try:
+            self.memory.validate_requirements(required_items)
+        except JourneyContractError as error:
+            details = {"selectionRole": "selected"} if selected else None
+            result = StepResult(name, capability, self.mode, "FAIL", 0.0, str(error), case_ids, details)
+            self.steps.append(result)
+            return result
+        required = {Dependency.parse(item) for item in required_items}
+        required_states = {dependency.name for dependency in required if dependency.kind == "state"}
         if required:
             failures = []
             for dependency in sorted(item for item in required if item.kind != "state"):
@@ -484,30 +490,24 @@ class FlowGraph:
                               f"\n== unexpected exception in {group}/{name} ==\n{traceback.format_exc()}",
                               append=True)
 
-    def step(self, name: str, group: str, capability: str, check: Callable[[], str | None],
-             cases: Iterable[str] = (), *, runners: Iterable[str] = ()) -> StepResult:
+    def dispatch_step(self, name: str, group: str, capability: str, check: Callable[[], str | None],
+                      cases: Iterable[str] = (), *, requires: Iterable[str] = (),
+                      runners: Iterable[str] = ()) -> StepResult:
         case_ids = list(cases)
-        if self.journey.selected_claims and (not case_ids or not self.journey.selected_claims.intersection(case_ids)):
-            return self.journey.step(name, capability, lambda: None, cases=case_ids, runners=runners)
-        blocker = self._blocker(group)
-        if blocker:
-            state, evidence = blocker
-            result = self.journey.blocked(
-                name, capability,
-                f"blocked by state {state}: {evidence['evidence']} (last mutated by "
-                f"{evidence['group']}/{evidence['step']} ({evidence['claim']}))",
-                cases=case_ids,
-            )
-            return result
-
         def checked() -> str | None:
+            blocker = self._blocker(group)
+            if blocker:
+                state, evidence = blocker
+                return (f"BLOCKED: blocked by state {state}: {evidence['evidence']} (last mutated by "
+                        f"{evidence['group']}/{evidence['step']} ({evidence['claim']}))")
             try:
                 return check()
             except Exception:
                 self._write_traceback(group, name)
                 raise
 
-        result = self.journey.step(name, capability, checked, cases=case_ids, runners=runners)
+        result = self.journey._record_step(name, capability, checked, cases=case_ids,
+                                           requires=requires, runners=runners)
         return result
 
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object],

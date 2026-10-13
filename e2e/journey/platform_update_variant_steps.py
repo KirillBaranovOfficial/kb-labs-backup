@@ -174,9 +174,11 @@ def run_platform_update_variant_steps(
         if not any(count > 0 for tables in before_rows.values() for count in tables.values()):
             raise RuntimeError("preservation fixture has no populated SQLite row to preserve")
 
-    preservation_cases = {"S-023.10", "S-023.11", "S-023.14", "S-023.15", "S-194.7"}
-    if not journey.selected_steps or preservation_cases.intersection(journey.selected_steps):
+    def prepare_preservation_fixture() -> None:
         save_preservation_fixture()
+
+    claim_step("prepare update preservation baseline", "platform.update", prepare_preservation_fixture,
+               cases=[], requires=("state:project-registered",))
 
     def plan_multi_release_notes() -> None:
         target = _target(jump_index)
@@ -437,6 +439,7 @@ def run_platform_update_variant_steps(
                  verify_preservation_matrix, cases=["S-023.10"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
+                           "step:prepare update preservation baseline",
                            "state:project-registered"))
 
     def verify_clients() -> None:
@@ -568,6 +571,7 @@ def run_platform_update_variant_steps(
                  recover_failed_host, cases=["S-023.15", "S-024.6", "S-024.7"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
+                           "step:prepare update preservation baseline",
                            "state:project-registered"))
 
     def verify_retention_and_disk_use() -> None:
