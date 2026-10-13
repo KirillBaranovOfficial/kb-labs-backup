@@ -4,18 +4,15 @@
 package secrets
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
+	"github.com/kb-labs/clikit/secretstate"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -23,7 +20,7 @@ import (
 var (
 	ErrBootstrapPasswordDisclosed   = errors.New("bootstrap password has already been disclosed")
 	ErrBootstrapCredentialLocked    = errors.New("bootstrap credential cannot change after completion")
-	ErrUnsupportedSecretStoreFormat = errors.New("secret store format is unsupported by this launcher")
+	ErrUnsupportedSecretStoreFormat = secretstate.ErrUnsupportedFormat
 )
 
 // EnsureGenerated fills every selected artifact's generated secret requirements
@@ -75,27 +72,12 @@ type Store struct {
 }
 
 const (
-	BootstrapPassword            = "gateway.bootstrap.password"
-	BootstrapPasswordEnvironment = "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"
+	BootstrapPassword            = secretstate.BootstrapPasswordRequirement
+	BootstrapPasswordEnvironment = secretstate.BootstrapPasswordEnvironment
 )
 
-// secretStoreRecord atomically binds requirement values to the installer-owned
-// facts that describe the bootstrap password. Generic Put only changes Values.
-type secretStoreRecord struct {
-	Schema       int               `json:"schema"`
-	Requirements map[string]string `json:"requirements"`
-	Bootstrap    lifecycleRecord   `json:"bootstrap"`
-}
-
-const secretStoreSchema = 1
-
-type lifecycleRecord struct {
-	BootstrapCompleted         string                  `json:"bootstrapCompleted,omitempty"`
-	BootstrapPasswordOrigin    BootstrapPasswordOrigin `json:"bootstrapPasswordOrigin,omitempty"`
-	BootstrapPasswordDisclosed bool                    `json:"bootstrapPasswordDisclosed,omitempty"`
-}
-
-type BootstrapPasswordOrigin string
+type secretStoreRecord = secretstate.Record
+type BootstrapPasswordOrigin = secretstate.BootstrapPasswordOrigin
 
 // PendingSecret is a value gathered by a frontend but not yet persisted. The
 // apply owner stores it only after validating the complete resolved request.
@@ -105,8 +87,8 @@ type PendingSecret struct {
 }
 
 const (
-	BootstrapOriginSupplied  BootstrapPasswordOrigin = "supplied"
-	BootstrapOriginGenerated BootstrapPasswordOrigin = "generated"
+	BootstrapOriginSupplied  BootstrapPasswordOrigin = secretstate.OriginSupplied
+	BootstrapOriginGenerated BootstrapPasswordOrigin = secretstate.OriginGenerated
 )
 
 type Environment struct {
@@ -123,7 +105,7 @@ func (store Store) Put(name, value string) error {
 		if err != nil {
 			return err
 		}
-		origin := record.Bootstrap.BootstrapPasswordOrigin
+		origin, _ := record.BootstrapPasswordOrigin()
 		if origin != BootstrapOriginGenerated && origin != BootstrapOriginSupplied {
 			origin = BootstrapOriginSupplied
 		}
@@ -151,21 +133,21 @@ func (store Store) PutBootstrapPassword(value string, origin BootstrapPasswordOr
 	if err != nil {
 		return err
 	}
-	current := record.Requirements[BootstrapPassword]
-	if record.Bootstrap.BootstrapCompleted != "" &&
-		(current != value || record.Bootstrap.BootstrapPasswordOrigin != origin || record.Bootstrap.BootstrapPasswordDisclosed) {
+	current, _ := record.Requirement(BootstrapPassword)
+	currentOrigin, _ := record.BootstrapPasswordOrigin()
+	_, completed := record.BootstrapCompleted()
+	if completed &&
+		(current != value || currentOrigin != origin || record.BootstrapPasswordDisclosed()) {
 		return ErrBootstrapCredentialLocked
 	}
-	if record.Bootstrap.BootstrapPasswordDisclosed {
+	if record.BootstrapPasswordDisclosed() {
 		return ErrBootstrapPasswordDisclosed
 	}
-	if current == value && record.Bootstrap.BootstrapPasswordOrigin == origin &&
-		record.Requirements[BootstrapPasswordEnvironment] == value {
+	environmentPassword, _ := record.Requirement(BootstrapPasswordEnvironment)
+	if current == value && currentOrigin == origin && environmentPassword == value {
 		return nil
 	}
-	record.Requirements[BootstrapPassword] = value
-	record.Requirements[BootstrapPasswordEnvironment] = value
-	record.Bootstrap.BootstrapPasswordOrigin = origin
+	record.SetBootstrapPassword(value, origin)
 	return store.writeRecord(record)
 }
 
@@ -183,7 +165,7 @@ func (store Store) put(name, value string) error {
 	if err != nil {
 		return err
 	}
-	record.Requirements[name] = value
+	record.SetRequirement(name, value)
 	return store.writeRecord(record)
 }
 
@@ -197,9 +179,7 @@ func (store Store) MarkBootstrapDisclosed() error {
 	if err != nil {
 		return err
 	}
-	record.Bootstrap.BootstrapPasswordDisclosed = true
-	delete(record.Requirements, BootstrapPassword)
-	delete(record.Requirements, BootstrapPasswordEnvironment)
+	record.MarkBootstrapDisclosed()
 	return store.writeRecord(record)
 }
 
@@ -212,29 +192,31 @@ func (store Store) MarkBootstrapCompleted(value string) error {
 	if err != nil {
 		return err
 	}
-	record.Bootstrap.BootstrapCompleted = value
+	record.MarkBootstrapCompleted(value)
 	return store.writeRecord(record)
 }
 
 func (store Store) BootstrapCompleted() (bool, error) {
 	record, err := store.readRecord()
-	return record.Bootstrap.BootstrapCompleted != "", err
+	_, completed := record.BootstrapCompleted()
+	return completed, err
 }
 
 func (store Store) BootstrapCompletedValue() (string, bool, error) {
 	record, err := store.readRecord()
-	return record.Bootstrap.BootstrapCompleted, record.Bootstrap.BootstrapCompleted != "", err
+	completed, present := record.BootstrapCompleted()
+	return completed, present, err
 }
 
 func (store Store) BootstrapDisclosed() (bool, error) {
 	record, err := store.readRecord()
-	return record.Bootstrap.BootstrapPasswordDisclosed, err
+	return record.BootstrapPasswordDisclosed(), err
 }
 
 func (store Store) BootstrapOrigin() (BootstrapPasswordOrigin, bool, error) {
 	record, err := store.readRecord()
-	origin := record.Bootstrap.BootstrapPasswordOrigin
-	return origin, origin != "", err
+	origin, present := record.BootstrapPasswordOrigin()
+	return origin, present, err
 }
 
 func (store Store) writeRecord(record secretStoreRecord) error {
@@ -245,11 +227,7 @@ func (store Store) writeRecord(record secretStoreRecord) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	if record.Requirements == nil {
-		record.Requirements = map[string]string{}
-	}
-	record.Schema = secretStoreSchema
-	data, err := json.Marshal(record)
+	data, err := secretstate.Encode(record)
 	if err != nil {
 		return err
 	}
@@ -264,29 +242,17 @@ func (store Store) readRecord() (secretStoreRecord, error) {
 	if err != nil {
 		return secretStoreRecord{}, err
 	}
-	data, err := os.ReadFile(path)
+	record, exists, err := secretstate.Load(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return secretStoreRecord{}, err
-		}
+		return secretStoreRecord{}, err
+	}
+	if !exists {
 		for _, oldPath := range store.previousStorePaths(path) {
 			if _, statErr := os.Lstat(oldPath); statErr == nil || !os.IsNotExist(statErr) {
 				return secretStoreRecord{}, ErrUnsupportedSecretStoreFormat
 			}
 		}
-		return secretStoreRecord{Schema: secretStoreSchema, Requirements: map[string]string{}}, nil
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	var record secretStoreRecord
-	if err := decoder.Decode(&record); err != nil {
-		return secretStoreRecord{}, ErrUnsupportedSecretStoreFormat
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return secretStoreRecord{}, ErrUnsupportedSecretStoreFormat
-	}
-	if record.Schema != secretStoreSchema || record.Requirements == nil {
-		return secretStoreRecord{}, ErrUnsupportedSecretStoreFormat
+		return secretstate.NewRecord(), nil
 	}
 	return record, nil
 }
@@ -303,7 +269,8 @@ func (store Store) Exists(name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return record.Requirements[name] != "", nil
+	value, _ := record.Requirement(name)
+	return value != "", nil
 }
 
 // Get returns a stored secret. The bool reports presence (an empty stored value
@@ -316,7 +283,7 @@ func (store Store) Get(name string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	value := record.Requirements[name]
+	value, _ := record.Requirement(name)
 	return value, value != "", nil
 }
 
@@ -363,29 +330,20 @@ func (store Store) BindEnvironments(patches []contracts.ConfigPatch) error {
 	return nil
 }
 
-var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 // Environment returns the stored values that are valid environment variable
 // names, for the host process. Requirement IDs such as "gateway.jwtSecret" are
 // not variable names; each secret reaches the host under the variable its plan
 // patch binds it to (see BindEnvironments).
 func (store Store) Environment() (Environment, error) {
-	record, err := store.readRecord()
+	path, err := store.path()
 	if err != nil {
 		return Environment{}, err
 	}
-	result := make(map[string]string, len(record.Requirements))
-	for name, value := range record.Requirements {
-		if environmentName.MatchString(name) {
-			result[name] = value
-		}
+	projection, err := secretstate.HostEnvironment(path)
+	if err != nil {
+		return Environment{}, err
 	}
-	environment := Environment{Values: result}
-	if record.Bootstrap.BootstrapCompleted != "" {
-		delete(environment.Values, BootstrapPasswordEnvironment)
-		environment.Suppressed = []string{BootstrapPasswordEnvironment}
-	}
-	return environment, nil
+	return Environment{Values: projection.Values, Suppressed: projection.Suppressed}, nil
 }
 
 func (store Store) path() (string, error) {
