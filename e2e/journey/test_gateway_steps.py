@@ -102,7 +102,9 @@ class GatewayStepTests(unittest.TestCase):
                 return JsonResponse(200, '{"ok":true,"data":{}}')
 
             journey = Journey("local", "stream-error-healthy")
-            run_gateway_steps(journey, token="fixture-token", runner=failed, opener=opener)
+            run_gateway_steps(journey, token="fixture-token", project_id="project-a",
+                              project_root="/fixture/project-a", project_b_id="project-b",
+                              project_b_root="/fixture/project-b", runner=failed, opener=opener)
 
         statuses = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
         self.assertEqual(statuses["S-189.5"], "PASS")
@@ -149,7 +151,9 @@ class GatewayStepTests(unittest.TestCase):
 
             journey = Journey("local", "provider-green")
             journey.step("registered project setup", "journey.setup", lambda: None)
-            run_llm_provider_steps(journey, runner=successful)
+            run_llm_provider_steps(journey, project_id="project-a", project_root="/fixture/project-a",
+                                   project_b_id="project-b", project_b_root="/fixture/project-b",
+                                   runner=successful)
 
         claims = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
         self.assertEqual(claims, {
@@ -183,7 +187,9 @@ class GatewayStepTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
 
             journey = Journey("local", "provider-install-fails")
-            run_llm_provider_steps(journey, runner=install_fails)
+            run_llm_provider_steps(journey, project_id="project-a", project_root="/fixture/project-a",
+                                   project_b_id="project-b", project_b_root="/fixture/project-b",
+                                   runner=install_fails)
 
         claims = {item["claimId"]: item for item in journey.result().case_run["claims"]}
         self.assertEqual(claims["S-018.3"]["status"], "FAIL")
@@ -210,7 +216,9 @@ class GatewayStepTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, output, "")
 
             journey = Journey("local", "provider-red")
-            run_llm_provider_steps(journey, runner=wrong_provider)
+            run_llm_provider_steps(journey, project_id="project-a", project_root="/fixture/project-a",
+                                   project_b_id="project-b", project_b_root="/fixture/project-b",
+                                   runner=wrong_provider)
 
         claims = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
         self.assertEqual(claims["S-017.3"], "FAIL")
@@ -240,7 +248,9 @@ class GatewayStepTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, output, "")
 
             journey = Journey("local", "provider-wrong-shape")
-            run_llm_provider_steps(journey, runner=missing_message_shape)
+            run_llm_provider_steps(journey, project_id="project-a", project_root="/fixture/project-a",
+                                   project_b_id="project-b", project_b_root="/fixture/project-b",
+                                   runner=missing_message_shape)
 
         claims = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
         self.assertEqual(claims["S-018.3"], "FAIL")
@@ -259,7 +269,9 @@ class GatewayStepTests(unittest.TestCase):
 
             journey = Journey("local", "fake-gateway")
             journey.step("registered project setup", "journey.setup", lambda: None)
-            run_gateway_steps(journey, token="fixture-token", runner=failed,
+            run_gateway_steps(journey, token="fixture-token", project_id="project-a",
+                              project_root="/fixture/project-a", project_b_id="project-b",
+                              project_b_root="/fixture/project-b", runner=failed,
                               opener=lambda *_args, **_kwargs: FakeResponse())
 
         statuses = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
@@ -307,7 +319,9 @@ class GatewayStepTests(unittest.TestCase):
         }, clear=False), patch("gateway_steps.run_llm_provider_steps"), \
                 patch("gateway_steps._http", side_effect=fake_http):
             journey = Journey("local", "planned-adapter-catalog-not-in-extras")
-            run_gateway_steps(journey, token="fixture-token")
+            run_gateway_steps(journey, token="fixture-token", project_id="project-a",
+                              project_root="/fixture/project-a", project_b_id="project-b",
+                              project_b_root="/fixture/project-b")
 
         claims = {item["claimId"] for item in journey.result().case_run["claims"]}
         self.assertNotIn("S-189.1", claims)

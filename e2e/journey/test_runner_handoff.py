@@ -1,31 +1,24 @@
 from __future__ import annotations
 
-import json
-import tempfile
 import unittest
-from pathlib import Path
 
-from runner import project_fixture_handoff
+from journey_values import MissingJourneyState
+from runner import project_b_fixture_from_state
+from service_steps import FlowGraph, Journey
 
 
-class ProjectFixtureHandoffTests(unittest.TestCase):
-    def test_missing_handoff_returns_a_reportable_failure_instead_of_partial_values(self):
-        with tempfile.TemporaryDirectory(prefix="journey-project-handoff-") as temp:
-            path = Path(temp) / "project-fixtures.json"
-            path.write_text("{}", encoding="utf-8")
+class ProjectFixtureStateTests(unittest.TestCase):
+    def test_missing_project_b_fixture_state_fails_loudly(self):
+        graph = FlowGraph(Journey("local", "missing-project-b-fixture"), {})
+        with self.assertRaisesRegex(MissingJourneyState, "fixtures-installed"):
+            project_b_fixture_from_state(graph)
 
-            result = project_fixture_handoff(path)
-
-        self.assertIsInstance(result, str)
-        self.assertIn("valid project B ID or canonical root", result)
-
-    def test_valid_handoff_returns_both_values(self):
-        with tempfile.TemporaryDirectory(prefix="journey-project-handoff-") as temp:
-            path = Path(temp) / "project-fixtures.json"
-            root = str((Path(temp) / "project-b").resolve())
-            path.write_text(json.dumps({"projectBId": "project-b", "projectBRoot": root}), encoding="utf-8")
-
-            self.assertEqual(project_fixture_handoff(path), ("project-b", root))
+    def test_project_b_fixture_values_are_read_from_established_state(self):
+        value = {"projectBId": "prj_project_b", "projectBRoot": "/tmp/project-b"}
+        graph = FlowGraph(Journey("local", "registered-project-b-fixture"), {}, states={
+            "fixtures-installed": {"passed": True, "evidence": "registered fixture project", "value": value},
+        })
+        self.assertEqual(project_b_fixture_from_state(graph), value)
 
 
 if __name__ == "__main__":
