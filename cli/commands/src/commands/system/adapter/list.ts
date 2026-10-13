@@ -61,7 +61,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
   async handler(ctx) {
     let loaded: Awaited<ReturnType<typeof loadPlatformConfig>>;
     try {
-      loaded = await loadPlatformConfig({ startDir: getContextCwd(ctx), loadEnvFile: false });
+      loaded = await loadPlatformConfig({ startDir: getContextCwd(ctx), loadEnvFile: false, projectScope: 'platform' });
     } catch (error) {
       const envelope = toErrorEnvelope(error);
       throwSystemCataloguedError(envelope);

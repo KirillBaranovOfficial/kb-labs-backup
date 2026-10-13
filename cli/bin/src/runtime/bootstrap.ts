@@ -173,7 +173,7 @@ export async function executeCli(
     return reportGateResult(authResult, global.json, presenter);
   }
 
-  const projectScope = resolveProjectScope(authRoute, global, cmdPath);
+  const projectScope = resolveProjectScope(authRoute, global, cmdPath, flagsObj);
   if (projectScope === "required") {
     try {
       loadedConfig = await resolveProjectConfig(cwd, options.moduleUrl);

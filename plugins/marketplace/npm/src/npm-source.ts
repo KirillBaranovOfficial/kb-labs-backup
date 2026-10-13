@@ -32,7 +32,7 @@ export class PackageMetadataError extends Error {
 }
 
 export class PlatformArtifactPinsError extends Error {
-  readonly code = 'MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING';
+  readonly code = 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING';
   readonly hint: string;
 
   constructor(root: string, packageId: string, version: string) {
@@ -59,6 +59,7 @@ export class PackageInstallError extends Error {
 
 export class NpmPackageSource implements PackageSource {
   private readonly registryUrl: string;
+  private readonly pendingInstalls = new Map<string, PackageManagerFileSnapshot[]>();
 
   constructor(options: NpmPackageSourceOptions = {}) {
     this.registryUrl = (options.registryUrl ?? process.env.npm_config_registry ?? process.env.NPM_CONFIG_REGISTRY ?? 'https://registry.npmjs.org').replace(/\/$/, '');
@@ -163,6 +164,7 @@ export class NpmPackageSource implements PackageSource {
       }
       const integrity = lockIntegrity ?? await computeIntegrity(packageRoot);
 
+      this.pendingInstalls.set(installKey(root, pkg.id), state);
       return {
         id: pkg.id,
         version,
@@ -171,8 +173,8 @@ export class NpmPackageSource implements PackageSource {
       };
     } catch (error) {
       try {
-        await restorePackageManagerState(root, state);
-        if (pnpmStarted) { await reconcilePackageManagerState(root, state); }
+        if (pnpmStarted) {await reconcileRestoredPackageGraph(root, state);}
+        else {await restorePackageManagerState(root, state);}
       } catch (rollbackError) {
         throw new PackageInstallError(
           'INSTALL_FAILED',
@@ -185,9 +187,25 @@ export class NpmPackageSource implements PackageSource {
     }
   }
 
+  async commitInstall(packageId: string, root: string): Promise<void> {
+    this.pendingInstalls.delete(installKey(root, packageId));
+  }
+
+  async rollbackInstall(packageId: string, root: string): Promise<void> {
+    const key = installKey(root, packageId);
+    const snapshot = this.pendingInstalls.get(key);
+    if (!snapshot) {return;}
+    await reconcileRestoredPackageGraph(root, snapshot);
+    this.pendingInstalls.delete(key);
+  }
+
   async remove(packageId: string, root: string): Promise<void> {
     await execa('pnpm', ['remove', packageId], { cwd: root, timeout: 2 * 60 * 1000 });
   }
+}
+
+function installKey(root: string, packageId: string): string {
+  return `${path.resolve(root)}\0${packageId}`;
 }
 
 /** Check that kb-create owns and has written every sealed archive override. */
@@ -296,6 +314,18 @@ async function restorePackageManagerState(root: string, snapshot: PackageManager
     }
     await fs.writeFile(file, entry.contents, { mode: entry.mode });
     if (entry.mode !== undefined) { await fs.chmod(file, entry.mode); }
+  }
+}
+
+async function reconcileRestoredPackageGraph(root: string, snapshot: PackageManagerFileSnapshot[]): Promise<void> {
+  const workspace = snapshot.find(entry => entry.name === 'pnpm-workspace.yaml');
+  await restorePackageManagerState(root, snapshot.filter(entry => entry.name !== 'pnpm-workspace.yaml'));
+  try {
+    // Keep the install's exact-version age exclusion active until pnpm removes
+    // the candidate from its virtual store, then restore the prior policy file.
+    await reconcilePackageManagerState(root, snapshot);
+  } finally {
+    if (workspace) {await restorePackageManagerState(root, [workspace]);}
   }
 }
 

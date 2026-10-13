@@ -37,6 +37,7 @@ export class RegistryPackageSource implements PackageSource {
   private readonly authToken?: string;
   private readonly shareToken?: string;
   private readonly signingPublicKey?: string;
+  private readonly pendingInstalls = new Map<string, { packageRoot: string; backupPath?: string }>();
 
   constructor(opts: RegistrySourceOptions) {
     this.baseUrl = opts.registryUrl.replace(/\/$/, '');
@@ -144,11 +145,30 @@ export class RegistryPackageSource implements PackageSource {
 
     // Extract to node_modules (write tarball to temp file first — tar requires a path)
     const packageRoot = path.join(root, 'node_modules', pkg.id);
-    await fs.mkdir(packageRoot, { recursive: true });
+    const key = `${path.resolve(root)}\0${pkg.id}`;
+    const backupPath = path.join(os.tmpdir(), `kb-registry-before-${createHash('sha256').update(key).digest('hex')}`);
+    await fs.rm(backupPath, { recursive: true, force: true });
+    let hadPrevious = false;
+    try {
+      await fs.access(packageRoot);
+      await fs.cp(packageRoot, backupPath, { recursive: true, dereference: false });
+      hadPrevious = true;
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {throw error;}
+    }
+    this.pendingInstalls.set(key, { packageRoot, ...(hadPrevious ? { backupPath } : {}) });
     const tmpFile = path.join(os.tmpdir(), `kb-registry-${Date.now()}.tgz`);
     try {
+      await fs.mkdir(packageRoot, { recursive: true });
       await fs.writeFile(tmpFile, tarball);
       await extract({ file: tmpFile, cwd: packageRoot, strip: 1 });
+    } catch (error) {
+      try {
+        await this.rollbackInstall(pkg.id, root);
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], `Marketplace could not restore package files after installing ${pkg.id}.`);
+      }
+      throw error;
     } finally {
       await fs.unlink(tmpFile).catch(() => { /* ignore */ });
     }
@@ -168,6 +188,26 @@ export class RegistryPackageSource implements PackageSource {
   async remove(_packageId: string, _root: string): Promise<void> {
     // Removal delegates to npm/fs — RegistryPackageSource doesn't manage node_modules cleanup
     throw new RegistryPackageError('UNSUPPORTED', 'Use npm source for remove operations');
+  }
+
+  async commitInstall(packageId: string, root: string): Promise<void> {
+    const key = `${path.resolve(root)}\0${packageId}`;
+    const pending = this.pendingInstalls.get(key);
+    if (pending?.backupPath) {await fs.rm(pending.backupPath, { recursive: true, force: true });}
+    this.pendingInstalls.delete(key);
+  }
+
+  async rollbackInstall(packageId: string, root: string): Promise<void> {
+    const key = `${path.resolve(root)}\0${packageId}`;
+    const pending = this.pendingInstalls.get(key);
+    if (!pending) {return;}
+    await fs.rm(pending.packageRoot, { recursive: true, force: true });
+    if (pending.backupPath) {
+      await fs.mkdir(path.dirname(pending.packageRoot), { recursive: true });
+      await fs.cp(pending.backupPath, pending.packageRoot, { recursive: true, dereference: false });
+      await fs.rm(pending.backupPath, { recursive: true, force: true });
+    }
+    this.pendingInstalls.delete(key);
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────

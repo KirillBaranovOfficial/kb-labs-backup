@@ -207,9 +207,13 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       // Platform adapters remain in the platform graph for runtime resolution.
       const usesExtensionStore = this.extensionStore !== undefined &&
         (ctx.scope === 'project' || resolved.primaryKind === 'plugin');
+      const marketplaceState = usesExtensionStore ? [] : await snapshotMarketplaceState(scopeRoot);
       const result = usesExtensionStore
         ? await this.installInStore(resolved)
         : await source.install(resolved, scopeRoot, opts);
+
+      let canonicalId: string | null | undefined;
+      try {
 
       // Detect primary kind via strategies. A null result means the installed
       // package is not a KB Labs entity (no plugin/adapter/... manifest) —
@@ -217,9 +221,6 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       // lock entry (B-021).
       const primaryKind = await this.detectKind(result.packageRoot);
       if (primaryKind === null) {
-        if (!this.extensionStore) {
-          await source.remove(result.id, scopeRoot).catch(() => undefined);
-        }
         throw new InvalidEntityError(
           `Package "${result.id}" (resolved from "${spec}") is not a valid KB Labs entity — ` +
           `no plugin/adapter/workflow manifest found. Nothing was installed.`,
@@ -228,7 +229,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       this.assertScopeAllowsKind(ctx.scope, primaryKind);
 
       const strategy = this.strategies.get(primaryKind);
-      const canonicalId = strategy?.resolveId
+      canonicalId = strategy?.resolveId
         ? await strategy.resolveId(result.packageRoot)
         : result.id;
       if (!canonicalId) {
@@ -288,6 +289,29 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         packageRoot: result.packageRoot,
         scope: ctx.scope,
       });
+      if (!usesExtensionStore) {await source.commitInstall(result.id, scopeRoot);}
+      } catch (error) {
+        if (!usesExtensionStore) {
+          const rollbackErrors: unknown[] = [];
+          try {
+            await source.rollbackInstall(result.id, scopeRoot);
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError);
+          }
+          try {
+            await restoreMarketplaceState(marketplaceState);
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError);
+          }
+          if (rollbackErrors.length > 0) {
+            throw new MarketplaceInstallRollbackError(
+              result.id, ctx.scope, scopeRoot, error,
+              new AggregateError(rollbackErrors, 'Marketplace install rollback failed'),
+            );
+          }
+        }
+        throw error;
+      }
     }
 
     return { installed, warnings, scope: ctx.scope, diagnostics: diagnostics.length ? diagnostics : undefined };
@@ -915,6 +939,19 @@ export class AdapterScopeError extends Error {
   }
 }
 
+export class MarketplaceInstallRollbackError extends Error {
+  readonly code = 'KB_MARKETPLACE_INSTALL_FAILED';
+  readonly hint: string;
+
+  constructor(readonly packageId: string, readonly scope: MarketplaceScope, scopeRoot: string, cause: unknown, rollbackCause: unknown) {
+    super(`Marketplace could not restore the platform after installing ${packageId}.`, {
+      cause: new AggregateError([cause, rollbackCause], 'Marketplace install rollback failed'),
+    });
+    this.name = 'MarketplaceInstallRollbackError';
+    this.hint = `Run "pnpm install --offline" in ${scopeRoot} to restore the package graph, then retry "kb marketplace install ${packageId} --scope ${scope}".`;
+  }
+}
+
 /**
  * Thrown when a package was resolved/installed but is not a recognizable KB Labs
  * entity (no plugin/adapter/workflow manifest). Maps to HTTP 422. Prevents
@@ -942,6 +979,39 @@ export class PackageClassificationError extends Error {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+interface MarketplaceStateFile {
+  path: string;
+  contents?: Buffer;
+  mode?: number;
+}
+
+async function snapshotMarketplaceState(root: string): Promise<MarketplaceStateFile[]> {
+  return Promise.all(['.kb/marketplace.lock', '.kb/marketplace.manifests.json'].map(async relativePath => {
+    const filePath = path.join(root, relativePath);
+    try {
+      const [contents, stat] = await Promise.all([fs.readFile(filePath), fs.stat(filePath)]);
+      return { path: filePath, contents, mode: stat.mode & 0o777 };
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        return { path: filePath };
+      }
+      throw error;
+    }
+  }));
+}
+
+async function restoreMarketplaceState(snapshot: MarketplaceStateFile[]): Promise<void> {
+  for (const file of snapshot) {
+    if (file.contents === undefined) {
+      await fs.rm(file.path, { force: true });
+      continue;
+    }
+    await fs.mkdir(path.dirname(file.path), { recursive: true });
+    await fs.writeFile(file.path, file.contents, { mode: file.mode });
+    if (file.mode !== undefined) {await fs.chmod(file.path, file.mode);}
+  }
+}
 
 function relativeToRoot(root: string, absPath: string): string {
   const rel = path.relative(root, absPath);

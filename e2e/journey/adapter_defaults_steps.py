@@ -215,7 +215,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     platform_content_root = active_platform_root(platform_root)
     project_b = Path(tempfile.mkdtemp(prefix="kb-adapter-project-b-", dir=base_env["HOME"]))
     project_b_registered = False
-    platform_config_path = platform_root / ".kb" / "kb.config.jsonc"
+    platform_config_path = platform_content_root / ".kb" / "kb.config.jsonc"
     if not platform_config_path.exists():
         platform_config_path = platform_root / ".kb" / "kb.config.json"
     original_platform_config = platform_config_path.read_bytes() if platform_config_path.exists() else None
@@ -855,6 +855,38 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 raise RuntimeError("workflow record was not written under the built-in storage default")
         journey.step("unbind platform storage and restore the built-in default", "adapter",
                      unbind_platform_storage_and_restore_default, cases=["S-048.6"])
+
+        def platform_scope_works_without_project_registration() -> None:
+            registry_file = Path(base_env["HOME"]) / ".kb" / "projects.json"
+            registry_before = registry_file.read_bytes()
+            commands = (
+                ["adapter", "list", "--json"],
+                ["adapter", "bind", "storage", "@kb-labs/adapters-fs", "--json"],
+                ["config", "set", "--scope", "platform", "platform.adapterOptions.storage",
+                 '{"baseDir":"storage"}', "--json"],
+                ["config", "get", "--scope", "platform", "platform.adapterOptions.storage", "--json"],
+                ["adapter", "unbind", "storage", "--json"],
+            )
+            results = []
+            for command in commands:
+                result = runner(["kb", *command], cwd=str(platform_root), env=base_env,
+                                capture_output=True, text=True, timeout=300)
+                payload = _json(result, command)
+                if result.returncode != 0 or payload.get("ok") is not True:
+                    raise RuntimeError(f"platform-scoped command failed outside registered projects: {' '.join(command)}")
+                results.append(payload)
+            if results[2].get("file") != str(platform_config_path):
+                raise RuntimeError(
+                    "platform config set did not name the installed platform config file: "
+                    f"got {results[2]!r}, expected {str(platform_config_path)!r}"
+                )
+            if results[3].get("value") != {"baseDir": "storage"}:
+                raise RuntimeError("platform config get did not read the value written outside registered projects")
+            if registry_file.read_bytes() != registry_before:
+                raise RuntimeError("platform-scoped commands changed project registration")
+
+        journey.step("platform scope works outside registered projects", "adapter",
+                     platform_scope_works_without_project_registration, cases=["S-048.7"])
     except Exception as error:
         journey.step("project adapter and plugin isolation checks", "adapter", lambda: str(error))
     finally:
