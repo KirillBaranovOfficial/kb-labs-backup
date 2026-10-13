@@ -13,11 +13,11 @@ import (
 func TestFinishUsesCataloguedFailureStatus(t *testing.T) {
 	var output bytes.Buffer
 	writer := New(&output)
-	failure := diag.New("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE", "index unavailable", diag.WithProcessExitCode(diag.ExitInput))
+	failure := diag.New("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE", "index unavailable")
 	if err := writer.Fail(failure); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Finish(diag.ExitInput); err != nil {
+	if err := writer.Finish(); err != nil {
 		t.Fatal(err)
 	}
 	if writer.ExitCode() != diag.ExitError {
@@ -36,7 +36,7 @@ func TestStreamWritesEnvelopeEventsAndTerminalRecord(t *testing.T) {
 		diag.WithCorrelationID("stream-correlation"))); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Finish(diag.ExitError); err != nil {
+	if err := writer.Finish(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -100,7 +100,7 @@ func TestStreamResultEventHasResultMetadataAndTerminalRecord(t *testing.T) {
 	if err := writer.Result(map[string]any{"operation": "apply"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Finish(diag.ExitOK); err != nil {
+	if err := writer.Finish(); err != nil {
 		t.Fatal(err)
 	}
 	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))

@@ -2,6 +2,9 @@ package diag
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,15 +26,15 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 	}
 	var catalog struct {
 		Codes []struct {
-			Code            string `json:"code"`
-			HTTPStatus      int    `json:"httpStatus,omitempty"`
-			Area            string `json:"area"`
-			Stage           string `json:"stage"`
-			Severity        string `json:"severity"`
-			Retryable       bool   `json:"retryable"`
-			ProcessExitCode int    `json:"processExitCode,omitempty"`
-			Message         string `json:"message"`
-			Hint            string `json:"hint"`
+			Code             string           `json:"code"`
+			HTTPStatus       int              `json:"httpStatus,omitempty"`
+			Area             string           `json:"area"`
+			Stage            string           `json:"stage"`
+			Severity         string           `json:"severity"`
+			Retryable        bool             `json:"retryable"`
+			ProcessExitClass ProcessExitClass `json:"processExitClass"`
+			Message          string           `json:"message"`
+			Hint             string           `json:"hint"`
 		} `json:"codes"`
 	}
 	if err := json.Unmarshal(content, &catalog); err != nil {
@@ -40,8 +43,9 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 	entries := make(map[string]CatalogEntry, len(catalog.Codes))
 	entryCodes := make(map[string]struct{}, len(catalog.Codes))
 	for _, entry := range catalog.Codes {
-		if entry.Area == "" || entry.Severity == "" || entry.Message == "" || entry.Hint == "" {
-			t.Errorf("catalog entry %s is missing area, severity, message, or hint", entry.Code)
+		if entry.Area == "" || entry.Severity == "" || entry.Message == "" || entry.Hint == "" ||
+			(entry.ProcessExitClass != ExitClassInputRefusal && entry.ProcessExitClass != ExitClassOperationFailure) {
+			t.Errorf("catalog entry %s is missing required metadata or process exit class", entry.Code)
 		}
 		entries[entry.Code] = CatalogEntry(entry)
 		entryCodes[entry.Code] = struct{}{}
@@ -66,6 +70,72 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 			}
 		}
 		t.Errorf("Go tool emits uncatalogued code %s in %s", code, strings.Join(relative, ", "))
+	}
+}
+
+func TestGoToolsDoNotAssignProcessExitStatusOutsideDiag(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerDir, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolsDir := filepath.Join(root, "tools")
+	check := func(source string) bool {
+		file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", source, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch value := node.(type) {
+			case *ast.SelectorExpr:
+				if value.Sel.Name == "ProcessExitCode" || value.Sel.Name == "ProcessExitClass" || value.Sel.Name == "WithProcessExitCode" {
+					found = true
+				}
+			case *ast.KeyValueExpr:
+				if key, ok := value.Key.(*ast.Ident); ok && (key.Name == "ProcessExitCode" || key.Name == "ProcessExitClass") {
+					found = true
+				}
+			}
+			return true
+		})
+		return found
+	}
+	if !check("package p\nfunc f() { failure.ProcessExitClass = \"input-refusal\" }\n") {
+		t.Fatal("rail mutation was not detected")
+	}
+	err = filepath.WalkDir(toolsDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() && (entry.Name() == "vendor" || entry.Name() == "node_modules") {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() {
+			absolute, _ := filepath.Abs(path)
+			if absolute == ownerDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if check(string(source)) {
+			relative, _ := filepath.Rel(root, path)
+			t.Errorf("%s assigns or constructs a process exit status outside the diag owner", relative)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

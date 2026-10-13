@@ -20,25 +20,13 @@ func TestCataloguedFailureUsesSharedExitStatusForEveryRegisteredCommand(t *testi
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
-	failure := contracts.NewDiag(contracts.CodeGatewayIndexUnavailable, "index unavailable", "recover", nil)
-	failure.ProcessExitCode = diag.ExitInput // Simulates a command-local mapping that the catalog must override.
+	failures := []*diag.Diag{
+		contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "invalid invocation", "check input", nil),
+		contracts.NewDiag("KB_RUNTIME_UNEXPECTED", "operation failed", "inspect diagnostics", nil),
+	}
 	original := make([]func(context.Context, *cobra.Command, *commandFlagReader, commandDependencies) (any, *diag.Diag), len(operationDescriptors))
 	for i := range operationDescriptors {
 		original[i] = operationDescriptors[i].Handler
-		descriptor := operationDescriptors[i]
-		operationDescriptors[i].Handler = func(_ context.Context, cmd *cobra.Command, _ *commandFlagReader, _ commandDependencies) (any, *diag.Diag) {
-			if descriptor.JSONStream {
-				writer := stream.New(clikitcommand.StreamWriter(cmd))
-				if err := writer.Fail(failure); err != nil {
-					return nil, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "failure output failed")
-				}
-				if err := writer.Finish(diag.ExitInput); err != nil {
-					return nil, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "failure output failed")
-				}
-				return streamCompletion{ExitCode: writer.ExitCode()}, nil
-			}
-			return nil, failure
-		}
 	}
 	t.Cleanup(func() {
 		for i := range operationDescriptors {
@@ -51,50 +39,84 @@ func TestCataloguedFailureUsesSharedExitStatusForEveryRegisteredCommand(t *testi
 	if len(registered) != len(operationDescriptors) {
 		t.Fatalf("registered commands = %d, descriptors = %d", len(registered), len(operationDescriptors))
 	}
-	for _, command := range registered {
-		descriptor, ok := lookupOperationDescriptor(command.Name())
-		if !ok {
-			t.Fatalf("registered command %q has no descriptor", command.Name())
-		}
-		t.Run(command.Name(), func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			code := clikitcommand.Execute(newRootCommand(), []string{command.Name(), "--json"}, &stdout, &stderr)
-			if code != diag.ExitError {
-				t.Fatalf("exit = %d, want %d: stdout=%s stderr=%s", code, diag.ExitError, stdout.String(), stderr.String())
+	for _, failure := range failures {
+		want := diag.ExitCode(failure)
+		for _, command := range registered {
+			command := command
+			descriptor, ok := lookupOperationDescriptor(command.Name())
+			if !ok {
+				t.Fatalf("registered command %q has no descriptor", command.Name())
 			}
-			if descriptor.JSONStream {
-				lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))
-				if len(lines) != 2 {
-					t.Fatalf("stream records = %d, want error and terminal: %s", len(lines), stdout.String())
+			for i := range operationDescriptors {
+				d := operationDescriptors[i]
+				operationDescriptors[i].Handler = func(_ context.Context, cmd *cobra.Command, _ *commandFlagReader, _ commandDependencies) (any, *diag.Diag) {
+					if d.JSONStream {
+						writer := stream.New(clikitcommand.StreamWriter(cmd))
+						if err := writer.Fail(failure); err != nil {
+							return nil, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "failure output failed")
+						}
+						if err := writer.Finish(); err != nil {
+							return nil, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "failure output failed")
+						}
+						return streamCompletion{ExitCode: writer.ExitCode()}, nil
+					}
+					return nil, failure
 				}
-				var errorRecord, terminal struct {
+			}
+			t.Run(failure.Code+"/"+command.Name(), func(t *testing.T) {
+				var stdout, stderr bytes.Buffer
+				code := clikitcommand.Execute(newRootCommand(), []string{command.Name(), "--json"}, &stdout, &stderr)
+				if code != want {
+					t.Fatalf("exit = %d, want %d: stdout=%s stderr=%s", code, want, stdout.String(), stderr.String())
+				}
+				if descriptor.JSONStream {
+					lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))
+					if len(lines) != 2 {
+						t.Fatalf("stream records = %d, want error and terminal: %s", len(lines), stdout.String())
+					}
+					var records []struct {
+						Error struct {
+							Code string `json:"code"`
+						} `json:"error"`
+						Meta struct {
+							Stream struct {
+								Terminal bool `json:"terminal"`
+								ExitCode int  `json:"exitCode"`
+							} `json:"stream"`
+						} `json:"meta"`
+					}
+					for _, line := range lines {
+						var record struct {
+							Error struct {
+								Code string `json:"code"`
+							} `json:"error"`
+							Meta struct {
+								Stream struct {
+									Terminal bool `json:"terminal"`
+									ExitCode int  `json:"exitCode"`
+								} `json:"stream"`
+							} `json:"meta"`
+						}
+						if err := json.Unmarshal(line, &record); err != nil {
+							t.Fatal(err)
+						}
+						records = append(records, record)
+					}
+					if records[0].Error.Code != failure.Code || !records[1].Meta.Stream.Terminal || records[1].Meta.Stream.ExitCode != want {
+						t.Fatalf("stream records do not preserve %s/status %d: %s", failure.Code, want, stdout.String())
+					}
+					return
+				}
+				var envelope struct {
 					Error struct {
 						Code string `json:"code"`
 					} `json:"error"`
-					Meta struct {
-						Stream struct {
-							Terminal bool `json:"terminal"`
-							ExitCode int  `json:"exitCode"`
-						} `json:"stream"`
-					} `json:"meta"`
 				}
-				if err := json.Unmarshal(lines[0], &errorRecord); err != nil || errorRecord.Error.Code != contracts.CodeGatewayIndexUnavailable {
-					t.Fatalf("stream error record = %s (%v)", lines[0], err)
+				if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.Error.Code != failure.Code {
+					t.Fatalf("document failure = %s (%v)", stdout.String(), err)
 				}
-				if err := json.Unmarshal(lines[1], &terminal); err != nil || !terminal.Meta.Stream.Terminal || terminal.Meta.Stream.ExitCode != diag.ExitError {
-					t.Fatalf("stream terminal = %s (%v)", lines[1], err)
-				}
-				return
-			}
-			var envelope struct {
-				Error struct {
-					Code string `json:"code"`
-				} `json:"error"`
-			}
-			if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.Error.Code != contracts.CodeGatewayIndexUnavailable {
-				t.Fatalf("document failure = %s (%v)", stdout.String(), err)
-			}
-		})
+			})
+		}
 	}
 }
 

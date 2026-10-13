@@ -132,7 +132,7 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	if err := json.Unmarshal(busyOutput.Bytes(), &busyPayload); err != nil {
 		t.Fatal(err)
 	}
-	if busyCode != 2 || errorCode(busyPayload) != contracts.CodePortInUse {
+	if busyCode != diag.ExitError || errorCode(busyPayload) != contracts.CodePortInUse {
 		t.Fatalf("occupied Gateway plan = code %d, error %s: %s", busyCode, errorCode(busyPayload), busyOutput.String())
 	}
 	errorEnvelope := busyPayload["error"].(map[string]any)
@@ -1738,7 +1738,7 @@ func TestInstallChecksNodeBeforeQuestions(t *testing.T) {
 	_, path := installOutput(t)
 	var screen bytes.Buffer
 	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", InstallInput: strings.NewReader("\n"), InstallOutput: &screen, NodePreflight: func() error { return errors.New("node missing") }})
-	if code != 2 || failure == nil || failure.Code != contracts.CodeNodeVersion || strings.Contains(screen.String(), "Platform channel") {
+	if code != 1 || failure == nil || failure.Code != contracts.CodeNodeVersion || strings.Contains(screen.String(), "Platform channel") {
 		t.Fatalf("code/failure/output = %d / %#v / %s", code, failure, screen.String())
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -1752,7 +1752,7 @@ func TestApplyReportsNodeVersionCodeBeforeResolution(t *testing.T) {
 		t.Fatalf("expected Node version failure, exit=%d", code)
 	}
 	data := fmt.Sprint(failure) + " " + failure.Hint
-	if code != 2 || failure.Code != contracts.CodeNodeVersion || !strings.Contains(data, "Install Node.js 24") || strings.Contains(data, "KB_INSTALL_INPUT_REQUIRED") {
+	if code != 1 || failure.Code != contracts.CodeNodeVersion || !strings.Contains(data, "Install Node.js 24") || strings.Contains(data, "KB_INSTALL_INPUT_REQUIRED") {
 		t.Fatalf("code/output = %d / %s", code, data)
 	}
 }

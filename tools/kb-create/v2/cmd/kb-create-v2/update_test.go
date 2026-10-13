@@ -1321,7 +1321,7 @@ func TestUpdateCommandNeedsAnInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, code, raw := inst.update(t, updatePlan(t, inst.root, freeLoopbackPort(t)), &recordingInstaller{})
-	if code != 2 || errorCode(payload) != contracts.CodeReceiptUnavailable {
+	if code != 1 || errorCode(payload) != contracts.CodeReceiptUnavailable {
 		t.Fatalf("update: %d %s", code, raw)
 	}
 	after, err := treeDigest(inst.root)

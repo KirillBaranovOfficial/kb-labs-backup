@@ -1029,7 +1029,6 @@ func TestExistingApplyRejectsDifferentProjectBeforeOperation(t *testing.T) {
 		NodeCheck: func() error { return nil },
 	})
 	if failure == nil || failure.Code != "KB_INSTALL_PROJECT_SELECTION_CHANGED" ||
-		failure.ProcessExitCode != diag.ExitInput ||
 		!strings.Contains(failure.Hint, contracts.ShellCommand("kb", "project", "add", selectedProject)) ||
 		!strings.Contains(failure.Hint, contracts.ShellCommand("kb", "project", "show", selectedProject)) {
 		t.Fatalf("apply selection failure = %#v", failure)

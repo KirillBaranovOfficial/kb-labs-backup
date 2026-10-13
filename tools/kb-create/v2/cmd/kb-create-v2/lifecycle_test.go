@@ -137,7 +137,7 @@ func TestRecoveryWithYesPassesConfirmationGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, code, raw := invoke(t, operationTestSetup{Operation: "uninstall", PlatformRoot: root, Yes: true})
-	if code != 2 || errorCode(payload) != contracts.CodeReceiptUnavailable {
+	if code != 1 || errorCode(payload) != contracts.CodeReceiptUnavailable {
 		t.Fatalf("--yes did not proceed to receipt validation: %d %s", code, raw)
 	}
 }
@@ -311,7 +311,7 @@ func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 	t.Setenv(host.KBHomeEnv, t.TempDir())
 	for _, test := range []struct{ operation, code string }{{"rollback", contracts.CodeInstallLayoutUnsupported}, {"uninstall", contracts.CodeInstallLayoutUnsupported}} {
 		payload, code, raw := invoke(t, operationTestSetup{Operation: test.operation, PlatformRoot: t.TempDir(), Yes: true})
-		if code != 2 || errorCode(payload) != test.code {
+		if code != 1 || errorCode(payload) != test.code {
 			t.Fatalf("%s: %d %s", test.operation, code, raw)
 		}
 	}
@@ -645,14 +645,14 @@ func TestDoctorRecoverNeedsAPlatformThatShipsARecoveryTool(t *testing.T) {
 	}
 }
 
-func TestDoctorRecoverPropagatesTheToolsExitStatus(t *testing.T) {
+func TestDoctorRecoverFailureUsesCataloguedOperationStatus(t *testing.T) {
 	inst, _ := recoverInstallation(t, true)
 	script := filepath.Join(platformRootForTest(t, inst.root), "recover.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 4\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, code, _ := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true}}); code != 4 {
-		t.Fatalf("exit status = %d, want the tool's 4", code)
+	if _, code, raw := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true}}); code != 1 {
+		t.Fatalf("exit status = %d, want catalogued operation failure 1: %s", code, raw)
 	}
 }
 

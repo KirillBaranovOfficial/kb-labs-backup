@@ -27,13 +27,13 @@ class PlatformStateDumpTests(unittest.TestCase):
             destination = dump_platform_state(
                 platform, reports, mode="local", front="agent", scenario="explore",
                 variant="default", first_failure=(
-                    'kb-create install --json: exit 2; '
+                    'kb-create install --json: exit 1; '
                     '{"error":{"code":"KB_INSTALL_LAYOUT_UNSUPPORTED"}}'),
             )
 
             diagnosis = json.loads((destination / "install-root-diagnosis.json").read_text())
             self.assertEqual(diagnosis["firstFailure"],
-                             'kb-create install --json: exit 2; '
+                             'kb-create install --json: exit 1; '
                              '{"error":{"code":"KB_INSTALL_LAYOUT_UNSUPPORTED"}}')
             self.assertIn("current is not a symlink", diagnosis["layoutError"])
 

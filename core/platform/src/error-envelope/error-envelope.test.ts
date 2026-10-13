@@ -61,6 +61,13 @@ describe('errors.catalog.json lint', () => {
     }
   });
 
+  it('declares one Go CLI exit class for every catalog code', () => {
+    for (const entry of errorCatalog.codes) {
+      expect(['input-refusal', 'operation-failure'], `${entry.code} processExitClass`)
+        .toContain(entry.processExitClass);
+    }
+  });
+
   it('defines the shared CLI command failure code', () => {
     expect(getCatalogEntry('KB_RUNTIME_COMMAND_FAILED')).toMatchObject({
       area: 'runtime',

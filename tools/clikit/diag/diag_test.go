@@ -141,17 +141,18 @@ func TestExitCodeUsesSharedTable(t *testing.T) {
 	}
 }
 
-func TestExitCodePreservesWrappedOperationStatus(t *testing.T) {
-	d := New("KB_INSTALL_CONFIRMATION_REQUIRED", "Confirmation is required.", WithProcessExitCode(ExitInput))
-	if got := ExitCode(d); got != ExitInput {
-		t.Fatalf("ExitCode() = %d, want %d", got, ExitInput)
-	}
-}
-
-func TestExitCodeUsesCataloguedStatusBeforeCommandStatus(t *testing.T) {
-	d := New("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE", "index unavailable", WithProcessExitCode(ExitInput))
-	if got := ExitCode(d); got != ExitError {
-		t.Fatalf("ExitCode() = %d, want catalogued status %d", got, ExitError)
+func TestEveryCatalogEntryDeclaresCanonicalExitClass(t *testing.T) {
+	for code, entry := range catalogEntries {
+		want := ExitError
+		if entry.ProcessExitClass == ExitClassInputRefusal {
+			want = ExitInput
+		} else if entry.ProcessExitClass != ExitClassOperationFailure {
+			t.Errorf("%s has invalid exit class %q", code, entry.ProcessExitClass)
+			continue
+		}
+		if got := ExitCode(New(code, "failure")); got != want {
+			t.Errorf("ExitCode(%s) = %d, want %d from %s", code, got, want, entry.ProcessExitClass)
+		}
 	}
 }
 
