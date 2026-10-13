@@ -62,6 +62,13 @@ def shim_owner_matches(data: dict, install_root: Path, expected_owner: Path) -> 
         "linked": owns_shim, "owner": str(canonical_owner)}
 
 
+def gateway_registry_rows_for_installation(registry_path: Path, installation_id: str) -> list[dict]:
+    registry = json.loads(Path(registry_path).read_text(encoding="utf-8"))
+    if registry["schema"] != 2:
+        raise RuntimeError(f"Gateway registry has unsupported schema {registry['schema']}")
+    return [row for row in registry["roots"] if row["installationId"] == installation_id]
+
+
 def verify_installation_spellings(*, launcher: str, index: Path, install_root: Path,
                                   channel: str, version: str, gateway_url: str,
                                   installation_id: str,
@@ -73,9 +80,7 @@ def verify_installation_spellings(*, launcher: str, index: Path, install_root: P
     shim_path = Path(launcher).absolute().parent / "kb"
     before_shim = shim_path.readlink() if shim_path.is_symlink() else None
     registry_before = registry_path.read_bytes()
-    registry = json.loads(registry_before)
-    matching = [row for row in registry.get("roots", [])
-                if Path(row.get("platformRoot", "")).resolve() == install_root.resolve()]
+    matching = gateway_registry_rows_for_installation(registry_path, installation_id)
     if (len(matching) != 1 or matching[0].get("installationId") != installation_id
             or matching[0].get("url") != gateway_url):
         raise RuntimeError(f"Gateway registry does not have one row for {install_root}: {matching}")
@@ -1586,9 +1591,6 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         if (not applied.get("receipt") or installation.get("platformChannel") != channel
                 or installation.get("platformVersion") != exact_version):
             raise RuntimeError(f"receipt-backed status did not confirm {channel} {exact_version}")
-    journey.step("plan, apply, and verify stable install", "platform.install",
-                 lambda: channel_plan("stable", stable_index, "s181-stable-root"), cases=["S-181.1"])
-
     def verify_stable_spellings() -> None:
         stable_root = platform_root.parent / "s181-stable-root"
         receipt = json.loads((active_platform_root(stable_root) / ".kb/v2/receipt.json").read_text())
@@ -1599,11 +1601,6 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             gateway_url=plan["request"]["gatewayUrl"],
             installation_id=receipt["installationId"],
             run_command=run_command)
-
-    journey.step("plan, apply, status, and update stable install through all root spellings", "platform.install",
-                 verify_stable_spellings, cases=["S-181.1"])
-    journey.step("plan, apply, and verify canary install", "platform.install",
-                 lambda: channel_plan("canary", canary_index, "s181-canary-root"), cases=["S-181.2"])
 
     secret_root = platform_root.parent / "s181-secret-root"
     explicit_gateway_root = platform_root.parent / "pc001-explicit-gateway-root"
@@ -1633,13 +1630,20 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         if secret_value in serialized or "KB_JOURNEY_ADMIN_PASSWORD" in serialized:
             raise RuntimeError("secret apply serialized the secret value or environment-variable name")
 
-    journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
-                 cases=["S-181.3", "PC-001.10"])
-
     run_fixture_group(journey, "gateway allocation", lambda: run_gateway_allocation_step(
         mode=mode, launcher=launcher, stable_index=stable_index,
         primary_root=platform_root, automatic_root=secret_root,
         explicit_root=explicit_gateway_root, run_command=run_command))
+
+    journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
+                 cases=["S-181.3", "PC-001.10"])
+
+    journey.step("plan, apply, and verify stable install", "platform.install",
+                 lambda: channel_plan("stable", stable_index, "s181-stable-root"), cases=["S-181.1"])
+    journey.step("plan, apply, status, and update stable install through all root spellings", "platform.install",
+                 verify_stable_spellings, cases=["S-181.1"])
+    journey.step("plan, apply, and verify canary install", "platform.install",
+                 lambda: channel_plan("canary", canary_index, "s181-canary-root"), cases=["S-181.2"])
 
     run_fixture_group(journey, "secondary root gateway isolation", lambda: run_secondary_root_gateway_isolation_step(
         mode=mode, launcher=launcher, primary_root=platform_root,
