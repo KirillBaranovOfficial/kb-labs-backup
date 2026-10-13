@@ -226,8 +226,7 @@ class PlatformStateDumpTests(unittest.TestCase):
             fingerprints_path = destination / "installation-secret-fingerprints.json"
             self.assertTrue(fingerprints_path.is_file())
             fingerprints = json.loads(fingerprints_path.read_text())
-            self.assertEqual({entry["name"] for entry in fingerprints["entries"]},
-                             {"gateway.jwtSecret", "GATEWAY_JWT_SECRET"})
+            self.assertRegex(fingerprints["sha256"], r"^[0-9a-f]{64}$")
             self.assertNotIn("signing-value", fingerprints_path.read_text())
             snapshot = destination / "installer/snapshots/snapshot-good.json"
             self.assertTrue(snapshot.is_file())

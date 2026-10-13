@@ -2,7 +2,6 @@ package secrets
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/secretstate"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -146,9 +147,10 @@ func TestBootstrapOriginTransitionsRemainAtomicAtEveryCommitBoundary(t *testing.
 						if !bytes.Contains(data, []byte(pair.value)) {
 							continue
 						}
-						var record secretStoreRecord
-						if json.Unmarshal(data, &record) != nil || record.Requirements[BootstrapPassword] != pair.value ||
-							record.Bootstrap.BootstrapPasswordOrigin != pair.origin {
+						record, decodeErr := secretstate.Decode(data)
+						value, _ := record.Requirement(BootstrapPassword)
+						origin, _ := record.BootstrapPasswordOrigin()
+						if decodeErr != nil || value != pair.value || origin != pair.origin {
 							return errors.New("a file paired a bootstrap credential with another origin")
 						}
 					}
@@ -315,11 +317,11 @@ func secretsFile(t *testing.T, root string) map[string]string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var state secretStoreRecord
-	if err := json.Unmarshal(data, &state); err != nil {
+	state, err := secretstate.Decode(data)
+	if err != nil {
 		t.Fatal("decode private secret state")
 	}
-	return state.Requirements
+	return state.Requirements()
 }
 
 func secretsPath(t *testing.T, root string) string {
@@ -565,6 +567,36 @@ func TestLegacyFlatBootstrapMarkersReturnUnsupportedFormatWithoutReset(t *testin
 		if err != nil || !bytes.Equal(after, data) {
 			t.Fatal("unsupported old store was silently reset or changed")
 		}
+	}
+}
+
+func TestStoreUsesSharedCataloguedDiagnosisForInvalidWireFormat(t *testing.T) {
+	for name, contents := range map[string][]byte{
+		"unknown schema": []byte(`{"schema":99,"requirements":{},"bootstrap":{}}`),
+		"malformed":      []byte(`{"schema":`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := Store{PlatformRoot: t.TempDir()}
+			path := secretsPath(t, store.PlatformRoot)
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, contents, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := store.Get("OTHER_SECRET")
+			if !errors.Is(err, ErrUnsupportedSecretStoreFormat) {
+				t.Fatalf("store error does not identify unsupported format: %v", err)
+			}
+			var failure *diag.Diag
+			if !errors.As(err, &failure) || failure.Code != secretstate.UnsupportedCode {
+				t.Fatalf("store diagnosis = %#v", failure)
+			}
+			catalog, ok := diag.LookupCatalog(secretstate.UnsupportedCode)
+			if !ok || failure.Message != catalog.Message || failure.Hint != catalog.Hint {
+				t.Fatalf("store diagnosis = %#v; catalog = %#v", failure, catalog)
+			}
+		})
 	}
 }
 
