@@ -22,6 +22,8 @@ from urllib.error import HTTPError, URLError
 
 from platform_state_dump import _redact_json, _redact_text
 
+WIZARD_PROMPT_EVENT = "\x1eKB-LABS-WIZARD-PROMPT\x1f"
+
 _STEP_ID: ContextVar[str] = ContextVar("journey_step_id", default="journey.setup")
 _REPORT_ROOT: ContextVar[Path | None] = ContextVar("journey_report_root", default=None)
 # Only long values are safe to replace globally: shorter secrets can be ordinary
@@ -671,7 +673,7 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
         except OSError:
             pass
         os.close(master)
-    rendered = transcript.decode(errors="replace")
+    rendered = transcript.decode(errors="replace").replace(WIZARD_PROMPT_EVENT, "")
     duration = time.monotonic() - started
     error = (f"timed out after {timeout}s" if rendered else
              f"no output received before the timeout ({timeout}s)") if timed_out else None

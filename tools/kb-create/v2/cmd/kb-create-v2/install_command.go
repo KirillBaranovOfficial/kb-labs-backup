@@ -96,9 +96,14 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	if bootstrapCompleted {
 		skipRequirements = []string{secrets.BootstrapPassword}
 	}
-	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, wizard.IO{
-		In: inputReader, Out: out, PendingSecrets: pendingSecrets, SkipRequirements: skipRequirements,
-	})
+	terminal := wizard.IO{In: inputReader, Out: out, PendingSecrets: pendingSecrets, SkipRequirements: skipRequirements}
+	if os.Getenv("KB_JOURNEY_WIZARD_PROMPT_EVENTS") == "1" {
+		terminal.BeforeRead = func() error {
+			_, writeErr := fmt.Fprint(out, wizard.PromptEventMarker)
+			return writeErr
+		}
+	}
+	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, terminal)
 	if err != nil {
 		var validation *contracts.RequestValidationError
 		if errors.As(err, &validation) {

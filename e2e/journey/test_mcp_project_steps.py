@@ -264,7 +264,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 patch("service_runner.expect_project_service_health") as expect_health:
             name, capability, check, cases, _requires, _runners = next(
                 row for row in checks("local", graph) if row[0] == "platform readiness (gateway + project workflow)")
-            graph.step(name, "platform", capability, check, cases)
+            graph.dispatch_step(name, "platform", capability, check, cases)
 
         blocked = next(step for step in journey.steps if step.status == "BLOCKED")
         self.assertIn("project-registered", blocked.message)

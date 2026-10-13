@@ -144,7 +144,8 @@ def _owner_command_sites(root: Path) -> tuple[dict[str, list[str]], list[str], d
                         if isinstance(item, ast.Constant) and isinstance(item.value, str):
                             if item.value.startswith("-"):
                                 alternatives = [
-                                    (tokens + [item.value] if not tokens and item.value in {"--help", "--version"} else tokens,
+                                    (tokens + [item.value] if item.value == "--help"
+                                     or not tokens and item.value in {"--help", "--version"} else tokens,
                                      dynamic)
                                     for tokens, dynamic in alternatives
                                 ]
@@ -299,23 +300,26 @@ def _owner_command_sites(root: Path) -> tuple[dict[str, list[str]], list[str], d
     return command_sites, violations, shapes
 
 
-def _registered_leaf_commands(root: Path) -> set[str]:
-    """Derive command leaves from shipped plugin, fixture, and CLI declarations."""
-    registered = set()
+def _registered_command_registry(root: Path) -> tuple[set[str], set[str]]:
+    """Derive command leaves and groups from shipped command declarations."""
+    leaves: set[str] = set()
+    groups: set[str] = set()
     for manifest in root.glob("plugins/**/entry/src/manifest.ts"):
         text = manifest.read_text(encoding="utf-8")
         group_meta = set(re.findall(r"groupMeta\s*:\s*\[([^\]]*)\]", text, re.S))
         group_paths = {path for block in group_meta
                        for path in re.findall(r"path\s*:\s*['\"]([^'\"]+)['\"]", block)}
+        groups.update(group_paths)
         command_paths = set(re.findall(r"path\s*:\s*['\"]([a-zA-Z0-9][a-zA-Z0-9 -]*)['\"]", text))
-        registered.update(command_paths - group_paths)
+        leaves.update(command_paths - group_paths)
     for manifest in (root / "e2e/journey/fixtures").glob("**/manifest.js"):
         text = manifest.read_text(encoding="utf-8")
         group_meta = set(re.findall(r"groupMeta\s*:\s*\[([^\]]*)\]", text, re.S))
         group_paths = {path for block in group_meta
                        for path in re.findall(r"path\s*:\s*['\"]([^'\"]+)['\"]", block)}
+        groups.update(group_paths)
         command_paths = set(re.findall(r"path\s*:\s*['\"]([a-zA-Z0-9][a-zA-Z0-9 -]*)['\"]", text))
-        registered.update(command_paths - group_paths)
+        leaves.update(command_paths - group_paths)
 
     system_commands = {}
     system_aliases = {}
@@ -330,16 +334,17 @@ def _registered_leaf_commands(root: Path) -> set[str]:
     groups_text = (system_root / "groups.ts").read_text(encoding="utf-8")
     for group, members in re.findall(
             r"defineSystemCommandGroup\(\s*['\"]([^'\"]+)['\"][^\[]*\[([^\]]*)\]", groups_text, re.S):
+        groups.add(group)
         for member in re.findall(r"\b[A-Za-z_$][\w$]*\b", members):
             if member in system_commands:
-                registered.add(f"{group} {system_commands[member]}")
+                leaves.add(f"{group} {system_commands[member]}")
     for variable, aliases in system_aliases.items():
-        registered.update(alias for block in aliases
-                          for alias in re.findall(r"['\"]([^'\"]+)['\"]", block))
+        leaves.update(alias for block in aliases
+                      for alias in re.findall(r"['\"]([^'\"]+)['\"]", block))
     registration_source = (root / "cli/commands/src/utils/register.ts").read_text(encoding="utf-8")
     for variable in re.findall(r"registry\.register\(\s*(\w+)\s*\)", registration_source):
         if variable in system_commands:
-            registered.add(system_commands[variable])
+            leaves.add(system_commands[variable])
 
     scaffold_source = (root / "cli/commands/src/commands/system/plugins/plugins-scaffold.ts").read_text(
         encoding="utf-8")
@@ -351,19 +356,63 @@ def _registered_leaf_commands(root: Path) -> set[str]:
                 continue
             plugin_name = re.search(r"^PLUGIN_NAME\s*=\s*['\"]([^'\"]+)['\"]", journey_text, re.M)
             if plugin_name:
-                registered.update(f"{plugin_name.group(1)} {command}" for command in generated_command_ids)
-    return registered
+                groups.add(plugin_name.group(1))
+                leaves.update(f"{plugin_name.group(1)} {command}" for command in generated_command_ids)
+    return leaves, groups
 
 
-def _unregistered_commands(paths: dict[str, list[str]], registered: set[str]) -> dict[str, list[str]]:
+def _unregistered_commands(paths: dict[str, list[str]], registered: set[str],
+                           groups: set[str] | None = None) -> dict[str, list[str]]:
+    groups = groups or set()
     failures = {}
     for command, locations in paths.items():
         tokens = command.split()
+        if len(tokens) > 1 and tokens[-1] == "--help" and " ".join(tokens[:-1]) in groups:
+            continue
         resolved = next((" ".join(tokens[:index]) for index in range(len(tokens), 0, -1)
                          if " ".join(tokens[:index]) in registered), None)
         if resolved is None:
             failures[command] = locations
     return failures
+
+
+def _selection_owner_violations(root: Path) -> list[str]:
+    selection_fields = {"selected_claims", "selected_steps", "prerequisite_steps"}
+    violations = []
+    for source_path in (root / "e2e/journey").rglob("*.py"):
+        if ("__pycache__" in source_path.parts or source_path.name.startswith("test_")
+                or source_path.relative_to(root).as_posix() == "e2e/journey/service_steps.py"):
+            continue
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        relative = source_path.relative_to(root).as_posix()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in selection_fields:
+                violations.append(
+                    f"{relative}:{node.lineno}: selection metadata read outside service_steps.py")
+    return sorted(violations)
+
+
+def _studio_process_creation_violations(root: Path) -> list[str]:
+    """Require every TypeScript process sink to live in the generic owner."""
+    owner = "e2e/studio/kb-command.ts"
+    sink_call = re.compile(r"\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(")
+    violations = []
+    for source_path in (root / "e2e/studio").rglob("*.ts"):
+        if "node_modules" in source_path.parts or source_path.name.endswith(".test.ts"):
+            continue
+        relative = source_path.relative_to(root).as_posix()
+        if relative == owner:
+            continue
+        text = source_path.read_text(encoding="utf-8", errors="replace")
+        if "child_process" in text:
+            line = next((number for number, content in enumerate(text.splitlines(), 1)
+                         if "child_process" in content), 1)
+            violations.append(f"{relative}:{line}: child_process sink outside {owner}")
+        elif sink_call.search(text):
+            match = sink_call.search(text)
+            line = text.count("\n", 0, match.start()) + 1
+            violations.append(f"{relative}:{line}: process sink outside {owner}")
+    return sorted(violations)
 
 
 class DispatchRegistryTests(unittest.TestCase):
@@ -421,7 +470,7 @@ class DispatchRegistryTests(unittest.TestCase):
             paths, violations, _ = _owner_command_sites(fixture)
             self.assertEqual(violations, [])
             self.assertIn("commit", paths)
-            self.assertIn("commit", _unregistered_commands(paths, _registered_leaf_commands(root)))
+            self.assertIn("commit", _unregistered_commands(paths, _registered_command_registry(root)[0]))
 
     def test_command_path_rail_reads_literal_data_table_and_rejects_bare_group(self):
         root = Path(__file__).resolve().parents[2]
@@ -440,7 +489,50 @@ class DispatchRegistryTests(unittest.TestCase):
             )
             paths, violations, _ = _owner_command_sites(fixture)
             self.assertEqual(violations, [])
-            self.assertIn("commit", _unregistered_commands(paths, _registered_leaf_commands(root)))
+            self.assertIn("commit", _unregistered_commands(paths, _registered_command_registry(root)[0]))
+
+    def test_command_registry_accepts_documented_group_help_and_rejects_a_bare_group(self):
+        root = Path(__file__).resolve().parents[2]
+        cases = (root / "docs/qa/scenarios/S-011-marketplace-enable-disable.md").read_text()
+        row = re.search(r"\|\s*S-011\.3\s*\|\s*Run `kb ([^`]+)`", cases)
+        self.assertIsNotNone(row, "S-011.3 must keep its documented command probe")
+        group_help = row.group(1)
+        registered, groups = _registered_command_registry(root)
+        self.assertEqual(_unregistered_commands({group_help: ["S-011.3"]}, registered, groups), {})
+        group = " ".join(group_help.split()[:-1])
+        self.assertIn(group, groups)
+        self.assertEqual(_unregistered_commands({group: ["leaf-required"]}, registered, groups),
+                         {group: ["leaf-required"]})
+
+    def test_selection_metadata_reads_are_owned_by_flow_graph_module(self):
+        root = Path(__file__).resolve().parents[2]
+        self.assertEqual(_selection_owner_violations(root), [])
+        with tempfile.TemporaryDirectory(prefix="journey-selection-owner-") as temporary:
+            fixture = Path(temporary)
+            (fixture / "e2e/journey").mkdir(parents=True)
+            (fixture / "e2e/journey/service_steps.py").write_text("journey.selected_steps\n")
+            (fixture / "e2e/journey/other_steps.py").write_text("if journey.prerequisite_steps: pass\n")
+            self.assertEqual(_selection_owner_violations(fixture), [
+                "e2e/journey/other_steps.py:1: selection metadata read outside service_steps.py"
+            ])
+
+    def test_studio_process_creation_is_owned_by_generic_command_runner(self):
+        root = Path(__file__).resolve().parents[2]
+        self.assertEqual(_studio_process_creation_violations(root), [])
+        with tempfile.TemporaryDirectory(prefix="studio-process-owner-") as temporary:
+            fixture = Path(temporary)
+            (fixture / "e2e/studio").mkdir(parents=True)
+            (fixture / "e2e/studio/kb-command.ts").write_text(
+                "import { execFileSync } from 'node:child_process'\n"
+                "export const run = (file: string, args: string[]) => execFileSync(file, args)\n"
+            )
+            (fixture / "e2e/studio/scenario.ts").write_text(
+                "import { execFileSync as run } from 'node:child_process'\n"
+                "run(binary, args)\n"
+            )
+            self.assertEqual(_studio_process_creation_violations(fixture), [
+                "e2e/studio/scenario.ts:1: child_process sink outside e2e/studio/kb-command.ts"
+            ])
 
     def test_command_path_rail_rejects_raw_kb_argv_outside_owner(self):
         with tempfile.TemporaryDirectory(prefix="journey-command-owner-") as temporary:
@@ -497,7 +589,7 @@ class DispatchRegistryTests(unittest.TestCase):
 
     def test_literal_kb_command_paths_resolve_to_registered_leaf_commands(self):
         root = Path(__file__).resolve().parents[2]
-        registered = _registered_leaf_commands(root)
+        registered, registered_groups = _registered_command_registry(root)
 
         paths = {}
         for directory in (root / "e2e", root / "scripts"):
@@ -586,9 +678,8 @@ class DispatchRegistryTests(unittest.TestCase):
                 continue
             relative = source_path.relative_to(root).as_posix()
             text = source_path.read_text(encoding="utf-8", errors="replace")
-            if relative != "e2e/studio/kb-command.ts" and re.search(
-                    r"exec(?:File|FileSync|Sync)?\s*\(\s*['\"]kb['\"]", text):
-                owner_violations.append(f"{relative}: raw kb executable outside the Studio command owner")
+            if relative == "e2e/studio/kb-command.ts":
+                continue
             for match in re.finditer(r"runKbCommand\s*\(\s*\[([^\]]*)\]", text):
                 raw_args = re.findall(r"['\"]([^'\"]+)['\"]", match.group(1))
                 command = []
@@ -596,12 +687,22 @@ class DispatchRegistryTests(unittest.TestCase):
                     if value.startswith("-"):
                         break
                     command.append(value)
+                if "--help" in raw_args:
+                    command.append("--help")
                 if command:
                     line = text.count("\n", 0, match.start()) + 1
                     paths.setdefault(" ".join(command), []).append(f"{relative}:{line} (TypeScript owner call)")
                 else:
                     line = text.count("\n", 0, match.start()) + 1
                     owner_violations.append(f"{relative}:{line}: TypeScript command path must be literal")
+            for match in re.finditer(r"runProcessSync\s*\(\s*([^,]+)", text):
+                executable = match.group(1).strip()
+                line = text.count("\n", 0, match.start()) + 1
+                if not re.fullmatch(r"['\"][^'\"]+['\"]", executable) or executable[1:-1] == "kb":
+                    owner_violations.append(
+                        f"{relative}:{line}: generic process executable must be a literal non-kb tool; use runKbCommand for kb")
+
+        owner_violations.extend(_studio_process_creation_violations(root))
 
         for source_path in (root / "scripts").rglob("*.sh"):
             source = source_path.read_text(encoding="utf-8", errors="replace")
@@ -612,7 +713,7 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertEqual(owner_violations, [], "\n".join(owner_violations))
         self.assertTrue(owner_shapes)
 
-        failures = _unregistered_commands(paths, registered)
+        failures = _unregistered_commands(paths, registered, registered_groups)
         self.assertEqual(failures, {}, str(list(failures.items())[:30]))
 
     def test_fixture_default_runner_comes_from_registered_mode(self):

@@ -232,7 +232,7 @@ class ServiceJourneyTests(unittest.TestCase):
         selected = "PC-002.8"
         with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
                                     "KB_JOURNEY_CASES": selected}, clear=True):
-            step = graph.step("project registry check", "projects", "projects",
+            step = graph.dispatch_step("project registry check", "projects", "projects",
                               lambda: service_api_token(graph), cases=["PC-002.8"])
         self.assertEqual(step.status, "BLOCKED")
         self.assertIn("service-api-session", step.message)
@@ -255,7 +255,7 @@ class ServiceJourneyTests(unittest.TestCase):
             journey = Journey("secured", "ordinary-unclaimed-session-mutation")
             graph = FlowGraph(journey, {"projects": ("service-api-session",)}, states={})
             ordinary = journey.step("service API login", "auth.secured", lambda: None)
-            consumer = graph.step("project registry check", "projects", "projects",
+            consumer = graph.dispatch_step("project registry check", "projects", "projects",
                                   lambda: service_api_token(graph), cases=["PC-002.8"])
         self.assertEqual(ordinary.status, "SKIPPED")
         self.assertEqual(consumer.status, "BLOCKED")
@@ -320,7 +320,7 @@ class ServiceJourneyTests(unittest.TestCase):
                         lambda: "cleanup should not run", after_flow="adapter defaults flow")
                     for name, claim in (("selected readiness", "PC-002.3"),
                                         ("selected project runtime", "PC-002.8")):
-                        graph.step(name, "projects", "projects",
+                        graph.dispatch_step(name, "projects", "projects",
                                    lambda: (None if request_result("/ready", token=service_api_token(graph))[0] == 200
                                             else "selected request failed"), cases=[claim])
 
@@ -453,7 +453,7 @@ class ServiceJourneyTests(unittest.TestCase):
                               value=lambda: "synthetic-service-token")
             outcome = graph.flow("auth group flow", "auth", "auth.secured",
                                  lambda: "unrelated auth assertion failed")
-            check = graph.step(
+            check = graph.dispatch_step(
                 "project registry check", "projects", "projects",
                 lambda: (None if request_result("/api/v1/projects", token=service_api_token(graph))[0] == 200
                          else "project registry request failed"),
@@ -656,7 +656,7 @@ raise SystemExit(1)
                         for name, capability, check, cases in steps:
                             group = next(group for group, spec in SERVICE_GROUPS.items()
                                          if capability in spec["capabilities"])
-                            result = graph.step(name, group, capability, check, cases=cases)
+                            result = graph.dispatch_step(name, group, capability, check, cases=cases)
                             if result.status == "PASS":
                                 executed.append(name)
 
@@ -1165,6 +1165,58 @@ raise SystemExit(1)
         self.assertIn("blocked by state host-running", journey.steps[1].message)
         self.assertIn("no case claim", journey.steps[1].message)
         self.assertIn("gateway readiness", journey.steps[2].message)
+
+    def test_selected_group_step_runs_declared_setup_and_blocks_owner_on_setup_failure(self):
+        from journey_selection import JourneySelection
+        selection = JourneySelection(
+            requested=("S-100.1",),
+            claims=frozenset({"S-100.1"}),
+            owning_steps={"selected update owner": ("S-100.1",)},
+            prerequisite_steps=frozenset({"prepare update fixture"}),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset({"platform.update"}),
+            runner_selector="service-secured:explore",
+            requested_runners="",
+        )
+        journey = Journey("secured", "selection-owned-update", selection=selection)
+        calls = []
+        groups = {
+            "update": {
+                "capabilities": {"platform.update"},
+                "cases": {"S-100.1"},
+                "steps": {"prepare update fixture", "selected update owner"},
+                "depends_on": (),
+            },
+        }
+        graph = FlowGraph(journey, {"update": ()}, groups=groups)
+        run_grouped_service_steps(journey, [
+            ("prepare update fixture", "platform.update",
+             lambda: calls.append("setup") or "fixture setup failed", [], (), ()),
+            ("selected update owner", "platform.update",
+             lambda: calls.append("owner"), ["S-100.1"],
+             ("step:prepare update fixture",), ()),
+            ("unselected update claim", "platform.update",
+             lambda: calls.append("unselected"), ["S-023.2"], (), ()),
+        ], groups=groups, graph=graph)
+
+        self.assertEqual(calls, ["setup"])
+        self.assertEqual([step.status for step in journey.steps], ["FAIL", "BLOCKED", "SKIPPED"])
+        self.assertIn("step:prepare update fixture ended FAIL", journey.steps[1].message)
+
+    def test_unselected_step_with_invalid_prerequisite_does_not_fail_selected_run(self):
+        from journey_selection import JourneySelection
+
+        selection = JourneySelection(
+            requested=("S-100.1",), claims=frozenset({"S-100.1"}),
+            owning_steps={"selected owner": ("S-100.1",)}, capabilities=frozenset(),
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(),
+            runner_selector="service-secured:explore", requested_runners="",
+        )
+        journey = Journey("secured", "unselected-invalid-dependency", selection=selection)
+        result = journey.step("unselected", "fixture", lambda: self.fail("unselected check ran"),
+                              cases=["S-050.5"], requires=("step:missing",))
+        self.assertEqual(result.status, "SKIPPED")
+        self.assertEqual(result.message, "not selected")
 
     def test_fixture_probe_blocks_only_groups_that_need_the_fixture(self):
         journey = Journey("local", "fixture-state")

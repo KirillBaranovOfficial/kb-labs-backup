@@ -492,7 +492,7 @@ def capture_case_failure() -> None:
 def check_selected_claim_completion(journey_results: list[dict], selection: str | None = None) -> list[str]:
     """Fail the run if selected claims were not recorded by any of its journeys."""
     raw_selection = (selection if selection is not None else
-                     ",".join(sorted(CASE_JOURNEY.selected_claims)) if CASE_JOURNEY is not None else "")
+                     ",".join(sorted(CASE_JOURNEY.selection)) if CASE_JOURNEY is not None else "")
     selected = set(filter(None, raw_selection.split(",")))
     executed = {
         case_id
@@ -528,7 +528,7 @@ def check_selected_step_completion(journey_results: list[dict], selected_steps: 
 
 
 class OrderedPromptResponder:
-    """Answer the next expected prompt only when the PTY becomes idle."""
+    """Answer only at the wizard's explicit prompt-read boundary."""
 
     def __init__(self, expectations: list[tuple[str, str]]):
         self.expectations = [(re.compile(pattern, re.I), answer) for pattern, answer in expectations]
@@ -539,7 +539,19 @@ class OrderedPromptResponder:
     def __call__(self, transcript: str) -> str | None:
         self.pending += transcript[self.cursor:]
         self.cursor = len(transcript)
-        return None
+        from invocations import WIZARD_PROMPT_EVENT
+        if WIZARD_PROMPT_EVENT not in self.pending:
+            return None
+        prompt_output, self.pending = self.pending.split(WIZARD_PROMPT_EVENT, 1)
+        visible = self._normalize_redraws(prompt_output)
+        if self.position >= len(self.expectations):
+            raise RuntimeError(f"unexpected wizard prompt {visible!r}; no prompt was expected")
+        pattern, answer = self.expectations[self.position]
+        if not pattern.search(visible):
+            raise RuntimeError(
+                f"unexpected wizard prompt {visible!r}; expected prompt {pattern.pattern!r}")
+        self.position += 1
+        return answer + "\n"
 
     @staticmethod
     def _normalize_redraws(output: str) -> str:
@@ -557,22 +569,6 @@ class OrderedPromptResponder:
         if line:
             rows.append(line)
         return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", "\n".join(rows)).strip()
-
-    def on_idle(self, transcript: str, child_alive: bool) -> str | None:
-        if not child_alive or not self.expectations:
-            return None
-        visible = self._normalize_redraws(self.pending)
-        if not visible:
-            return None
-        if self.position >= len(self.expectations):
-            raise RuntimeError(f"unexpected wizard output tail {visible!r}; no prompt was expected")
-        pattern, answer = self.expectations[self.position]
-        if not pattern.search(visible):
-            raise RuntimeError(
-                f"unexpected wizard output tail {visible!r}; expected prompt {pattern.pattern!r}")
-        self.position += 1
-        self.pending = ""
-        return answer + "\n"
 
     def finish(self) -> None:
         missing = [pattern.pattern for pattern, _ in self.expectations[self.position:]]
@@ -678,8 +674,9 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = "", acces
         if apply_started is None and re.search(r"Applying installation", new_text, re.I):
             apply_started = time.monotonic()
         return prompt_responder(transcript)
-    result, duration = run_pty_command(command, env=env, timeout=900, on_output=respond,
-                                       on_idle=prompt_responder.on_idle,
+    prompt_env = dict(env)
+    prompt_env["KB_JOURNEY_WIZARD_PROMPT_EVENTS"] = "1"
+    result, duration = run_pty_command(command, env=prompt_env, timeout=900, on_output=respond,
                                        monitor_process=_sample_pnpm_rss_for_run,
                                        start_new_session=True, raise_on_timeout=False)
     prompt_responder.finish()
@@ -1741,7 +1738,7 @@ def _main(*, update_variant_runner=None):
             installer_case_report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 f"installer-cases-{mode}.json")
             installer_case_journey.write_json(installer_case_report)
-    elif CASE_JOURNEY.selected_claims:
+    elif outer_graph.selection_active:
         for group in ISOLATED_FIXTURE_GROUPS:
             key = f"isolated-fixture:{group.__name__}"
             outer_graph.flow(group.__name__, key, "journey.installer-fixture", lambda: None,
