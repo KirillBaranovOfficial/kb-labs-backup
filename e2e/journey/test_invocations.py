@@ -197,6 +197,29 @@ class PtyInvocationTest(unittest.TestCase):
 
 
 class ReportRedactionTest(unittest.TestCase):
+    def test_typed_command_failure_attaches_redacted_product_named_log_files(self):
+        with tempfile.TemporaryDirectory(prefix="journey-failure-log-evidence-") as temp:
+            root = Path(temp)
+            log = root / "host.log"
+            secret = "journey-log-secret-value"
+            log.write_text(f"startup failed\nTOKEN={secret}\n")
+            env = {"KB_JOURNEY_API_TOKEN": secret}
+            payload = {"ok": False, "error": {"code": "KB_HOST_START_FAILED",
+                                                "details": {"log": str(log)}}}
+            runner = lambda *_args, **_kwargs: subprocess.CompletedProcess(
+                args=["kb-create", "start"], returncode=1,
+                stdout=json.dumps(payload), stderr="")
+
+            with invocations.invocation_context(step_id="S-001.1", report_root=root):
+                invocations.run_command(["kb-create", "start", "--json"], env=env, runner=runner)
+
+            call = json.loads((root / "invocations/calls.jsonl").read_text())
+            self.assertEqual(len(call["invocation_evidence"]), 1)
+            evidence = root / call["invocation_evidence"][0]
+            self.assertIn("startup failed", evidence.read_text())
+            self.assertNotIn(secret, evidence.read_text())
+            self.assertEqual(evidence.read_text().splitlines()[-1], "TOKEN=[REDACTED]")
+
     def test_short_secret_values_only_redact_structural_secret_fields(self):
         with tempfile.TemporaryDirectory(prefix="journey-short-redaction-") as temp:
             target = Path(temp) / "report.json"

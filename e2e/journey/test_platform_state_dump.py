@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from platform_state_dump import (MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDumpOnce,
                                  _write_auth_state_probe, archive_service_logs, dump_platform_state,
-                                 failure_dump_environment)
+                                 )
 from journey_resources import installer_record_path
 from test_install_layout import create_test_install_container, move_test_platform_into_container
 
@@ -147,23 +147,13 @@ class PlatformStateDumpTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="journey-dump-test-") as temporary:
             root = Path(temporary)
             home = root / "home"
-            launcher_logs = home / ".kb" / "launcher"
-            launcher_logs.mkdir(parents=True)
-            (launcher_logs / "host.log").write_text(
+            host_state = root / "relocated-host-state"
+            host_state.mkdir()
+            (host_state / "host.log").write_text(
                 "\n".join(f"host-line-{number}" for number in range(500))
-                + '\n{"traceId":"trace-project-start","startupOutput":"module initialization detail"}\n'
-                + "apiKey: launcher-secret\n"
+                + "\napiKey: launcher-secret\n"
             )
-            probe_logs = launcher_logs / "probe"
-            probe_logs.mkdir()
-            (probe_logs / "host.log").write_text(
-                "\n".join(f"probe-line-{number}" for number in range(500))
-                + "\nGATEWAY_INTERNAL_SECRET=probe-secret\n"
-            )
-            (probe_logs / "launcher.log").write_text(
-                '{"event":"host.start.failed","cause":"readiness check failed",'
-                '"details":{"stderrTail":"API_TOKEN=probe-launcher-secret"}}\n'
-            )
+            (host_state / "launcher.log").write_text("GATEWAY_INTERNAL_SECRET=probe-secret\n")
             platform = root / "platform"
             reports = root / "reports"
             binaries = root / "bin"
@@ -204,7 +194,14 @@ class PlatformStateDumpTests(unittest.TestCase):
             )
             kb.chmod(0o755)
             launcher = binaries / "kb-create"
-            launcher.write_text("#!/bin/sh\necho '{\"token\":\"launcher-secret\"}'\nexit 9\n")
+            launcher.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = doctor ]; then\n"
+                f"  echo '{{\"ok\":true,\"data\":{{\"retention\":{{\"hostState\":\"{host_state}\"}}}}}}'\n"
+                "  exit 0\n"
+                "fi\n"
+                "echo '{\"token\":\"launcher-secret\"}'\nexit 9\n"
+            )
             launcher.chmod(0o755)
             move_test_platform_into_container(platform)
             snapshots = installer_record_path(platform, "snapshots")
@@ -255,49 +252,44 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertIn("exit_code: 7", (destination / "kb-marketplace-plugins-project.txt").read_text())
             self.assertIn("exit_code: 8", (destination / "kb-command-diagnostic.txt").read_text())
             self.assertIn("exit_code: 9", (destination / "kb-create-status.txt").read_text())
-            launcher_tail = (destination / "launcher-logs/host.log").read_text()
+            launcher_tail = (destination / "installer-host-state/host.log").read_text()
             self.assertIn("host-line-499", launcher_tail)
-            self.assertIn('"traceId":"trace-project-start"', launcher_tail)
-            self.assertIn('"startupOutput":"module initialization detail"', launcher_tail)
             self.assertNotIn("host-line-99\n", launcher_tail)
             self.assertNotIn("launcher-secret", launcher_tail)
-            probe_tail_path = destination / "launcher-logs/probe/host.log"
-            self.assertTrue(probe_tail_path.is_file())
-            probe_tail = probe_tail_path.read_text()
-            self.assertIn("probe-line-499", probe_tail)
-            self.assertNotIn("probe-line-99\n", probe_tail)
-            self.assertNotIn("probe-secret", probe_tail)
-            probe_launcher_tail = (destination / "launcher-logs/probe/launcher.log").read_text()
-            self.assertIn("host.start.failed", probe_launcher_tail)
-            self.assertNotIn("probe-launcher-secret", probe_launcher_tail)
+            self.assertIn("GATEWAY_INTERNAL_SECRET", (destination / "installer-host-state/launcher.log").read_text())
+            self.assertNotIn("launcher-secret", launcher_tail)
+            self.assertNotIn("probe-secret", (destination / "installer-host-state/launcher.log").read_text())
             self.assertIn("First failure:", (destination / "index.md").read_text())
             self.assertIn("Journey git revision: abc123def", (destination / "index.md").read_text())
             size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
             self.assertLessEqual(size, MAX_DUMP_BYTES)
 
-    def test_runner_failure_dump_uses_main_launcher_home_after_fixture_commands(self):
+    def test_dump_reports_missing_product_directed_host_logs(self):
         with tempfile.TemporaryDirectory(prefix="journey-main-home-dump-") as temporary:
             root = Path(temporary)
-            main_home, fixture_home = root / "main-home", root / "fixture-home"
-            launcher_log = main_home / ".kb/launcher/probe/launcher.log"
-            launcher_log.parent.mkdir(parents=True)
-            launcher_log.write_text('{"event":"host.start.failed","cause":"probe failed"}\n')
-            fixture_home.mkdir()
-            namespace = {
-                "ACTIVE_MAIN_ENV": None,
-                "LAST_COMMAND_ENV": {"HOME": str(fixture_home)},
-            }
-            command_env = failure_dump_environment(
-                namespace["ACTIVE_MAIN_ENV"], namespace["LAST_COMMAND_ENV"],
-                {"HOME": str(main_home), "KB_JOURNEY_HOME_LABEL": "main"},
-            )
             platform = root / "platform"
             create_test_install_container(platform)
-            destination = dump_platform_state(
-                platform, root / "reports", mode="local", front="agent",
-                scenario="explore", variant="default", first_failure="runner failed", env=command_env,
+            host_state = root / "moved-host-state"
+            host_state.mkdir()
+            binaries = root / "bin"
+            binaries.mkdir()
+            launcher = binaries / "kb-create"
+            launcher.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = doctor ]; then\n"
+                f"  echo '{{\"ok\":true,\"data\":{{\"retention\":{{\"hostState\":\"{host_state}\"}}}}}}'\n"
+                "  exit 0\n"
+                "fi\nexit 0\n"
             )
-            self.assertTrue((destination / "launcher-logs/probe/launcher.log").is_file())
+            launcher.chmod(0o755)
+            destination = dump_platform_state(
+                platform, root / "reports", mode="local", front="agent", scenario="explore",
+                variant="default", first_failure="runner failed",
+                env={**os.environ, "HOME": str(root), "PATH": str(binaries)},
+            )
+            index = (destination / "index.md").read_text()
+            self.assertIn("Doctor reported hostState", index)
+            self.assertIn("contains no log files", index)
 
     def test_dump_includes_project_workflow_records_and_daemon_logs(self):
         with tempfile.TemporaryDirectory(prefix="journey-workflow-dump-test-") as temporary:

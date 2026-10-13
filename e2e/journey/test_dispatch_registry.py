@@ -1,6 +1,7 @@
 """Keep selected-case routing complete for every active journey claim."""
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from select_from_cases import (read_coverage_result, selection_from_coverage,
                                _case_declarations,
                                _step_declaration, _source_step_declarations,
                                _imported_journey_sources, selectors_from_coverage,
+                               selected_fixture_groups, registered_group_selected,
                                validate_dependency_declarations,
                                lint_direct_module_global_state_handoffs,
                                validate_runner_conditions, validate_journey_environment_reads,
@@ -31,6 +33,77 @@ def helper_read(memory, key):
 
 
 class DispatchRegistryTests(unittest.TestCase):
+    def test_installer_fixture_groups_follow_selected_claim_ownership_and_prerequisites(self):
+        from installer_case_steps import (run_apply_scenario_step, run_doctor_root_isolation_step,
+                                          run_installer_case_steps, run_invalid_request_step,
+                                          run_missing_project_request_steps)
+        root = Path(__file__).resolve().parents[2]
+        groups = (run_doctor_root_isolation_step, run_installer_case_steps,
+                  run_apply_scenario_step, run_invalid_request_step,
+                  run_missing_project_request_steps)
+        smoke_claims = {"PC-001.2", "PC-002.3", "PC-002.8"}
+
+        smoke_groups = selected_fixture_groups(groups, smoke_claims, "service-local:explore", root)
+        self.assertEqual(smoke_groups, ())
+        self.assertEqual(selected_fixture_groups(groups, set(), "service-local:explore", root), groups)
+        selected = selected_fixture_groups(groups, {"PC-001.4"}, "agent:commit", root)
+        self.assertEqual(selected, (run_installer_case_steps,))
+
+    def test_selected_claim_prerequisite_selects_its_fixture_group(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory(prefix="journey-fixture-registry-") as temporary:
+            root = Path(temporary)
+            source_path = root / "fixture_group.py"
+            source_path.write_text(
+                "def fixture_producer(journey):\n"
+                "    journey.step('fixture producer', 'test', lambda: None, "
+                "runners=['agent:commit'])\n"
+                "def selected_consumer(journey):\n"
+                "    journey.step('selected consumer', 'test', lambda: None, "
+                "cases=['TEST-CLAIM.1'], requires=('step:fixture producer',), "
+                "runners=['agent:commit'])\n"
+            )
+            namespace = {"__file__": str(source_path)}
+            exec(compile(source_path.read_text(), str(source_path), "exec"), namespace)
+            group = namespace["fixture_producer"]
+            with patch("select_from_cases.RUNNERS", {
+                    "agent:commit": SimpleNamespace(journey_sources=("fixture_group.py",))}):
+                self.assertTrue(registered_group_selected(group, {"TEST-CLAIM.1"}, "agent:commit", root))
+
+    def test_fixture_selection_gate_uses_registry_answer(self):
+        from installer_case_steps import run_installer_case_steps
+        with patch("select_from_cases.registered_group_selected", return_value=False) as owns_claim:
+            selected = selected_fixture_groups(
+                (run_installer_case_steps,), {"PC-001.4"}, "agent:commit", Path(__file__).resolve().parents[2])
+        self.assertEqual(selected, ())
+        owns_claim.assert_called_once_with(
+            run_installer_case_steps, {"PC-001.4"}, "agent:commit", Path(__file__).resolve().parents[2])
+
+    def test_fixture_execution_and_host_cycle_are_inside_resolved_selection_gate(self):
+        root = Path(__file__).resolve().parents[2]
+        source = ast.parse((root / "e2e/journey/runner.py").read_text())
+        gate = next(node for node in ast.walk(source)
+                    if isinstance(node, ast.If) and isinstance(node.test, ast.Name)
+                    and node.test.id == "selected_groups")
+        calls = [node for node in ast.walk(gate) if isinstance(node, ast.Call)]
+        lifecycle_commands = {
+            call.args[0].elts[1].value
+            for call in calls
+            if isinstance(call.func, ast.Name) and call.func.id == "run"
+            and call.args and isinstance(call.args[0], ast.List)
+            and len(call.args[0].elts) > 1 and isinstance(call.args[0].elts[1], ast.Constant)
+        }
+        self.assertEqual(lifecycle_commands.intersection({"stop", "start"}), {"stop", "start"})
+        self.assertTrue(any(isinstance(call.func, ast.Attribute) and call.func.attr == "step"
+                            and call.args and isinstance(call.args[0], ast.Constant)
+                            and call.args[0].value == "restart the main host after isolated installer fixtures"
+                            for call in calls))
+        self.assertTrue(any(isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+                            and any(isinstance(comparator, ast.Name)
+                                    and comparator.id == "selected_groups"
+                                    for comparator in node.test.comparators)
+                            for node in ast.walk(gate)))
+
     def test_registered_memory_rejects_helper_read_without_prerequisite(self):
         from service_steps import JourneyMemory, JourneyContractError
         memory = JourneyMemory({"setup": ((), ("project",))})
