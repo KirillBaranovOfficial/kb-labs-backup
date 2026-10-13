@@ -442,6 +442,10 @@ class FlowGraph:
         start = len(self.journey.steps)
         try:
             outcome = action()
+        except MissingJourneyState as error:
+            self.journey.step(name, capability, lambda: f"BLOCKED: {error}", cases=case_ids, role=role,
+                              runners=runners)
+            outcome = None
         except Exception as error:
             self._write_traceback(group, name)
             self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__, role=role)
