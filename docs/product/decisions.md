@@ -4,6 +4,16 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-12
+
+### Bootstrap credentials stop being startup credentials after first-admin completion
+
+The bootstrap password only creates an unfinished first-admin account. Once the account is active, later user-driven password changes are independent of bootstrap configuration; the Gateway does not compare the stored bootstrap secret against an active user's credential. After the installer records completion, the host receives no bootstrap-password environment variable. Readiness counts an admin only through an operational configured identity provider. Cases: S-222.
+
+### Gateway readiness follows configured identity methods
+
+An active tenant administrator is usable when a configured login method can authenticate that user: the configured email-password provider needs its credential, while a configured redirect provider resolves an authenticated provider email to an active user in the tenant. A secured install with no bootstrap email does not require a bootstrap-completion marker; Gateway readiness and `kb-create doctor` report the configured sign-in path. Cases: S-100, S-222.
+
 ## 2026-10-11
 
 ### The chosen install directory is the complete installation container
@@ -41,14 +51,21 @@ S-050.5, S-050.6, S-223.
 
 ## 2026-10-09
 
-### Secured install creates and discloses the first administrator credential once
+### First-administrator disclosure is recorded after a successful result write
 
 A secured install with a first-admin email and no supplied password generates a
-password, seeds the administrator, and displays the email and password once in
-human output or once in the JSON install result. The password lives in the
-platform secret store and is absent from the plan, receipt, logs, and later
-commands. `kb-create doctor --recover` remains for account recovery after
-installation. Cases: PC-001, S-040, S-100.
+password and seeds the administrator. The installer records disclosure only
+after a result containing that credential was successfully written. Failures
+before the result write leave the credential eligible for the next successful
+install or apply result. A crash after the write and before the marker can show
+the credential again on retry; avoiding that duplicate is less important than
+avoiding lockout when the only generated password was never delivered. The
+password remains in the platform secret store and is absent from the plan,
+receipt, logs, and diagnostics. If the disclosure marker exists or the password
+is absent, a later result gives the administrator's email and the exact
+stop/recovery/start sequence without a password. `kb-create doctor --recover`
+remains for account recovery after installation. Cases: PC-001, S-040, S-100,
+S-222.
 
 ### Marketplace integrity pins may bypass registry freshness for the pinned artifact
 
@@ -668,3 +685,20 @@ selection is refused before apply so the user can authenticate and register it
 explicitly. Duplicate registration of the same canonical path returns the
 existing record unless a conflicting name was requested. Update never
 registers projects. Cases: S-124.14, S-187.9–S-187.12, S-224.1.
+
+## 2026-10-12
+
+### Project identity is owned by the registry
+
+The installer preserves the selected project path as an absolute lexical
+spelling and sends it to the Gateway project registry. The registry owns the
+project ID and canonical path; the receipt stores the selected spelling and
+both registry values, and success output uses the registry identity. On a
+later install/apply, a non-empty selection matches only when its absolute
+lexical spelling equals the receipt's selected or canonical path. Other
+spellings, including aliases that resolve to the same directory, are refused
+before apply and can be settled through `kb project add` and `kb project show`.
+Receipt schema v3 requires this identity for projects selected by the prior
+install; older receipt schemas are unavailable and must be reinstalled with the
+current launcher rather than guessed or migrated. Cases: S-187.10–S-187.12,
+S-224.3.

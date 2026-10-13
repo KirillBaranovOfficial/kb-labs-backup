@@ -107,7 +107,7 @@ func TestEnsureGeneratedInternalSecretBindsEveryProtectedService(t *testing.T) {
 		t.Fatal(err)
 	}
 	environment, err := store.Environment()
-	if err != nil || environment["GATEWAY_INTERNAL_SECRET"] != value {
+	if err != nil || environment.Values["GATEWAY_INTERNAL_SECRET"] != value {
 		t.Fatalf("service environment = %#v, err=%v", environment, err)
 	}
 }
@@ -246,6 +246,43 @@ func TestBindEnvironmentsIsIdempotentAndSkipsWhatIsNotThere(t *testing.T) {
 	// gateway.bootstrap.password was never provided: no alias is invented for it.
 	if len(got) != 2 || got["gateway.jwtSecret"] != "jwt-value" || got["GATEWAY_JWT_SECRET"] != "jwt-value" {
 		t.Fatalf("stored keys = %v", got)
+	}
+}
+
+// case: S-222.11
+func TestEnvironmentOmitsBootstrapPasswordAfterCompletion(t *testing.T) {
+	store := Store{PlatformRoot: t.TempDir()}
+	if err := store.Put("gateway.bootstrap.password", "one-time-bootstrap-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("GATEWAY_BOOTSTRAP_ADMIN_PASSWORD", "one-time-bootstrap-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("gateway.jwtSecret", strings.Repeat("j", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("GATEWAY_JWT_SECRET", strings.Repeat("j", 64)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Environment()
+	if err != nil || before.Values["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"] != "one-time-bootstrap-password" {
+		t.Fatalf("pre-completion environment = %#v, err=%v", before, err)
+	}
+	if err := store.Put(BootstrapCompleted, "provisioned"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.Environment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := after.Values["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"]; present {
+		t.Fatalf("completed host environment still contains bootstrap password: %#v", after)
+	}
+	if after.Values["GATEWAY_JWT_SECRET"] != strings.Repeat("j", 64) {
+		t.Fatalf("completion removed an unrelated Gateway secret: %#v", after)
+	}
+	if password, present, err := store.Get("gateway.bootstrap.password"); err != nil || !present || password != "one-time-bootstrap-password" {
+		t.Fatalf("completion deleted stored bootstrap secret: present=%v err=%v", present, err)
 	}
 }
 

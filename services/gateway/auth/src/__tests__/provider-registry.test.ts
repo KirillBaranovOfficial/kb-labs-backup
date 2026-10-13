@@ -18,6 +18,7 @@ const makeProvider = (id: string, kind: 'password' | 'redirect' = 'password'): I
     return {
       id,
       kind,
+      getOperationalState: async () => ({ state: 'operational', checkedAt: Date.now() }),
       authenticate: async () => ({ ok: true, email: 'x@y.z' }),
       startAuthorization: async () => ({ redirectUrl: 'https://idp/authorize' }),
     };
@@ -25,6 +26,7 @@ const makeProvider = (id: string, kind: 'password' | 'redirect' = 'password'): I
   return {
     id,
     kind,
+    getOperationalState: async () => ({ state: 'operational', checkedAt: Date.now() }),
     authenticate: async () => ({ ok: true, email: 'x@y.z' }),
   };
 };

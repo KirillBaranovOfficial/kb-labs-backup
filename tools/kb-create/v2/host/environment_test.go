@@ -15,14 +15,15 @@ import (
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/secrets"
 )
 
 func TestHostReceivesPlatformSecretsAndSpecEnvironment(t *testing.T) {
 	dump := filepath.Join(t.TempDir(), "env.txt")
 	f := newRunner(t, 10, 5, "-dump-env", dump)
 	f.runner.Spec.Env = map[string]string{"FROM_SPEC": "spec", "SHARED": "spec-wins"}
-	f.runner.SecretEnv = func() (map[string]string, error) {
-		return map[string]string{"GATEWAY_JWT_SECRET": "s3cret", "SHARED": "secret"}, nil
+	f.runner.SecretEnv = func() (secrets.Environment, error) {
+		return secrets.Environment{Values: map[string]string{"GATEWAY_JWT_SECRET": "s3cret", "SHARED": "secret"}}, nil
 	}
 	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatal(err)
@@ -41,7 +42,7 @@ func TestHostReceivesPlatformSecretsAndSpecEnvironment(t *testing.T) {
 
 func TestSecretEnvironmentFailureStopsTheStart(t *testing.T) {
 	f := newRunner(t, 10, 5)
-	f.runner.SecretEnv = func() (map[string]string, error) { return nil, errors.New("store unreadable") }
+	f.runner.SecretEnv = func() (secrets.Environment, error) { return secrets.Environment{}, errors.New("store unreadable") }
 	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
 		t.Fatalf("code %s", code)
@@ -60,7 +61,9 @@ func TestRunToolUsesHostEnvironmentAndReturnsItsExitStatus(t *testing.T) {
 	}
 	f := newRunner(t, 10, 5)
 	f.runner.Spec.WorkingDir = root
-	f.runner.SecretEnv = func() (map[string]string, error) { return map[string]string{"GATEWAY_JWT_SECRET": "s3cret"}, nil }
+	f.runner.SecretEnv = func() (secrets.Environment, error) {
+		return secrets.Environment{Values: map[string]string{"GATEWAY_JWT_SECRET": "s3cret"}}, nil
+	}
 	var out bytes.Buffer
 	code, err := f.runner.RunTool(context.Background(), Tool{Command: script, Args: []string{"--base"}}, []string{"--email", "a@b.c"}, strings.NewReader("hunter2\n"), &out, &out)
 	if err != nil || code != 3 {

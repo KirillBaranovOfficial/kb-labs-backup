@@ -374,7 +374,8 @@ func Verify(source Catalog) error {
 	}
 	if !strings.EqualFold(expected, actual) {
 		return &indexGateError{gate: "digest", expected: expected, actual: actual,
-			err: contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index digest does not match its content.", indexInvalidHint, nil)}
+			err: contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index digest does not match its content.", indexInvalidHint,
+				fmt.Errorf("release index digest mismatch"))}
 	}
 	return nil
 }

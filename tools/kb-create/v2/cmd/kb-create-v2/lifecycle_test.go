@@ -23,6 +23,7 @@ import (
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/lifecycle"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
@@ -316,11 +317,19 @@ func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 	}
 }
 
+// case: S-222.7
 func TestStatusReportsTheHostAndTheInstalledVersion(t *testing.T) {
 	inst := newInstallation(t)
 	payload, code, raw := invoke(t, operationTestSetup{Operation: "status", PlatformRoot: inst.root, JSON: true})
-	if code != 0 || payload["host"].(map[string]any)["state"] != "stopped" {
+	if code != 0 || payload["host"].(map[string]any)["state"] != "stopped" || payload["bootstrapCompleted"] != false {
 		t.Fatalf("status: %d %s", code, raw)
+	}
+	if err := (secrets.Store{PlatformRoot: platformRootForTest(t, inst.root)}).Put(secrets.BootstrapCompleted, "provisioned"); err != nil {
+		t.Fatal(err)
+	}
+	payload, code, raw = invoke(t, operationTestSetup{Operation: "status", PlatformRoot: inst.root, JSON: true})
+	if code != 0 || payload["bootstrapCompleted"] != true {
+		t.Fatalf("status after bootstrap completion: %d %s", code, raw)
 	}
 }
 

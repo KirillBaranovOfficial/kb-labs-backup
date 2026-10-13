@@ -147,6 +147,12 @@ func callDescriptor(cmd *cobra.Command, descriptor operationDescriptor, values m
 			command.Printf("%s\n", human)
 		}
 	}
+	if applyResult, ok := output.(applyCommandResult); ok {
+		return result.ReturnWithEmitter(output, func(write func() error) *diag.Diag {
+			_, failure := emitFirstAdminResult(applyResult, descriptor.Name, write)
+			return failure
+		})
+	}
 	return result.Return(output)
 }
 
@@ -239,7 +245,14 @@ func withFirstAdmin(message string, credential *firstAdminCredential) string {
 	if credential == nil {
 		return message
 	}
-	return fmt.Sprintf("%s\nFirst administrator credentials (shown once):\n  Email: %s\n  Password: %s", message, credential.Email, credential.Password)
+	switch credential.State {
+	case firstAdminDisclosed:
+		return fmt.Sprintf("%s\nFirst administrator credentials (shown once):\n  Email: %s\n  Password: %s", message, credential.Email, credential.Password)
+	case firstAdminPreviouslyDisclosed:
+		return fmt.Sprintf("%s\n%s\n  1. `%s`\n  2. `%s`\n  3. `%s`", message, credential.Notice, credential.StopCommand, credential.RecoveryCommand, credential.StartCommand)
+	default:
+		return fmt.Sprintf("%s\nFirst administrator result is incomplete. Run `kb-create doctor --recover --email %s --generate --yes` to recover access.", message, credential.Email)
+	}
 }
 
 func renderStatus(value any) string {

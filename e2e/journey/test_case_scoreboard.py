@@ -80,7 +80,7 @@ class CaseScoreboardTests(unittest.TestCase):
         catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
         self.assertEqual(release_claims_for_case("S-109", catalog), [])
         self.assertEqual(release_claims_for_case("S-100", catalog),
-                         ["S-100.1", "S-100.2", "S-100.3", "S-100.4"])
+                         ["S-100.1", "S-100.2", "S-100.3", "S-100.4", "S-100.5"])
 
     def test_playwright_tags_and_skip_are_claimed(self):
         self.write_json("studio-playwright-secured.json", {"suites": [{"specs": [{
@@ -133,6 +133,26 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertEqual(scoreboard["selection"], ["S-001.1"])
         self.assertEqual(case["status"], "Unclaimed")
         self.assertIn("Partial run", render_markdown(scoreboard))
+
+    def test_split_partial_journey_records_keep_selection_without_claiming_missing_rows(self):
+        selection = ["S-001.1", "S-001.2"]
+        self.write_json("installer-case-local-agent-explore-default.json", {
+            "case_run": {"mode": "local", "partial": True, "selection": selection,
+                         "claims": [{"claimId": "S-001.1", "status": "PASS"}]},
+            "steps": [],
+        })
+        self.write_json("service-local.json", {
+            "case_run": {"mode": "local", "partial": True, "selection": selection,
+                         "claims": [{"claimId": "S-001.2", "status": "PASS"}]},
+            "steps": [],
+        })
+
+        scoreboard = build_scoreboard(self.reports, self.catalog, ["local"])
+        case = next(item for item in scoreboard["cases"] if item["id"] == "S-001")
+        self.assertTrue(scoreboard["partial"])
+        self.assertEqual(scoreboard["selection"], selection)
+        self.assertEqual(case["status"], "Unclaimed")
+        self.assertEqual(case["claimedCount"], 0)
 
     def test_delta_reports_new_and_regressed_fully_green_cases(self):
         before, after = self.root / "before", self.root / "after"

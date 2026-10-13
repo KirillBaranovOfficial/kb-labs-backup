@@ -12,6 +12,7 @@
 
 export {
   runDocumentDatabaseContract,
+  assertConditionalSingleDocumentUpdate,
   type ContractFactory as DocumentDatabaseContractFactory,
 } from './document-database.contract.js';
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from unittest.mock import patch
 from dispatch_registry import RUNNERS, runners_for_source
 from hermetic_cli import run_hermetic_cli
 from select_from_cases import (read_coverage_result, selection_from_coverage,
+                               _case_declarations,
                                _step_declaration, _source_step_declarations,
                                _imported_journey_sources, selectors_from_coverage,
                                validate_dependency_declarations,
@@ -181,14 +183,60 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertEqual(resolved["prerequisiteSteps"], ["candidate provenance"])
 
     def test_installed_smoke_claims_resolve_to_one_service_runner_per_mode(self):
-        coverage = self._coverage()
-        for mode, selector in (("local", "service-local:explore"),
-                               ("secured", "service-secured:explore")):
-            with self.subTest(mode=mode), patch.dict(os.environ, {"KB_JOURNEY_ONLY": selector}):
-                resolved = selection_from_coverage(coverage, "PC-001.2,PC-002.3,PC-002.8")
-            self.assertEqual(resolved["runners"], [selector])
-            self.assertEqual(resolved["prerequisiteSteps"],
-                             ["candidate provenance", "registered project setup"])
+        root = Path(__file__).resolve().parents[2]
+        smoke_source = (root / "e2e/journey/smoke.sh").read_text(encoding="utf-8")
+        smoke_selection = re.search(r'^export KB_JOURNEY_CASES="([^"]+)"$', smoke_source, re.MULTILINE)
+        self.assertIsNotNone(smoke_selection)
+        selected_claims = set(smoke_selection.group(1).split(","))
+        registrations: dict[str, list[tuple[str, dict]]] = {}
+        runner_sources = {}
+        for selector, runner in RUNNERS.items():
+            if not runner.service_profile:
+                continue
+            runner_sources[selector] = _imported_journey_sources(set(runner.journey_sources), root)
+        for source in set().union(*runner_sources.values()):
+            declarations_by_signature = {}
+            for declaration in _case_declarations(source, root).values():
+                signature = (declaration["name"], tuple(declaration.get("cases") or ()),
+                             tuple(declaration["requires"]), tuple(declaration["runners"]))
+                declarations_by_signature[signature] = declaration
+            for declaration in declarations_by_signature.values():
+                for claim_id in declaration.get("cases") or ():
+                    registrations.setdefault(claim_id, []).append((source, declaration))
+
+        for mode in ("local", "secured"):
+            mode_branch = re.search(
+                rf"(?ms)^  {mode}\)\s+export KB_JOURNEY_ONLY=\"([^\"]+)\"",
+                smoke_source,
+            )
+            self.assertIsNotNone(mode_branch)
+            selector = mode_branch.group(1)
+            runner = RUNNERS[selector]
+            declarations = _source_step_declarations(runner_sources[selector], root)
+            claim_prerequisites = set()
+            for claim_id in selected_claims:
+                with self.subTest(mode=mode, claim=claim_id):
+                    owners = []
+                    for source, declaration in registrations.get(claim_id, []):
+                        declared_runners = declaration["runners"] or runners_for_source(source, mode)
+                        if selector in declared_runners and source in runner_sources[selector]:
+                            owners.append((source, declaration))
+                    self.assertEqual(len(owners), 1, f"{claim_id} must have one registration on {selector}")
+                    claim_source, declaration = owners[0]
+                    self.assertTrue(declaration["requires"], f"{claim_id} must declare its setup producer")
+                    for prerequisite_name in declaration["requires"]:
+                        prerequisite = declarations[prerequisite_name]
+                        self.assertTrue(prerequisite["sources"].intersection(runner_sources[selector]))
+                        claim_prerequisites.add(prerequisite_name)
+
+            self.assertEqual(
+                {claim_id for claim_id in registrations if any(
+                    selector in (declaration["runners"] or runners_for_source(source, mode))
+                    for source, declaration in registrations[claim_id]
+                    if source in runner_sources[selector])}.intersection(selected_claims),
+                selected_claims,
+            )
+            self.assertTrue(claim_prerequisites)
 
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         results = []

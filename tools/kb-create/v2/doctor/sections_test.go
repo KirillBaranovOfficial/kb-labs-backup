@@ -278,6 +278,17 @@ func TestPlatformSectionIsHealthyWhenEverythingReportsUp(t *testing.T) {
 	}
 }
 
+// case: S-222.9
+func TestPlatformSectionDoesNotFlagUsableSSOAdminWithoutBootstrapConfig(t *testing.T) {
+	status := gatewayDouble(t,
+		`{"ok":true,"data":{"upstreams":{"state":{"status":"up"}}}}`,
+		`{"ok":true,"data":{"ok":true,"authEnabled":true,"activeAdmins":1,"bootstrap":"not-configured","issues":[]}}`)
+	section := InspectPlatform(context.Background(), status, nil, nil)
+	if !check(t, section, "auth").OK {
+		t.Fatalf("usable SSO-only admin should not be reported broken: %+v", section)
+	}
+}
+
 func TestPlatformSectionDoesNotRequireAdminWhenAuthIsDisabled(t *testing.T) {
 	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{"marketplace":{"status":"up"}}}}`,
 		`{"ok":true,"data":{"ok":true,"authEnabled":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in"},{"code":"jwt_secret_default","severity":"error","message":"shared secret"}]}}`)

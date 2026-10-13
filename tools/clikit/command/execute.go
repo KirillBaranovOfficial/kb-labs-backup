@@ -168,7 +168,11 @@ func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
 			}
 			human = string(encoded)
 		}
-		result.Render(stdout, result.Success(human, data), mode)
+		if failure := result.EmitReturned(err, func() error {
+			return result.Render(stdout, result.Success(human, data), mode)
+		}); failure != nil {
+			return result.RenderDiag(stderr, stderr, failure, result.ModeHuman)
+		}
 		return diag.ExitOK
 	}
 	if err != nil {
