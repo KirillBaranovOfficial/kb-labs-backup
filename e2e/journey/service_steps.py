@@ -432,9 +432,41 @@ class FlowGraph:
 
     def state_value(self, state: str) -> Any:
         result = self.states.get(state)
-        if not result or result.get("passed") is not True or "value" not in result:
-            raise MissingJourneyState(state)
+        if not result:
+            raise MissingJourneyState(state, "state probe has not run")
+        if result.get("passed") is not True:
+            raise MissingJourneyState(state, str(result.get("evidence") or "state probe failed"))
+        if "value" not in result:
+            raise MissingJourneyState(state, "state probe passed without recording its value")
         return result["value"]
+
+    def state_value_if_passed(self, state: str) -> Any | None:
+        """Read an optional state at a runner boundary without raising on a failed probe."""
+        result = self.states.get(state)
+        if result is None or result.get("passed") is not True or "value" not in result:
+            return None
+        return result["value"]
+
+    def state_failure(self, state: str) -> str:
+        """Describe why a state value is unavailable at a runner boundary."""
+        result = self.states.get(state)
+        if result is None:
+            return "state probe has not run"
+        if result.get("passed") is not True:
+            return str(result.get("evidence") or "state probe failed")
+        if "value" not in result:
+            return "state probe passed without recording its value"
+        return "state probe passed with an unusable value"
+
+    def invalidate_state(self, state: str, *, group: str, step: str, evidence: str) -> None:
+        """Mark shared state unavailable after a declared mutating journey step."""
+        self.states[state] = {
+            "passed": False,
+            "evidence": evidence,
+            "group": group,
+            "step": step,
+            "claim": "no case claim",
+        }
 
     def _blocker(self, group: str) -> tuple[str, dict[str, object]] | None:
         for state in self.dependencies.get(group, ()):
@@ -456,6 +488,22 @@ class FlowGraph:
                 return self.journey.skipped(f"state probe: {state}", "journey.state")
             if state not in self.needed_states and not after_flow:
                 return self.journey.skipped(f"state probe: {state}", "journey.state")
+
+        blocker = self._blocker(group)
+        if blocker:
+            blocked_state, evidence = blocker
+            message = (f"blocked by state {blocked_state}: {evidence.get('evidence', 'state probe failed')} "
+                       f"(last mutated by {evidence.get('group', 'journey')}/"
+                       f"{evidence.get('step', 'unknown')} ({evidence.get('claim', 'no case claim')}))")
+            result = self.journey.blocked(f"state probe: {state}", "journey.state", message)
+            self.states[state] = {
+                "passed": False,
+                "evidence": message,
+                "group": group,
+                "step": step,
+                "claim": "no case claim",
+            }
+            return result
 
         def checked() -> str | None:
             try:

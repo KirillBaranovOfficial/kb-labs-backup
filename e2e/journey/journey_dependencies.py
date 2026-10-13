@@ -10,6 +10,7 @@ from dataclasses import dataclass
 FLOW_GRAPH_STATE_PRODUCERS = {
     "host-running": "host",
     "project-registered": "project",
+    "session": "auth",
 }
 
 

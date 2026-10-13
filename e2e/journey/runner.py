@@ -205,16 +205,20 @@ def export_graph_state_to_child_environment(graph: FlowGraph, env: dict[str, str
     env["KB_JOURNEY_STATES"] = json.dumps(graph.states)
 
 
-def project_registration_from_state(graph: FlowGraph) -> dict[str, str]:
-    project = graph.state_value("project-registered")
+def project_registration_from_state(graph: FlowGraph) -> dict[str, str] | None:
+    project = graph.state_value_if_passed("project-registered")
+    if project is None:
+        return None
     if (not isinstance(project, dict) or not isinstance(project.get("id"), str) or not project["id"]
             or not isinstance(project.get("root"), str) or not project["root"]):
-        raise RuntimeError("project-registered state passed without a project id and root")
+        return None
     return project
 
 
-def project_b_fixture_from_state(graph: FlowGraph) -> dict[str, str]:
-    fixtures = graph.state_value("fixtures-installed")
+def project_b_fixture_from_state(graph: FlowGraph) -> dict[str, str] | None:
+    fixtures = graph.state_value_if_passed("fixtures-installed")
+    if fixtures is None:
+        return None
     if (not isinstance(fixtures, dict) or not isinstance(fixtures.get("projectBId"), str)
             or not fixtures["projectBId"] or not isinstance(fixtures.get("projectBRoot"), str)
             or not fixtures["projectBRoot"]):
@@ -839,6 +843,18 @@ def restart_host(launcher: str, env: dict[str, str]) -> str:
     return "http://127.0.0.1:4000"
 
 
+def restart_shared_host(graph: FlowGraph, launcher: str, env: dict[str, str], step: str) -> str:
+    """Declare the shared host mutation and re-establish its health state."""
+    graph.invalidate_state("host-running", group="host", step=step,
+                          evidence=f"{step} restarted the shared platform host")
+    restarted_url = restart_host(launcher, env)
+    probe_platform_state(graph, env, launcher, mutator_group="host", mutator_step=step,
+                         include_installed=False, include_version=False)
+    if graph.states.get("host-running", {}).get("passed") is not True:
+        raise RuntimeError(f"shared platform host was not healthy after {step}: {graph.state_failure('host-running')}")
+    return restarted_url
+
+
 def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     receipt = PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json"
     hidden_receipt = receipt.with_name("receipt.journey-hidden.json")
@@ -1394,6 +1410,13 @@ def _main(*, update_variant_runner=None):
     if not update_journey and outer_graph.selection_active and not update_group_selected:
         outer_graph.skip_unselected("platform update journey", "platform.update")
     if update_journey:
+        update_gate = outer_graph.flow(
+            "platform update prerequisites", "update", "platform.update", lambda: None,
+            cases=outer_graph.groups.get("update", {}).get("cases", ()),
+            record_empty_success=False,
+        )
+        update_journey = update_gate != "BLOCKED"
+    if update_journey:
         if outer_graph.states.get("project-registered") is None:
             establish_project_registration(outer_graph, PROJECT, env)
             capture_case_failure()
@@ -1636,6 +1659,10 @@ def _main(*, update_variant_runner=None):
 
         installer_case_journey = None
         if selected_groups:
+            outer_graph.invalidate_state(
+                "host-running", group="host", step="isolated installer fixture host cycle",
+                evidence="isolated installer fixtures stop and restart the shared platform host",
+            )
             stopped, _ = run([launcher, "stop", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
             if stopped.returncode != 0:
                 raise RuntimeError(f"could not stop the main host before isolated installer fixtures: {stopped.stderr or stopped.stdout}")
@@ -1705,6 +1732,11 @@ def _main(*, update_variant_runner=None):
                                       "journey.orchestration", lambda: restart_failure)
                     if body_error is None:
                         raise RuntimeError(restart_failure)
+                else:
+                    probe_platform_state(outer_graph, env, launcher,
+                                         mutator_group="host",
+                                         mutator_step="isolated installer fixture host cycle",
+                                         include_installed=False, include_version=False)
         if installer_case_journey is not None:
             installer_case_report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 f"installer-cases-{mode}.json")
@@ -1752,7 +1784,7 @@ def _main(*, update_variant_runner=None):
             establish_project_registration(outer_graph, PROJECT, env)
         capture_case_failure()
         project_result = project_registration_from_state(outer_graph)
-        project_id = project_result["id"]
+        project_id = project_result["id"] if project_result is not None else ""
         def lint_workflow_fixture() -> str | None:
             lint, _ = run(kb_login_shell(["workflow", "lint", "--json"]),
                           env=service_env, cwd=PROJECT, timeout=120)
@@ -1777,12 +1809,16 @@ def _main(*, update_variant_runner=None):
             if mode == "local":
                 run_local_auth_steps("http://127.0.0.1:4000")
             else:
+                def restart_auth_host() -> str:
+                    mutation = "admin invite, reset, and restart persistence"
+                    return restart_shared_host(outer_graph, launcher, env, mutation)
+
                 run_secured_auth_steps(
                     "http://127.0.0.1:4000",
                     service_env["KB_JOURNEY_ADMIN_EMAIL"],
                     service_env["KB_JOURNEY_ADMIN_PASSWORD"],
                     "auth-reset-member@example.test",
-                    lambda: restart_host(launcher, env),
+                    restart_auth_host,
                 )
             return None
 
@@ -1844,17 +1880,35 @@ def _main(*, update_variant_runner=None):
                                  env=env, cwd=PROJECT, timeout=90)
                 if removed.returncode != 0:
                     raise RuntimeError(f"could not prepare the no-project recovery case: {' '.join(removed.stdout.split())[-400:]}")
-                try:
-                    run_bootstrap_recovery_steps(
-                        launcher, str(PLATFORM), service_env["KB_JOURNEY_ADMIN_EMAIL"],
-                        service_env["KB_JOURNEY_ADMIN_PASSWORD"], recovered_password, env, run,
-                        on_valid_password=store_recovered_password,
-                    )
-                finally:
-                    added, _ = run(kb_command([ "project", "add", "--json"], executable=str(BIN / "kb")),
-                                   env=env, cwd=PROJECT, timeout=90)
-                    if added.returncode != 0:
-                        raise RuntimeError(f"could not restore the journey project after recovery: {' '.join(added.stdout.split())[-400:]}")
+                mutation = "bootstrap administrator recovery"
+                outer_graph.invalidate_state(
+                    "project-registered", group="auth", step=mutation,
+                    evidence="the recovery case removed the shared journey project",
+                )
+                outer_graph.invalidate_state(
+                    "session", group="auth", step=mutation,
+                    evidence="bootstrap recovery revokes every saved platform session",
+                )
+                outer_graph.invalidate_state(
+                    "host-running", group="auth", step=mutation,
+                    evidence="the recovery case stops and restarts the shared platform host",
+                )
+                run_bootstrap_recovery_steps(
+                    launcher, str(PLATFORM), service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"], recovered_password, env, run,
+                    on_valid_password=store_recovered_password,
+                )
+                from service_runner import restore_secured_cli_login
+                restore_secured_cli_login(BIN / "kb", service_env)
+                outer_graph.probe_state("session", "auth", "fresh admin CLI login", lambda: None)
+                probe_platform_state(outer_graph, env, launcher, mutator_group="host",
+                                     mutator_step=mutation, include_installed=False,
+                                     include_version=False)
+                added, _ = run(kb_command([ "project", "add", "--json"], executable=str(BIN / "kb")),
+                               env=service_env, cwd=PROJECT, timeout=90)
+                if added.returncode != 0:
+                    raise RuntimeError(f"could not restore the journey project after recovery: {' '.join(added.stdout.split())[-400:]}")
+                establish_project_registration(outer_graph, PROJECT, service_env)
 
             auth_journey.step(
                 "bootstrap administrator recovery", "auth.accounts",
@@ -1873,6 +1927,7 @@ def _main(*, update_variant_runner=None):
                     "JourneyReplacement123!",
                 ),
                 cases=["S-103.1", "S-103.2", "S-103.3", "S-103.4", "S-103.5"],
+                requires=("state:host-running", "state:project-registered", "state:session"),
                 runners=("service-secured:explore",),
             )
             auth_journey.step(
@@ -1883,6 +1938,7 @@ def _main(*, update_variant_runner=None):
                     service_env["KB_JOURNEY_ADMIN_PASSWORD"],
                 ),
                 cases=["S-104.7"],
+                requires=("state:host-running", "state:project-registered", "state:session"),
                 runners=("service-secured:explore",),
             )
             auth_journey.step(
@@ -1893,6 +1949,7 @@ def _main(*, update_variant_runner=None):
                     service_env["KB_JOURNEY_ADMIN_PASSWORD"],
                 ),
                 cases=["S-105.1", "S-105.2", "S-105.3", "S-105.4"],
+                requires=("state:host-running", "state:project-registered", "state:session"),
                 runners=("service-secured:explore",),
             )
             auth_journey.step(
@@ -1901,24 +1958,28 @@ def _main(*, update_variant_runner=None):
                                             email="auth-reset-member@example.test",
                                             password="JourneyReplacement123!",
                                             base_url="http://127.0.0.1:4000"),
-                cases=["S-041.6"], runners=("service-secured:explore",),
+                cases=["S-041.6"], requires=("state:host-running", "state:project-registered", "state:session"),
+                runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "member reset-link command returns the shared permission envelope", "auth.accounts",
                 lambda: run_cli_auth_forbidden(str(BIN / "kb"), service_env),
-                cases=["S-041.9"], runners=("service-secured:explore",),
+                cases=["S-041.9"], requires=("state:host-running", "state:project-registered", "state:session"),
+                runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "change password and manage browser sessions", "auth.accounts",
                 lambda: run_password_and_session_steps(
                     "http://127.0.0.1:4000", "auth-reset-member@example.test", "JourneyReplacement123!"),
                 cases=["S-101.1", "S-101.2", "S-101.3", "S-102.1", "S-102.2"],
+                requires=("state:host-running", "state:project-registered", "state:session"),
                 runners=("service-secured:explore",),
             )
             auth_journey.step(
                 "CLI logout clears saved session", "auth.accounts",
                 lambda: run_cli_logout_steps(str(BIN / "kb"), service_env),
-                cases=["S-102.3"], runners=("service-secured:explore",),
+                cases=["S-102.3"], requires=("state:host-running", "state:project-registered", "state:session"),
+                runners=("service-secured:explore",),
             )
         auth_result = auth_journey.write_json(auth_report)
         if auth_result.status != "PASS":
@@ -1979,26 +2040,28 @@ def _main(*, update_variant_runner=None):
             or bool(outer_graph.selected_groups & {"workflow", "studio"})
             or outer_graph.group_selected("update-variants")
         )
+        project_b_id = ""
+        project_b_root_value = ""
         if fixture_state_needed:
             fixture_state = outer_graph.states.get("fixtures-installed", {})
             if fixture_state.get("passed") is not True:
-                fail(f"project B fixture handoff failed: {fixture_state.get('evidence', 'fixtures-installed state is missing')}")
+                evidence = str(fixture_state.get("evidence") or "state probe has not run")
+                fail(f"project B fixture handoff blocked by state fixtures-installed: {evidence}")
                 block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
                                                      "workflow", "analytics", "studio"])
-                _run_final_uninstall(outer_graph, env, launcher)
-                return finalize_run(False)
-            project_b_id = ""
-            project_b_root_value = ""
-            if project_b_consumers_selected:
+            elif project_b_consumers_selected:
                 fixture_projects = project_b_fixture_from_state(outer_graph)
-                project_b_id = fixture_projects["projectBId"]
-                project_b_root_value = fixture_projects["projectBRoot"]
-        else:
-            project_b_id = ""
-            project_b_root_value = ""
+                if fixture_projects is None:
+                    fail("project B fixture handoff blocked by state fixtures-installed: "
+                         + outer_graph.state_failure("fixtures-installed"))
+                    block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
+                                                         "workflow", "analytics", "studio"])
+                else:
+                    project_b_id = fixture_projects["projectBId"]
+                    project_b_root_value = fixture_projects["projectBRoot"]
         workflow_journey = Journey(mode, f"workflow-{mode}")
         def restart_for_workflow_history() -> None:
-            restart_host(launcher, env)
+            restart_shared_host(outer_graph, launcher, env, "workflow history checkpoint")
 
         workflow_claims = ([f"S-002.{step}" for step in range(1, 7)]
                            + [f"S-008.{step}" for step in range(1, 5)]
@@ -2019,8 +2082,14 @@ def _main(*, update_variant_runner=None):
         fixture_state = outer_graph.states.get("fixtures-installed", {})
         if fixture_state.get("passed") is True:
             fixture_projects = project_b_fixture_from_state(outer_graph)
-            project_b_root_value = fixture_projects["projectBRoot"]
-            project_b_id = fixture_projects["projectBId"]
+            if fixture_projects is None:
+                fail("project B fixture handoff blocked by state fixtures-installed: "
+                     + outer_graph.state_failure("fixtures-installed"))
+                block_outer_dependents(outer_graph, ["marketplace-fixtures", "adapters", "plugin-author",
+                                                     "workflow", "analytics", "studio"])
+            else:
+                project_b_root_value = fixture_projects["projectBRoot"]
+                project_b_id = fixture_projects["projectBId"]
         if project_b_root_value and project_b_id:
             project_b_fixture_root = Path(project_b_root_value)
             prepare_workflow_fixtures(project_b_fixture_root)
@@ -2240,6 +2309,14 @@ def _main(*, update_variant_runner=None):
 
     update_variants_selected = outer_graph.group_selected("update-variants")
     if update_variants_selected:
+        variant_gate = outer_graph.flow(
+            "platform update variant prerequisites", "update-variants", "platform.update",
+            lambda: None,
+            cases=outer_graph.groups.get("update-variants", {}).get("cases", ()),
+            record_empty_success=False,
+        )
+        update_variants_selected = variant_gate != "BLOCKED"
+    if update_variants_selected:
         try:
             candidate_base = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/"
             variant_indexes = {}
@@ -2264,7 +2341,7 @@ def _main(*, update_variant_runner=None):
             variant_request = HOME / "platform-update-variant-request.json"
             active_receipt = json.loads((PLATFORM_CURRENT / ".kb/v2/receipt.json").read_text())
             variant_request.write_text(json.dumps(active_receipt["plan"]["request"]) + "\n")
-            project_b_path = Path(project_b_fixture_from_state(outer_graph)["projectBRoot"])
+            project_b_path = Path(project_b_root_value)
             def variant_run(args, cwd):
                 result, _ = run(args, env=service_env, cwd=cwd, timeout=1200)
                 return result
