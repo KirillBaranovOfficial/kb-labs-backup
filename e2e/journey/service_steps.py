@@ -290,8 +290,6 @@ class Journey:
 
     def result(self) -> JourneyResult:
         first_step = next((step for step in self.steps if step.status == "FAIL"), None)
-        if first_step is None:
-            first_step = next((step for step in self.steps if step.status == "BLOCKED"), None)
         first = _step_dict(first_step) if first_step is not None else None
         failed = any(step.status == "FAIL" for step in self.steps)
         blocked = any(step.status == "BLOCKED" for step in self.steps)
@@ -318,7 +316,7 @@ class Journey:
 
     def write_json(self, path: str | Path) -> JourneyResult:
         result = self.result()
-        write_report_json(path, asdict(result))
+        write_report_json(path, asdict(result), env=os.environ)
         return result
 
 
@@ -398,6 +396,12 @@ class FlowGraph:
         declared_sources = set(owner_sources) | set(self.groups.get(group, {}).get("claim_sources", ()))
         return bool(self.journey.selected_sources.intersection(declared_sources))
 
+    def state_value(self, state: str) -> Any:
+        result = self.states.get(state)
+        if not result or result.get("passed") is not True or "value" not in result:
+            raise MissingJourneyState(state)
+        return result["value"]
+
     def _blocker(self, group: str) -> tuple[str, dict[str, object]] | None:
         for state in self.dependencies.get(group, ()):
             result = self.states.get(state)
@@ -409,7 +413,8 @@ class FlowGraph:
         return None
 
     def probe_state(self, state: str, group: str, step: str, check: Callable[[], str | None],
-                    *, after_flow: str | None = None) -> StepResult:
+                    *, after_flow: str | None = None,
+                    value: Callable[[], Any] | None = None) -> StepResult:
         """Run and record an explicit state precondition probe."""
         if self.selection_active:
             tied_flow = self.journey.flows.get(after_flow) if after_flow else None
@@ -427,13 +432,16 @@ class FlowGraph:
 
         probe_name = f"state probe: {state}"
         result = self.journey.step(probe_name, "journey.state", checked, role="lifecycle")
-        self.states[state] = {
+        state_result = {
             "passed": result.status == "PASS",
             "evidence": "probe passed" if result.status == "PASS" else result.message,
             "group": group,
             "step": step,
             "claim": "no case claim",
         }
+        if result.status == "PASS" and value is not None:
+            state_result["value"] = value()
+        self.states[state] = state_result
         return result
 
     def _write_traceback(self, group: str, name: str) -> None:
@@ -480,6 +488,7 @@ class FlowGraph:
         producer = self._group_produces_needed_state(group)
         selected_by_flow_rule = selected_owner or prerequisite or producer
         if (self.selection_active and not selected_by_flow_rule):
+            print(f"SKIPPED {name}: not selected", flush=True)
             self.journey.skipped(name, capability)
             self.journey.record_flow(name, "SKIPPED", "not selected")
             return "SKIPPED"

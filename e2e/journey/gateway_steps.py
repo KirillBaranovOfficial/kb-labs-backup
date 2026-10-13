@@ -127,7 +127,7 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
                     "@kb-labs/adapters-openai", "--json"], "S-017.1", runner)
     journey.step("configure platform OpenAI adapter", "gateway", lambda: (
         None if adapter.returncode == 0 else "could not select @kb-labs/adapters-openai at platform scope"
-    ), cases=["S-017.1", "S-018.1"], requires=("step:registered project setup",))
+    ), cases=["S-017.1", "S-018.1"])
 
     secret_ref = _cli(["kb", "config", "set", "--scope", "platform",
                        "platform.adapterOptions.llm.apiKey", "${OPENAI_API_KEY}", "--json"], "S-017.2", runner)
