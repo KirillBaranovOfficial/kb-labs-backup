@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,11 +16,12 @@ import (
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
-const registrySchema = 1
+const registrySchema = 2
 
 type Root struct {
-	PlatformRoot string `json:"platformRoot"`
-	URL          string `json:"url"`
+	PlatformRoot   string `json:"platformRoot"`
+	InstallationID string `json:"installationId"`
+	URL            string `json:"url"`
 }
 
 type file struct {
@@ -48,11 +50,11 @@ func (r Registry) Read() ([]Root, error) {
 		return nil, fmt.Errorf("installed Gateway root index %s is invalid: %w", r.Path, err)
 	}
 	for index, root := range value.Roots {
-		if !filepath.IsAbs(root.PlatformRoot) || !validOrigin(root.URL) {
+		if !filepath.IsAbs(root.PlatformRoot) || !validOrigin(root.URL) || !validInstallationID(root.InstallationID) {
 			return nil, fmt.Errorf("installed Gateway root index %s contains an invalid root or URL", r.Path)
 		}
 		for _, previous := range value.Roots[:index] {
-			if SameInstallation(previous.PlatformRoot, root.PlatformRoot) {
+			if previous.InstallationID == root.InstallationID {
 				return nil, fmt.Errorf("installed Gateway root index %s contains duplicate root %s", r.Path, root.PlatformRoot)
 			}
 		}
@@ -83,10 +85,17 @@ func (r Registry) AllocateWithKnown(platformRoot, defaultURL, explicitURL string
 	if err != nil {
 		return "", err
 	}
+	installationID, err := allocationInstallationID(platformRoot)
+	if err != nil {
+		return "", err
+	}
 	roots = append(roots, known...)
 	claimed := make(map[string]struct{}, len(roots))
 	for _, root := range roots {
-		if SameInstallation(root.PlatformRoot, platformRoot) {
+		if !validInstallationID(root.InstallationID) || !validOrigin(root.URL) {
+			return "", fmt.Errorf("known Gateway root %s has no validated installation identity or origin", root.PlatformRoot)
+		}
+		if root.InstallationID == installationID {
 			return root.URL, nil
 		}
 		claimed[root.URL] = struct{}{}
@@ -122,8 +131,15 @@ func (r Registry) ClaimantAmong(platformRoot, gatewayURL string, known []Root) (
 	if err != nil {
 		return Root{}, false, err
 	}
+	installationID, err := allocationInstallationID(platformRoot)
+	if err != nil {
+		return Root{}, false, err
+	}
 	for _, root := range append(roots, known...) {
-		if !SameInstallation(root.PlatformRoot, platformRoot) && root.URL == gatewayURL {
+		if !validInstallationID(root.InstallationID) || !validOrigin(root.URL) {
+			return Root{}, false, fmt.Errorf("known Gateway root %s has no validated installation identity or origin", root.PlatformRoot)
+		}
+		if root.InstallationID != installationID && root.URL == gatewayURL {
 			return root, true, nil
 		}
 	}
@@ -140,10 +156,15 @@ func (r Registry) RegisterMany(values []Root) error {
 		if !filepath.IsAbs(root.PlatformRoot) || !validOrigin(root.URL) {
 			return fmt.Errorf("platform root and Gateway URL must be absolute and valid")
 		}
-		root.PlatformRoot = filepath.Clean(root.PlatformRoot)
+		canonicalRoot, installationID, err := validatedPlatformIdentity(root.PlatformRoot)
+		if err != nil {
+			return err
+		}
+		root.PlatformRoot = canonicalRoot
+		root.InstallationID = installationID
 		replaced := false
 		for index := range byRoot {
-			if SameInstallation(byRoot[index].PlatformRoot, root.PlatformRoot) {
+			if byRoot[index].InstallationID == root.InstallationID {
 				byRoot[index] = root
 				replaced = true
 				break
@@ -160,34 +181,50 @@ func (r Registry) Register(platformRoot, gatewayURL string) error {
 	if !filepath.IsAbs(platformRoot) || !validOrigin(gatewayURL) {
 		return fmt.Errorf("platform root and Gateway URL must be absolute and valid")
 	}
+	canonicalRoot, installationID, err := validatedPlatformIdentity(platformRoot)
+	if err != nil {
+		return err
+	}
 	roots, err := r.Read()
 	if err != nil {
 		return err
 	}
-	root := filepath.Clean(platformRoot)
 	updated := false
 	for index := range roots {
-		if SameInstallation(roots[index].PlatformRoot, root) {
+		if roots[index].InstallationID == installationID {
+			roots[index].PlatformRoot = canonicalRoot
 			roots[index].URL = gatewayURL
 			updated = true
 			break
 		}
 	}
 	if !updated {
-		roots = append(roots, Root{PlatformRoot: root, URL: gatewayURL})
+		roots = append(roots, Root{PlatformRoot: canonicalRoot, InstallationID: installationID, URL: gatewayURL})
 	}
 	return r.write(roots)
 }
 
 func (r Registry) Remove(platformRoot string) error {
+	installationID, err := validatedInstallationID(platformRoot)
+	if err != nil {
+		return err
+	}
+	return r.RemoveInstallation(installationID)
+}
+
+// RemoveInstallation releases the Gateway row for an identity captured while
+// its installation was still validated, including after uninstall removed it.
+func (r Registry) RemoveInstallation(installationID string) error {
+	if !validInstallationID(installationID) {
+		return fmt.Errorf("installation identity is invalid")
+	}
 	roots, err := r.Read()
 	if err != nil {
 		return err
 	}
-	root := filepath.Clean(platformRoot)
 	filtered := roots[:0]
 	for _, entry := range roots {
-		if !SameInstallation(entry.PlatformRoot, root) {
+		if entry.InstallationID != installationID {
 			filtered = append(filtered, entry)
 		}
 	}
@@ -195,26 +232,60 @@ func (r Registry) Remove(platformRoot string) error {
 }
 
 // SameInstallation reports whether two validated platform paths belong to the
-// same installation identity. It also accepts an exact path match so Remove
-// can delete the registry row after uninstall has removed that installation.
+// same installation identity.
 func SameInstallation(left, right string) bool {
-	if filepath.Clean(left) == filepath.Clean(right) {
-		return true
-	}
-	leftLayout, err := versionroot.ForPlatformPath(left)
-	if err != nil || leftLayout.Validate() != nil {
-		return false
-	}
-	rightLayout, err := versionroot.ForPlatformPath(right)
-	if err != nil || rightLayout.Validate() != nil {
-		return false
-	}
-	leftID, err := versionroot.InstallationIDForPath(left)
+	leftID, err := validatedInstallationID(left)
 	if err != nil {
 		return false
 	}
-	rightID, err := versionroot.InstallationIDForPath(right)
+	rightID, err := validatedInstallationID(right)
 	return err == nil && leftID == rightID
+}
+
+func validatedInstallationID(platformRoot string) (string, error) {
+	_, installationID, err := validatedPlatformIdentity(platformRoot)
+	return installationID, err
+}
+
+// A path with no installed layout is a new allocation request, not an
+// installation identity. It may allocate around existing rows, but cannot
+// claim that any row belongs to it until the installation validates.
+func allocationInstallationID(platformRoot string) (string, error) {
+	layout, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return "", err
+	}
+	activeRoot, err := layout.ExistingPlatformRoot()
+	if errors.Is(err, versionroot.ErrPlatformNotInstalled) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return validatedInstallationID(activeRoot)
+}
+
+func validatedPlatformIdentity(platformRoot string) (string, string, error) {
+	layout, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return "", "", err
+	}
+	if err := layout.Validate(); err != nil {
+		return "", "", err
+	}
+	installationID, err := versionroot.InstallationIDForPath(platformRoot)
+	if err != nil {
+		return "", "", err
+	}
+	return filepath.Clean(layout.PlatformRoot()), installationID, nil
+}
+
+func validInstallationID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func (r Registry) write(roots []Root) error {

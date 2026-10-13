@@ -35,6 +35,64 @@ type EnsureResult struct {
 	Owner  string `json:"owner"`
 }
 
+type ClassificationKind string
+
+const (
+	ClassificationAbsent            ClassificationKind = "absent"
+	ClassificationOwned             ClassificationKind = "owned"
+	ClassificationOtherInstallation ClassificationKind = "other-installation"
+	ClassificationForeign           ClassificationKind = "foreign"
+)
+
+// Classification is the single ownership view used by apply, uninstall, and
+// doctor. Target is the link text when LinkIsSymlink is true; Owner and the
+// private identity are populated only for a validated installation target.
+type Classification struct {
+	Kind           ClassificationKind
+	Link           string
+	Target         string
+	Owner          string
+	LinkIsSymlink  bool
+	installationID string
+}
+
+func Classify(launcher, platformRoot string) (Classification, error) {
+	link := Path(launcher)
+	var requested installationOwner
+	requestedValid := false
+	if platformRoot != "" {
+		requested, _ = installation(platformRoot)
+		requestedValid = requested.id != ""
+	}
+	info, err := os.Lstat(link)
+	if os.IsNotExist(err) {
+		return Classification{Kind: ClassificationAbsent, Link: link}, nil
+	}
+	if err != nil {
+		return Classification{}, err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return Classification{Kind: ClassificationForeign, Link: link}, nil
+	}
+	target, err := os.Readlink(link)
+	if err != nil {
+		return Classification{}, err
+	}
+	classification := Classification{Kind: ClassificationForeign, Link: link, Target: target, LinkIsSymlink: true}
+	owner, valid := installationForTarget(target)
+	if !valid {
+		return classification, nil
+	}
+	classification.Owner = owner.root
+	classification.installationID = owner.id
+	if platformRoot == "" || (requestedValid && owner.id == requested.id) {
+		classification.Kind = ClassificationOwned
+	} else {
+		classification.Kind = ClassificationOtherInstallation
+	}
+	return classification, nil
+}
+
 func Ensure(launcher, platformRoot string) (EnsureResult, error) {
 	path := Path(launcher)
 	requested, err := installation(platformRoot)
@@ -46,36 +104,41 @@ func Ensure(launcher, platformRoot string) (EnsureResult, error) {
 	if _, err := os.Stat(cliEntry); err != nil {
 		return EnsureResult{}, failed(cliEntry, "cannot read the installed kb command", err)
 	}
-	if existing, err := os.Readlink(path); err == nil {
-		owner, valid := installationForTarget(existing)
-		if !valid {
-			return EnsureResult{}, failed(path, fmt.Sprintf("already points to an unverified target %s; inspect it and remove it with %s before installing the kb command", existing, RemoveCommand(path)), nil)
-		}
-		if owner.id != requested.id {
-			if err := ensureTarget(target, cliEntry); err != nil {
-				return EnsureResult{}, err
-			}
-			return EnsureResult{Linked: false, Owner: owner.root}, nil
-		}
+	classification, err := Classify(launcher, platformRoot)
+	if err != nil {
+		return EnsureResult{}, failed(path, "cannot classify the existing kb command", err)
+	}
+	switch classification.Kind {
+	case ClassificationOtherInstallation:
 		if err := ensureTarget(target, cliEntry); err != nil {
 			return EnsureResult{}, err
 		}
-		if existing != target {
+		return EnsureResult{Linked: false, Owner: classification.Owner}, nil
+	case ClassificationForeign:
+		if classification.LinkIsSymlink {
+			return EnsureResult{}, failed(path, fmt.Sprintf("already points to an unverified target %s; inspect it and remove it with %s before installing the kb command", classification.Target, RemoveCommand(path)), nil)
+		}
+		return EnsureResult{}, failed(path, fmt.Sprintf("is an existing file, not a validated kb link; inspect it and remove it with %s before installing the kb command", RemoveCommand(path)), nil)
+	case ClassificationOwned:
+		if err := ensureTarget(target, cliEntry); err != nil {
+			return EnsureResult{}, err
+		}
+		if classification.Target != target {
 			if err := replaceLink(path, target); err != nil {
 				return EnsureResult{}, err
 			}
 		}
 		return EnsureResult{Linked: true, Owner: requested.root}, nil
-	} else if !os.IsNotExist(err) {
-		return EnsureResult{}, failed(path, "cannot inspect the launcher path", err)
+	case ClassificationAbsent:
+		if err := ensureTarget(target, cliEntry); err != nil {
+			return EnsureResult{}, err
+		}
+		if err := os.Symlink(target, path); err != nil {
+			return EnsureResult{}, failed(path, "cannot create the launcher symlink", err)
+		}
+		return EnsureResult{Linked: true, Owner: requested.root}, nil
 	}
-	if err := ensureTarget(target, cliEntry); err != nil {
-		return EnsureResult{}, err
-	}
-	if err := os.Symlink(target, path); err != nil {
-		return EnsureResult{}, failed(path, "cannot create the launcher symlink", err)
-	}
-	return EnsureResult{Linked: true, Owner: requested.root}, nil
+	return EnsureResult{}, failed(path, "the kb command has an unknown ownership classification", nil)
 }
 
 type installationOwner struct {
@@ -115,21 +178,6 @@ func managedRoot(target string) (string, bool) {
 		return "", false
 	}
 	return root, true
-}
-
-func Dangling(launcher string) (string, bool) {
-	target, err := os.Readlink(Path(launcher))
-	if err != nil {
-		return "", false
-	}
-	_, managed := managedRoot(target)
-	if !managed {
-		return "", false
-	}
-	if _, valid := installationForTarget(target); valid {
-		return "", false
-	}
-	return target, true
 }
 
 func replaceLink(path, target string) error {
@@ -196,27 +244,19 @@ type Removal struct {
 }
 
 func PrepareRemoval(launcher, platformRoot string) (Removal, bool, error) {
-	path := Path(launcher)
-	existing, err := os.Readlink(path)
-	if os.IsNotExist(err) {
-		return Removal{}, false, nil
-	}
+	classification, err := Classify(launcher, platformRoot)
 	if err != nil {
-		info, statErr := os.Lstat(path)
-		if statErr == nil && info.Mode()&os.ModeSymlink == 0 {
-			return Removal{}, false, nil
-		}
 		return Removal{}, false, err
 	}
-	requested, err := installation(platformRoot)
-	if err != nil {
-		return Removal{}, false, nil
+	removal, owned := classification.PrepareRemoval()
+	return removal, owned, nil
+}
+
+func (classification Classification) PrepareRemoval() (Removal, bool) {
+	if classification.Kind != ClassificationOwned || !classification.LinkIsSymlink {
+		return Removal{}, false
 	}
-	owner, valid := installationForTarget(existing)
-	if !valid || owner.id != requested.id {
-		return Removal{}, false, nil
-	}
-	return Removal{target: existing, id: owner.id}, true, nil
+	return Removal{target: classification.Target, id: classification.installationID}, true
 }
 
 func (r Removal) Remove(launcher string) error {
@@ -235,30 +275,18 @@ func (r Removal) Remove(launcher string) error {
 }
 
 func Correct(launcher, platformRoot string) bool {
-	requested, err := installation(platformRoot)
-	if err != nil {
-		return false
-	}
-	target, err := os.Readlink(Path(launcher))
-	if err != nil {
-		return false
-	}
-	owner, valid := installationForTarget(target)
-	return valid && owner.id == requested.id
+	classification, err := Classify(launcher, platformRoot)
+	return err == nil && classification.Kind == ClassificationOwned
 }
 
 // Owner returns the installed platform root currently named by the managed kb
 // shim. It does not infer owners from unmanaged files or dangling symlinks.
 func Owner(launcher string) (string, bool) {
-	target, err := os.Readlink(Path(launcher))
-	if err != nil {
+	classification, err := Classify(launcher, "")
+	if err != nil || classification.Kind != ClassificationOwned {
 		return "", false
 	}
-	owner, valid := installationForTarget(target)
-	if !valid {
-		return "", false
-	}
-	return owner.root, true
+	return classification.Owner, true
 }
 
 func RemoveCommand(path string) string { return "`rm -- " + shellQuote(path) + "`" }

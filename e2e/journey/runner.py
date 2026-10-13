@@ -94,12 +94,15 @@ def uninstall_shim_result_matches(payload: dict, install_root: Path) -> bool:
     action = payload.get("shimAction")
     if action == "removed":
         return True
-    return action == "left" and payload.get("shimOwner") == str(install_root.resolve())
+    if action == "left":
+        return payload.get("shimOwner") == str(install_root.resolve())
+    return action == "left-foreign" and not payload.get("shimOwner")
 
 
 def uninstall_human_summary_has_shim_result(output: str, install_root: Path) -> bool:
     return ("The kb command was removed." in output
-            or f"The kb command remains with its owner at {install_root.resolve()}." in output)
+            or f"The kb command remains with its owner at {install_root.resolve()}." in output
+            or "The existing kb command was left untouched because its owner could not be verified." in output)
 
 
 def cleanup_partial_install(graph: FlowGraph, env: dict[str, str], launcher: str) -> None:

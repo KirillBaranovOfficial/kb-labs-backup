@@ -150,10 +150,13 @@ func knownGatewayRoots(executable string) []gateway.Root {
 		if layoutErr != nil {
 			return
 		}
+		if layoutErr = layout.Validate(); layoutErr != nil {
+			return
+		}
 		if active, readErr := receipt.Read(layout.PlatformRoot()); readErr == nil {
-			if url := recordedGatewayURL(active); url != "" {
+			if url := recordedGatewayURL(active); url != "" && active.InstallationID != "" {
 				root := filepath.Clean(layout.PlatformRoot())
-				known[root] = gateway.Root{PlatformRoot: root, URL: url}
+				known[root] = gateway.Root{PlatformRoot: root, InstallationID: active.InstallationID, URL: url}
 			}
 		}
 	}
@@ -290,8 +293,8 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 				if readErr != nil {
 					continue
 				}
-				if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" {
-					known = append(known, gateway.Root{PlatformRoot: candidateRoot, URL: ownerURL})
+				if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" && activeOwner.InstallationID != "" {
+					known = append(known, gateway.Root{PlatformRoot: candidateRoot, InstallationID: activeOwner.InstallationID, URL: ownerURL})
 				}
 			}
 		}

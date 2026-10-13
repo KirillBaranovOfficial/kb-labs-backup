@@ -4,6 +4,21 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-13
+
+### Installation identity is validated at the shared boundary
+
+Gateway allocation, registry claims, and the `kb` shim use the installation ID
+from a validated version-root layout. An absent layout can request a new
+Gateway allocation but cannot identify an existing registry row. Uninstall
+captures its receipt's validated installation ID before removing the layout,
+then releases that row by ID. A shim target that cannot resolve to a validated
+installation is foreign, even when it resembles a managed path; apply and
+doctor leave it untouched and doctor explains the target and the deliberate
+remove and recreate commands. A shim belonging to another validated
+installation also stays in place until the user deliberately switches it.
+Cases: PC-001.10–PC-001.11, S-025.9, S-181.1.
+
 ## 2026-10-12
 
 ### Bootstrap credentials stop being startup credentials after first-admin completion

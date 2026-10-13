@@ -55,6 +55,68 @@ def shim_owner_matches(data: dict, linked: bool, install_root: Path) -> bool:
     return data.get("shim") == {"linked": linked, "owner": str(install_root.resolve())}
 
 
+def verify_installation_spellings(*, launcher: str, index: Path, install_root: Path,
+                                  channel: str, version: str, gateway_url: str,
+                                  installation_id: str,
+                                  shim_owner: Path, run_command: CommandRunner) -> None:
+    """Prove the installed root's aliases keep one receipt, Gateway row, and shim."""
+    install_root = Path(install_root)
+    spellings = (install_root, install_root / "current", active_platform_root(install_root))
+    registry_path = Path(launcher).absolute().parents[2] / ".kb" / "launcher" / "gateway-roots.json"
+    shim_path = Path(launcher).absolute().parent / "kb"
+    before_shim = shim_path.readlink() if shim_path.is_symlink() else None
+    registry_before = registry_path.read_bytes()
+    registry = json.loads(registry_before)
+    matching = [row for row in registry.get("roots", [])
+                if Path(row.get("platformRoot", "")).resolve() == install_root.resolve()]
+    if (len(matching) != 1 or matching[0].get("installationId") != installation_id
+            or matching[0].get("url") != gateway_url):
+        raise RuntimeError(f"Gateway registry does not have one row for {install_root}: {matching}")
+
+    for spelling in spellings:
+        plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(index),
+                                           "--platform-channel", channel, "--policy", "compatible",
+                                           "--platform-root", str(spelling)],
+                             f"{channel} plan through {spelling}").get("plan", {})
+        request = plan.get("request", {})
+        if (request.get("gatewayUrl") != gateway_url
+                or plan.get("serviceGraph", {}).get("platformVersion") != version):
+            raise RuntimeError(f"plan through {spelling} changed installation identity or Gateway allocation: {plan}")
+
+        applied = _json_command(run_command, [launcher, "apply", "--json", "--index", str(index),
+                                              "--platform-channel", channel, "--policy", "compatible",
+                                              "--platform-root", str(spelling)],
+                                f"{channel} apply through {spelling}")
+        applied_receipt = applied.get("receipt", {})
+        if (applied.get("operation") != "apply"
+                or applied_receipt.get("installationId") != installation_id
+                or applied_receipt.get("plan", {}).get("request", {}).get("gatewayUrl") != gateway_url
+                or not shim_owner_matches(applied, linked=False, install_root=shim_owner)):
+            raise RuntimeError(f"apply through {spelling} changed the installation, Gateway, or shim owner: {applied}")
+        receipt_id = applied_receipt.get("id", "")
+
+        status = _json_command(run_command, [launcher, "status", "--json", "--platform-root", str(spelling)],
+                               f"{channel} status through {spelling}")
+        installation = status.get("installation", {})
+        if (installation.get("receiptId") != receipt_id
+                or installation.get("platformChannel") != channel
+                or installation.get("platformVersion") != version):
+            raise RuntimeError(f"status through {spelling} did not resolve the same installation: {status}")
+
+        update = _json_command(run_command, [launcher, "update", "--json", "--index", str(index),
+                                             "--platform-channel", channel, "--policy", "compatible",
+                                             "--platform-root", str(spelling)],
+                               f"{channel} update through {spelling}")
+        if update.get("operation") != "update" or update.get("alreadyUpToDate") is not True:
+            raise RuntimeError(f"update through {spelling} did not preserve the installed selection: {update}")
+
+        if registry_path.read_bytes() != registry_before:
+            raise RuntimeError(f"{channel} {spelling} changed or duplicated the Gateway registry row")
+        after_shim = shim_path.readlink() if shim_path.is_symlink() else None
+        if after_shim != before_shim:
+            raise RuntimeError(f"{channel} {spelling} changed the kb shim target: {before_shim} -> {after_shim}")
+
+
 def assert_foreign_shim_diagnosis(data: dict, human_output: str, link: Path,
                                   target: Path, install_root: Path) -> None:
     finding = next((item for item in data.get("findings", [])
@@ -69,6 +131,23 @@ def assert_foreign_shim_diagnosis(data: dict, human_output: str, link: Path,
         positions = [output.find(fragment) for fragment in required]
         if any(position < 0 for position in positions) or positions != sorted(positions):
             raise RuntimeError(f"doctor did not explain the foreign shim and ordered cleanup/repair: {output}")
+
+
+def assert_other_shim_diagnosis(data: dict, human_output: str, link: Path,
+                                owner_root: Path, install_root: Path) -> None:
+    installation = data.get("installation", {})
+    checks = installation.get("checks", [])
+    check = next((item for item in checks if item.get("id") == "kb-command-shim"), None)
+    if check is None:
+        raise RuntimeError(f"doctor omitted the other-installation shim check: {data}")
+    remove = "'rm' '--' '" + str(link) + "'"
+    repair = f"'kb-create' 'doctor' '--fix' '--platform-root' '{install_root}'"
+    expected = (str(link), "validated installation", str(owner_root.resolve()),
+                "leaves it with that installation", remove, repair)
+    for output in (check.get("hint", ""), human_output):
+        positions = [output.find(fragment) for fragment in expected]
+        if any(position < 0 for position in positions) or positions != sorted(positions):
+            raise RuntimeError(f"doctor did not explain the other shim owner and deliberate switch: {output}")
 
 
 class InstallerHostLifecycle:
@@ -696,7 +775,6 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
         primary_transport_ports = service_transport_ports(primary_plan)
         assert_root_offset(automatic_plan, primary_ports, primary_transport_ports, 100,
                            "secondary receipt")
-
         InstallerHostLifecycle(launcher, run_command).set_running(automatic_root, False)
 
         explicit_installed = False
@@ -735,6 +813,21 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
 
     journey.step("allocate an unused Gateway address by default and honor an explicit override",
                  "platform.install", verify_gateway_addresses, cases=["PC-001.10", "PC-001.16"])
+
+    def verify_primary_spellings() -> None:
+        receipt = json.loads((active_platform_root(primary_root) / ".kb/v2/receipt.json").read_text())
+        plan = receipt.get("plan", {})
+        origin = urlsplit(receipt.get("verification", {}).get("hostHealthUrl", ""))
+        verify_installation_spellings(
+            launcher=launcher, index=stable_index, install_root=primary_root,
+            channel=plan.get("platformChannel", "stable"),
+            version=plan.get("serviceGraph", {}).get("platformVersion", ""),
+            gateway_url=f"{origin.scheme}://{origin.netloc}",
+            installation_id=receipt.get("installationId", ""),
+            shim_owner=primary_root, run_command=run_command)
+
+    journey.step("plan, apply, status, and update the primary install through all root spellings",
+                 "platform.install", verify_primary_spellings, cases=["PC-001.10"])
     return journey
 
 
@@ -1473,9 +1566,22 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         if (not applied.get("receipt") or installation.get("platformChannel") != channel
                 or installation.get("platformVersion") != exact_version):
             raise RuntimeError(f"receipt-backed status did not confirm {channel} {exact_version}")
-
     journey.step("plan, apply, and verify stable install", "platform.install",
                  lambda: channel_plan("stable", stable_index, "s181-stable-root"), cases=["S-181.1"])
+
+    def verify_stable_spellings() -> None:
+        stable_root = platform_root.parent / "s181-stable-root"
+        receipt = json.loads((active_platform_root(stable_root) / ".kb/v2/receipt.json").read_text())
+        plan = receipt["plan"]
+        verify_installation_spellings(
+            launcher=launcher, index=stable_index, install_root=stable_root,
+            channel="stable", version=plan["serviceGraph"]["platformVersion"],
+            gateway_url=plan["request"]["gatewayUrl"],
+            installation_id=receipt["installationId"], shim_owner=platform_root,
+            run_command=run_command)
+
+    journey.step("plan, apply, status, and update stable install through all root spellings", "platform.install",
+                 verify_stable_spellings, cases=["S-181.1"])
     journey.step("plan, apply, and verify canary install", "platform.install",
                  lambda: channel_plan("canary", canary_index, "s181-canary-root"), cases=["S-181.2"])
 
@@ -1526,15 +1632,32 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         if not shim_path.is_symlink() or shim_path.readlink() != platform_root / "current/.kb/v2/bin/kb":
             raise RuntimeError("doctor --fix changed a shim owned by another live platform")
         dangling_root = platform_root.parent / "removed-shim-owner"
-        shim_path.unlink(missing_ok=True)
-        shim_path.symlink_to(dangling_root / "current/.kb/v2/bin/kb")
-        diagnosis = _data(run_command([launcher, "doctor", "--platform-root", str(platform_root), "--json"]),
-                          "doctor dangling shim")
-        human_diagnosis = run_command([launcher, "doctor", "--platform-root", str(platform_root)])
-        assert_foreign_shim_diagnosis(diagnosis, human_diagnosis.stdout, shim_path,
-                                      dangling_root / "current/.kb/v2/bin/kb", platform_root)
+        existing_target = platform_root.parent / "arbitrary-kb-target"
+        existing_target.write_text("user-owned target bytes")
+        missing_target = platform_root.parent / "missing-kb-target"
+        foreign_targets = (existing_target, missing_target, dangling_root / "current/.kb/v2/bin/kb")
+        for target in foreign_targets:
+            shim_path.unlink(missing_ok=True)
+            shim_path.symlink_to(target)
+            diagnosis = _data(run_command([launcher, "doctor", "--platform-root", str(platform_root), "--json"]),
+                              f"doctor foreign shim {target}")
+            human_diagnosis = run_command([launcher, "doctor", "--platform-root", str(platform_root)])
+            assert_foreign_shim_diagnosis(diagnosis, human_diagnosis.stdout, shim_path, target, platform_root)
+            if shim_path.readlink() != target:
+                raise RuntimeError(f"doctor changed foreign shim target {target}")
+        other_target = active_platform_root(secret_root) / ".kb/v2/bin/kb"
+        shim_path.unlink()
+        shim_path.symlink_to(other_target)
+        other_diagnosis = _data(run_command([launcher, "doctor", "--platform-root", str(platform_root), "--json"]),
+                                "doctor shim owned by another validated installation")
+        other_human = run_command([launcher, "doctor", "--platform-root", str(platform_root)])
+        assert_other_shim_diagnosis(other_diagnosis, other_human.stdout, shim_path, secret_root, platform_root)
+        if shim_path.readlink() != other_target:
+            raise RuntimeError("doctor changed the shim owned by another validated installation")
+
+        shim_path.unlink()
         _data(run_command([launcher, "doctor", "--fix", "--platform-root", str(platform_root), "--json"]),
-              "doctor fix dangling shim")
+              "doctor fix absent shim after explicit removal")
         if shim_path.resolve() != (platform_root / "current/.kb/v2/bin/kb").resolve():
             raise RuntimeError("doctor --fix did not link the shim to its requested live platform root")
 

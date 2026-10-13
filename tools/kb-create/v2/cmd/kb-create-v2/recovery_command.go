@@ -88,20 +88,16 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 		return recoveryCommandResult{}, unsupportedPlatformLayout(root, layoutErr)
 	}
 	platformRoot := layout.PlatformRoot()
-	var shimOwner string
-	hasShimOwner := false
+	shimClassification := shim.Classification{Kind: shim.ClassificationAbsent}
 	if input.Executable != "" {
-		shimOwner, hasShimOwner = shim.Owner(input.Executable)
-	}
-	var shimRemoval shim.Removal
-	removeShim := false
-	var err error
-	if input.Executable != "" {
-		shimRemoval, removeShim, err = shim.PrepareRemoval(input.Executable, platformRoot)
-		if err != nil {
-			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the kb command ownership could not be checked before uninstall", "inspect the launcher directory, then retry `"+contracts.ShellCommand("kb-create", "uninstall", "--platform-root", root, "--yes")+"`", err)
+		var classifyErr error
+		shimClassification, classifyErr = shim.Classify(input.Executable, platformRoot)
+		if classifyErr != nil {
+			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the kb command ownership could not be checked before uninstall", "inspect the launcher directory, then retry `"+contracts.ShellCommand("kb-create", "uninstall", "--platform-root", root, "--yes")+"`", classifyErr)
 		}
 	}
+	shimOwner := shimClassification.Owner
+	shimRemoval, removeShim := shimClassification.PrepareRemoval()
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
@@ -143,14 +139,12 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 			return recoveryCommandResult{}, contracts.NewDiag("KB_INSTALL_APPLY_FAILED", "installation was removed but the kb command shim could not be removed", "remove the stale kb link from the launcher directory after checking its target", err)
 		}
 		shimAction = "removed"
-	} else if hasShimOwner {
+	} else if shimClassification.Kind == shim.ClassificationOtherInstallation {
 		shimAction = "left"
-	} else if input.Executable != "" {
-		if _, err := os.Readlink(shim.Path(input.Executable)); err == nil {
-			shimAction = "left-foreign"
-		}
+	} else if shimClassification.Kind == shim.ClassificationForeign {
+		shimAction = "left-foreign"
 	}
-	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Remove(platformRoot); err != nil {
+	if err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).RemoveInstallation(active.InstallationID); err != nil {
 		return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installation was removed but its Gateway address could not be released", "check launcher state permissions, then rerun `kb-create apply` for remaining roots", err)
 	}
 	return recoveryCommandResult{OK: true, Operation: "uninstall", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: false, LogPath: result.LogPath,
