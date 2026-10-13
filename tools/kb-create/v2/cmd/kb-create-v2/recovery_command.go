@@ -19,6 +19,7 @@ import (
 	"github.com/kb-labs/create/v2/logs"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/swap"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -26,14 +27,15 @@ import (
 )
 
 type recoveryCommandResult struct {
-	OK               bool           `json:"ok"`
-	Operation        string         `json:"operation"`
-	Snapshot         map[string]any `json:"snapshot"`
-	HostRestarted    bool           `json:"hostRestarted"`
-	LogPath          string         `json:"logPath"`
-	ShimAction       string         `json:"shimAction,omitempty"`
-	ShimOwner        string         `json:"shimOwner,omitempty"`
-	PreservedEntries []string       `json:"preservedEntries,omitempty"`
+	OK                        bool           `json:"ok"`
+	Operation                 string         `json:"operation"`
+	Snapshot                  map[string]any `json:"snapshot"`
+	HostRestarted             bool           `json:"hostRestarted"`
+	LogPath                   string         `json:"logPath"`
+	ProjectRegistrationNotice string         `json:"projectRegistrationNotice,omitempty"`
+	PreservedEntries          []string       `json:"preservedEntries,omitempty"`
+	ShimAction                string         `json:"shimAction,omitempty"`
+	ShimOwner                 string         `json:"shimOwner,omitempty"`
 }
 
 type uninstallCommandInput struct {
@@ -175,6 +177,9 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 		return recoveryCommandResult{}, asDiag(err)
 	}
 	platformRoot := layout.PlatformRoot()
+	if _, err := (secrets.Store{PlatformRoot: platformRoot}).BootstrapCompleted(); err != nil {
+		return recoveryCommandResult{}, asDiag(err)
+	}
 	if running := refuseForeignHost(root); running != nil {
 		return recoveryCommandResult{}, running
 	}
@@ -217,6 +222,14 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	if failure != nil {
 		return recoveryCommandResult{}, failure
 	}
+	registrationNotice := ""
+	if restored, readErr := receipt.Read(platformRoot); readErr == nil {
+		registrationNotice, err = completedBootstrapProjectNotice(restored, restored.Plan.Request.ProjectRoot, false)
+		if err != nil {
+			return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+				"the project registration state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "rollback", "--platform-root", root)+"`", err)
+		}
+	}
 	if restored, readErr := receipt.Read(platformRoot); readErr == nil && restored.Plan.Host != nil {
 		origin, originErr := gateway.OriginFromHealthURL(restored.Verification.HostHealthURL)
 		if originErr != nil {
@@ -226,7 +239,8 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 			return recoveryCommandResult{}, asDiag(err)
 		}
 	}
-	return recoveryCommandResult{OK: true, Operation: "rollback", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: result.WasRunning, LogPath: result.LogPath}, nil
+	return recoveryCommandResult{OK: true, Operation: "rollback", Snapshot: snapshotSummary(result.Snapshot), HostRestarted: result.WasRunning, LogPath: result.LogPath,
+		ProjectRegistrationNotice: registrationNotice}, nil
 }
 
 type recoveryMutationResult struct {

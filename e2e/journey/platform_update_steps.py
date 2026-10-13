@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
+from bootstrap_secret_steps import password_absence_failure
 from journey_resources import (active_platform_root, current_link_path,
                                parse_shell_commands, snapshot_state_tree)
 from invocations import (decode_ux_error_result, decode_ux_success_result,
@@ -108,6 +109,8 @@ def run_platform_update_steps(
     run_command: CommandRunner = invoke_command,
     verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
     expire_user_session: Callable[[], None] | None = None,
+    bootstrap_password: str | None = None,
+    bootstrap_outside_roots: tuple[tuple[str, Path], ...] = (),
     parent_journey: Journey | None = None,
     allowed_outside_roots: tuple[Path, ...] = (),
 ) -> Journey:
@@ -122,7 +125,7 @@ def run_platform_update_steps(
     root = str(platform_root)
     receipt_path = platform_root / "current/.kb/v2/receipt.json"
     config_paths = [platform_root / "current/.kb/kb.config.jsonc"]
-    secrets_path = platform_root / "current/.kb/v2/secrets.env"
+    secrets_path = platform_root / "current/.kb/v2/secret-state.json"
     snapshot_id = ""
     runtime_log_path = platform_root / "current/.kb/logs/post-update-before-restart.log"
     updated_plan_hash = ""
@@ -567,7 +570,17 @@ def run_platform_update_steps(
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
                  cases=["S-024.3", "S-041.4", "PC-001.14"] if verify_user is not None else ["S-024.3", "PC-001.14"],
                  details=checkpoint_details,
-                 requires=("step:save installed receipt, config, and host status",))
+                 requires=("step:save installed receipt, config, and host status",
+                           "step:roll back to version N with explicit non-TTY confirmation",
+                           "step:reject a missing snapshot without changing the active install"))
+
+    if mode == "secured":
+        journey.step(
+            "verify disclosed bootstrap credential absent after update and rollback", "platform.install",
+            lambda: password_absence_failure(platform_root, bootstrap_outside_roots, bootstrap_password),
+            cases=["S-100.1"], runners=("service-secured:explore",),
+            requires=("step:verify restored receipt, config, host, and project command",),
+        )
 
     if verify_user is not None:
         def login_after_rollback() -> None:
@@ -601,12 +614,8 @@ def run_platform_update_steps(
     journey.step("restart the installed host and run an adapter command", "platform.restart",
                  restart_and_verify_identity, cases=["PC-001.15"])
     def update_secret_policy() -> None:
-        secrets_path = active_platform_root(platform_root) / ".kb/v2/secrets.env"
-        values = {}
-        for line in secrets_path.read_text(encoding="utf-8").splitlines():
-            name, separator, value = line.partition("=")
-            if separator and value:
-                values[name] = value
+        secrets_path = active_platform_root(platform_root) / ".kb/v2/secret-state.json"
+        values = json.loads(secrets_path.read_text(encoding="utf-8")).get("requirements", {})
         if not values:
             raise RuntimeError("the installed journey fixture did not provide a stored secret for update policy")
         secret, original = next(iter(sorted(values.items())))

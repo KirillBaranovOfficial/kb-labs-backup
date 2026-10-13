@@ -21,6 +21,8 @@ from studio_steps import (create_studio_access_tokens, create_studio_environment
                           create_studio_member, run_studio_browser_step)
 from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
+from bootstrap_secret_steps import (register_install_password_absence_step,
+                                    register_supplied_password_absence_step)
 from platform_update_variant_steps import run_platform_update_variant_steps
 from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import (run_doctor_root_isolation_step,
@@ -1114,6 +1116,11 @@ def main(*, update_variant_runner=None):
                         env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
                 if not first_admin_shown_once:
                     fail("secured install did not return exactly one firstAdmin credential with state=disclosed")
+                else:
+                    register_install_password_absence_step(
+                        CASE_JOURNEY, PLATFORM,
+                        (("kb-home", Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb")))),
+                         ("bin", BIN)), password)
             payload = {}
         else:
             try:
@@ -1347,6 +1354,9 @@ def main(*, update_variant_runner=None):
                     run_command=update_command,
                     verify_user=verify_admin,
                     expire_user_session=expire_admin_session,
+                    bootstrap_password=env.get("KB_JOURNEY_ADMIN_PASSWORD") if access_mode == "secured" else None,
+                    bootstrap_outside_roots=(("kb-home", Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb")))),
+                                             ("bin", BIN)),
                     parent_journey=CASE_JOURNEY,
                     allowed_outside_roots=(Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb"))),
                                            Path(BIN / "kb").absolute()),
@@ -1530,11 +1540,14 @@ def main(*, update_variant_runner=None):
                     path = HOME / f"container-{filename}"
                     path.write_bytes(body)
                     container_update_indexes[key] = path
-                return run_installer_case_steps(
+                fixture_journey = run_installer_case_steps(
                     mode=mode, launcher=launcher, stable_index=stable_index,
                     update_index=container_update_indexes["update"],
                     jump_index=container_update_indexes["jump"], canary_index=canary_index,
                     platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command)
+                register_supplied_password_absence_step(
+                    fixture_journey, Path(env["HOME"]), installer_secret)
+                return fixture_journey
 
             fixture_actions = {
                 DOCTOR_ROOT_ISOLATION_GROUP: lambda: run_doctor_root_isolation_step(

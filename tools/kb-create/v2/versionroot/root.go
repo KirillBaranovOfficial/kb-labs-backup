@@ -251,6 +251,26 @@ func (l Layout) SharedRuntimePath(platformPath string) (string, error) {
 // A rename over a symlink replaces the link itself, so atomic writers must
 // write beside its declared target and rename that target instead.
 func AtomicWriteFile(path string, data []byte, mode fs.FileMode) error {
+	return atomicWriteFile(path, data, mode, nil)
+}
+
+// AtomicWriteBoundaryHook runs after each filesystem boundary. It is used by
+// store tests to inject failures while preserving the production write path.
+type AtomicWriteBoundaryHook func(string) error
+
+// AtomicWriteFileWithBoundaryHook writes with the same implementation as
+// AtomicWriteFile and allows callers to inject a failure after a named boundary.
+func AtomicWriteFileWithBoundaryHook(path string, data []byte, mode fs.FileMode, hook AtomicWriteBoundaryHook) error {
+	return atomicWriteFile(path, data, mode, hook)
+}
+
+func atomicWriteFile(path string, data []byte, mode fs.FileMode, hook AtomicWriteBoundaryHook) error {
+	failAt := func(boundary string) error {
+		if hook == nil {
+			return nil
+		}
+		return hook(boundary)
+	}
 	destination, err := atomicWriteDestination(path)
 	if err != nil {
 		return err
@@ -261,7 +281,15 @@ func AtomicWriteFile(path string, data []byte, mode fs.FileMode) error {
 	}
 	temporary := temporaryFile.Name()
 	defer os.Remove(temporary)
+	if err := failAt("temporary-created"); err != nil {
+		_ = temporaryFile.Close()
+		return err
+	}
 	if err := temporaryFile.Chmod(mode); err != nil {
+		_ = temporaryFile.Close()
+		return err
+	}
+	if err := failAt("temporary-chmodded"); err != nil {
 		_ = temporaryFile.Close()
 		return err
 	}
@@ -269,13 +297,26 @@ func AtomicWriteFile(path string, data []byte, mode fs.FileMode) error {
 		_ = temporaryFile.Close()
 		return err
 	}
+	if err := failAt("temporary-written"); err != nil {
+		_ = temporaryFile.Close()
+		return err
+	}
 	if err := errors.Join(temporaryFile.Sync(), temporaryFile.Close()); err != nil {
+		return err
+	}
+	if err := failAt("temporary-synced-and-closed"); err != nil {
 		return err
 	}
 	if err := os.Rename(temporary, destination); err != nil {
 		return err
 	}
-	return syncDirectory(filepath.Dir(destination))
+	if err := failAt("renamed"); err != nil {
+		return err
+	}
+	if err := syncDirectory(filepath.Dir(destination)); err != nil {
+		return err
+	}
+	return failAt("directory-synced")
 }
 
 func atomicWriteDestination(path string) (string, error) {

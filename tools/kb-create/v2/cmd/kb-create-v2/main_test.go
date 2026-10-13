@@ -31,6 +31,7 @@ import (
 	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
@@ -49,6 +50,15 @@ func TestRequestWithGeneratedSecretsAddsOnlyDeclaredGeneratedSecretInputs(t *tes
 	got, changed, err = requestWithGeneratedSecrets(got, artifacts)
 	if err != nil || changed || len(got.SecretInputs) != 1 {
 		t.Fatalf("second request/changed/error = %#v / %v / %v", got, changed, err)
+	}
+}
+
+func TestMissingSecretDiagnosticOmitsEnvironmentVariableName(t *testing.T) {
+	const environment = "KB_TEST_SECRET_ENV_NAME_MUST_NOT_APPEAR"
+	t.Setenv(environment, "")
+	err := populateSecrets(secrets.Store{PlatformRoot: t.TempDir()}, "gateway.apiKey="+environment)
+	if err == nil || strings.Contains(err.Error(), environment) {
+		t.Fatal("missing secret diagnostic exposed its environment-variable name")
 	}
 }
 

@@ -38,7 +38,7 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 		shimState = map[string]any{"linked": classification.Kind == shim.ClassificationOwned, "owner": classification.Owner}
 	}
 	if receiptErr == nil && active.Plan.ServiceGraph.Profile == "client" {
-		completed, err := (secrets.Store{PlatformRoot: platformRoot}).Exists(secrets.BootstrapCompleted)
+		completed, err := (secrets.Store{PlatformRoot: platformRoot}).BootstrapCompleted()
 		if err != nil {
 			return nil, asDiag(err)
 		}
@@ -78,7 +78,7 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	installed := receiptErr == nil
 	payload := map[string]any{"ok": true, "operation": "status", "host": status, "installed": installed,
 		"running": status.State == host.StateRunning, "reachable": status.Healthy}
-	bootstrapCompleted, err := (secrets.Store{PlatformRoot: platformRoot}).Exists(secrets.BootstrapCompleted)
+	bootstrapCompleted, err := (secrets.Store{PlatformRoot: platformRoot}).BootstrapCompleted()
 	if err != nil {
 		return nil, asDiag(err)
 	}

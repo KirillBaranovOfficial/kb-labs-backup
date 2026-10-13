@@ -215,7 +215,7 @@ func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
 		updateMapping string
 		targetHasReq  bool
 	}{
-		{name: "changed stored secret", storedSecret: true, updateMapping: "gateway.token=UPDATE_SECRET"},
+		{name: "changed stored secret", storedSecret: true, updateMapping: "gateway.token=OPERATOR_ENV_SOURCE_SENTINEL"},
 		{name: "missing target secret", targetHasReq: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -284,7 +284,7 @@ func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
 				}
 			}
 			stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
-			secretsPath := filepath.Join(activeRoot, ".kb", "v2", "secrets.env")
+			secretsPath := filepath.Join(activeRoot, ".kb", "v2", "secret-state.json")
 			secretBefore, readErr := os.ReadFile(secretsPath)
 			if os.IsNotExist(readErr) {
 				secretBefore = nil
@@ -293,13 +293,16 @@ func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
 			}
 			secretFingerprintBefore := sha256.Sum256(secretBefore)
 			updateArgs := []string{"update", "--index", updateIndex, "--input", requestPath, "--platform-root", inst.root, "--json"}
-			updateEnv := []string{"UPDATE_SECRET=changed-after-install", "ENV_VAR=provided-after-refusal"}
+			updateEnv := []string{"OPERATOR_ENV_SOURCE_SENTINEL=changed-after-install", "ENV_VAR=provided-after-refusal"}
 			if scenario.updateMapping != "" {
 				updateArgs = append(updateArgs, "--secret-env", scenario.updateMapping)
 			}
 			refused := inst.runCommand(updateArgs, updateEnv...)
 			if refused.code == 0 || errorCode(refused.payload) != contracts.CodeUpdateSecretRefused {
 				t.Fatalf("secret policy result = %d %s", refused.code, refused.output)
+			}
+			if strings.Contains(refused.output, "OPERATOR_ENV_SOURCE_SENTINEL") {
+				t.Fatal("secret update diagnostic exposed its environment-variable name")
 			}
 			if got := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(got, stateBefore) {
 				t.Fatalf("secret refusal changed shared state: before=%#v after=%#v", stateBefore, got)
@@ -359,7 +362,7 @@ func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
 			if code != 0 || status["running"] != true || status["reachable"] != true {
 				t.Fatalf("suggested apply did not restore a healthy running host: code=%d %s", code, output)
 			}
-			followup := []string{"update", "--index", updateIndex, "--input", requestPath, "--platform-root", inst.root, "--json", "--secret-env", secretMapping(scenario)}
+			followup := []string{"update", "--index", updateIndex, "--input", requestPath, "--platform-root", inst.root, "--json", "--secret-env", "gateway.token=ENV_VAR"}
 			updated := inst.runCommand(followup, updateEnv...)
 			if updated.code != 0 || updated.payload["alreadyUpToDate"] != true {
 				t.Fatalf("update with newly stored secret is not a no-op: code=%d %s", updated.code, updated.output)
@@ -381,18 +384,6 @@ func quotedCommandFromHint(t *testing.T, hint string) string {
 		t.Fatalf("diagnostic hint has no quoted command: %q", hint)
 	}
 	return parts[1]
-}
-
-func secretMapping(scenario struct {
-	name          string
-	storedSecret  bool
-	updateMapping string
-	targetHasReq  bool
-}) string {
-	if scenario.updateMapping != "" {
-		return scenario.updateMapping
-	}
-	return "gateway.token=ENV_VAR"
 }
 
 func writeSecretCommandInputs(t *testing.T, inst installation, fakehost, binaryURL, binaryHash string, packages map[string][]byte, storedSecret, targetRequiresSecret bool) (initialIndex, updateIndex, requestPath string) {

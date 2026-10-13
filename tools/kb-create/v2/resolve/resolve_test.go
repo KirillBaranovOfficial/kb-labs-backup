@@ -632,3 +632,20 @@ func TestPlanMarksPlatformMembersThatAreCatalogPluginsOrAdapters(t *testing.T) {
 		t.Fatalf("registry kinds = %v", got)
 	}
 }
+
+// case: S-222.13
+func TestSecretInputIDsMustBelongToSelectedSecretRequirements(t *testing.T) {
+	artifacts := []contracts.Artifact{{Config: []contracts.ConfigRequirement{
+		{ID: "gateway.jwtSecret", Secret: true},
+		{ID: "gateway.access.mode", Secret: false},
+	}}}
+	if err := ValidateSecretInputIDs(artifacts, []string{"gateway.jwtSecret"}); err != nil {
+		t.Fatalf("declared secret requirement was refused: %v", err)
+	}
+	for _, id := range []string{"gateway.bootstrap.generated", "gateway.bootstrap.disclosed", "unknown.requirement", "gateway.access.mode"} {
+		err := ValidateSecretInputIDs(artifacts, []string{id})
+		if err == nil || !strings.Contains(err.Error(), id) {
+			t.Fatalf("undeclared/non-secret requirement %q was not refused with its safe ID: %v", id, err)
+		}
+	}
+}

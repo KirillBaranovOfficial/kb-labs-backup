@@ -211,17 +211,28 @@ func executeVersion(_ context.Context, _ versionCommandInput) (map[string]any, *
 }
 func renderUpdate(value any) string {
 	if result, ok := value.(updateCommandResult); ok {
+		message := "Platform update completed."
+		if result.ProjectRegistrationNotice != "" {
+			message += "\n" + result.ProjectRegistrationNotice
+		}
 		if result.AlreadyUpToDate {
-			return "Platform is already up to date."
+			message = "Platform is already up to date."
 		}
 		if result.PendingRestart != nil {
-			return "Platform update completed.\n" + renderPendingRestart(result.PendingRestart)
+			message += "\n" + renderPendingRestart(result.PendingRestart)
 		}
+		return message
 	}
 	return "Platform update completed."
 }
 
-func renderRollback(any) string { return "Platform rollback completed." }
+func renderRollback(value any) string {
+	result, ok := value.(recoveryCommandResult)
+	if !ok || result.ProjectRegistrationNotice == "" {
+		return "Platform rollback completed."
+	}
+	return "Platform rollback completed.\n" + result.ProjectRegistrationNotice
+}
 func renderUninstall(value any) string {
 	result, ok := value.(recoveryCommandResult)
 	if !ok {
@@ -255,6 +266,9 @@ func renderApply(value any) string {
 	if payload.Shim != nil && !payload.Shim.Linked {
 		message += fmt.Sprintf("\nThe kb command is owned by %s; run %s to use this platform.", payload.Shim.Owner, shim.Target(payload.Receipt.Plan.Request.PlatformRoot))
 	}
+	if payload.ProjectRegistrationNotice != "" {
+		message += "\n" + payload.ProjectRegistrationNotice
+	}
 	return withFirstAdmin(message, payload.FirstAdmin)
 }
 
@@ -265,6 +279,8 @@ func withFirstAdmin(message string, credential *firstAdminCredential) string {
 	switch credential.State {
 	case firstAdminDisclosed:
 		return fmt.Sprintf("%s\nFirst administrator credentials (shown once):\n  Email: %s\n  Password: %s", message, credential.Email, credential.Password)
+	case firstAdminSupplied:
+		return fmt.Sprintf("%s\nFirst administrator is ready; its password was supplied by the operator.\n  Email: %s", message, credential.Email)
 	case firstAdminPreviouslyDisclosed:
 		return fmt.Sprintf("%s\n%s\n  1. `%s`\n  2. `%s`\n  3. `%s`", message, credential.Notice, credential.StopCommand, credential.RecoveryCommand, credential.StartCommand)
 	default:

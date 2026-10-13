@@ -45,7 +45,15 @@ func registerProject(platformRoot, projectRoot string) (projectRegistrationResul
 	}
 	accessToken := ""
 	if adminEmail, secured := configuredFirstAdmin(active.Plan.Request); secured {
-		password, present, readErr := (secrets.Store{PlatformRoot: platformRoot}).Get("gateway.bootstrap.password")
+		store := secrets.Store{PlatformRoot: platformRoot}
+		disclosed, readErr := store.BootstrapDisclosed()
+		if readErr != nil {
+			return projectRegistrationResult{}, registrationBoundaryFailure("KB_INSTALL_SECRET_INPUT_INVALID", "The first administrator bootstrap state is unavailable.", "login", 0)
+		}
+		if disclosed {
+			return projectRegistrationResult{}, registrationBoundaryFailure(contracts.CodeProjectRegistrationFailed, "Bootstrap is complete; register the project under your own login.", "login", 0)
+		}
+		password, present, readErr := store.Get(secrets.BootstrapPassword)
 		if readErr != nil || !present {
 			return projectRegistrationResult{}, registrationBoundaryFailure("KB_INSTALL_SECRET_INPUT_INVALID", "The first administrator password is unavailable.", "login", 0)
 		}
@@ -127,6 +135,20 @@ func projectRegistrationHint(active contracts.InstallReceipt, projectRoot string
 		return "Run `" + commands[0] + "`, then `" + commands[1] + "`, then `" + commands[2] + "`."
 	}
 	return "Run `" + commands[0] + "`, then `" + commands[1] + "`."
+}
+
+func completedBootstrapProjectNotice(active contracts.InstallReceipt, projectRoot string, allowBootstrapRegistration bool) (string, error) {
+	if projectRoot == "" || active.ProjectID != "" || allowBootstrapRegistration {
+		return "", nil
+	}
+	completed, err := (secrets.Store{PlatformRoot: active.Plan.Request.PlatformRoot}).BootstrapCompleted()
+	if err != nil {
+		return "", err
+	}
+	if !completed {
+		return "", nil
+	}
+	return "Project registration is still needed. Sign in as the project owner, then " + projectRegistrationHint(active, projectRoot), nil
 }
 
 func unquoteRequestValue(value string) string {

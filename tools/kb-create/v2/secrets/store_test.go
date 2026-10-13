@@ -1,7 +1,11 @@
 package secrets
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -23,11 +27,141 @@ func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 	path := secretsPath(t, root)
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), "super-secret") {
-		t.Fatalf("store/error = %s / %v", data, err)
+		t.Fatalf("secret store write failed: err=%v", err)
 	}
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode/error = %v / %v", info.Mode(), err)
+	}
+}
+
+// case: S-100.1
+func TestBootstrapValueAndFactsShareOneAtomicRecord(t *testing.T) {
+	root := t.TempDir()
+	store := Store{PlatformRoot: root}
+	if err := store.PutBootstrapPassword("bootstrap-transition-sentinel", BootstrapOriginGenerated); err != nil {
+		t.Fatal("store bootstrap credential")
+	}
+	statePath := secretsPath(t, root)
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read atomic secret state: %v", err)
+	}
+	for _, field := range []string{`"requirements"`, `"bootstrap"`, `"gateway.bootstrap.password"`, `"bootstrap-transition-sentinel"`, `"generated"`} {
+		if !bytes.Contains(data, []byte(field)) {
+			t.Fatalf("atomic state omitted required field %s", field)
+		}
+	}
+	for _, oldPath := range []string{
+		filepath.Join(filepath.Dir(statePath), "secrets.env"),
+		filepath.Join(filepath.Dir(statePath), "bootstrap-lifecycle.json"),
+	} {
+		if _, err := os.Lstat(oldPath); !os.IsNotExist(err) {
+			t.Fatal("bootstrap value or facts were persisted outside the atomic record")
+		}
+	}
+}
+
+// case: S-100.1
+func TestBootstrapOriginTransitionsRemainAtomicAtEveryCommitBoundary(t *testing.T) {
+	transitions := []struct {
+		name       string
+		fromOrigin BootstrapPasswordOrigin
+		toOrigin   BootstrapPasswordOrigin
+		completed  bool
+		locked     bool
+	}{
+		{name: "generated to supplied while pending", fromOrigin: BootstrapOriginGenerated, toOrigin: BootstrapOriginSupplied},
+		{name: "supplied to generated while pending", fromOrigin: BootstrapOriginSupplied, toOrigin: BootstrapOriginGenerated},
+		{name: "generated rotation while pending", fromOrigin: BootstrapOriginGenerated, toOrigin: BootstrapOriginGenerated},
+		{name: "supplied rotation while pending", fromOrigin: BootstrapOriginSupplied, toOrigin: BootstrapOriginSupplied},
+		{name: "replacement after completion", fromOrigin: BootstrapOriginGenerated, toOrigin: BootstrapOriginSupplied, completed: true, locked: true},
+	}
+	for _, transition := range transitions {
+		failurePoints := []string{
+			"temporary-created", "temporary-chmodded", "temporary-written",
+			"temporary-synced-and-closed", "renamed", "directory-synced",
+		}
+		for _, failurePoint := range failurePoints {
+			t.Run(transition.name+"/"+failurePoint, func(t *testing.T) {
+				root := t.TempDir()
+				store := Store{PlatformRoot: root}
+				if err := store.PutBootstrapPassword("original-transition-value", transition.fromOrigin); err != nil {
+					t.Fatal("seed bootstrap state")
+				}
+				if transition.completed {
+					if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+						t.Fatal("complete bootstrap state")
+					}
+				}
+				writes := 0
+				injected := store
+				injected.atomicWrite = func(path string, data []byte, mode os.FileMode) error {
+					writes++
+					return versionroot.AtomicWriteFileWithBoundaryHook(path, data, mode, func(boundary string) error {
+						if boundary == failurePoint {
+							return errors.New("injected atomic replacement boundary failure")
+						}
+						return nil
+					})
+				}
+				err := injected.PutBootstrapPassword("replacement-transition-value", transition.toOrigin)
+				if transition.locked {
+					if !errors.Is(err, ErrBootstrapCredentialLocked) || writes != 0 {
+						t.Fatal("completed bootstrap accepted a credential replacement")
+					}
+				} else if err == nil || writes != 1 {
+					t.Fatal("atomic replacement fault was not injected at the single state boundary")
+				}
+
+				fresh := Store{PlatformRoot: root}
+				value, present, readErr := fresh.Get(BootstrapPassword)
+				origin, originPresent, originErr := fresh.BootstrapOrigin()
+				if readErr != nil || originErr != nil || !present || !originPresent {
+					t.Fatal("fresh process could not read a complete bootstrap state")
+				}
+				oldState := value == "original-transition-value" && origin == transition.fromOrigin
+				newState := value == "replacement-transition-value" && origin == transition.toOrigin
+				if transition.locked {
+					if !oldState {
+						t.Fatal("completed bootstrap state changed after refusal")
+					}
+				} else if failurePoint != "renamed" && failurePoint != "directory-synced" && !oldState {
+					t.Fatal("pre-rename failure exposed a mixed or partial state")
+				} else if (failurePoint == "renamed" || failurePoint == "directory-synced") && !newState {
+					t.Fatal("post-rename failure exposed a mixed or partial state")
+				}
+				if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+					if walkErr != nil || entry.IsDir() {
+						return walkErr
+					}
+					data, readErr := os.ReadFile(path)
+					if readErr != nil {
+						return readErr
+					}
+					for _, pair := range []struct {
+						value  string
+						origin BootstrapPasswordOrigin
+					}{{"original-transition-value", transition.fromOrigin}, {"replacement-transition-value", transition.toOrigin}} {
+						if !bytes.Contains(data, []byte(pair.value)) {
+							continue
+						}
+						var record secretStoreRecord
+						if json.Unmarshal(data, &record) != nil || record.Requirements[BootstrapPassword] != pair.value ||
+							record.Bootstrap.BootstrapPasswordOrigin != pair.origin {
+							return errors.New("a file paired a bootstrap credential with another origin")
+						}
+					}
+					return nil
+				}); err != nil {
+					t.Fatal("bootstrap credential and origin diverged in a file under the install root")
+				}
+				disclosed, disclosedErr := fresh.BootstrapDisclosed()
+				if disclosedErr != nil || disclosed {
+					t.Fatal("failed replacement changed disclosure state")
+				}
+			})
+		}
 	}
 }
 
@@ -47,7 +181,7 @@ func TestReadOnlyStoreRejectsStagedWrites(t *testing.T) {
 	}
 	after, err := os.ReadFile(secretsPath(t, root))
 	if err != nil || string(after) != string(before) {
-		t.Fatalf("read-only secret write changed shared state: %q / %v", after, err)
+		t.Fatalf("read-only secret write changed shared state: err=%v", err)
 	}
 }
 
@@ -62,7 +196,7 @@ func TestEnsureGeneratedCreatesPrivateRandomSecretAndPreservesSuppliedValue(t *t
 	}
 	first, present, err := store.Get("gateway.jwtSecret")
 	if err != nil || !present || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(first) {
-		t.Fatalf("generated secret = %q, present=%v, err=%v", first, present, err)
+		t.Fatalf("generated secret availability mismatch: present=%v, err=%v", present, err)
 	}
 	if err := EnsureGenerated(plan, store); err != nil {
 		t.Fatal(err)
@@ -79,7 +213,29 @@ func TestEnsureGeneratedCreatesPrivateRandomSecretAndPreservesSuppliedValue(t *t
 	}
 	got, _, _ := store.Get("gateway.jwtSecret")
 	if got != "operator-selected-secret" {
-		t.Fatalf("operator secret = %q", got)
+		t.Fatal("operator secret was not preserved")
+	}
+}
+
+func TestBootstrapPasswordOriginIsAtomicWithThePassword(t *testing.T) {
+	store := Store{PlatformRoot: t.TempDir()}
+	if err := store.PutBootstrapPassword("generated-test-secret", BootstrapOriginGenerated); err != nil {
+		t.Fatal(err)
+	}
+	password, present, err := store.Get(BootstrapPassword)
+	if err != nil || !present || password != "generated-test-secret" {
+		t.Fatal("generated bootstrap password was not stored")
+	}
+	origin, present, err := store.BootstrapOrigin()
+	if err != nil || !present || origin != BootstrapOriginGenerated {
+		t.Fatal("generated origin was not committed with the bootstrap password")
+	}
+	if err := store.Put(BootstrapPassword, "supplied-test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	origin, present, err = store.BootstrapOrigin()
+	if err != nil || !present || origin != BootstrapOriginSupplied {
+		t.Fatal("supplied origin was not committed with the bootstrap password")
 	}
 }
 
@@ -98,7 +254,7 @@ func TestEnsureGeneratedInternalSecretBindsEveryProtectedService(t *testing.T) {
 	}
 	value, present, err := store.Get("gateway.internalSecret")
 	if err != nil || !present || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(value) {
-		t.Fatalf("generated internal secret = %q, present=%v, err=%v", value, present, err)
+		t.Fatalf("generated internal secret availability mismatch: present=%v, err=%v", present, err)
 	}
 	if err := store.BindEnvironments([]contracts.ConfigPatch{{
 		Owner: "manifest:gateway.internalSecret", Environment: "GATEWAY_INTERNAL_SECRET",
@@ -127,7 +283,7 @@ func TestEnsureGeneratedPreservesInternalSecretDuringUpdate(t *testing.T) {
 	}
 	after, _, _ := store.Get("gateway.internalSecret")
 	if after != before {
-		t.Fatalf("update replaced generated secret: before=%q after=%q", before, after)
+		t.Fatal("update replaced generated secret")
 	}
 }
 func TestStoreRejectsInjectionName(t *testing.T) {
@@ -146,7 +302,7 @@ func TestGetReturnsStoredValueAndReportsAbsence(t *testing.T) {
 	}
 	value, present, err := store.Get("gateway.jwtSecret")
 	if err != nil || !present || value != "value=with=equals" {
-		t.Fatalf("value/present/err = %q / %v / %v", value, present, err)
+		t.Fatalf("secret availability mismatch: present=%v, err=%v", present, err)
 	}
 	if _, _, err := store.Get("bad=name"); err == nil {
 		t.Fatal("an invalid name must be rejected")
@@ -159,13 +315,11 @@ func secretsFile(t *testing.T, root string) map[string]string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	values := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if key, value, ok := strings.Cut(line, "="); ok {
-			values[key] = value
-		}
+	var state secretStoreRecord
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal("decode private secret state")
 	}
-	return values
+	return state.Requirements
 }
 
 func secretsPath(t *testing.T, root string) string {
@@ -174,7 +328,7 @@ func secretsPath(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
+	path, err := layout.SharedRuntimePath(".kb/v2/secret-state.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,12 +367,15 @@ func TestBindEnvironmentsAddsTheBoundEnvironmentKey(t *testing.T) {
 		"GATEWAY_BOOTSTRAP_ADMIN_PASSWORD": "admin-value",
 	}
 	if len(got) != len(want) {
-		t.Fatalf("stored keys = %v, want %v", got, want)
+		t.Fatalf("stored secret key set mismatch: got=%v want=%v", got, want)
 	}
 	for key, value := range want {
 		if got[key] != value {
-			t.Fatalf("%s = %q, want %q (all: %v)", key, got[key], value, got)
+			t.Fatalf("stored value mismatch for secret key %s", key)
 		}
+	}
+	if origin, present, err := store.BootstrapOrigin(); err != nil || !present || origin != BootstrapOriginSupplied {
+		t.Fatal("supplied bootstrap origin was not stored in the internal lifecycle record")
 	}
 	if exists, err := store.Exists("gateway.jwtSecret"); err != nil || !exists {
 		t.Fatalf("requirement ID must stay verifiable: %v / %v", exists, err)
@@ -266,9 +423,9 @@ func TestEnvironmentOmitsBootstrapPasswordAfterCompletion(t *testing.T) {
 	}
 	before, err := store.Environment()
 	if err != nil || before.Values["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"] != "one-time-bootstrap-password" {
-		t.Fatalf("pre-completion environment = %#v, err=%v", before, err)
+		t.Fatalf("pre-completion environment binding mismatch: err=%v", err)
 	}
-	if err := store.Put(BootstrapCompleted, "provisioned"); err != nil {
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
 		t.Fatal(err)
 	}
 	after, err := store.Environment()
@@ -276,13 +433,138 @@ func TestEnvironmentOmitsBootstrapPasswordAfterCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, present := after.Values["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"]; present {
-		t.Fatalf("completed host environment still contains bootstrap password: %#v", after)
+		t.Fatal("completed host environment still contains bootstrap password")
 	}
 	if after.Values["GATEWAY_JWT_SECRET"] != strings.Repeat("j", 64) {
-		t.Fatalf("completion removed an unrelated Gateway secret: %#v", after)
+		t.Fatal("completion removed an unrelated Gateway secret")
 	}
 	if password, present, err := store.Get("gateway.bootstrap.password"); err != nil || !present || password != "one-time-bootstrap-password" {
 		t.Fatalf("completion deleted stored bootstrap secret: present=%v err=%v", present, err)
+	}
+}
+
+// case: S-222.11
+func TestBootstrapDisclosureAtomicallyErasesPasswordAndRejectsReinsertion(t *testing.T) {
+	root := t.TempDir()
+	store := Store{PlatformRoot: root}
+	const password = "bootstrap-disclosure-test-sentinel"
+	for name, value := range map[string]string{
+		"gateway.bootstrap.password": password,
+		BootstrapPasswordEnvironment: password,
+		"gateway.jwtSecret":          "unrelated-secret",
+	} {
+		if err := store.Put(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.MarkBootstrapDisclosed(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(secretsPath(t, root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disclosed, err := store.BootstrapDisclosed()
+	if err != nil || !disclosed || strings.Contains(string(data), password) || !strings.Contains(string(data), "unrelated-secret") {
+		t.Fatal("disclosure update did not atomically preserve unrelated values, record the marker, and erase the password")
+	}
+	for _, name := range []string{"gateway.bootstrap.password", BootstrapPasswordEnvironment} {
+		if present, err := store.Exists(name); err != nil || present {
+			t.Fatalf("disclosed password key %q present=%v, err=%v", name, present, err)
+		}
+	}
+	for _, name := range []string{BootstrapPassword, BootstrapPasswordEnvironment} {
+		if err := store.Put(name, password); err != ErrBootstrapPasswordDisclosed {
+			t.Fatalf("password reinsertion error for %q = %v; want ErrBootstrapPasswordDisclosed", name, err)
+		}
+	}
+	if err := store.Put("gateway.bootstrap.disclosed", "false"); err != nil {
+		t.Fatal("generic values remain separate from the bootstrap lifecycle record")
+	}
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || !disclosed {
+		t.Fatal("generic storage changed the typed disclosure fact")
+	}
+}
+
+func TestDisclosureStateAndPasswordDeletionShareOneAtomicRecord(t *testing.T) {
+	root := t.TempDir()
+	store := Store{PlatformRoot: root}
+	const password = "interrupted-disclosure-test-sentinel"
+	if err := store.PutBootstrapPassword(password, BootstrapOriginGenerated); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkBootstrapDisclosed(); err != nil {
+		t.Fatal(err)
+	}
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || !disclosed {
+		t.Fatal("atomic secret record did not observe disclosure")
+	}
+	stored, err := os.ReadFile(secretsPath(t, root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), password) {
+		t.Fatal("atomic handoff record retained a disclosed password")
+	}
+	if err := store.PutBootstrapPassword("replacement-after-disclosure", BootstrapOriginSupplied); !errors.Is(err, ErrBootstrapCredentialLocked) {
+		t.Fatal("completed disclosed bootstrap did not refuse a credential replacement with its locked-state error")
+	}
+	afterRefusal, err := os.ReadFile(secretsPath(t, root))
+	if err != nil || !bytes.Equal(stored, afterRefusal) {
+		t.Fatal("refused post-disclosure replacement changed the atomic state record")
+	}
+}
+
+// case: S-222.13
+func TestGenericRequirementNamesCannotWriteBootstrapLifecycleFacts(t *testing.T) {
+	store := Store{PlatformRoot: t.TempDir()}
+	for _, id := range []string{"gateway.bootstrap.generated", "gateway.bootstrap.disclosed", "gateway.bootstrap.completed"} {
+		if err := store.Put(id, "operator-value"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	origin, present, err := store.BootstrapOrigin()
+	if err != nil || present || origin != "" {
+		t.Fatal("generic requirement write changed bootstrap origin")
+	}
+	disclosed, err := store.BootstrapDisclosed()
+	if err != nil || disclosed {
+		t.Fatal("generic requirement write changed bootstrap disclosure state")
+	}
+	completed, err := store.BootstrapCompleted()
+	if err != nil || completed {
+		t.Fatal("generic requirement write changed bootstrap completion state")
+	}
+}
+
+// case: S-222.13
+func TestLegacyFlatBootstrapMarkersReturnUnsupportedFormatWithoutReset(t *testing.T) {
+	root := t.TempDir()
+	store := Store{PlatformRoot: root}
+	legacyDir := filepath.Dir(secretsPath(t, root))
+	if err := os.MkdirAll(legacyDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	legacyFiles := map[string][]byte{
+		filepath.Join(legacyDir, "secrets.env"):              []byte("gateway.bootstrap.generated=true\n" + BootstrapPassword + "=sentinel\n"),
+		filepath.Join(legacyDir, "bootstrap-lifecycle.json"): []byte(`{"bootstrapPasswordOrigin":"generated"}`),
+	}
+	for path, data := range legacyFiles {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := store.Get(BootstrapPassword); !errors.Is(err, ErrUnsupportedSecretStoreFormat) {
+		t.Fatal("previous flat and sidecar stores were not rejected with the unsupported-format diagnosis")
+	}
+	for path, data := range legacyFiles {
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(after, data) {
+			t.Fatal("unsupported old store was silently reset or changed")
+		}
 	}
 }
 

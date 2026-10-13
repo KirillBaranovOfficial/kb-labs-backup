@@ -171,13 +171,35 @@ func TestExpandEnvFromDotEnvFile(t *testing.T) {
 
 func TestExpandEnvFromV2LauncherSecretStore(t *testing.T) {
 	dir := t.TempDir()
-	writeDotEnvTo(t, filepath.Join(dir, ".kb", "v2", "secrets.env"), "V2_LAUNCHER_TOKEN=private\n")
+	path := filepath.Join(dir, ".kb", "v2", "secret-state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema":1,"requirements":{"V2_LAUNCHER_TOKEN":"private"},"bootstrap":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	yf := minimalYAMLWithEnvVar("${V2_LAUNCHER_TOKEN}")
 	if err := expandEnv(yf, dir); err != nil {
 		t.Fatal(err)
 	}
 	if got := yf.Services["api"].Env["SECRET"]; got != "private" {
 		t.Fatalf("SECRET = %q", got)
+	}
+}
+
+func TestExpandEnvDoesNotInjectBootstrapPasswordAfterCompletion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".kb", "v2", "secret-state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state := `{"schema":1,"requirements":{"GATEWAY_BOOTSTRAP_ADMIN_PASSWORD":"private"},"bootstrap":{"bootstrapCompleted":"provisioned"}}`
+	if err := os.WriteFile(path, []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	yf := minimalYAMLWithEnvVar("${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD}")
+	if err := expandEnv(yf, dir); err == nil {
+		t.Fatal("completed bootstrap password was injected into the host configuration")
 	}
 }
 

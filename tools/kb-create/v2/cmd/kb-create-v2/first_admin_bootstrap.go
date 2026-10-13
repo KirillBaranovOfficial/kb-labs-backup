@@ -118,7 +118,7 @@ func readBootstrapOutcome(ctx context.Context, healthURL string, store secrets.S
 	}
 	switch *readiness.Bootstrap {
 	case GatewayBootstrapStatusProvisioned, GatewayBootstrapStatusExistsActive, GatewayBootstrapStatusExistsNonActive:
-		return store.Put(secrets.BootstrapCompleted, string(*readiness.Bootstrap))
+		return store.MarkBootstrapCompleted(string(*readiness.Bootstrap))
 	case GatewayBootstrapStatusNotConfigured, GatewayBootstrapStatusFailed:
 		return bootstrapOutcomeFailure(store.PlatformRoot, "Gateway reports that first-administrator bootstrap did not complete")
 	default:
@@ -154,18 +154,28 @@ func bootstrapOutcomeFailure(platformRoot, cause string) *diag.Diag {
 }
 
 func firstAdminResult(store secrets.Store, adminEmail string, platformRoot string) (*firstAdminCredential, *diag.Diag) {
-	bootstrapState, present, readErr := store.Get(secrets.BootstrapCompleted)
-	disclosed, disclosedErr := store.Exists(secrets.BootstrapDisclosed)
+	bootstrapState, present, readErr := store.BootstrapCompletedValue()
+	disclosed, disclosedErr := store.BootstrapDisclosed()
 	if readErr != nil || disclosedErr != nil {
+		if errors.Is(readErr, secrets.ErrUnsupportedSecretStoreFormat) || errors.Is(disclosedErr, secrets.ErrUnsupportedSecretStoreFormat) {
+			return nil, asDiag(errors.Join(readErr, disclosedErr))
+		}
 		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator bootstrap state could not be read", "check that the platform root is writable, then rerun `kb-create install`", errors.Join(readErr, disclosedErr))
 	}
 	if !present || bootstrapState != "provisioned" {
 		return nil, nil
 	}
+	origin, provenancePresent, provenanceErr := store.BootstrapOrigin()
+	if provenanceErr != nil {
+		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator credential origin could not be read", "check that the platform root is writable, then rerun `kb-create install`", provenanceErr)
+	}
+	if !provenancePresent || origin != secrets.BootstrapOriginGenerated {
+		return &firstAdminCredential{State: firstAdminSupplied, Email: adminEmail}, nil
+	}
 	if disclosed {
 		return previouslyDisclosedFirstAdmin(adminEmail, platformRoot), nil
 	}
-	password, passwordPresent, passwordErr := store.Get("gateway.bootstrap.password")
+	password, passwordPresent, passwordErr := store.Get(secrets.BootstrapPassword)
 	if passwordErr != nil {
 		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read", "check that the platform root is writable, then rerun `kb-create install`", passwordErr)
 	}
@@ -176,7 +186,7 @@ func firstAdminResult(store secrets.Store, adminEmail string, platformRoot strin
 }
 
 func setBootstrapDisclosed(store secrets.Store) error {
-	return store.Put(secrets.BootstrapDisclosed, "true")
+	return store.MarkBootstrapDisclosed()
 }
 
 func emitFirstAdminResult(value applyCommandResult, operation string, emit func() error) (bool, *diag.Diag) {
@@ -187,7 +197,7 @@ func emitFirstAdminResult(value applyCommandResult, operation string, emit func(
 			"the command result could not be written",
 			"Restore writable stdout, then rerun `"+retry+"` to receive the first-administrator result.", err)
 	}
-	if value.FirstAdmin == nil || value.FirstAdmin.Password == "" {
+	if value.FirstAdmin == nil || (value.FirstAdmin.State != firstAdminDisclosed && value.FirstAdmin.State != firstAdminSupplied) {
 		return true, nil
 	}
 	if value.disclosureStoreRoot == "" {

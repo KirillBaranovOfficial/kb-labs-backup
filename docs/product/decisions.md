@@ -721,3 +721,29 @@ Receipt schema v3 requires this identity for projects selected by the prior
 install; older receipt schemas are unavailable and must be reinstalled with the
 current launcher rather than guessed or migrated. Cases: S-187.10–S-187.12,
 S-224.3.
+
+## 2026-10-13
+
+### Bootstrap credentials end with their first disclosure
+
+The generated first-administrator password is a one-time secret. The result
+writer records disclosure and erases both stored password names in one atomic
+replacement of the shared secret file. A completed install may use the
+credential only until that disclosure is recorded, which includes retrying
+first-install project registration after a failed result. Recovery generates a
+replacement and shows it without storing it. Later install/apply/update/rollback
+operations never log in as the first administrator. Only the original install
+invocation may use the credential to register its selected project. A receipt
+with project identity confirms that install recorded registration; without
+that identity, a later command succeeds with a notice and the exact commands
+for the user to register under their own login. Cases: S-100.1, S-100.2,
+S-222.11–S-222.12.
+
+Only an installer-generated first-administrator password is serialized once
+to disclose a credential the user cannot otherwise know. When the operator
+supplies that password through a secret reference, the result reports
+`firstAdmin.state="supplied"` and the administrator email without a password
+field; the value and source environment-variable name never enter installer
+output or persisted artifacts. The provenance is stored atomically with the
+bootstrap password and survives retries until the successful result removes
+the supplied value. Cases: S-100.1, S-181.3.

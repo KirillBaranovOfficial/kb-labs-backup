@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,9 +23,9 @@ func expandEnv(yf *yamlFile, rootDir string) error {
 	// with mode 0600 under .kb/v2 and never appear in generated config,
 	// receipts, diagnostics, or the terminal. Keep .env as the documented
 	// fallback for hand-managed services.
-	launcherSecrets, err := loadDotEnv(filepath.Join(rootDir, ".kb", "v2", "secrets.env"))
+	launcherSecrets, err := loadSecretState(filepath.Join(rootDir, ".kb", "v2", "secret-state.json"))
 	if err != nil {
-		return fmt.Errorf("load launcher secrets: %w", err)
+		return fmt.Errorf("load launcher secret state: %w", err)
 	}
 	dotenv, err := loadDotEnv(filepath.Join(rootDir, ".env"))
 	if err != nil {
@@ -95,6 +96,30 @@ func expandEnv(yf *yamlFile, rootDir string) error {
 	}
 
 	return nil
+}
+
+func loadSecretState(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var state struct {
+		Schema       int               `json:"schema"`
+		Requirements map[string]string `json:"requirements"`
+		Bootstrap    struct {
+			Completed string `json:"bootstrapCompleted"`
+		} `json:"bootstrap"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil || state.Schema != 1 || state.Requirements == nil {
+		return nil, fmt.Errorf("%s does not contain a supported launcher secret state", path)
+	}
+	if state.Bootstrap.Completed != "" {
+		delete(state.Requirements, "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD")
+	}
+	return state.Requirements, nil
 }
 
 // expandString replaces all ${VAR} references in s using the provided lookup

@@ -298,7 +298,14 @@ func verifySecrets(plan contracts.ResolvedInstallPlan, store *secrets.Store) err
 	if store == nil {
 		return fmt.Errorf("apply resolved plan: secret store is required for declared secret inputs")
 	}
+	bootstrapCompleted, err := store.BootstrapCompleted()
+	if err != nil {
+		return fmt.Errorf("check first-administrator bootstrap completion: %w", err)
+	}
 	for _, name := range plan.Request.SecretInputs {
+		if bootstrapCompleted && name == secrets.BootstrapPassword {
+			continue
+		}
 		exists, err := store.Exists(name)
 		if err != nil {
 			return fmt.Errorf("check secret %s: %w", name, err)

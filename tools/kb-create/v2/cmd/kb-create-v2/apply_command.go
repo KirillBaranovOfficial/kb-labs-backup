@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -34,16 +35,53 @@ import (
 )
 
 type applyCommandInput struct {
-	Plan                   planInput
-	Resolved               *resolvedPlan
-	Registry               string
-	SecretEnv              string
-	Executable             string
-	Progress               runtime.ProgressSink
-	JSON                   bool
-	TelemetryEndpoint      string
-	TelemetryConsent       bool
-	AdminPasswordGenerated bool
+	Plan                       planInput
+	Resolved                   *resolvedPlan
+	Registry                   string
+	SecretEnv                  string
+	PendingSecrets             map[string]secrets.PendingSecret
+	Executable                 string
+	Progress                   runtime.ProgressSink
+	JSON                       bool
+	TelemetryEndpoint          string
+	TelemetryConsent           bool
+	AllowBootstrapRegistration bool
+}
+
+func secretRedactionValues(store secrets.Store, plan contracts.ResolvedInstallPlan, mappings string) ([]string, error) {
+	values := make([]string, 0)
+	seen := make(map[string]struct{})
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	for _, artifact := range plan.Artifacts {
+		for _, requirement := range artifact.Config {
+			if !requirement.Secret {
+				continue
+			}
+			add(requirement.ID)
+			add(requirement.Env)
+			value, present, err := store.Get(requirement.ID)
+			if err != nil {
+				return nil, err
+			}
+			if present {
+				add(value)
+			}
+		}
+	}
+	for _, mapping := range splitSecretMappings(mappings) {
+		add(mapping[0])
+		add(mapping[1])
+	}
+	return values, nil
 }
 
 func executeApply(ctx context.Context, applyInput applyCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
@@ -90,6 +128,16 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		resolved = &result
 	}
 	planned = resolved.Plan
+	secretIDs := make([]string, 0)
+	for _, mapping := range splitSecretMappings(input.SecretEnv) {
+		secretIDs = append(secretIDs, mapping[0])
+	}
+	for id := range input.PendingSecrets {
+		secretIDs = append(secretIDs, id)
+	}
+	if failure := resolve.ValidateSecretInputIDs(planned.Artifacts, secretIDs); failure != nil {
+		return applyCommandResult{}, asDiag(failure)
+	}
 	launcherState := resolved.State
 	root := planned.Request.PlatformRoot
 	installRoot := root
@@ -195,25 +243,35 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 	}
 	correlationID := fmt.Sprintf("apply-%d", time.Now().UTC().UnixNano())
-	transcript, err := logs.New(layout.OperationLogsDir(), correlationID, nil)
-	if err != nil {
-		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the platform root is writable", err)
-	}
-	defer transcript.Close()
 	store := secrets.Store{PlatformRoot: operationRoot}
+	if err := storePendingSecrets(store, input.PendingSecrets); err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeSecretInputInvalid, "secret input could not be stored", "verify the declared secret inputs, then rerun `kb-create install`", err)
+	}
 	if err := populateSecrets(store, input.SecretEnv); err != nil {
+		if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
+			return applyCommandResult{}, asDiag(err)
+		}
+		if errors.Is(err, secrets.ErrBootstrapCredentialLocked) {
+			return applyCommandResult{}, asDiag(err)
+		}
+		if errors.Is(err, secrets.ErrBootstrapPasswordDisclosed) {
+			adminEmail, _ := configuredFirstAdmin(planned.Request)
+			recovery := buildFirstAdminRecoveryCommands(root, adminEmail)
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired,
+				"the first-administrator password was already disclosed and cannot be stored again",
+				"Run `"+recovery.Stop+"`, then `"+recovery.Doctor+"`, then `"+recovery.Start+"` to generate and disclose a replacement.", nil)
+		}
 		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SECRET_INPUT_INVALID", "secret input could not be stored", "use --secret-env requirement=ENV_VAR and set the environment variable", err)
 	}
 	adminEmail, securedAdmin := configuredFirstAdmin(planned.Request)
 	bootstrapCompleted := false
-	adminPasswordPresent := false
 	if securedAdmin {
 		var existsErr error
-		bootstrapCompleted, existsErr = store.Exists(secrets.BootstrapCompleted)
-		if existsErr == nil && !bootstrapCompleted {
-			adminPasswordPresent, existsErr = store.Exists("gateway.bootstrap.password")
-		}
+		bootstrapCompleted, existsErr = store.BootstrapCompleted()
 		if existsErr != nil {
+			if errors.Is(existsErr, secrets.ErrUnsupportedSecretStoreFormat) {
+				return applyCommandResult{}, asDiag(existsErr)
+			}
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read from the secret store", "check that the platform root is writable, then rerun `kb-create install`", existsErr)
 		}
 	}
@@ -222,16 +280,15 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			"the session signing secret could not be generated or stored.",
 			"check that the platform root is writable, then rerun `kb-create install`", err)
 	}
-	if securedAdmin && !bootstrapCompleted && !adminPasswordPresent && input.AdminPasswordGenerated == false {
-		if err := store.Put(secrets.BootstrapGenerated, "true"); err != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the generated bootstrap credential state could not be stored", "check that the platform root is writable, then rerun `kb-create install`", err)
-		}
+	redactions, err := secretRedactionValues(store, planned, input.SecretEnv)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installation secret state could not be read for safe logging", "check that the platform root is writable, then rerun `kb-create install`", err)
 	}
-	if securedAdmin && input.AdminPasswordGenerated {
-		if err := store.Put(secrets.BootstrapGenerated, "true"); err != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the generated bootstrap credential state could not be stored", "check that the platform root is writable, then rerun `kb-create install`", err)
-		}
+	transcript, err := logs.New(layout.OperationLogsDir(), correlationID, redactions)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the platform root is writable", err)
 	}
+	defer transcript.Close()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -272,7 +329,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	applied, applyErr := runtime.Apply(applyCtx, planned, runtimeDeps)
 	if applyErr != nil {
-		return applyCommandResult{}, applyDossier(root, correlationID, transcript.Path(), planned, applyErr)
+		return applyCommandResult{}, applyDossier(root, correlationID, transcript.Path(), planned, redactions, applyErr)
 	}
 	var firstAdmin *firstAdminCredential
 	if initialInstall {
@@ -372,9 +429,36 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			return applyCommandResult{}, failure
 		}
 	}
+	registrationNotice, noticeErr := completedBootstrapProjectNotice(applied, applied.Plan.Request.ProjectRoot, input.AllowBootstrapRegistration)
+	if noticeErr != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the project registration state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "apply", "--platform-root", root)+"`", noticeErr)
+	}
 	return applyCommandResult{OK: true, Operation: "apply", Receipt: applied, LogPath: logPath,
 		Profile: applied.Plan.ServiceGraph.Profile, Services: applied.Plan.ServiceGraph.Services,
-		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, disclosureStoreRoot: store.PlatformRoot}, nil
+		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, ProjectRegistrationNotice: registrationNotice,
+		disclosureStoreRoot: store.PlatformRoot}, nil
+}
+
+func storePendingSecrets(store secrets.Store, pending map[string]secrets.PendingSecret) error {
+	ids := make([]string, 0, len(pending))
+	for id := range pending {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		input := pending[id]
+		if id == secrets.BootstrapPassword {
+			if err := store.PutBootstrapPassword(input.Value, input.Origin); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := store.Put(id, input.Value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func unsupportedPlatformLayout(root string, cause error) *diag.Diag {
@@ -444,7 +528,7 @@ func (starter installedHostStarter) Start(ctx context.Context, spec contracts.Ho
 	}, nil
 }
 
-func applyDossier(root, correlationID, logPath string, plan contracts.ResolvedInstallPlan, cause error) *diag.Diag {
+func applyDossier(root, correlationID, logPath string, plan contracts.ResolvedInstallPlan, redactions []string, cause error) *diag.Diag {
 	var failure *diag.Diag
 	if !errors.As(cause, &failure) {
 		failure = contracts.NewDiag(contracts.CodeApplyFailed, "V2 operation did not reach a verified installation", "Inspect the local log and diagnostic dossier, then fix the reported prerequisite or run doctor --fix.", cause)
@@ -456,7 +540,7 @@ func applyDossier(root, correlationID, logPath string, plan contracts.ResolvedIn
 	if layoutErr != nil {
 		return contracts.NewDiag("KB_INSTALL_DIAGNOSTIC_UNAVAILABLE", "The operation failed and the diagnostic dossier could not be written.", "inspect the local operation log", layoutErr)
 	}
-	path, err := diagnostics.Write(layout.FailureDossiersDir(), dossier, nil)
+	path, err := diagnostics.Write(layout.FailureDossiersDir(), dossier, redactions)
 	if err != nil {
 		return contracts.NewDiag("KB_INSTALL_DIAGNOSTIC_UNAVAILABLE", "The operation failed and the diagnostic dossier could not be written.", "inspect the local operation log", err)
 	}

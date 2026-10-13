@@ -226,7 +226,8 @@ func install(t *testing.T, answers string) journeyResult {
 	source := sealedGatewayCatalog(t)
 	primeOfflineCatalog(t, root, &source)
 	var terminal bytes.Buffer
-	request, err := wizard.RequestScenario(source, root, "custom", "", wizard.IO{In: bytes.NewBufferString("\n" + answers), Out: &terminal})
+	pending := map[string]secrets.PendingSecret{}
+	request, err := wizard.RequestScenario(source, root, "custom", "", wizard.IO{In: bytes.NewBufferString("\n" + answers), Out: &terminal, PendingSecrets: pending})
 	if err != nil {
 		t.Fatalf("wizard: %v\n%s", err, terminal.String())
 	}
@@ -234,6 +235,16 @@ func install(t *testing.T, answers string) journeyResult {
 	plan, err := resolve.Plan(request, source)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
+	}
+	for id, input := range pending {
+		if id == secrets.BootstrapPassword {
+			err = (secrets.Store{PlatformRoot: root}).PutBootstrapPassword(input.Value, input.Origin)
+		} else {
+			err = (secrets.Store{PlatformRoot: root}).Put(id, input.Value)
+		}
+		if err != nil {
+			t.Fatal("persist resolved wizard secret")
+		}
 	}
 	layout, stage := prepareFreshContainer(t, root)
 	plan.Request.PlatformRoot = stage
@@ -268,12 +279,14 @@ func readInstall(t *testing.T, root string, plan contracts.ResolvedInstallPlan) 
 		t.Fatal(err)
 	}
 	result.environment = environment.Values
-	if data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "secrets.env")); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-			if key, value, ok := strings.Cut(line, "="); ok {
-				result.secrets[key] = value
-			}
+	if data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "secret-state.json")); err == nil {
+		var record struct {
+			Requirements map[string]string `json:"requirements"`
 		}
+		if err := json.Unmarshal(data, &record); err != nil {
+			t.Fatal("decode private secret state")
+		}
+		result.secrets = record.Requirements
 	}
 	return result
 }
@@ -293,7 +306,7 @@ func everywhereExcept(t *testing.T, root, value string) []string {
 	t.Helper()
 	var hits []string
 	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || strings.HasSuffix(path, filepath.Join(".kb", "v2", "secrets.env")) {
+		if err != nil || entry.IsDir() || strings.HasSuffix(path, filepath.Join(".kb", "v2", "secret-state.json")) {
 			return nil
 		}
 		if data, readErr := os.ReadFile(path); readErr == nil && bytes.Contains(data, []byte(value)) {
@@ -365,7 +378,7 @@ func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) 
 			t.Fatalf("a secret leaked outside the private store: %v", hits)
 		}
 	}
-	info, err := os.Stat(filepath.Join(result.root, ".kb", "v2", "secrets.env"))
+	info, err := os.Stat(filepath.Join(result.root, ".kb", "v2", "secret-state.json"))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("secret store must be private: %v / %v", info, err)
 	}

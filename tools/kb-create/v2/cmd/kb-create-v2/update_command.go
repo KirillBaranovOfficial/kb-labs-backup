@@ -3,6 +3,7 @@ package v2cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -26,15 +27,16 @@ import (
 )
 
 type updateCommandResult struct {
-	OK              bool                      `json:"ok"`
-	Operation       string                    `json:"operation"`
-	Receipt         contracts.InstallReceipt  `json:"receipt"`
-	Snapshot        map[string]any            `json:"snapshot"`
-	HostRestarted   bool                      `json:"hostRestarted"`
-	AlreadyUpToDate bool                      `json:"alreadyUpToDate,omitempty"`
-	UpdateSummary   *contracts.UpdateSummary  `json:"updateSummary,omitempty"`
-	PendingRestart  *contracts.PendingRestart `json:"pendingRestart,omitempty"`
-	LogPath         string                    `json:"logPath"`
+	OK                        bool                      `json:"ok"`
+	Operation                 string                    `json:"operation"`
+	Receipt                   contracts.InstallReceipt  `json:"receipt"`
+	Snapshot                  map[string]any            `json:"snapshot"`
+	HostRestarted             bool                      `json:"hostRestarted"`
+	AlreadyUpToDate           bool                      `json:"alreadyUpToDate,omitempty"`
+	UpdateSummary             *contracts.UpdateSummary  `json:"updateSummary,omitempty"`
+	PendingRestart            *contracts.PendingRestart `json:"pendingRestart,omitempty"`
+	LogPath                   string                    `json:"logPath"`
+	ProjectRegistrationNotice string                    `json:"projectRegistrationNotice,omitempty"`
 }
 
 type updateCommandInput struct {
@@ -58,6 +60,13 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		return updateCommandResult{}, updateCompatibilityDiag(failure)
 	}
 	plan := resolved.Plan
+	secretIDs := make([]string, 0)
+	for _, mapping := range splitSecretMappings(input.SecretEnv) {
+		secretIDs = append(secretIDs, mapping[0])
+	}
+	if failure := resolve.ValidateSecretInputIDs(plan.Artifacts, secretIDs); failure != nil {
+		return updateCommandResult{}, inputFailure(asDiag(failure))
+	}
 	layout, layoutErr := versionroot.ForPlatformPath(plan.Request.PlatformRoot)
 	if layoutErr == nil {
 		layoutErr = layout.Validate()
@@ -78,6 +87,9 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	if err != nil {
 		return updateCommandResult{}, unsupportedPlatformLayout(plan.Request.PlatformRoot, err)
 	}
+	if _, err := (secrets.Store{PlatformRoot: activeRoot, ReadOnly: true}).BootstrapCompleted(); err != nil {
+		return updateCommandResult{}, asDiag(err)
+	}
 	secretStore := secrets.Store{PlatformRoot: activeRoot, ReadOnly: true}
 	if failure := refuseUpdateSecretChanges(input, layout.InstallRoot(), secretStore); failure != nil {
 		return updateCommandResult{}, failure
@@ -87,7 +99,13 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		return updateCommandResult{}, updateCompatibilityDiag(asDiag(err))
 	}
 	if disposition == resolve.UpdateAlreadyUpToDate {
-		return updateCommandResult{OK: true, Operation: "update", Receipt: active, HostRestarted: false, AlreadyUpToDate: true}, nil
+		registrationNotice, noticeErr := completedBootstrapProjectNotice(active, active.Plan.Request.ProjectRoot, false)
+		if noticeErr != nil {
+			return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+				"the project registration state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", platformRoot)+"`", noticeErr)
+		}
+		return updateCommandResult{OK: true, Operation: "update", Receipt: active, HostRestarted: false, AlreadyUpToDate: true,
+			ProjectRegistrationNotice: registrationNotice}, nil
 	}
 	request, changed, err := requestWithGeneratedSecrets(plan.Request, plan.Artifacts)
 	if err != nil {
@@ -129,7 +147,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	return result, nil
 }
 
-func updateSecretDiagnostic(root, secret, index, requestFile, env string) *diag.Diag {
+func updateSecretDiagnostic(root, secret, index, requestFile string) *diag.Diag {
 	stopCommand := contracts.ShellCommand("kb-create", "stop", "--platform-root", root)
 	applyArgs := []string{"kb-create", "apply", "--platform-root", root}
 	if index != "" {
@@ -138,15 +156,11 @@ func updateSecretDiagnostic(root, secret, index, requestFile, env string) *diag.
 	if requestFile != "" {
 		applyArgs = append(applyArgs, "--input", requestFile)
 	}
-	if env != "" {
-		applyArgs = append(applyArgs, "--secret-env", secret+"="+env)
-	} else {
-		applyArgs = append(applyArgs, "--secret-env", secret+"=ENV_VAR")
-	}
+	applyArgs = append(applyArgs, "--secret-env", secret+"=ENV_VAR")
 	command := stopCommand + " && " + contracts.ShellCommand(applyArgs...)
 	return contracts.NewDiag(contracts.CodeUpdateSecretRefused,
 		"Update cannot create or change installation secret "+secret+".",
-		"Set the environment variable to the intended secret, then run `"+command+"`.", nil)
+		"Set the environment variable configured for this secret to the intended value, then run `"+command+"`.", nil)
 }
 
 func refuseUpdateSecretChanges(input updateCommandInput, root string, store secrets.Store) *diag.Diag {
@@ -157,14 +171,17 @@ func refuseUpdateSecretChanges(input updateCommandInput, root string, store secr
 		}
 		value, present := os.LookupEnv(environment)
 		if !present || value == "" {
-			return contracts.NewDiag(contracts.CodeSecretInputInvalid, "the mapped secret environment value is missing", "set "+environment+", then rerun `kb-create update`", nil)
+			return contracts.NewDiag(contracts.CodeSecretInputInvalid, "the mapped secret environment value is missing", "set the environment variable configured for this secret, then rerun `kb-create update`", nil)
 		}
 		stored, exists, err := store.Get(name)
 		if err != nil {
+			if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
+				return asDiag(err)
+			}
 			return contracts.NewDiag(contracts.CodeUpdateSecretRefused, "the stored installation secret could not be compared", "run `kb-create doctor` before changing installation secrets", err)
 		}
 		if !exists || stored != value {
-			return updateSecretDiagnostic(root, name, input.Index, input.RequestFile, environment)
+			return updateSecretDiagnostic(root, name, input.Index, input.RequestFile)
 		}
 	}
 	return nil
@@ -174,7 +191,7 @@ func requireUpdateSecrets(plan contracts.ResolvedInstallPlan, store secrets.Stor
 	for _, secret := range plan.Request.SecretInputs {
 		exists, err := store.Exists(secret)
 		if err != nil || !exists {
-			return updateSecretDiagnostic(root, secret, input.Index, input.RequestFile, "")
+			return updateSecretDiagnostic(root, secret, input.Index, input.RequestFile)
 		}
 	}
 	return nil
@@ -188,7 +205,8 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The install root cannot use the required atomic layout.", "Run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"` on Linux or macOS.", err)
 	}
 	root := layout.PlatformRoot()
-	if _, err := receipt.Read(root); err != nil {
+	previousReceipt, err := receipt.Read(root)
+	if err != nil {
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
 		return updateCommandResult{}, failure
 	}
@@ -223,16 +241,20 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		}
 	}()
 	plan.Request.PlatformRoot = stage
-	transcript, err := logs.New(layout.OperationLogsDir(), correlationID, nil)
-	if err != nil {
-		return updateCommandResult{}, contracts.NewDiag("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the staged version root is writable", err)
-	}
-	defer transcript.Close()
 	activeRoot, err := layout.Active()
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "The active version root could not be resolved for read-only update inputs.", "Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the update.", err)
 	}
 	store := secrets.Store{PlatformRoot: activeRoot, ReadOnly: true}
+	redactions, err := secretRedactionValues(store, plan, input.SecretEnv)
+	if err != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installation secret state could not be read for safe logging", "run `kb-create doctor` before retrying the update", err)
+	}
+	transcript, err := logs.New(layout.OperationLogsDir(), correlationID, redactions)
+	if err != nil {
+		return updateCommandResult{}, contracts.NewDiag("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the staged version root is writable", err)
+	}
+	defer transcript.Close()
 	release, err := state.AcquireOperation("update")
 	if err != nil {
 		return updateCommandResult{}, asDiag(err)
@@ -273,7 +295,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	}
 	updated, snapshot, err = runtime.Update(ctx, plan, deps)
 	if err != nil {
-		return updateCommandResult{}, applyDossier(stage, correlationID, transcript.Path(), plan, err)
+		return updateCommandResult{}, applyDossier(stage, correlationID, transcript.Path(), plan, redactions, err)
 	}
 	updated.Plan.Request.PlatformRoot = root
 	if err := receipt.Write(stage, updated); err != nil {
@@ -311,6 +333,11 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		}
 	}
 	outcome, errorCode = "success", ""
+	registrationNotice, noticeErr := completedBootstrapProjectNotice(previousReceipt, previousReceipt.Plan.Request.ProjectRoot, false)
+	if noticeErr != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the project registration state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "update", "--platform-root", installRoot)+"`", noticeErr)
+	}
 	runner, err = host.NewRunner(installRoot)
 	if err != nil {
 		return updateCommandResult{}, asDiag(err)
@@ -323,5 +350,6 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	}
 	outcome, errorCode = "success", ""
 	return updateCommandResult{OK: true, Operation: "update", Receipt: updated, Snapshot: snapshotSummary(snapshot), HostRestarted: false,
-		PendingRestart: pendingRestart(updated, running, installRoot), LogPath: transcriptPath}, nil
+		PendingRestart: pendingRestart(updated, running, installRoot), LogPath: transcriptPath,
+		ProjectRegistrationNotice: registrationNotice}, nil
 }

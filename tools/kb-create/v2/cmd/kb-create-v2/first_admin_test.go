@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ import (
 	clikitresult "github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
@@ -58,73 +60,396 @@ func TestFirstAdminCredentialIsShownOnceAndNeverPersisted(t *testing.T) {
 
 	human := renderApply(result)
 	if strings.Count(human, password) != 1 || strings.Count(human, credential.Email) != 1 {
-		t.Fatalf("human output must show the credential exactly once: %q", human)
+		t.Fatal("human output did not show the credential exactly once")
 	}
 }
 
 func TestCompletedUndisclosedBootstrapReturnsStoredPasswordWithoutRecordingDisclosure(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
-	for key, value := range map[string]string{
-		secrets.BootstrapCompleted:   "provisioned",
-		secrets.BootstrapGenerated:   "true",
-		"gateway.bootstrap.password": "stored-bootstrap-password",
-	} {
-		if err := store.Put(key, value); err != nil {
-			t.Fatal(err)
-		}
+	if err := store.PutBootstrapPassword("stored-bootstrap-password", secrets.BootstrapOriginGenerated); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+		t.Fatal(err)
 	}
 
 	credential, failure := firstAdminResult(store, "admin@example.test", "<platform-root>")
 	if failure != nil || credential == nil || credential.State != firstAdminDisclosed || credential.Password != "stored-bootstrap-password" {
-		t.Fatalf("completed bootstrap disclosure = (%#v, %v), want the stored credential result", credential, failure)
+		t.Fatalf("completed bootstrap disclosure did not return the stored credential result; failure=%v", failure)
 	}
-	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || disclosed {
 		t.Fatalf("result construction recorded disclosure marker = %v, err %v; want the output writer to own it", disclosed, err)
+	}
+}
+
+// case: S-100.1
+func TestSuppliedFirstAdminPasswordIsNamedWithoutReturningValue(t *testing.T) {
+	root := t.TempDir()
+	store := secrets.Store{PlatformRoot: root}
+	if err := store.Put(secrets.BootstrapPassword, "operator-supplied-bootstrap-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+		t.Fatal(err)
+	}
+
+	admin, failure := firstAdminResult(store, "admin@example.test", root)
+	if failure != nil || admin == nil || admin.State != firstAdminSupplied || admin.Email != "admin@example.test" || admin.Password != "" {
+		t.Fatalf("supplied first-admin result has incorrect state or fields; failure=%v", failure)
+	}
+	result, err := json.Marshal(applyCommandResult{FirstAdmin: admin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	human := renderApply(applyCommandResult{FirstAdmin: admin})
+	for _, output := range []string{string(result), human} {
+		if strings.Contains(output, "operator-supplied-bootstrap-secret") || strings.Contains(output, "KB_TEST_SUPPLIED_BOOTSTRAP_PASSWORD") {
+			t.Fatal("supplied first-admin result exposed secret material")
+		}
+	}
+	if !strings.Contains(string(result), `"state":"supplied"`) || !strings.Contains(string(result), "admin@example.test") || strings.Contains(string(result), `"password"`) {
+		t.Fatal("supplied first-admin result did not report the supplied state without a password field")
+	}
+	value := applyCommandResult{FirstAdmin: admin, disclosureStoreRoot: root,
+		Receipt: contracts.InstallReceipt{Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{PlatformRoot: root}}}}
+	var emitted bytes.Buffer
+	if written, failure := emitFirstAdminResult(value, "apply", func() error {
+		_, err := emitted.Write(result)
+		return err
+	}); !written || failure != nil {
+		t.Fatal("supplied first-admin result was not emitted and erased")
+	}
+	assertSecretsAbsentFromTrees(t, []string{"operator-supplied-bootstrap-secret", "KB_TEST_SUPPLIED_BOOTSTRAP_PASSWORD"}, root)
+}
+
+func TestSecretRedactionsCoverResolvedValuesAndSourceNames(t *testing.T) {
+	store := secrets.Store{PlatformRoot: t.TempDir()}
+	if err := store.Put("adapter.llm.apiKey", "stored-test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	plan := contracts.ResolvedInstallPlan{Artifacts: []contracts.Artifact{{Config: []contracts.ConfigRequirement{{
+		ID: "adapter.llm.apiKey", Secret: true, Env: "LLM_API_KEY",
+	}}}}}
+	redactions, err := secretRedactionValues(store, plan, "adapter.llm.apiKey=OPERATOR_SECRET_NAME")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"adapter.llm.apiKey", "stored-test-secret", "LLM_API_KEY", "OPERATOR_SECRET_NAME"} {
+		if !slices.Contains(redactions, expected) {
+			t.Fatal("redaction values omitted a secret reference field")
+		}
+	}
+}
+
+// case: S-100.1, S-181.3
+func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t *testing.T) {
+	const password = "operator-supplied-bootstrap-secret"
+	const environment = "KB_TEST_SUPPLIED_BOOTSTRAP_PASSWORD"
+	for _, test := range []struct {
+		name    string
+		command string
+		json    bool
+	}{
+		{name: "apply JSON", command: "apply", json: true},
+		{name: "apply human", command: "apply"},
+		{name: "install JSON", command: "install", json: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
+			t.Setenv(environment, password)
+			root := filepath.Join(home, "platform")
+			port := freeLoopbackPort(t)
+			source := testReleaseCatalog(t, "2.0.0")
+			source.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5}
+			source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}}
+			source.Platforms[0].Config = []catalog.ConfigRequirement{
+				{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)},
+				{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`},
+				{ID: "gateway.bootstrap.adminEmail", Path: "/gateway/bootstrap/adminEmail", Default: `"admin@example.test"`},
+				{ID: "gateway.bootstrap.tenantId", Path: "/gateway/bootstrap/tenantId", Default: `"workspace"`},
+				{ID: secrets.BootstrapPassword, Path: "/gateway/bootstrap/password", Required: true, Secret: true, Generate: true, Env: secrets.BootstrapPasswordEnvironment, Services: []string{"gateway"}},
+				{ID: "gateway.jwtSecret", Path: "/gateway/jwtSecret", Required: true, Secret: true, Generate: true, Env: "GATEWAY_JWT_SECRET", Services: []string{"gateway"}},
+			}
+			release, err := catalog.Seal(source)
+			if err != nil {
+				t.Fatal("seal release catalog")
+			}
+			indexPath := filepath.Join(home, "release-index.json")
+			indexBytes, err := json.Marshal(release)
+			if err != nil {
+				t.Fatal("encode release catalog")
+			}
+			if err := os.WriteFile(indexPath, indexBytes, 0o600); err != nil {
+				t.Fatal("write release catalog")
+			}
+			request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
+				Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, SDK: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default",
+				Values:       map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.test"`, "gateway.bootstrap.tenantId": `"workspace"`},
+				SecretInputs: []string{secrets.BootstrapPassword, "gateway.jwtSecret"}}
+			requestPath := filepath.Join(home, "request.json")
+			requestBytes, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal("encode install request")
+			}
+			if err := os.WriteFile(requestPath, requestBytes, 0o600); err != nil {
+				t.Fatal("write install request")
+			}
+			starter := &bootstrapTestHost{address: fmt.Sprintf("127.0.0.1:%d", port)}
+			t.Cleanup(func() {
+				if starter.stop != nil {
+					_ = starter.stop()
+				}
+			})
+			factory := func(cmd *cobra.Command) commandDependencies {
+				return commandDependencies{Command: cmd, NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
+					Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: starter}}
+			}
+			args := []string{test.command, "--index", indexPath, "--input", requestPath, "--secret-env", secrets.BootstrapPassword + "=" + environment}
+			if test.json {
+				args = append(args, "--json")
+			}
+			var stdout, stderr bytes.Buffer
+			if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr); code != 0 {
+				t.Fatalf("%s command failed with exit %d", test.name, code)
+			}
+			for _, output := range []string{stdout.String(), stderr.String()} {
+				if strings.Contains(output, password) || strings.Contains(output, environment) {
+					t.Fatal("command output exposed supplied secret material")
+				}
+			}
+			if !strings.Contains(stdout.String(), "supplied") || strings.Contains(stdout.String(), `"password"`) {
+				t.Fatal("command result did not report the supplied state without a password field")
+			}
+			assertSecretsAbsentFromTrees(t, []string{password, environment}, root, filepath.Join(home, ".kb"), requestPath, indexPath)
+			store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
+			if present, err := store.Exists(secrets.BootstrapPassword); err != nil || present {
+				t.Fatal("supplied bootstrap password remains in the secret store")
+			}
+			if starter.stop != nil {
+				if err := starter.stop(); err != nil {
+					t.Fatal("stop fake Gateway host")
+				}
+				starter.stop = nil
+			}
+			args = []string{test.command, "--index", indexPath, "--input", requestPath}
+			if test.json {
+				args = append(args, "--json")
+			}
+			stdout.Reset()
+			stderr.Reset()
+			if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr); code != 0 {
+				t.Fatalf("repeat %s command failed with exit %d", test.name, code)
+			}
+			if strings.Contains(stdout.String(), password) || strings.Contains(stdout.String(), environment) {
+				t.Fatal("repeat command output exposed supplied secret material")
+			}
+			assertSecretsAbsentFromTrees(t, []string{password, environment}, root, filepath.Join(home, ".kb"), requestPath, indexPath)
+		})
 	}
 }
 
 func TestCompletedBootstrapWithoutStoredPasswordReturnsRecoveryNotice(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
-	for key, value := range map[string]string{
-		secrets.BootstrapCompleted: "provisioned",
-		secrets.BootstrapGenerated: "true",
-	} {
-		if err := store.Put(key, value); err != nil {
-			t.Fatal(err)
-		}
+	if err := store.PutBootstrapPassword("bootstrap-recovery-test-sentinel", secrets.BootstrapOriginGenerated); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkBootstrapDisclosed(); err != nil {
+		t.Fatal(err)
 	}
 	admin, failure := firstAdminResult(store, "admin@example.test", root)
 	if failure != nil || admin == nil || admin.State != firstAdminPreviouslyDisclosed || admin.Password != "" {
-		t.Fatalf("completed bootstrap without stored password = (%#v, %v), want successful recovery notice", admin, failure)
+		t.Fatalf("completed bootstrap without stored password did not return a recovery notice; failure=%v", failure)
 	}
 	if !strings.Contains(admin.RecoveryCommand, firstAdminRecoveryCommand(root, "admin@example.test")) {
-		t.Fatalf("missing-password recovery notice omitted doctor command: %#v", admin)
+		t.Fatal("missing-password recovery notice omitted doctor command")
 	}
+}
+
+// case: S-222.13
+func TestExecuteRejectsUndeclaredAndLifecycleSecretIDsBeforeWriting(t *testing.T) {
+	for _, test := range []struct {
+		name, channel, id, command string
+	}{
+		{name: "provenance through environment mapping on install", channel: "secret-env", id: "gateway.bootstrap.generated", command: "install"},
+		{name: "provenance through environment mapping on apply", channel: "secret-env", id: "gateway.bootstrap.generated", command: "apply"},
+		{name: "provenance through environment mapping on update", channel: "secret-env", id: "gateway.bootstrap.generated", command: "update"},
+		{name: "disclosure through environment mapping on install", channel: "secret-env", id: "gateway.bootstrap.disclosed", command: "install"},
+		{name: "disclosure through environment mapping on apply", channel: "secret-env", id: "gateway.bootstrap.disclosed", command: "apply"},
+		{name: "disclosure through environment mapping on update", channel: "secret-env", id: "gateway.bootstrap.disclosed", command: "update"},
+		{name: "unknown environment mapping on install", channel: "secret-env", id: "operator.unknownSecret", command: "install"},
+		{name: "unknown environment mapping on apply", channel: "secret-env", id: "operator.unknownSecret", command: "apply"},
+		{name: "unknown environment mapping on update", channel: "secret-env", id: "operator.unknownSecret", command: "update"},
+		{name: "unknown request input", channel: "input", id: "operator.unknownSecret", command: "apply"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			root := filepath.Join(home, "platform")
+			const envName = "KB_TEST_INTERNAL_FACT_SENTINEL"
+			const passwordEnv = "KB_TEST_SUPPLIED_BOOTSTRAP_SENTINEL"
+			const value = "generated-test-secret-sentinel"
+			t.Setenv(envName, value)
+			t.Setenv(passwordEnv, value)
+			source := testReleaseCatalog(t, "2.0.0")
+			source.Platforms[0].Config = []catalog.ConfigRequirement{
+				{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`},
+				{ID: "gateway.bootstrap.adminEmail", Path: "/gateway/bootstrap/adminEmail", Default: `"admin@example.test"`},
+				{ID: secrets.BootstrapPassword, Path: "/gateway/bootstrap/password", Secret: true, Generate: true, Env: secrets.BootstrapPasswordEnvironment, Services: []string{"gateway"}},
+			}
+			release, err := catalog.Seal(source)
+			if err != nil {
+				t.Fatal("seal test release")
+			}
+			indexPath := filepath.Join(home, "release-index.json")
+			indexBytes, err := json.Marshal(release)
+			if err != nil {
+				t.Fatal("encode test release")
+			}
+			if err := os.WriteFile(indexPath, indexBytes, 0o600); err != nil {
+				t.Fatal("write test release")
+			}
+			request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
+				Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, SDK: contracts.VersionSelector{Channel: contracts.ChannelStable},
+				ServiceProfile: "default", Values: map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.test"`}}
+			if test.channel == "input" {
+				request.SecretInputs = []string{test.id}
+			}
+			requestPath := filepath.Join(home, "request.json")
+			requestBytes, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal("encode test request")
+			}
+			if err := os.WriteFile(requestPath, requestBytes, 0o600); err != nil {
+				t.Fatal("write test request")
+			}
+			args := []string{test.command, "--index", indexPath, "--input", requestPath, "--json"}
+			if test.channel == "secret-env" {
+				mapping := test.id + "=" + envName
+				if test.id == "gateway.bootstrap.generated" || test.id == "gateway.bootstrap.disclosed" {
+					mapping = secrets.BootstrapPassword + "=" + passwordEnv + "," + mapping
+				}
+				args = append(args, "--secret-env", mapping)
+			}
+			var stdout, stderr bytes.Buffer
+			code := clikitcommand.Execute(newRootCommand(), args, &stdout, &stderr)
+			if code == 0 {
+				t.Fatal("undeclared requirement was accepted")
+			}
+			output := stdout.String() + stderr.String()
+			if !strings.Contains(output, contracts.CodeSecretInputInvalid) || !strings.Contains(output, test.id) {
+				t.Fatal("refusal did not include the catalogued code and offending requirement ID")
+			}
+			if strings.Contains(output, value) || strings.Contains(output, envName) || strings.Contains(output, passwordEnv) {
+				t.Fatal("refusal output exposed a secret value or environment-variable name")
+			}
+			if _, err := os.Stat(root); !os.IsNotExist(err) {
+				t.Fatal("refused input wrote installation state")
+			}
+			assertSecretsAbsentFromTrees(t, []string{value, envName, passwordEnv}, home)
+		})
+	}
+}
+
+// case: S-222.13
+func TestExecuteInteractiveInstallDoesNotPersistPromptSecretsBeforeMappingValidation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "platform")
+	project := filepath.Join(home, "project")
+	if err := os.Mkdir(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const value = "interactive-secret-test-sentinel"
+	const passwordEnv = "KB_TEST_INTERACTIVE_PASSWORD"
+	const markerEnv = "KB_TEST_INTERACTIVE_MARKER"
+	t.Setenv(passwordEnv, value)
+	t.Setenv(markerEnv, value)
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{
+		{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
+		{ID: "gateway.bootstrap.adminEmail", Path: "/gateway/bootstrap/adminEmail"},
+		{ID: "gateway.bootstrap.tenantId", Path: "/gateway/bootstrap/tenantId"},
+		{ID: secrets.BootstrapPassword, Path: "/gateway/bootstrap/password", Secret: true, Generate: true, Env: secrets.BootstrapPasswordEnvironment, Services: []string{"gateway"}},
+		{ID: "gateway.jwtSecret", Path: "/gateway/jwtSecret", Secret: true, Generate: true, Env: "GATEWAY_JWT_SECRET", Services: []string{"gateway"}},
+	}
+	release, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal("seal interactive test release")
+	}
+	indexPath := filepath.Join(home, "release-index.json")
+	indexBytes, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal("encode interactive test release")
+	}
+	if err := os.WriteFile(indexPath, indexBytes, 0o600); err != nil {
+		t.Fatal("write interactive test release")
+	}
+	input := strings.NewReader("\n\nsecured\nadmin@example.test\n\n" + value + "\n" + value + "\n\n")
+	factory := func(cmd *cobra.Command) commandDependencies {
+		return commandDependencies{Command: cmd, NodeCheck: func() error { return nil }, InstallInput: input,
+			Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+	}
+	var stdout, stderr bytes.Buffer
+	args := []string{"install", "--index", indexPath, "--platform-root", root, "--project-root", project,
+		"--secret-env", secrets.BootstrapPassword + "=" + passwordEnv + ",gateway.bootstrap.generated=" + markerEnv}
+	if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr); code == 0 {
+		t.Fatal("interactive install accepted an installer lifecycle ID")
+	}
+	output := stdout.String() + stderr.String()
+	if !strings.Contains(output, contracts.CodeSecretInputInvalid) || !strings.Contains(output, "gateway.bootstrap.generated") {
+		phases := make([]string, 0)
+		codes := make([]string, 0)
+		for _, token := range strings.Fields(output) {
+			if strings.HasPrefix(token, "KB_") {
+				codes = append(codes, strings.Trim(token, ",:;"))
+			}
+		}
+		for _, phrase := range []string{"Admin email", "Admin password", "Session signing secret", "Plan:", "Applying installation", "KB_INSTALL_SCENARIO_INVALID", "KB_INSTALL_INPUT_REQUIRED"} {
+			if strings.Contains(output, phrase) {
+				phases = append(phases, phrase)
+			}
+		}
+		t.Fatalf("interactive refusal omitted its catalogued code or offending requirement ID (code=%v id=%v phases=%v codes=%v output_bytes=%d)", strings.Contains(output, contracts.CodeSecretInputInvalid), strings.Contains(output, "gateway.bootstrap.generated"), phases, codes, len(output))
+	}
+	for _, sensitive := range []string{value, passwordEnv, markerEnv} {
+		if strings.Contains(output, sensitive) {
+			t.Fatal("interactive refusal output exposed secret material")
+		}
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatal("refused interactive install wrote platform state")
+	}
+	assertSecretsAbsentFromTrees(t, []string{value, passwordEnv, markerEnv}, home)
 }
 
 // case: S-222.11
 func TestPreviouslyDisclosedFirstAdminProducesRecoveryNotice(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
-	for key, value := range map[string]string{
-		secrets.BootstrapCompleted:   "provisioned",
-		secrets.BootstrapGenerated:   "true",
-		secrets.BootstrapDisclosed:   "true",
-		"gateway.bootstrap.password": "prior-run-secret-marker",
-	} {
-		if err := store.Put(key, value); err != nil {
-			t.Fatal(err)
-		}
+	if err := store.PutBootstrapPassword("prior-run-secret-marker", secrets.BootstrapOriginGenerated); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkBootstrapDisclosed(); err != nil {
+		t.Fatal(err)
 	}
 
 	admin, failure := firstAdminResult(store, "admin@example.test", root)
 	if failure != nil || admin == nil {
-		t.Fatalf("previous disclosure = (%#v, %v), want a successful notice result", admin, failure)
+		t.Fatalf("previous disclosure did not return a successful notice result; failure=%v", failure)
 	}
 	if admin.State != firstAdminPreviouslyDisclosed || admin.Email != "admin@example.test" || admin.Password != "" || admin.RecoveryCommand == "" || admin.StopCommand == "" || admin.StartCommand == "" {
-		t.Fatalf("previously disclosed result = %#v", admin)
+		t.Fatal("previously disclosed result has incorrect state or fields")
 	}
 	recovery := buildFirstAdminRecoveryCommands(root, "admin@example.test")
 	recoveryCommand := recovery.Doctor
@@ -142,7 +467,7 @@ func TestPreviouslyDisclosedFirstAdminProducesRecoveryNotice(t *testing.T) {
 	humanOutput := renderApply(result)
 	for label, output := range map[string]string{"human": humanOutput, "JSON": string(jsonOutput)} {
 		if !strings.Contains(output, "issued by an earlier run") || !strings.Contains(output, "not shown again") || !strings.Contains(output, "admin@example.test") || !strings.Contains(output, recovery.Stop) || !strings.Contains(output, recoveryCommand) || !strings.Contains(output, recovery.Start) {
-			t.Errorf("%s result omitted prior-disclosure notice or recovery command: %s", label, output)
+			t.Errorf("%s result omitted prior-disclosure notice or recovery command", label)
 		}
 		if strings.Contains(output, "prior-run-secret-marker") {
 			t.Errorf("%s result exposed the stored bootstrap password", label)
@@ -161,7 +486,7 @@ func TestPreviouslyDisclosedFirstAdminProducesRecoveryNotice(t *testing.T) {
 		t.Fatalf("JSON firstAdmin notice = %#v", payload.FirstAdmin)
 	}
 	if _, hasPassword := payload.FirstAdmin["password"]; hasPassword {
-		t.Fatalf("previously disclosed JSON result included a password: %#v", payload.FirstAdmin)
+		t.Fatal("previously disclosed JSON result included a password field")
 	}
 }
 
@@ -305,7 +630,7 @@ func TestGatewayAuthHealthContractAcceptsProviderFailureDetails(t *testing.T) {
 	if !errors.As(failure, &typed) || typed.Code != contracts.CodeApplyFailed || typed.Message != "Gateway did not prove first-administrator bootstrap and secured authentication are ready with a usable active administrator." {
 		t.Fatalf("provider readiness response failure = %v; want typed readiness refusal, not contract mismatch", failure)
 	}
-	if completed, err := store.Exists(secrets.BootstrapCompleted); err != nil || completed {
+	if completed, err := store.BootstrapCompleted(); err != nil || completed {
 		t.Fatalf("provider readiness refusal completion marker = %v, err %v; want absent", completed, err)
 	}
 }
@@ -349,7 +674,7 @@ func TestUnknownGatewayBootstrapFailsWithCataloguedDiagnostic(t *testing.T) {
 	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || diagnostic.Cause == "" || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) {
 		t.Fatalf("unknown bootstrap status error = %#v, want catalogued apply diagnostic with next step", err)
 	}
-	if _, present, err := store.Get(secrets.BootstrapCompleted); err != nil || present {
+	if _, present, err := store.BootstrapCompletedValue(); err != nil || present {
 		t.Fatalf("unknown bootstrap response persisted completion: present=%v error=%v", present, err)
 	}
 }
@@ -467,10 +792,10 @@ func TestGatewayWithoutUsableAdminCannotWriteBootstrapCompletion(t *testing.T) {
 			}
 			for _, output := range []string{err.Error(), string(encoded), jsonOutput.String(), humanOutput.String()} {
 				if strings.Contains(output, remoteSecretMarker) {
-					t.Fatalf("bootstrap refusal exposed remote health detail: %s", output)
+					t.Fatal("bootstrap refusal exposed remote health detail")
 				}
 			}
-			if _, present, err := store.Get(secrets.BootstrapCompleted); err != nil || present {
+			if _, present, err := store.BootstrapCompletedValue(); err != nil || present {
 				t.Fatalf("non-proving readiness wrote completion marker: present=%v error=%v", present, err)
 			}
 			if starter.stopped != 1 {
@@ -531,7 +856,7 @@ func TestGatewayFailureEnvelopePreservesDiagnosticWithoutSecrets(t *testing.T) {
 	for _, secret := range []string{bodySecret, headerSecret} {
 		if strings.Contains(err.Error(), secret) || strings.Contains(string(encoded), secret) ||
 			strings.Contains(jsonOutput.String(), secret) || strings.Contains(humanOutput.String(), secret) {
-			t.Fatalf("Gateway failure exposed credential %q: %s %s", secret, err, encoded)
+			t.Fatal("Gateway failure exposed credential material")
 		}
 	}
 }
@@ -562,7 +887,7 @@ func TestNonSuccessGatewayBodyGetsInternalMismatchWithoutSecrets(t *testing.T) {
 	}
 	for _, secret := range []string{bodySecret, headerSecret, "do-not-display"} {
 		if strings.Contains(err.Error(), secret) || strings.Contains(string(encoded), secret) {
-			t.Fatalf("non-success Gateway response exposed private value %q: %s %s", secret, err, encoded)
+			t.Fatal("non-success Gateway response exposed private value")
 		}
 	}
 }
@@ -607,12 +932,28 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 		}
 	})
 	firstOutput := runApplyStreamForTest(t, resolved, deps)
-	password, present, err := store.Get("gateway.bootstrap.password")
-	if err != nil || !present || strings.Count(firstOutput, password) != 1 {
-		t.Fatalf("stored password = %q, present=%v, error=%v", password, present, err)
+	firstResult := applyResultFromStream(t, firstOutput)
+	password := firstResult.FirstAdmin.Password
+	if password == "" || strings.Count(firstOutput, password) != 1 {
+		t.Fatalf("first result did not disclose exactly one generated password")
+	}
+	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+		present, err := store.Exists(name)
+		if err != nil || present {
+			t.Fatalf("disclosed bootstrap secret %q present=%v, error=%v", name, present, err)
+		}
+	}
+	assertSecretAbsentFromTree(t, root, password)
+	for label, platformRoot := range map[string]string{"root": root, "current": filepath.Join(root, "current")} {
+		storeAtRoot := secrets.Store{PlatformRoot: platformRoot}
+		completed, completedErr := storeAtRoot.BootstrapCompleted()
+		disclosed, disclosedErr := storeAtRoot.BootstrapDisclosed()
+		present, presentErr := storeAtRoot.Exists("gateway.bootstrap.password")
+		if !completed || completedErr != nil || !disclosed || disclosedErr != nil || present || presentErr != nil {
+			t.Fatalf("first disclosure lifecycle at %s: completed=%v/%v disclosed=%v/%v passwordPresent=%v/%v", label, completed, completedErr, disclosed, disclosedErr, present, presentErr)
+		}
 	}
 	assertSingleAdminResultRecord(t, firstOutput, "admin@example.test", password)
-	firstResult := applyResultFromStream(t, firstOutput)
 	logBytes, err := os.ReadFile(firstResult.LogPath)
 	if err != nil {
 		t.Fatalf("read operation log %q from apply result: %v", firstResult.LogPath, err)
@@ -634,13 +975,15 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondOutput := runApplyStreamForTest(t, resolved, deps)
-	unchanged, present, err := store.Get("gateway.bootstrap.password")
-	if err != nil || !present || unchanged != password {
-		t.Fatalf("repeat apply changed stored password: %q, present=%v, error=%v", unchanged, present, err)
+	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+		present, err := store.Exists(name)
+		if err != nil || present {
+			t.Fatalf("repeat apply restored bootstrap secret %q: present=%v, error=%v", name, present, err)
+		}
 	}
 	assertSingleAdminResultRecord(t, secondOutput, "admin@example.test", "")
 	if strings.Contains(secondOutput, password) || !strings.Contains(secondOutput, "issued by an earlier run") || !strings.Contains(secondOutput, firstAdminRecoveryCommand(platformRoot, "admin@example.test")) {
-		t.Fatalf("repeat apply omitted prior-disclosure notice or leaked password: %s", secondOutput)
+		t.Fatal("repeat apply omitted prior-disclosure notice or exposed secret material")
 	}
 }
 
@@ -676,7 +1019,7 @@ func TestApplyFailureBeforeResultWriteLeavesPasswordEligibleForRetry(t *testing.
 	if _, failure := executeApply(context.Background(), failedAttemptInput, deps); failure == nil {
 		t.Fatal("apply without the installed CLI entry unexpectedly created the kb shim")
 	}
-	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || disclosed {
 		t.Fatalf("apply failure before result output consumed the disclosure marker: disclosed=%v err=%v", disclosed, err)
 	}
 	if starter.stop != nil {
@@ -687,13 +1030,13 @@ func TestApplyFailureBeforeResultWriteLeavesPasswordEligibleForRetry(t *testing.
 	}
 	password, present, err := store.Get("gateway.bootstrap.password")
 	if err != nil || !present {
-		t.Fatalf("stored password = %q, present=%v, error=%v", password, present, err)
+		t.Fatalf("stored password availability mismatch: present=%v, error=%v", present, err)
 	}
 	retryResult, retryFailure := executeApply(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
 	if retryFailure != nil || retryResult.FirstAdmin == nil || retryResult.FirstAdmin.State != firstAdminDisclosed || retryResult.FirstAdmin.Password != password {
-		t.Fatalf("retry after completed bootstrap without a result write = (%#v, %v), want stored credential result", retryResult.FirstAdmin, retryFailure)
+		t.Fatalf("retry after completed bootstrap without a result write did not return the stored credential; failure=%v", retryFailure)
 	}
-	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || disclosed {
 		t.Fatalf("apply result construction recorded disclosure before output: disclosed=%v err=%v", disclosed, err)
 	}
 }
@@ -743,9 +1086,9 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 	deps.Command = command
 	completion, failure := executeApplyStream(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
 	if failure != nil || completion.ExitCode == 0 {
-		t.Fatalf("apply with a failing result writer = completion %#v, failure %v; want typed output failure", completion, failure)
+		t.Fatalf("apply with a failing result writer did not return a typed output failure; failure=%v", failure)
 	}
-	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || disclosed {
 		t.Fatalf("failed final result write recorded disclosure = %v, err %v", disclosed, err)
 	}
 	if starter.stop != nil {
@@ -755,11 +1098,17 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 		starter.stop = nil
 	}
 	output := runApplyStreamForTest(t, resolved, deps)
-	password, present, err := store.Get("gateway.bootstrap.password")
-	if err != nil || !present || !strings.Contains(output, password) {
-		t.Fatalf("retry after failed result write did not disclose stored password: present=%v err=%v", present, err)
+	result := applyResultFromStream(t, output)
+	password := result.FirstAdmin.Password
+	if password == "" || !strings.Contains(output, password) {
+		t.Fatalf("retry after failed result write did not disclose the first-admin password")
 	}
-	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || !disclosed {
+	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+		if present, err := store.Exists(name); err != nil || present {
+			t.Fatalf("successful retry retained bootstrap secret %q: present=%v err=%v", name, present, err)
+		}
+	}
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || !disclosed {
 		t.Fatalf("successful retry did not record disclosure after result write: %v, err %v", disclosed, err)
 	}
 }
@@ -866,9 +1215,9 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 	store := secrets.Store{PlatformRoot: activeRoot}
 	password, present, err := store.Get("gateway.bootstrap.password")
 	if firstCode == 0 || !present || !strings.Contains(firstOutput, contracts.CodeProjectRegistrationFailed) || strings.Contains(firstOutput, password) {
-		t.Fatalf("registration-failed JSON install: exit=%d passwordPresent=%v output=%s", firstCode, present, firstOutput)
+		t.Fatalf("registration-failed JSON install did not preserve the undisclosed credential; exit=%d passwordPresent=%v", firstCode, present)
 	}
-	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || disclosed {
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || disclosed {
 		t.Fatalf("registration failure recorded disclosure: disclosed=%v err=%v", disclosed, err)
 	}
 	if starter.stop != nil {
@@ -892,9 +1241,26 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 	}
 	secondCode, secondOutput := run(rootBySpelling[retrySpelling])
 	if secondCode != 0 || !strings.Contains(secondOutput, password) || !strings.Contains(secondOutput, `"state":"disclosed"`) {
-		t.Fatalf("retry after registration failure did not disclose the stored credential: exit=%d output=%s", secondCode, secondOutput)
+		t.Fatalf("retry after registration failure did not disclose the stored credential: exit=%d", secondCode)
 	}
-	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || !disclosed {
+	secondResult := applyResultFromStream(t, secondOutput)
+	registrationGateway, err := gateway.OriginFromHealthURL(secondResult.Receipt.Verification.HostHealthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{
+		contracts.ShellCommand("kb", "auth", "login", "--gateway-url", registrationGateway, "--email", "admin@example.test"),
+		contracts.ShellCommand("kb", "project", "add", project),
+		contracts.ShellCommand("kb", "project", "show", project),
+	} {
+		if !strings.Contains(secondResult.ProjectRegistrationNotice, command) {
+			t.Fatalf("completed retry notice %q omitted command %q", secondResult.ProjectRegistrationNotice, command)
+		}
+	}
+	if registrations != 1 {
+		t.Fatalf("completed repeat install attempted project registration %d times; want only the initial install attempt", registrations)
+	}
+	if disclosed, err := store.BootstrapDisclosed(); err != nil || !disclosed {
 		t.Fatalf("successful result did not record disclosure: disclosed=%v err=%v", disclosed, err)
 	}
 	if starter.stop != nil {
@@ -905,7 +1271,7 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 	}
 	thirdCode, thirdOutput := run(rootBySpelling[retrySpelling])
 	if thirdCode != 0 || strings.Contains(thirdOutput, password) || !strings.Contains(thirdOutput, "previously-disclosed") || !strings.Contains(thirdOutput, "issued by an earlier run") {
-		t.Fatalf("third run did not return the non-secret prior-disclosure notice: exit=%d output=%s", thirdCode, thirdOutput)
+		t.Fatalf("third run did not return the non-secret prior-disclosure notice: exit=%d", thirdCode)
 	}
 }
 
@@ -986,7 +1352,7 @@ func assertSingleAdminResultRecord(t *testing.T, output, email, password string)
 		}
 		resultRecords++
 		if record.Data.FirstAdmin == nil || record.Data.FirstAdmin.Email != email || record.Data.FirstAdmin.Password != password {
-			t.Fatalf("first-administrator result = %#v; want email %q and password %q", record.Data.FirstAdmin, email, password)
+			t.Fatal("first-administrator result did not contain the expected email and credential")
 		}
 		if password == "" && record.Data.FirstAdmin.State != firstAdminPreviouslyDisclosed {
 			t.Fatalf("repeat first-administrator state = %q, want %q", record.Data.FirstAdmin.State, firstAdminPreviouslyDisclosed)

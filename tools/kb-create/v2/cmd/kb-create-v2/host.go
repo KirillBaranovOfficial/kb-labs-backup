@@ -17,6 +17,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -77,6 +78,9 @@ func (c hostCommand) setup(runnerOperation string) (*host.ProcessRunner, host.St
 	}
 	runner, err := host.NewRunner(c.PlatformRoot)
 	if err != nil {
+		return nil, host.State{}, asDiag(err)
+	}
+	if _, err := (secrets.Store{PlatformRoot: c.PlatformRoot}).BootstrapCompleted(); err != nil {
 		return nil, host.State{}, asDiag(err)
 	}
 	return runner, runner.State, nil
@@ -463,6 +467,16 @@ func (h lifecycleHost) Resume(ctx context.Context) error {
 }
 
 func asDiag(err error) *diag.Diag {
+	if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
+		return contracts.NewDiag(contracts.CodeSecretStoreUnsupported,
+			"The platform secret state uses a format this launcher cannot safely read.",
+			"Preserve the existing platform root, then run `kb-create install --platform-root NEW_ROOT` with a new empty path.", nil)
+	}
+	if errors.Is(err, secrets.ErrBootstrapCredentialLocked) {
+		return contracts.NewDiag(contracts.CodeBootstrapCredentialLocked,
+			"The first-administrator credential cannot be replaced after bootstrap completes.",
+			"Stop the host, then run `kb-create doctor --platform-root <platform-root> --recover --email <email> --generate --yes`; restart with `kb-create start --platform-root <platform-root>`.", nil)
+	}
 	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		return typed

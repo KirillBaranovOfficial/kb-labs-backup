@@ -14,6 +14,7 @@ import (
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
@@ -46,12 +47,15 @@ type doctorCommandInput struct {
 
 func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperationResult, *diag.Diag) {
 	in := input
-	if in.Recover.Enabled {
-		return executeRecover(input)
-	}
 	root := in.PlatformRoot
 	if root == "" {
 		root = defaultPlatformRoot()
+	}
+	if _, err := (secrets.Store{PlatformRoot: root}).BootstrapCompleted(); err != nil {
+		return nil, asDiag(err)
+	}
+	if in.Recover.Enabled {
+		return executeRecover(input)
 	}
 	layout, layoutErr := versionroot.ForPlatformPath(root)
 	if layoutErr != nil {
