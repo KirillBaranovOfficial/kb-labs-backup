@@ -22,7 +22,8 @@ import runner as journey_runner
 from runner import (login_and_configure_secured_admin,
                     uninstall_human_summary_has_shim_result,
                     uninstall_shim_result_matches)
-from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_installed_cli_path, declared_capabilities,
+from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_selection_groups,
+                            configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
                             request as request_result,
@@ -242,7 +243,6 @@ class ServiceJourneyTests(unittest.TestCase):
                     "KB_JOURNEY_SELECTED_STEPS": selected,
                     "KB_JOURNEY_CASES": selected,
                     "KB_JOURNEY_SELECTED_CAPABILITIES": "gateway,projects",
-                    "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/service_runner.py",
                 }, clear=True), patch("service_runner.open_http", side_effect=fake_open_http):
                     journey = Journey(mode, f"selected-smoke-{mode}")
                     groups = SERVICE_GROUPS
@@ -303,19 +303,19 @@ class ServiceJourneyTests(unittest.TestCase):
             "KB_JOURNEY_SELECTED_STEPS": selected,
             "KB_JOURNEY_CASES": selected,
             "KB_JOURNEY_SELECTED_CAPABILITIES": "marketplace",
-            "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/marketplace_steps.py",
         }, clear=True):
             journey = Journey("local", "selected-marketplace-flow")
+            groups = service_selection_groups()
             graph = FlowGraph(
                 journey,
-                {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+                {name: spec["depends_on"] for name, spec in groups.items()},
                 states={
                     "host-running": {"passed": True, "evidence": "host ready"},
                     "project-registered": {"passed": True, "evidence": "project registered"},
                     "service-api-session": {"passed": True, "evidence": "API session ready"},
                 },
                 state_producers=STATE_PRODUCERS,
-                groups=SERVICE_GROUPS,
+                groups=groups,
             )
             producer = graph.flow("produce Commit project fixture", "marketplace-fixture-producer",
                                   "marketplace-fixtures", lambda: calls.append("producer"),
@@ -326,6 +326,7 @@ class ServiceJourneyTests(unittest.TestCase):
                 "marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
                 lambda: journey.step("install exact marketplace plugin", "marketplace", lambda: None,
                                      cases=["S-010.1"]),
+                cases=["S-010.1"],
                 record_empty_success=False,
             )
 
@@ -342,14 +343,13 @@ class ServiceJourneyTests(unittest.TestCase):
         with patch.dict(os.environ, {
             "KB_JOURNEY_SELECTED_STEPS": selected,
             "KB_JOURNEY_CASES": selected,
-            "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/marketplace_steps.py",
         }, clear=True):
             journey = Journey("local", "named-flow-error")
             graph = FlowGraph(journey, {"marketplace-lifecycle": ()}, groups={
-                "marketplace-lifecycle": {"claim_sources": ("e2e/journey/marketplace_steps.py",)},
+                "marketplace-lifecycle": {"cases": ("S-010.1",)},
             })
             graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
-                       lambda: (_ for _ in ()).throw(RuntimeError("fixture setup failed")))
+                       lambda: (_ for _ in ()).throw(RuntimeError("fixture setup failed")), cases=("S-010.1",))
         result = journey.result()
         self.assertEqual(result.first_failure["name"], "marketplace lifecycle assertions")
         self.assertEqual(result.first_failure["message"], "fixture setup failed")
@@ -360,6 +360,35 @@ class ServiceJourneyTests(unittest.TestCase):
         blocked_result = blocked.result()
         self.assertEqual(blocked_result.status, "BLOCKED")
         self.assertIsNone(blocked_result.first_failure)
+
+    def test_project_b_claims_stay_registered_when_fixture_state_is_missing(self):
+        selected = "S-199.3,S-199.4,S-199.5"
+        groups = service_selection_groups()
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selected,
+            "KB_JOURNEY_CASES": selected,
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "mcp",
+            "KB_JOURNEY_SELECTED_OWNING_STEPS": "{}",
+        }, clear=True):
+            journey = Journey("secured", "missing-project-b-claims")
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in groups.items()},
+                states={
+                    "project-registered": {"passed": True, "evidence": "project registered",
+                                           "value": {"id": "prj_a", "root": "/tmp/project-a"}},
+                    "service-api-session": {"passed": True, "evidence": "service API session ready",
+                                            "value": "token"},
+                },
+                state_producers=STATE_PRODUCERS,
+                groups=groups,
+            )
+            declarations = checks("secured", graph)
+        by_claim = {claim: name for name, _capability, _check, cases, _requires, _runners in declarations
+                    for claim in cases}
+        self.assertEqual(by_claim["S-199.3"], "project plugin catalog isolation")
+        self.assertEqual(by_claim["S-199.4"], "project MCP read-only tool isolation")
+        self.assertEqual(by_claim["S-199.5"], "secured project MCP catalog selection")
 
     def test_auth_group_failure_does_not_invalidate_service_api_session(self):
         selected = "PC-002.8"
@@ -569,6 +598,8 @@ raise SystemExit(1)
                                                "value": {"id": "prj_fixture", "root": str(Path(directory))}},
                     })
                     env = {
+                        "HOME": directory,
+                        "PATH": os.environ.get("PATH", ""),
                         "KB_JOURNEY_PLATFORM_ROOT": str(Path(directory) / "platform"),
                         "KB_JOURNEY_STATES": inherited,
                     }
@@ -629,8 +660,10 @@ raise SystemExit(1)
                         service_main()
 
                     result = json.loads(output.read_text())
-                    expected = {"selected analytics check"} if selected else {
-                        "selected analytics check", "unselected mcp check"}
+                    expected = (
+                        {"selected analytics check"} if selected else
+                        {"selected analytics check", "unselected mcp check"}
+                    )
                     self.assertEqual(set(executed), expected)
                     self.assertEqual(len(executed), len(expected))
                     self.assertEqual(fixture_project_ids, ["prj_fixture"])
@@ -651,6 +684,12 @@ raise SystemExit(1)
                             status[0] == ("PASS" if name in allowed_passes else "SKIPPED")
                             for name, status in status_by_name.items()
                         ), status_by_name)
+
+    def test_project_fixture_flows_do_not_depend_on_claim_selection_for_registration(self):
+        source = Path(__file__).with_name("service_runner.py").read_text(encoding="utf-8")
+        self.assertNotIn("if project_b_root or graph.selection_active", source)
+        self.assertNotIn("if project_root or journey.selected_claims", source)
+        self.assertNotIn("if project_id or journey.selected_claims", source)
 
     def test_checks_returns_a_reusable_list_for_both_modes(self):
         for mode in ("local", "secured"):
@@ -717,7 +756,7 @@ raise SystemExit(1)
         def selection_environment(*, cases):
             return {
                 "KB_JOURNEY_SELECTED_STEPS": cases[0],
-                "KB_JOURNEY_PREREQUISITE_STEPS": "candidate provenance,launcher version,start host",
+                "KB_JOURNEY_PREREQUISITE_STEPS": '["candidate provenance", "launcher version", "start host"]',
             }
 
         env = selection_environment(cases=["S-023.9"])
@@ -787,7 +826,7 @@ raise SystemExit(1)
 
         with patch.dict(os.environ, {
             "KB_JOURNEY_SELECTED_STEPS": "S-042.1",
-            "KB_JOURNEY_PREREQUISITE_STEPS": "",
+            "KB_JOURNEY_PREREQUISITE_STEPS": "[]",
         }, clear=False):
             journey = Journey("local", "selected-closure-state-missing-edge")
             producer = journey.step("closure state producer", "test", produce_state)
@@ -807,7 +846,7 @@ raise SystemExit(1)
         def selection_environment(*, cases):
             return {
                 "KB_JOURNEY_SELECTED_STEPS": cases[0],
-                "KB_JOURNEY_PREREQUISITE_STEPS": "project registration",
+                "KB_JOURNEY_PREREQUISITE_STEPS": '["project registration"]',
             }
 
         with patch.dict(os.environ, selection_environment(cases=["S-042.1"]), clear=False):
@@ -858,8 +897,8 @@ raise SystemExit(1)
     def test_failed_host_start_blocks_nested_update_in_full_run(self):
         with patch.dict(os.environ, {
             "KB_JOURNEY_SELECTED_STEPS": "",
-            "KB_JOURNEY_PREREQUISITE_STEPS": "",
-            "KB_JOURNEY_PREREQUISITE_FLOWS": "",
+            "KB_JOURNEY_PREREQUISITE_STEPS": "[]",
+            "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
         }, clear=False):
             parent = Journey("local", "full-update-parent")
             graph = FlowGraph(parent, {})
@@ -996,7 +1035,7 @@ raise SystemExit(1)
     def test_failed_registered_setup_blocks_selected_service_claim(self):
         with patch.dict(os.environ, {
                 "KB_JOURNEY_SELECTED_STEPS": "PC-002.3",
-                "KB_JOURNEY_PREREQUISITE_STEPS": "registered project setup",
+                "KB_JOURNEY_PREREQUISITE_STEPS": '["registered project setup"]',
         }, clear=False):
             journey = Journey("local", "service-setup-prerequisite")
             journey.step("registered project setup", "journey.setup",
@@ -1308,7 +1347,7 @@ raise SystemExit(1)
 
         self.assertIsNone(result)
         self.assertEqual(len(commands), 1)
-        self.assertIn("kb auth login", commands[0][0][2])
+        self.assertEqual(commands[0][0][3:6], ["kb", "auth", "login"])
         self.assertEqual(commands[0][1], project)
 
     def test_secured_admin_signs_in_before_authenticated_provider_config(self):
@@ -1333,7 +1372,7 @@ raise SystemExit(1)
 
         self.assertIsNone(result)
         self.assertEqual(len(commands), 3)
-        self.assertIn("kb auth login", commands[0][0][2])
+        self.assertEqual(commands[0][0][3:6], ["kb", "auth", "login"])
         self.assertIn("gateway.auth.providers", commands[1][0])
         self.assertEqual(commands[1][1], home)
         self.assertEqual(commands[2][0], ["kb-create", "restart", "--platform-root", str(root / "platform")])
@@ -1358,7 +1397,7 @@ raise SystemExit(1)
 
         self.assertEqual(result[0], "kb auth login")
         self.assertEqual(len(commands), 1)
-        self.assertIn("kb auth login", commands[0][2])
+        self.assertEqual(commands[0][3:6], ["kb", "auth", "login"])
 
     def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
         import json

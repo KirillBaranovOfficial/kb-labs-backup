@@ -1,6 +1,8 @@
 """Installed marketplace and adapter journeys for the shared service runner."""
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 from project_service_path import project_service_path
 
 import json
@@ -107,7 +109,7 @@ def _registry_version(package_id: str, registry: str, project: Path, env: dict[s
 def wait_for_marketplace_ready(project: Path, env: dict[str, str], runner: CommandRunner,
                                *, timeout: float = 60) -> None:
     """Wait for the installed product's marketplace health check before registry reads."""
-    command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+    command = kb_command([ "marketplace", "plugins", "doctor", "--scope", "project", "--json"])
     deadline = time.monotonic() + timeout
     last_problem = "health check did not return"
     while time.monotonic() < deadline:
@@ -157,7 +159,7 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
     def verify() -> None:
         version = _registry_version(fixture_package, registry, project, env, runner)
         install = ["marketplace", "install", f"{fixture_package}@{version}", "--json"]
-        _json(_run(["kb", *install], cwd=project, env=env, runner=runner), install)
+        _json(_run(kb_command([ *install]), cwd=project, env=env, runner=runner), install)
         original = config_file.read_bytes() if config_file.exists() else None
         try:
             config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -166,7 +168,7 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
             config_file.write_text(json.dumps(config, indent=2) + "\n")
 
             doctor = ["marketplace", "plugins", "doctor", "--scope", "project", "--json"]
-            result = _run(["kb", *doctor], cwd=project, env=env, runner=runner)
+            result = _run(kb_command([ *doctor]), cwd=project, env=env, runner=runner)
             try:
                 envelope = read_ux_cli_result(result.stdout, result.returncode)
                 error = decode_ux_error_result(envelope)
@@ -185,7 +187,7 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
                 raise RuntimeError("marketplace doctor omitted the typed plugins.block diagnostic, config path, or repair hint")
 
             blocked = ["journey", "analytics", "emit", "--marker", "policy-blocked", "--json"]
-            blocked_result = _run(["kb", *blocked], cwd=project, env=env, runner=runner)
+            blocked_result = _run(kb_command([ *blocked]), cwd=project, env=env, runner=runner)
             if blocked_result.returncode == 0:
                 raise RuntimeError("third-party analytics command remained registered with an invalid project policy")
             blocked_error = decode_ux_error_result(read_ux_cli_result(blocked_result.stdout, blocked_result.returncode))
@@ -193,7 +195,7 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
                 raise RuntimeError("third-party analytics command ran instead of being excluded from discovery")
 
             first_party = ["version", "--json"]
-            _json(_run(["kb", *first_party], cwd=project, env=env, runner=runner), first_party)
+            _json(_run(kb_command([ *first_party]), cwd=project, env=env, runner=runner), first_party)
         finally:
             if original is None:
                 config_file.unlink(missing_ok=True)
@@ -248,7 +250,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         return
 
     def assert_auth_required(step_id: str) -> None:
-        command = ["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"]
+        command = kb_command([ "marketplace", "plugins", "list", "--scope", "platform", "--json"])
         with invocation_context(step_id=step_id):
             result = _run(command, cwd=project, env=env, runner=runner)
         try:
@@ -274,21 +276,21 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
     if not password:
         raise RuntimeError("secured marketplace journey needs KB_JOURNEY_ADMIN_PASSWORD")
-    login = ["kb", "auth", "login", "--gateway-url", gateway,
-             "--email", email, "--password-stdin", "--json"]
+    login = kb_command([ "auth", "login", "--gateway-url", gateway,
+             "--email", email, "--password-stdin", "--json"])
     with invocation_context(step_id="marketplace.authenticated-session"):
         result = _run(login, cwd=project, env=env, runner=runner, input=password + "\n")
     if result.returncode != 0:
         raise RuntimeError("secured admin CLI login failed; check the isolated journey credentials")
 
-    status = ["kb", "auth", "status", "--json"]
+    status = kb_command([ "auth", "status", "--json"])
     with invocation_context(step_id="marketplace.authenticated-session"):
         auth_status = _json(_run(status, cwd=project, env=env, runner=runner), status)
     session = auth_status.get("session")
     if not isinstance(session, dict) or session.get("authenticated") is not True:
         raise RuntimeError("secured marketplace CLI login did not save a user session")
 
-    command = ["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"]
+    command = kb_command([ "marketplace", "plugins", "list", "--scope", "platform", "--json"])
     with invocation_context(step_id="marketplace.authenticated-session"):
         resumed = _run(command, cwd=project, env=env, runner=runner)
     payload = read_ux_cli_result(resumed.stdout, resumed.returncode)
@@ -311,7 +313,7 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
         wait_for_marketplace_ready(project, base_env, runner)
         version = _registry_version("@kb-labs/commit-entry", registry, project, base_env, runner)
         command = ["marketplace", "install", f"@kb-labs/commit-entry@{version}", "--json"]
-        result = _json(_run(["kb", *command], cwd=project, env=base_env, runner=runner), command)
+        result = _json(_run(kb_command([ *command]), cwd=project, env=base_env, runner=runner), command)
         installed = result.get("installed")
         if (result.get("scope") != "project" or not isinstance(installed, list)
                 or not any(isinstance(item, dict) and item.get("id") == "@kb-labs/commit"
@@ -340,7 +342,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     export_project_identity_to_child_environment(base_env, project_root=str(project))
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
     def cli(args: list[str], cwd: Path = project) -> subprocess.CompletedProcess[str]:
-        return _run(["kb", *args], cwd=cwd, env=base_env, runner=runner)
+        return _run(kb_command([ *args]), cwd=cwd, env=base_env, runner=runner)
 
     commit_package = "@kb-labs/commit"
     commit_install_package = "@kb-labs/commit-entry"
@@ -359,7 +361,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             for json_mode in (False, True):
                 with_flags = [*command, *( ["--json"] if json_mode else [])]
                 with invocation_context(step_id="S-051.2" if code == "KB_PLUGIN_NOT_FOUND" else "S-051.3"):
-                    result = _run(["kb", *with_flags], cwd=project, env=base_env, runner=runner)
+                    result = _run(kb_command([ *with_flags]), cwd=project, env=base_env, runner=runner)
                 validate_shared_failure(result, json_mode=json_mode, code=code, message=message, hint=hint)
     journey.step("marketplace and adapter failures use the shared envelope", "marketplace",
                  assert_shared_errors, cases=["S-051.2", "S-051.3", "S-051.4"])
@@ -560,7 +562,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         stop_command = ["kb-create", "stop", "--platform-root", str(platform_root), "--json"]
         stop = _run(stop_command, cwd=platform_root, env=base_env, runner=runner)
         _output(stop, stop_command)
-        command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+        command = kb_command([ "marketplace", "plugins", "doctor", "--scope", "project", "--json"])
         try:
             with invocation_context(step_id="S-203.14"):
                 result = _run(command, cwd=project, env=base_env, runner=runner)
@@ -587,7 +589,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         gateway = config.get("gateway")
         if not isinstance(gateway, dict) or "port" in gateway:
             raise RuntimeError("fresh platform fixture must leave gateway.port at its service default")
-        command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+        command = kb_command([ "marketplace", "plugins", "doctor", "--scope", "project", "--json"])
         with invocation_context(step_id="S-203.15"):
             result = _run(command, cwd=project, env=base_env, runner=runner)
         payload = _json(result, command)
@@ -597,7 +599,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
 
     def assert_invalid_gateway_port_error() -> None:
         invalid_env = {**base_env, "GATEWAY_PORT": "not-a-port"}
-        command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+        command = kb_command([ "marketplace", "plugins", "doctor", "--scope", "project", "--json"])
         with invocation_context(step_id="S-203.16"):
             result = _run(command, cwd=project, env=invalid_env, runner=runner)
         try:
@@ -626,12 +628,10 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     journey.step("repeat exact install without duplicate pin", "marketplace", assert_reinstall_idempotent,
                  cases=["S-010.5"], requires=("step:install Commit into the project for the route lifecycle",))
 
-    def set_plugin_enabled(enabled: bool) -> None:
-        action = "enable" if enabled else "disable"
-        command = ["marketplace", "plugins", action, "@kb-labs/commit"]
-        with invocation_context(step_id="S-011.4" if enabled else "S-011.1"):
+    def set_plugin_enabled(command: list[str], action: str, enabled: bool, step_id: str) -> None:
+        with invocation_context(step_id=step_id):
             result = cli(command)
-        expected = f"{'Enabled' if enabled else 'Disabled'} @kb-labs/commit (project)"
+        expected = f"{action} @kb-labs/commit (project)"
         output = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
         if result.returncode != 0 or expected not in output:
             raise RuntimeError(f"{command!r} did not report {expected!r}: {output!r}")
@@ -640,7 +640,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError(f"{commit_package} was not {'enabled' if enabled else 'disabled'} in the project lock")
 
     def assert_disabled() -> None:
-        set_plugin_enabled(False)
+        set_plugin_enabled(["marketplace", "plugins", "disable", "@kb-labs/commit"],
+                           "Disabled", False, "S-011.1")
     journey.step("disable installed Commit plugin", "marketplace", assert_disabled, cases=["S-011.1"],
                  requires=("step:install Commit into the project for the route lifecycle",))
 
@@ -655,7 +656,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                  requires=("step:disable installed Commit plugin",))
 
     def assert_command_hidden() -> None:
-        command = ["commit", "--help"]
+        command = ["commit", "open", "--help"]
         with invocation_context(step_id="S-011.3"):
             result = cli(command)
         if result.returncode == 0:
@@ -664,7 +665,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                  cases=["S-011.3"], requires=("step:disable installed Commit plugin",))
 
     def assert_enabled() -> None:
-        set_plugin_enabled(True)
+        set_plugin_enabled(["marketplace", "plugins", "enable", "@kb-labs/commit"],
+                           "Enabled", True, "S-011.4")
     journey.step("enable installed Commit plugin", "marketplace", assert_enabled, cases=["S-011.4"],
                  requires=("step:disable installed Commit plugin",))
 
@@ -676,7 +678,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         if (list_result.returncode != 0 or "enabled" not in output.lower()
                 or "✅" not in output or "commit" not in output.lower()):
             raise RuntimeError(f"marketplace list did not show enabled Commit: {output!r}")
-        command = ["commit", "--help"]
+        command = ["commit", "open", "--help"]
         with invocation_context(step_id="S-011.5"):
             help_result = cli(command)
         if help_result.returncode != 0:
@@ -730,7 +732,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                  cases=["S-012.2"], requires=("step:update installed Commit version",))
 
     def assert_updated_command() -> None:
-        command = ["commit", "--help"]
+        command = ["commit", "open", "--help"]
         with invocation_context(step_id="S-012.3"):
             result = cli(command)
         if result.returncode != 0:
@@ -871,9 +873,9 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, project_id
         if entry == fixture_entry:
             return
         if isinstance(entry, dict):
-            uninstall = ["kb", "marketplace", "uninstall", "@kb-labs/commit", "--json"]
+            uninstall = kb_command([ "marketplace", "uninstall", "@kb-labs/commit", "--json"])
             _output(_run(uninstall, cwd=project, env=base_env, runner=runner), uninstall)
-        install = ["kb", "marketplace", "install", f"@kb-labs/commit-entry@{version}", "--json"]
+        install = kb_command([ "marketplace", "install", f"@kb-labs/commit-entry@{version}", "--json"])
         _output(_run(install, cwd=project, env=base_env, runner=runner), install)
         lock = json.loads(lock_file.read_text())
         entry = lock.get("plugins", {}).get("@kb-labs/commit")

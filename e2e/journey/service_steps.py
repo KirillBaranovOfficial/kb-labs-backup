@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Small named-step framework shared by installed service journeys."""
 from __future__ import annotations
-from journey_values import journey_value
-
 import json
 import time
 import traceback
@@ -16,6 +14,9 @@ from typing import Any, Callable, Iterable, Mapping
 from invocations import invocation_context, invocation_link, write_report_json, write_report_text
 from journey_dependencies import Dependency
 from journey_values import MissingJourneyState
+from journey_values import journey_value
+from journey_selection import (JourneySelection, active_journey_selection,
+                               read_journey_selection)
 
 
 class JourneyContractError(RuntimeError):
@@ -133,24 +134,28 @@ class Journey:
     def run_instances(cls) -> tuple["Journey", ...]:
         return tuple(cls._instances)
 
-    def __init__(self, mode: str, run_id: str = "local", *, parent: "Journey | None" = None):
+    def __init__(self, mode: str, run_id: str = "local", *, parent: "Journey | None" = None,
+                 selection: JourneySelection | None = None):
         if mode not in {"local", "secured"}:
             raise ValueError(f"unsupported access mode: {mode}")
         self.mode = mode
         self.run_id = run_id
         self.parent = parent
+        inherited_selection = parent.selection_boundary if parent is not None else active_journey_selection()
+        self.selection_boundary = selection or inherited_selection or read_journey_selection(os.environ)
+        self.state_graph: FlowGraph | None = None
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.started = time.monotonic()
         self.steps: list[StepResult] = []
-        self.selected_steps = set(filter(None, journey_value("KB_JOURNEY_SELECTED_STEPS", "").split(",")))
+        self.selected_steps = set(self.selection_boundary.claims)
         self.selected_claims = set(self.selected_steps)
-        self.selected_sources = set(filter(None, journey_value("KB_JOURNEY_SELECTED_SOURCES", "").split(",")))
-        self.selected_capabilities = set(filter(None, journey_value("KB_JOURNEY_SELECTED_CAPABILITIES", "").split(",")))
-        self.prerequisite_steps = set(filter(None, journey_value("KB_JOURNEY_PREREQUISITE_STEPS", "").split(",")))
-        self.prerequisite_flows = set(filter(None, journey_value("KB_JOURNEY_PREREQUISITE_FLOWS", "").split(",")))
+        self.selected_owning_steps = self.selection_boundary.owning_steps
+        self.selected_capabilities = set(self.selection_boundary.capabilities)
+        self.prerequisite_steps = set(self.selection_boundary.prerequisite_steps)
+        self.prerequisite_flows = set(self.selection_boundary.prerequisite_flows)
         self.flows: dict[str, tuple[str, str]] = {}
-        self.selection = list(filter(None, journey_value("KB_JOURNEY_CASES", "").split(",")))
-        self.runner_selector = journey_value("KB_JOURNEY_RUNNER_SELECTOR", "")
+        self.selection = list(self.selection_boundary.requested)
+        self.runner_selector = self.selection_boundary.runner_selector
         self.step_guard: Callable[[str, Callable[[], str | None]], str | None] | None = None
         self.memory = parent.memory if parent is not None else JourneyMemory({})
         self._instances.append(self)
@@ -174,6 +179,7 @@ class Journey:
             self.steps.append(result)
             return result
         required = {Dependency.parse(item) for item in requires}
+        required_states = {dependency.name for dependency in required if dependency.kind == "state"}
         selected = bool(self.selected_steps.intersection(case_ids))
         eligible_runners = set(runners)
         if selected and eligible_runners and self.runner_selector not in eligible_runners:
@@ -198,12 +204,23 @@ class Journey:
             return result
         if required:
             failures = []
-            for dependency in sorted(required):
+            for dependency in sorted(item for item in required if item.kind != "state"):
                 prior = self.find_outcome(dependency)
                 if prior is None:
                     failures.append(f"{dependency} did not run before {name}")
                 elif prior[0] != "PASS":
                     failures.append(f"{dependency} ended {prior[0]}: {prior[1]}")
+            graph = self.state_graph
+            ancestor = self.parent
+            while graph is None and ancestor is not None:
+                graph = ancestor.state_graph
+                ancestor = ancestor.parent
+            for state in sorted(required_states):
+                outcome = graph.states.get(state) if graph is not None else None
+                if outcome is None:
+                    failures.append(f"state:{state} has not been registered before {name}")
+                elif outcome.get("passed") is not True:
+                    failures.append(f"state:{state} ended FAIL: {outcome.get('evidence', 'state failed')}")
             if failures:
                 message = "step prerequisites failed: " + "; ".join(failures)
                 step_details = {"prerequisiteFailures": failures}
@@ -353,6 +370,7 @@ class FlowGraph:
                  state_producers: dict[str, str] | None = None,
                  groups: Mapping[str, Mapping[str, object]] | None = None):
         self.journey = journey
+        journey.state_graph = self
         self.dependencies = dependencies
         self.diagnostics_path = Path(diagnostics_path) if diagnostics_path else None
         self.states = dict(states or {})
@@ -365,7 +383,6 @@ class FlowGraph:
         self.selected_groups = {
             group for group, spec in self.groups.items()
             if (self.journey.selected_capabilities.intersection(spec.get("capabilities", ()))
-                or self.journey.selected_sources.intersection(spec.get("claim_sources", ()))
                 or self.journey.selected_claims.intersection(spec.get("cases", ()))
                 or self.journey.prerequisite_steps.intersection(spec.get("steps", ())))
         }
@@ -392,15 +409,26 @@ class FlowGraph:
         """Return whether selection or its declared prerequisites include a graph group."""
         return not self.selection_active or group in self.selected_groups
 
+    def selects_steps(self, *names: str) -> bool:
+        """Whether the resolver selected one of these owning or prerequisite steps."""
+        return not self.selection_active or bool(set(names).intersection(
+            set(self.journey.selected_owning_steps) | self.journey.prerequisite_steps))
+
+    def skip_unselected(self, name: str, capability: str) -> None:
+        """Record an orchestration journey omitted by claim selection."""
+        print(f"SKIPPED {name}: not selected", flush=True)
+        self.journey.skipped(name, capability)
+        self.journey.record_flow(name, "SKIPPED", "not selected")
+
     def _group_produces_needed_state(self, group: str) -> bool:
         return bool(set(self.groups.get(group, {}).get("produces", ())) & self.needed_states)
 
-    def _flow_owns_selected_claim(self, group: str, cases: Iterable[str],
-                                  owner_sources: Iterable[str]) -> bool:
+    def _flow_owns_selected_claim(self, group: str, cases: Iterable[str]) -> bool:
         if self.journey.selected_claims.intersection(cases):
             return True
-        declared_sources = set(owner_sources) | set(self.groups.get(group, {}).get("claim_sources", ()))
-        return bool(self.journey.selected_sources.intersection(declared_sources))
+        selected_names = set(self.journey.selected_owning_steps) | self.journey.prerequisite_steps
+        declared_steps = set(self.groups.get(group, {}).get("steps", ()))
+        return bool(selected_names.intersection(declared_steps))
 
     def state_value(self, state: str) -> Any:
         result = self.states.get(state)
@@ -485,13 +513,13 @@ class FlowGraph:
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object],
              cases: Iterable[str] = (), *, role: str = "step",
              record_empty_success: bool = True, runners: Iterable[str] = (),
-             owner_sources: Iterable[str] = (), skip_note: str | None = None) -> str:
+             skip_note: str | None = None) -> str:
         """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
         case_ids = list(cases)
         prerequisite = name in self.journey.prerequisite_flows
         lifecycle = role == "lifecycle"
         selected_owner = (group in self.selected_groups
-                          or self._flow_owns_selected_claim(group, case_ids, owner_sources))
+                          or self._flow_owns_selected_claim(group, case_ids))
         producer = self._group_produces_needed_state(group)
         selected_by_flow_rule = selected_owner or prerequisite or producer
         if (self.selection_active and not selected_by_flow_rule):
@@ -597,17 +625,3 @@ def record_candidate_provenance(journey: Journey, checkout_commit: str,
 
     return journey.step("candidate provenance", "journey.orchestration",
                         lambda: failure, details=lambda: details, role="lifecycle")
-
-
-def source_selected(module_file: str) -> bool:
-    """Whether a module contributes a selected claim or prerequisite."""
-    if not journey_value("KB_JOURNEY_SELECTED_STEPS"):
-        return True
-    path = Path(module_file).resolve()
-    root = Path(__file__).resolve().parents[2]
-    try:
-        source = path.relative_to(root).as_posix()
-    except ValueError:
-        return False
-    selected_sources = set(filter(None, journey_value("KB_JOURNEY_SELECTED_SOURCES", "").split(",")))
-    return source in selected_sources

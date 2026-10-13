@@ -1,6 +1,8 @@
 """Installed update variants that exercise sealed releases and preserved state."""
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 from project_service_path import project_service_path
 
 import hashlib
@@ -142,20 +144,20 @@ def run_platform_update_variant_steps(
     def save_preservation_fixture() -> None:
         nonlocal before_services
         for project in (project_a, project_b):
-            installed = cli([kb_binary, "marketplace", "install", "@kb-labs/commit-entry", "--json"], project)
+            installed = cli(kb_command([ "marketplace", "install", "@kb-labs/commit-entry", "--json"], executable=kb_binary), project)
             _payload(installed, f"install preservation plugin in {project}")
             setting = [{"id": f"update-{project.name}", "label": f"{project.name} update scope", "path": "."}]
-            configured = cli([kb_binary, "config", "set", "plugins.commit.scope.scopes",
-                              json.dumps(setting), "--json"], project)
+            configured = cli(kb_command([ "config", "set", "plugins.commit.scope.scopes",
+                              json.dumps(setting), "--json"], executable=kb_binary), project)
             _payload(configured, f"set per-project plugin settings in {project}")
             before_project_settings[str(project)] = setting
-        config = cli([kb_binary, "config", "set", "--scope", "platform", "platform.adapters.llm",
-                      "@kb-labs/adapters-vibeproxy", "--json"])
+        config = cli(kb_command([ "config", "set", "--scope", "platform", "platform.adapters.llm",
+                      "@kb-labs/adapters-vibeproxy", "--json"], executable=kb_binary))
         _payload(config, "configure non-default adapter")
-        secret = cli([kb_binary, "config", "set", "--scope", "platform", "platform.adapterOptions.llm.apiKey",
-                      "${VIBEPROXY_API_KEY}", "--json"])
+        secret = cli(kb_command([ "config", "set", "--scope", "platform", "platform.adapterOptions.llm.apiKey",
+                      "${VIBEPROXY_API_KEY}", "--json"], executable=kb_binary))
         _payload(secret, "configure adapter secret reference")
-        project_payload = _payload(cli([kb_binary, "project", "list", "--json"]), "list registered projects")
+        project_payload = _payload(cli(kb_command([ "project", "list", "--json"], executable=kb_binary)), "list registered projects")
         projects = project_payload.get("projects", [])
         if len(projects) < 2:
             raise RuntimeError("preservation fixture needs two registered projects")
@@ -196,7 +198,7 @@ def run_platform_update_variant_steps(
                  plan_multi_release_notes, cases=["S-023.2", "S-214.10"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def refuse_bad_checksum() -> None:
         target = _target(bad_checksum_index)
@@ -224,7 +226,7 @@ def run_platform_update_variant_steps(
                  cases=["S-023.12"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def reject_staged_config_and_doctor_failures() -> None:
         for label, index in (("config", config_failure_index), ("doctor", doctor_failure_index)):
@@ -256,7 +258,7 @@ def run_platform_update_variant_steps(
                  reject_staged_config_and_doctor_failures, cases=["S-023.12"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def kill_during_staging() -> None:
         target = _target(next_index)
@@ -286,7 +288,7 @@ def run_platform_update_variant_steps(
                  kill_during_staging, cases=["S-023.13"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
 
     def start_long_workflow() -> None:
@@ -296,8 +298,8 @@ def run_platform_update_variant_steps(
             "name: update-variant\nversion: 1.0.0\non:\n  manual: true\njobs:\n  wait:\n    runsOn: local\n    steps:\n"
             f"      - name: Wait for update restart\n        id: wait\n        uses: builtin:shell\n        with:\n          command: 'while [ ! -f {workflow_marker} ]; do echo update-work-in-flight; sleep 1; done'\n",
             encoding="utf-8")
-        _payload(cli([kb_binary, "workflow", "lint", "--json"]), "lint long workflow fixture")
-        started = _payload(cli([kb_binary, "workflow", "run", "--workflow-id=update-variant", "--json"]),
+        _payload(cli(kb_command([ "workflow", "lint", "--json"], executable=kb_binary)), "lint long workflow fixture")
+        started = _payload(cli(kb_command([ "workflow", "run", "--workflow-id=update-variant", "--json"], executable=kb_binary)),
                            "start long workflow through workflow API")
         workflow_id = str(started.get("runId") or started.get("id") or "")
         if not workflow_id:
@@ -317,7 +319,7 @@ def run_platform_update_variant_steps(
         if (not isinstance(pending, dict) or pending.get("installedVersion") != target
                 or not pending.get("services") or not pending.get("command")):
             raise RuntimeError("update omitted the pending restart contract while workflow work was active")
-        detail = _payload(cli([kb_binary, "workflow", "runs", "view", workflow_id, "--json"]),
+        detail = _payload(cli(kb_command([ "workflow", "runs", "view", workflow_id, "--json"], executable=kb_binary)),
                           "active workflow after update")
         if detail.get("status") not in {"queued", "running"}:
             raise RuntimeError("update interrupted the active workflow run")
@@ -333,7 +335,7 @@ def run_platform_update_variant_steps(
                  update_while_work_is_active, cases=["S-023.14"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def refuse_restart_with_work() -> None:
         result = cli([launcher, "restart", "--platform-root", root, "--json"])
@@ -370,7 +372,7 @@ def run_platform_update_variant_steps(
                  refuse_restart_with_work, cases=["S-023.8", "S-194.7"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
 
     def update_stopped_to_jump() -> None:
@@ -391,7 +393,7 @@ def run_platform_update_variant_steps(
             if status.get("runningVersion") != target or status.get("installedVersion") != target:
                 raise RuntimeError(f"start did not bring up unified {label} target")
             for executable in (kb_binary, str(platform_root / "current/.kb/v2/bin/kb-create")):
-                version = cli([executable, "--version"])
+                version = cli(kb_command([ "--version"], executable=executable))
                 if version.returncode or target not in version.stdout:
                     raise RuntimeError(f"{executable} --version did not report unified target {target}")
             _payload(cli([launcher, "stop", "--platform-root", root, "--json"]), f"stop after {label} update")
@@ -401,7 +403,7 @@ def run_platform_update_variant_steps(
                  update_stopped_to_jump, cases=["S-023.9"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def verify_preservation_matrix() -> None:
         after_files = _file_fingerprints(platform_root, (project_a, project_b))
@@ -419,14 +421,14 @@ def run_platform_update_variant_steps(
                               for service in services) else {})
         if after_services != before_services:
             raise RuntimeError("selected service identities or required states changed after update")
-        projects = _payload(cli([kb_binary, "project", "list", "--json"]), "projects after update").get("projects", [])
+        projects = _payload(cli(kb_command([ "project", "list", "--json"], executable=kb_binary)), "projects after update").get("projects", [])
         if len(projects) < 2:
             raise RuntimeError("one or more registered projects disappeared after update")
         for project in (project_a, project_b):
-            result = cli([kb_binary, "commit", "--help"], project)
+            result = cli(kb_command([ "commit", "open", "--help"], executable=kb_binary), project)
             if result.returncode:
                 raise RuntimeError(f"compatible project plugin command disappeared after update: {result.stdout}")
-            settings = _payload(cli([kb_binary, "config", "get", "plugins.commit.scope.scopes", "--json"], project),
+            settings = _payload(cli(kb_command([ "config", "get", "plugins.commit.scope.scopes", "--json"], executable=kb_binary), project),
                                 f"read project plugin settings in {project}")
             if settings.get("value") != before_project_settings[str(project)]:
                 raise RuntimeError(f"project plugin settings changed after update in {project}")
@@ -435,7 +437,7 @@ def run_platform_update_variant_steps(
                  verify_preservation_matrix, cases=["S-023.10"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def verify_clients() -> None:
         with urlopen("http://127.0.0.1:3000/", timeout=20) as response:
@@ -448,7 +450,7 @@ def run_platform_update_variant_steps(
             with urlopen(asset_url, timeout=20) as asset:
                 if asset.status != 200 or not asset.read(256):
                     raise RuntimeError(f"Studio referenced a missing or empty asset: {asset_url}")
-        project_id = json.loads(cli([kb_binary, "project", "show", "--json"], project_a).stdout).get("data", {}).get("project", {}).get("id")
+        project_id = json.loads(cli(kb_command([ "project", "show", "--json"], executable=kb_binary), project_a).stdout).get("data", {}).get("project", {}).get("id")
         if not project_id:
             raise RuntimeError("project show did not identify project MCP endpoint")
         request = Request(f"http://127.0.0.1:4000{project_service_path(project_id, 'mcp')}",
@@ -496,7 +498,7 @@ def run_platform_update_variant_steps(
                  verify_clients, cases=["S-023.11"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def recover_failed_host() -> None:
         v1 = _target(jump_index)
@@ -566,7 +568,7 @@ def run_platform_update_variant_steps(
                  recover_failed_host, cases=["S-023.15", "S-024.6", "S-024.7"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
 
     def verify_retention_and_disk_use() -> None:
         result = cli([launcher, "doctor", "--platform-root", root, "--json"])
@@ -585,5 +587,5 @@ def run_platform_update_variant_steps(
                  verify_retention_and_disk_use, cases=["S-023.15"],
                  requires=("step:candidate provenance", "step:launcher version",
                            "flow:start platform host", "step:start host",
-                           "step:verify installed project registration"))
+                           "state:project-registered"))
     return journey

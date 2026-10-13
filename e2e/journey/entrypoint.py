@@ -16,6 +16,7 @@ from dispatch_registry import RUNNERS
 from scoreboard import write_scoreboards
 from journey_resources import case_catalog_root, journey_module
 from invocations import print_report_text, write_report_json, write_report_text
+from journey_selection import JourneySelectionError, read_journey_selection, use_journey_selection
 
 
 def write_case_scoreboards(summary_path: str | Path) -> None:
@@ -24,7 +25,7 @@ def write_case_scoreboards(summary_path: str | Path) -> None:
 
 
 def record_runner_failure(summary_path: str | Path, mode: str, error: Exception, phase: str) -> None:
-    name = "runner startup" if phase == "startup" else "runner crash"
+    name = "journey selection metadata" if phase == "selection" else "runner startup" if phase == "startup" else "runner crash"
     step = {
         "name": name,
         "capability": "journey.runner",
@@ -127,13 +128,21 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
 
 
 def main() -> int:
-    selector = journey_value("KB_JOURNEY_RUNNER_SELECTOR", "agent:commit")
-    runner = RUNNERS.get(selector)
-    if runner is None:
-        raise ValueError(f"unknown registered journey runner {selector!r}")
-    runner_path = journey_module("runner.py")
     summary_path = journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")
-    return run_runner(runner_path, summary_path, runner.mode)
+    try:
+        selection = read_journey_selection(os.environ, strict=True)
+    except JourneySelectionError as error:
+        mode = "secured" if journey_value("KB_JOURNEY_VARIANT", "default").endswith("secured") else "local"
+        record_runner_failure(summary_path, mode, error, "selection")
+        write_case_scoreboards(summary_path)
+        print_report_text(f"Journey selection failed: {error}", stream=sys.stderr, flush=True)
+        return 1
+    with use_journey_selection(selection):
+        runner = RUNNERS.get(selection.runner_selector)
+        if runner is None:
+            raise ValueError(f"unknown registered journey runner {selection.runner_selector!r}")
+        runner_path = journey_module("runner.py")
+        return run_runner(runner_path, summary_path, runner.mode)
 
 
 if __name__ == "__main__":

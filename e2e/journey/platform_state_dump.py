@@ -14,6 +14,7 @@ from typing import Mapping
 from typing import Any
 
 from journey_resources import active_platform_root, installer_record_path
+from kb_invocation import kb_command, kb_shell_text
 
 MAX_DUMP_BYTES = 5 * 1024 * 1024
 CONTENT_BUDGET = MAX_DUMP_BYTES - 64 * 1024
@@ -425,8 +426,9 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         kb_executable = kb_executable or "kb"
         for scope in ("platform", "project"):
             target = destination / f"kb-marketplace-plugins-{scope}.txt"
-            args = [kb_executable, "marketplace", "plugins", "list", "--scope", scope, "--json"]
-            used += _command(target, "$ " + " ".join(args[1:]), args,
+            command_args = ["marketplace", "plugins", "list", "--scope", scope, "--json"]
+            args = kb_command(command_args, executable=kb_executable)
+            used += _command(target, "$ " + kb_shell_text(command_args), args,
                              env=command_env, cwd=command_cwd, admin_password=admin_password,
                              budget=CONTENT_BUDGET - used)
             entries.append(f"- `{target.name}` ({target.stat().st_size} bytes)")
@@ -434,8 +436,9 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         if unknown and used < CONTENT_BUDGET:
             command = unknown.group(1).strip().strip("'\"` ")
             target = destination / "kb-command-diagnostic.txt"
-            args = [kb_executable, "diag", "--command", command, "--json"]
-            used += _command(target, "$ kb diag --command " + command + " --json", args,
+            command_args = ["diag", "--command", command, "--json"]
+            args = kb_command(command_args, executable=kb_executable)
+            used += _command(target, "$ " + kb_shell_text(command_args), args,
                              env=command_env, cwd=command_cwd, admin_password=admin_password,
                              budget=CONTENT_BUDGET - used)
             entries.append(f"- `kb-command-diagnostic.txt` ({target.stat().st_size} bytes)")
@@ -483,7 +486,8 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
 
         if used < CONTENT_BUDGET:
             target = destination / "kb-adapter-list.txt"
-            used += _command(target, "$ kb adapter list --json", [kb_executable, "adapter", "list", "--json"],
+            used += _command(target, "$ " + kb_shell_text(["adapter", "list", "--json"]),
+                             kb_command(["adapter", "list", "--json"], executable=kb_executable),
                              env=command_env, cwd=command_cwd, admin_password=admin_password,
                              budget=CONTENT_BUDGET - used)
             entries.append(f"- `kb-adapter-list.txt` ({target.stat().st_size} bytes)")

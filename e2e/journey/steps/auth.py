@@ -7,6 +7,8 @@ Call ``run_local_auth_steps(base_url)`` after a local install.
 """
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 import json
 import os
 import subprocess
@@ -76,7 +78,7 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
                         password: str | None = None) -> None:
     """Prove the CLI status surface in local and secured mode."""
     def invoke(args: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
-        return run_command([cli_path, *args], env=env, **kwargs)
+        return run_command(kb_command([ *args], executable=cli_path), env=env, **kwargs)
 
     if authenticated:
         if not base_url or not email or not password:
@@ -101,7 +103,7 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
             raise AssertionError(f"kb auth login failed: {(login.stdout + login.stderr)[-400:]}")
         if password in login.stdout or password in login.stderr:
             raise AssertionError("kb auth login echoed the password supplied through stdin")
-        command = [cli_path, "auth", "login", "--gateway-url", base_url, "--email", email]
+        command = kb_command([ "auth", "login", "--gateway-url", base_url, "--email", email], executable=cli_path)
         password_sent = False
 
         def enter_password(transcript: str) -> str | None:
@@ -142,7 +144,7 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
 
 def run_cli_auth_forbidden(cli_path: str, env: dict[str, str], *, user_id: str = "member-1") -> None:
     """A logged-in member must get the gateway's typed permission denial."""
-    args = [cli_path, "auth", "reset-link", "--user-id", user_id, "--json"]
+    args = kb_command([ "auth", "reset-link", "--user-id", user_id, "--json"], executable=cli_path)
     result = run_command(args, env=env)
     try:
         payload = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
@@ -194,7 +196,7 @@ def run_cli_corrupt_session_file(cli_path: str, env: dict[str, str]) -> None:
         isolated_env = dict(env)
         isolated_env["HOME"] = home
         isolated_env["KB_JOURNEY_HOME_LABEL"] = "corrupt-auth-session"
-        status = run_command([cli_path, "auth", "status", "--json"], env=isolated_env)
+        status = run_command(kb_command([ "auth", "status", "--json"], executable=cli_path), env=isolated_env)
         try:
             status_data = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))
         except (json.JSONDecodeError, ValueError) as error:
@@ -202,7 +204,7 @@ def run_cli_corrupt_session_file(cli_path: str, env: dict[str, str]) -> None:
         session_path = Path(status_data["session"]["path"])
         session_path.parent.mkdir(parents=True)
         session_path.write_text("{ invalid json", encoding="utf-8")
-        command = [cli_path, "config", "show", "--json"]
+        command = kb_command([ "config", "show", "--json"], executable=cli_path)
         result = run_command(command, env=isolated_env)
         try:
             envelope = read_ux_cli_result(result.stdout, result.returncode)

@@ -223,7 +223,11 @@ if [[ "${INSTALL_FAILED:-0}" == 1 ]]; then
   block_stage "${STAGE_NAMES[$AGGREGATION_STAGE]}" 'blocked because frozen install failed'
 else
 stage "${STAGE_NAMES[1]}" env KB_DEVKIT_BASE_REF=local/main...HEAD "$DEVKIT_BIN" run build --affected || exit 1
-stage "${STAGE_NAMES[2]}" pnpm kb qa cases validate || exit 1
+if [[ ! -f "$ROOT/cli/bin/dist/bin.js" ]]; then
+  echo "local-gate: built workspace CLI is missing at $ROOT/cli/bin/dist/bin.js; run: kb-devkit run build --affected" >&2
+  exit 1
+fi
+stage "${STAGE_NAMES[2]}" node ./cli/bin/dist/bin.js qa cases validate || exit 1
 # The release plugin (Commit) suites always run: a change elsewhere must not
 # leave the only release-contour plugin untested (they were red unnoticed).
 RELEASE_PLUGIN_PACKAGES='@kb-labs/commit-entry,@kb-labs/commit-core'
@@ -279,8 +283,8 @@ else
   block_stage "${STAGE_NAMES[$((AGGREGATION_STAGE + 2))]}" 'blocked because journey candidate is unavailable'
 fi
 if ((JOURNEY_CANDIDATE_READY)); then
-  stage 'local release-case coverage' pnpm kb qa coverage show --level release --mode local --run .journey/reports/service-local.json || exit 1
-  stage 'secured release-case coverage' pnpm kb qa coverage show --level release --mode secured --run .journey/reports/service-secured.json || exit 1
+  stage 'local release-case coverage' node ./cli/bin/dist/bin.js qa coverage show --level release --mode local --run .journey/reports/service-local.json || exit 1
+  stage 'secured release-case coverage' node ./cli/bin/dist/bin.js qa coverage show --level release --mode secured --run .journey/reports/service-secured.json || exit 1
 fi
 [[ "$STATUS" == 0 ]] || exit 1
 exit 0

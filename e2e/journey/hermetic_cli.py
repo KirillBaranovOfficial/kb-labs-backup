@@ -20,6 +20,16 @@ def run_hermetic_cli(
     timeout: float = 300,
 ) -> subprocess.CompletedProcess[str]:
     """Run a host-side CLI with fresh HOME and no installed-platform overrides."""
+    if len(command) > 1 and Path(command[1]).as_posix().endswith("cli/bin/dist/bin.js"):
+        workspace_root = Path(cwd or Path.cwd())
+        cli_entry = Path(command[1])
+        if not cli_entry.is_absolute():
+            cli_entry = workspace_root / cli_entry
+        if not cli_entry.is_file():
+            raise FileNotFoundError(
+                f"built workspace CLI is missing at {cli_entry}; "
+                "build it with `kb-devkit run build --affected` and retry"
+            )
     child_env = dict(os.environ if env is None else env)
     for key in ("KB_PLATFORM_ROOT", "KB_HOME", "KB_NET_OFFSET"):
         child_env.pop(key, None)

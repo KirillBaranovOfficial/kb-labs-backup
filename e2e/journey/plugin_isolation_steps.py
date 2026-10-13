@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 import json
 import os
 from pathlib import Path
@@ -17,7 +19,7 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
     def unavailable(project: Path, args: list[str], package: str, step_id: str,
                     command_env: dict[str, str]) -> str | None:
         with invocation_context(step_id=step_id):
-            result = run_command([cli, *args], cwd=project, env=command_env, runner=runner, timeout=180)
+            result = run_command(kb_command([ *args], executable=cli), cwd=project, env=command_env, runner=runner, timeout=180)
         if result.returncode == 0:
             return f"{package} command resolved from {project.name} although it is not installed in that project"
         output = "\n".join((result.stdout or "", result.stderr or ""))
@@ -83,7 +85,7 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
         try:
             with invocation_context(step_id="S-197.3"):
                 result = run_command(
-                    [cli, "review", "run", "--mode=heuristic", "--json"],
+                    kb_command([ "review", "run", "--mode=heuristic", "--json"], executable=cli),
                     cwd=project_b, env=env, runner=runner, timeout=180,
                 )
             if result.returncode != 0:

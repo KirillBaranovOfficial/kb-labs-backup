@@ -1,6 +1,8 @@
 """Installed secured journey coverage for connection and session cases."""
 from __future__ import annotations
 
+from kb_invocation import kb_command
+
 import json
 import os
 from pathlib import Path
@@ -23,7 +25,7 @@ def _expect(value: bool, message: str) -> None:
 
 
 def _cli(cli: str, env: dict[str, str], *args: str):
-    return run_command([cli, *args], env=env, timeout=90)
+    return run_command(kb_command([ *args], executable=cli), env=env, timeout=90)
 
 
 def _json(result, description: str) -> dict:

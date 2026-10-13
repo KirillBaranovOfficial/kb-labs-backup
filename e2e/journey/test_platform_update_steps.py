@@ -45,7 +45,8 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         graph = FlowGraph(parent, {})
         graph.flow("start platform host", "host", "platform.host",
                    lambda: parent.step("start host", "platform.host", lambda: None))
-        parent.step("verify installed project registration", "projects", lambda: None)
+        graph.probe_state("project-registered", "project", "kb project show/list", lambda: None,
+                          value=lambda: {"id": "prj_update_test", "root": str(self.root)})
         self.parent_journey = parent
 
     def tearDown(self):
