@@ -113,17 +113,15 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
 def _write_secret_fingerprints(source: Path, target: Path) -> int:
     """Record secret names and one-way fingerprints without copying secret values."""
     try:
-        entries = []
-        for line in source.read_text().splitlines():
-            name, separator, value = line.partition("=")
-            if separator and name and value:
-                entries.append({"name": name, "sha256": hashlib.sha256(value.encode()).hexdigest()})
+        state = json.loads(source.read_text())
+        entries = [{"name": name, "sha256": hashlib.sha256(value.encode()).hexdigest()}
+                   for name, value in state.get("requirements", {}).items() if name and value]
         if not entries:
             return 0
         target.parent.mkdir(parents=True, exist_ok=True)
         _write_evidence_json(target, {"entries": entries})
         return target.stat().st_size
-    except OSError:
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError):
         return 0
 
 
@@ -314,7 +312,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                          Path(".kb/v2/receipt.json")):
             add(active / relative, relative)
         fingerprint_bytes = _write_secret_fingerprints(
-            active / ".kb/v2/secrets.env", destination / "installation-secret-fingerprints.json"
+            active / ".kb/v2/secret-state.json", destination / "installation-secret-fingerprints.json"
         )
         if fingerprint_bytes and used + fingerprint_bytes <= CONTENT_BUDGET:
             used += fingerprint_bytes

@@ -70,7 +70,7 @@ what it needs in `kb-create.requirements.json` (see `tools/kb-create/v2/README.m
 `secured` the wizard also asks for the first admin's email and password (hidden input,
 confirmed) and generates the session signing secret (`GATEWAY_JWT_SECRET`) when you press Enter.
 Non-interactive installs pass the secrets with `--secret-env`. Secrets land only in the private
-`.kb/v2/secrets.env`, never in generated config. If the admin password is skipped, no admin exists
+`.kb/v2/secret-state.json`, never in generated config. If the admin password is skipped, no admin exists
 after install: `kb-create doctor` reports `auth:no_active_admin` in its `platform` section, and
 `kb-create doctor --recover` creates one using the email the installer already wrote.
 

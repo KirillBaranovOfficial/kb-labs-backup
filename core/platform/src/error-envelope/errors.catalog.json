@@ -911,6 +911,24 @@
       "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable."
     },
     {
+      "code": "KB_INSTALL_SECRET_STORE_UNSUPPORTED",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "The platform secret state uses a format this launcher cannot safely read.",
+      "hint": "Preserve the existing platform root, then run `kb-create install --platform-root NEW_ROOT` with a new empty path."
+    },
+    {
+      "code": "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED",
+      "area": "install",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": false,
+      "message": "The first-administrator credential cannot be replaced after bootstrap completes.",
+      "hint": "Stop the host, then run `kb-create doctor --platform-root <platform-root> --recover --email <email> --generate --yes`; restart with `kb-create start --platform-root <platform-root>`."
+    },
+    {
       "code": "KB_INSTALL_SERVICE_GRAPH_MISMATCH",
       "area": "install",
       "stage": "verify",

@@ -140,6 +140,9 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	for _, mapping := range splitSecretMappings(input.SecretEnv) {
 		secretIDs = append(secretIDs, mapping[0])
 	}
+	for id := range input.PendingSecrets {
+		secretIDs = append(secretIDs, id)
+	}
 	if failure := resolve.ValidateSecretInputIDs(planned.Artifacts, secretIDs); failure != nil {
 		return applyCommandResult{}, asDiag(failure)
 	}
@@ -254,6 +257,9 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	if err := populateSecrets(store, input.SecretEnv); err != nil {
 		if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
+			return applyCommandResult{}, asDiag(err)
+		}
+		if errors.Is(err, secrets.ErrBootstrapCredentialLocked) {
 			return applyCommandResult{}, asDiag(err)
 		}
 		if errors.Is(err, secrets.ErrBootstrapPasswordDisclosed) {

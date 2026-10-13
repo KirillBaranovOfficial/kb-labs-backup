@@ -84,7 +84,8 @@ the matrix as its compatibility gate.
 
 Secret input uses `--secret-env requirement.id=ENV_VAR`, so CI/agents pass a
 reference to process environment rather than secret text through argv/JSON.
-V2 stores the value only in `.kb/v2/secrets.env` (0600); generated config,
+V2 stores secret values and bootstrap lifecycle facts together in
+`.kb/v2/secret-state.json` (0600); generated config,
 receipt, scenario state, logs, diagnostics and telemetry retain only the
 manifest requirement or environment variable name. The launcher hands the
 private store to the host process as its environment (see Host supervision).
@@ -113,7 +114,7 @@ without it the commands print short text. All take `--platform-root`.
   launcher runs that command directly (`ProcessRunner`: own process group, pid
   file and log in the state home, health polling, SIGTERM then kill after the
   grace period). The host process gets the launcher's environment, then the
-  platform's secrets (`.kb/v2/secrets.env`, variable names only), then the
+  platform's secrets (`.kb/v2/secret-state.json`, variable names only), then the
   spec's `env`.
 - `start` spawns `kb-create supervise` detached. `supervise` (foreground; the
   future autostart entry) keeps the host and serves the control channel.

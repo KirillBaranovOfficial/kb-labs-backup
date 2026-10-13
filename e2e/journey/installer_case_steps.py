@@ -1488,6 +1488,59 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
                  cases=["S-181.3", "PC-001.10"])
 
+    refusal_roots = {
+        "install": platform_root.parent / "s181-secret-input-install",
+        "apply": platform_root.parent / "s181-secret-input-apply",
+    }
+
+    def snapshot_paths(paths: list[Path]) -> dict[str, bytes | None]:
+        return {str(path): path.read_bytes() if path.is_file() else None for path in paths}
+
+    def reject_undeclared_secret_inputs() -> None:
+        if not secret_value:
+            raise RuntimeError("isolated journey secret is unavailable for S-181.6")
+        variable = "KB_JOURNEY_ADMIN_PASSWORD"
+        mapping = f"operator.unknownSecret={variable}"
+        answers = json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
+                              "admin.tenant": "journey"})
+        for root in refusal_roots.values():
+            if root.exists():
+                raise RuntimeError("S-181.6 expected an empty isolated install root")
+        empty_before = {name: snapshot_tree(root) for name, root in refusal_roots.items()}
+        active = active_platform_root(platform_root)
+        installed_paths = [active / ".kb/v2/receipt.json", active / ".kb/kb.config.jsonc",
+                           active / ".kb/v2/secret-state.json"]
+        installed_before = snapshot_paths(installed_paths)
+        commands = (
+            ("install", [launcher, "install", "--json", "--index", str(stable_index),
+                          "--platform-channel", "stable", "--platform-root", str(refusal_roots["install"]),
+                          "--scenario", "custom", "--scenario-answers", answers, "--secret-env", mapping]),
+            ("apply", [launcher, "apply", "--json", "--index", str(stable_index),
+                        "--platform-channel", "stable", "--platform-root", str(refusal_roots["apply"]),
+                        "--scenario", "custom", "--scenario-answers", answers, "--secret-env", mapping]),
+            ("update", [launcher, "update", "--json", "--index", str(update_index),
+                         "--platform-channel", "stable", "--platform-root", str(platform_root),
+                         "--secret-env", mapping]),
+        )
+        for operation, argv in commands:
+            result = run_command(argv)
+            envelope, error = _diagnostic(result, f"S-181.6 {operation} undeclared secret input")
+            output = result.stdout + result.stderr
+            if (result.returncode != 2 or envelope.get("ok") is not False
+                    or error.get("code") != "KB_INSTALL_SECRET_INPUT_INVALID"
+                    or "operator.unknownSecret" not in json.dumps(error)
+                    or variable in output or secret_value in output):
+                raise RuntimeError(f"S-181.6 {operation} did not refuse the undeclared secret input safely")
+        if any(snapshot_tree(root) != empty_before[name] for name, root in refusal_roots.items()):
+            raise RuntimeError("S-181.6 refusal wrote files under an empty install root")
+        if snapshot_paths(installed_paths) != installed_before:
+            raise RuntimeError("S-181.6 update refusal changed the installed receipt, config, or secret state")
+
+    journey.step("refuse undeclared secret environment inputs before writing state", "platform.install",
+                 reject_undeclared_secret_inputs, cases=["S-181.6"],
+                 runners=("agent-secured:commit", "agent:commit"),
+                 requires=("step:apply a secret through an environment reference",))
+
     run_fixture_group(journey, "gateway allocation", lambda: run_gateway_allocation_step(
         mode=mode, launcher=launcher, stable_index=stable_index,
         primary_root=platform_root, automatic_root=secret_root,

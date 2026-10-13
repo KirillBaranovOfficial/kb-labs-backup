@@ -89,6 +89,9 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	if err != nil {
 		return updateCommandResult{}, unsupportedPlatformLayout(plan.Request.PlatformRoot, err)
 	}
+	if _, err := (secrets.Store{PlatformRoot: activeRoot, ReadOnly: true}).BootstrapCompleted(); err != nil {
+		return updateCommandResult{}, asDiag(err)
+	}
 	secretStore := secrets.Store{PlatformRoot: activeRoot, ReadOnly: true}
 	if failure := refuseUpdateSecretChanges(input, layout.InstallRoot(), secretStore); failure != nil {
 		return updateCommandResult{}, failure

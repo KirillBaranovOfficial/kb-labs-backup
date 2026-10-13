@@ -19,6 +19,7 @@ import (
 	"github.com/kb-labs/create/v2/logs"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/swap"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -150,6 +151,9 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 		return recoveryCommandResult{}, asDiag(err)
 	}
 	platformRoot := layout.PlatformRoot()
+	if _, err := (secrets.Store{PlatformRoot: platformRoot}).BootstrapCompleted(); err != nil {
+		return recoveryCommandResult{}, asDiag(err)
+	}
 	if running := refuseForeignHost(root); running != nil {
 		return recoveryCommandResult{}, running
 	}
