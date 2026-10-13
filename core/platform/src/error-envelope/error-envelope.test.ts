@@ -103,6 +103,7 @@ describe('errors.catalog.json lint', () => {
       UPDATE: 'update',
       RUNTIME: 'runtime',
       DEPLOY: 'runtime',
+      DEVKIT: 'runtime',
       SERVICE: 'runtime',
       ENV: 'config',
       MARKETPLACE: 'plugin',

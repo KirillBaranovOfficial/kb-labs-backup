@@ -67,6 +67,9 @@ interface IdentityProviderBase {
    */
   readonly id: string;
 
+  /** Return this provider's cached operational state for readiness checks. */
+  getOperationalState(): Promise<IdentityProviderOperationalState>;
+
   /**
    * Verify a single authentication attempt.
    *
@@ -85,6 +88,10 @@ interface IdentityProviderBase {
    */
   authenticate(input: unknown): Promise<IdentityResult>;
 }
+
+export type IdentityProviderOperationalState =
+  | { state: 'operational'; checkedAt: number }
+  | { state: 'unavailable'; checkedAt: number; failure: 'unreachable' | 'invalid-discovery' };
 
 /**
  * A provider that authenticates with credentials presented directly to

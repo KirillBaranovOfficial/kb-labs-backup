@@ -165,14 +165,14 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	}
 	// Resolve user supplied paths at the request boundary so later execution
 	// never interprets a relative root against a changed working directory.
-	root, err := absolutePath(r.PlatformRoot)
+	root, err := AbsolutePath(r.PlatformRoot)
 	if err != nil {
 		return InstallRequest{}, invalidRequestField(CodeIncompatibleComponents, "platformRoot", "platform root could not be resolved",
 			"Set `platformRoot` to a directory path that can be resolved in the request JSON.", err)
 	}
 	r.PlatformRoot = root
 	if r.ProjectRoot != "" {
-		project, err := absolutePath(r.ProjectRoot)
+		project, err := AbsolutePath(r.ProjectRoot)
 		if err != nil {
 			return InstallRequest{}, invalidRequestField(CodeInputRequired, "projectRoot", "project directory could not be resolved",
 				"Pass a project directory path that can be resolved, then retry.", err)
@@ -204,7 +204,7 @@ func ValidateProjectSelection(value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	absolute, err := absolutePath(value)
+	absolute, err := AbsolutePath(value)
 	if err != nil {
 		return "", invalidRequestField(CodeInputRequired, "projectRoot", "project directory could not be resolved",
 			"Pass an existing project directory, then retry.", err)
@@ -226,12 +226,7 @@ func ValidateProjectSelection(value string) (string, error) {
 		return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project path is not a directory",
 			"Pass an existing project directory, then retry.", nil)
 	}
-	canonical, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project directory could not be resolved",
-			"Pass an existing project directory, then retry.", err)
-	}
-	return canonical, nil
+	return absolute, nil
 }
 
 // ShellQuote returns a POSIX shell-safe single-quoted argument for actionable
@@ -240,7 +235,9 @@ func ShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func absolutePath(value string) (string, error) {
+// AbsolutePath applies the install request's lexical absolute-path rule. It
+// cleans path syntax but deliberately does not resolve filesystem identity.
+func AbsolutePath(value string) (string, error) {
 	if filepath.IsAbs(value) {
 		return filepath.Clean(value), nil
 	}

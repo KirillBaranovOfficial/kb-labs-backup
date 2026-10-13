@@ -8,6 +8,7 @@ import (
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -27,7 +28,11 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	platformRoot := layout.PlatformRoot()
 	active, receiptErr := receipt.Read(platformRoot)
 	if receiptErr == nil && active.Plan.ServiceGraph.Profile == "client" {
-		return map[string]any{"ok": true, "operation": "status", "installed": true, "running": false, "reachable": false, "profile": "client", "services": []contracts.Service{}}, nil
+		completed, err := (secrets.Store{PlatformRoot: platformRoot}).Exists(secrets.BootstrapCompleted)
+		if err != nil {
+			return nil, asDiag(err)
+		}
+		return map[string]any{"ok": true, "operation": "status", "installed": true, "running": false, "reachable": false, "bootstrapCompleted": completed, "profile": "client", "services": []contracts.Service{}}, nil
 	}
 	runner, err := host.NewRecordedRunner(root)
 	if err != nil {
@@ -52,6 +57,11 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 	installed := receiptErr == nil
 	payload := map[string]any{"ok": true, "operation": "status", "host": status, "installed": installed,
 		"running": status.State == host.StateRunning, "reachable": status.Healthy}
+	bootstrapCompleted, err := (secrets.Store{PlatformRoot: platformRoot}).Exists(secrets.BootstrapCompleted)
+	if err != nil {
+		return nil, asDiag(err)
+	}
+	payload["bootstrapCompleted"] = bootstrapCompleted
 	if installed {
 		payload["installedVersion"] = active.Plan.ServiceGraph.PlatformVersion
 	}

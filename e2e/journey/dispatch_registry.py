@@ -10,6 +10,7 @@ from invocations import print_report_text
 
 @dataclass(frozen=True)
 class Runner:
+    selector: str
     front_door: str
     scenario: str
     variant: str
@@ -18,19 +19,20 @@ class Runner:
 
 
 RUNNERS = {
-    "agent:explore": Runner("agent", "explore", "default"),
-    "agent:commit": Runner("agent", "commit", "default"),
-    "agent-secured:commit": Runner("agent", "commit", "secured"),
-    "agent-input:commit": Runner("agent", "commit", "input"),
-    "human:default": Runner("human", "explore", "human-default"),
-    "human:nondefault": Runner("human", "commit", "human-nondefault"),
-    "negative:wrong-node": Runner("agent", "explore", "wrong-node"),
-    "negative:occupied-port": Runner("agent", "explore", "occupied-port"),
+    "agent:explore": Runner("agent:explore", "agent", "explore", "default"),
+    "agent:commit": Runner("agent:commit", "agent", "commit", "default"),
+    "agent-secured:commit": Runner("agent-secured:commit", "agent", "commit", "secured"),
+    "agent-input:commit": Runner("agent-input:commit", "agent", "commit", "input"),
+    "agent-relative:commit": Runner("agent-relative:commit", "agent", "commit", "relative-path"),
+    "human:default": Runner("human:default", "human", "explore", "human-default"),
+    "human:nondefault": Runner("human:nondefault", "human", "commit", "human-nondefault"),
+    "negative:wrong-node": Runner("negative:wrong-node", "agent", "explore", "wrong-node"),
+    "negative:occupied-port": Runner("negative:occupied-port", "agent", "explore", "occupied-port"),
     "service-local:explore": Runner(
-        "agent", "explore", "default", "nightly",
+        "service-local:explore", "agent", "explore", "default", "nightly",
         ("e2e/journey/runner.py", "e2e/journey/service_runner.py")),
     "service-secured:explore": Runner(
-        "human", "explore", "secured", "nightly",
+        "service-secured:explore", "human", "explore", "secured", "nightly",
         ("e2e/journey/runner.py", "e2e/journey/service_runner.py")),
 }
 RUNNER_GROUPS = {

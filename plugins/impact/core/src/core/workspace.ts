@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { SubRepo } from '@kb-labs/impact-contracts';
-import { findRegisteredProjectContainingPathSync, requireProjectContext } from '@kb-labs/core-project-registry';
+import { findRegisteredProjectContainingPathSync, requireProjectContext } from '@kb-labs/sdk';
 
 export function findWorkspaceRoot(cwd?: string): string {
   const current = resolve(cwd ?? process.cwd());

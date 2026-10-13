@@ -267,7 +267,7 @@ func readInstall(t *testing.T, root string, plan contracts.ResolvedInstallPlan) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	result.environment = environment
+	result.environment = environment.Values
 	if data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "secrets.env")); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 			if key, value, ok := strings.Cut(line, "="); ok {
@@ -554,7 +554,7 @@ type captureHostEnvironment struct {
 
 func (probe *captureHostEnvironment) Probe(context.Context, contracts.HostSpec) error {
 	environment, err := probe.store.Environment()
-	probe.env = environment
+	probe.env = environment.Values
 	return err
 }
 

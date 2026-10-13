@@ -18,6 +18,8 @@
   ],
   "scripts": {
     "build": "tsup --config tsup.config.ts",
+    "dev": "tsup --config tsup.config.ts --watch",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "type-check": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run --passWithNoTests"

@@ -13,14 +13,15 @@ import (
 //   - ModeHuman: the pre-rendered Human string.
 //   - ModeJSON:  the shared {ok,data} machine envelope.
 //   - ModeAgent: the compact Agent payload, falling back to JSON.
-func Render(w io.Writer, out CommandOutput, mode Mode) {
+func Render(w io.Writer, out CommandOutput, mode Mode) error {
 	switch mode {
 	case ModeJSON:
-		writeJSON(w, jsonEnvelope(out))
+		return writeJSON(w, jsonEnvelope(out))
 	case ModeAgent:
-		writeJSON(w, jsonEnvelope(out))
+		return writeJSON(w, jsonEnvelope(out))
 	default:
-		fmt.Fprintln(w, out.Human)
+		_, err := fmt.Fprintln(w, out.Human)
+		return err
 	}
 }
 
@@ -81,8 +82,8 @@ func FailureEnvelope(d *diag.Diag) map[string]any {
 	return envelope
 }
 
-func writeJSON(w io.Writer, v any) {
+func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	return enc.Encode(v)
 }

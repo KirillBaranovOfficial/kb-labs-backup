@@ -76,6 +76,22 @@ func TestValidateProjectSelectionRejectsMissingProjectBeforePlatformMutation(t *
 	}
 }
 
+// case: S-187.10
+func TestValidateProjectSelectionPreservesAbsoluteLexicalSymlinkSpelling(t *testing.T) {
+	target := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "project-alias")
+	if err := os.Symlink(target, alias); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := ValidateProjectSelection(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected != filepath.Clean(alias) {
+		t.Fatalf("selected path = %q, want lexical absolute spelling %q", selected, filepath.Clean(alias))
+	}
+}
+
 func TestInstallRequestNormalizeDefaultsToSafeCIContract(t *testing.T) {
 	request, err := (InstallRequest{PlatformRoot: t.TempDir()}).Normalize()
 	if err != nil {

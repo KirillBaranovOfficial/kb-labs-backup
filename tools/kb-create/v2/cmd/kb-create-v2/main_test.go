@@ -699,8 +699,8 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 				NodeCheck:     func() error { return nil },
 				InstallInput:  strings.NewReader(strings.Repeat("\n", 12)),
 				InstallOutput: clikitcommand.FromCommand(cmd).ProgressWriter(),
-				ProjectRegistrar: func(string, string) (string, error) {
-					return "prj_fixture", nil
+				ProjectRegistrar: func(_ string, path string) (projectRegistrationResult, error) {
+					return projectRegistrationResult{ID: "prj_0123456789abcdef", CanonicalPath: path}, nil
 				},
 				Command: cmd, Executable: launcher,
 			}
@@ -1074,15 +1074,18 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
-	listener := testListenerWithPortHeadroom(t, 100)
-	port := listener.Addr().(*net.TCPAddr).Port
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	_, fakehost := binaries(t)
+	port := freeLoopbackPort(t)
 	root := filepath.Join(home, "kb-platform")
 	index := filepath.Join(home, "release-index.json")
+	testExecutable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	source := testReleaseCatalog(t, "2.0.0")
-	source.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)}
+	source.Platforms[0].Host = &contracts.HostSpec{Command: testExecutable, Args: []string{"-test.run=^TestHostExecLauncher$"},
+		Env:       map[string]string{"KB_TEST_FAKEHOST": fakehost, "KB_TEST_FAKEHOST_PORT": fmt.Sprint(port)},
+		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}}
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
 		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}
@@ -1107,7 +1110,20 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 	_, outputPath := installOutput(t)
 	var screen bytes.Buffer
-	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}}, NodePreflight: func() error { return nil }})
+	t.Cleanup(func() {
+		runner, runnerErr := host.NewRunner(root)
+		if runnerErr != nil {
+			if _, statErr := os.Stat(filepath.Join(root, "current")); os.IsNotExist(statErr) {
+				return
+			}
+			t.Errorf("load interactive-install test host runner: %v", runnerErr)
+			return
+		}
+		if _, runnerErr = runner.Stop(context.Background()); runnerErr != nil {
+			t.Errorf("stop interactive-install test host: %v", runnerErr)
+		}
+	})
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}, NodePreflight: func() error { return nil }})
 	if code != 0 {
 		t.Fatalf("exit code %d, failure=%v, screen:\n%s", code, failure, screen.String())
 	}
@@ -1139,7 +1155,12 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 		t.Fatal("sealed install fixture did not resolve the shipped kb-create binary")
 	}
 	var doctorOutput, doctorError bytes.Buffer
-	doctorCode := clikitcommand.Execute(newRootCommand(), []string{"doctor", "--platform-root", root, "--json"}, &doctorOutput, &doctorError)
+	doctorCommand := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
+		deps := productionCommandDependencies(cmd)
+		deps.Executable = launcher
+		return deps
+	})
+	doctorCode := clikitcommand.Execute(doctorCommand, []string{"doctor", "--platform-root", root, "--json"}, &doctorOutput, &doctorError)
 	if doctorCode != 0 {
 		t.Fatalf("automatic doctor after sealed install exited %d: stdout=%s stderr=%s", doctorCode, doctorOutput.String(), doctorError.String())
 	}
@@ -1181,7 +1202,7 @@ func TestLocalProjectRegistrationUsesHostProjectAPIWithoutCredentials(t *testing
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = fmt.Fprintf(w, `{"ok":true,"data":{"id":"prj_test123","path":%q}}`, project)
+		_, _ = fmt.Fprintf(w, `{"ok":true,"data":{"id":"prj_0123456789abcdef","path":%q,"alreadyExisted":false}}`, project)
 	}))
 	defer server.Close()
 	active := contracts.InstallReceipt{ID: "local-receipt", Plan: contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{Values: map[string]string{
@@ -1191,8 +1212,8 @@ func TestLocalProjectRegistrationUsesHostProjectAPIWithoutCredentials(t *testing
 		t.Fatal(err)
 	}
 	projectID, err := registerProject(root, project)
-	if err != nil || projectID != "prj_test123" {
-		t.Fatalf("project id/error = %q / %v", projectID, err)
+	if err != nil || projectID.ID != "prj_0123456789abcdef" || projectID.CanonicalPath != project || projectID.AlreadyExisted {
+		t.Fatalf("project registration/error = %#v / %v", projectID, err)
 	}
 }
 
@@ -1201,15 +1222,22 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	platformRoot := filepath.Join(home, "kb-platform")
-	projectRoot := filepath.Join(home, "work", "project")
-	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+	projectTarget := filepath.Join(home, "work", "project")
+	projectRoot := filepath.Join(home, "work", "project-alias")
+	if err := os.MkdirAll(projectTarget, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(projectTarget, projectRoot); err != nil {
+		t.Fatal(err)
+	}
+	selectedProjectPath, err := contracts.AbsolutePath(projectRoot)
+	if err != nil {
 		t.Fatal(err)
 	}
 	canonicalProjectRoot, err := filepath.EvalSymlinks(projectRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectRoot = canonicalProjectRoot
 	index := filepath.Join(home, "release-index.json")
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Host = testHostOnFreePort(t)
@@ -1236,20 +1264,27 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	}
 	var registered string
 	var screen bytes.Buffer
-	_, failure, code, _ := executeForTest(t, operationTestSetup{
+	installData, failure, code, _ := executeForTest(t, operationTestSetup{
 		Operation: "install", Index: index, Direct: directRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot},
 		Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen,
-		RuntimeDeps:      &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}},
-		NodePreflight:    func() error { return nil },
-		ProjectRegistrar: func(path string) (string, error) { registered = path; return "prj_test123", nil },
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}},
+		NodePreflight: func() error { return nil },
+		ProjectRegistrar: func(path string) (projectRegistrationResult, error) {
+			registered = path
+			return projectRegistrationResult{ID: "prj_0123456789abcdef", CanonicalPath: canonicalProjectRoot}, nil
+		},
 	})
-	if code != 0 || registered != projectRoot {
-		t.Fatalf("code=%d failure=%v registered=%q screen:\n%s", code, failure, registered, screen.String())
+	if code != 0 || registered != selectedProjectPath {
+		t.Fatalf("code=%d failure=%v cause=%q registered=%q screen:\n%s", code, failure, failure.Cause, registered, screen.String())
 	}
-	for _, expected := range []string{projectRoot, "prj_test123", "Verification: platform installed", contracts.ShellCommand("kb", "project", "show", projectRoot)} {
+	for _, expected := range []string{selectedProjectPath, canonicalProjectRoot, "prj_0123456789abcdef", "Verification: platform installed", contracts.ShellCommand("kb", "project", "show", canonicalProjectRoot)} {
 		if !strings.Contains(screen.String(), expected) {
 			t.Errorf("screen missing %q:\n%s", expected, screen.String())
 		}
+	}
+	installedResult, ok := installData.(applyCommandResult)
+	if !ok || installedResult.Receipt.ProjectSelectedPath != selectedProjectPath || installedResult.Receipt.ProjectID != "prj_0123456789abcdef" || installedResult.Receipt.ProjectCanonicalPath != canonicalProjectRoot {
+		t.Fatalf("install result did not carry registry project identity: %#v", installData)
 	}
 	if _, err := os.Stat(filepath.Join(projectRoot, ".kb")); !os.IsNotExist(err) {
 		t.Fatalf("installer created project files: %v", err)
@@ -1264,8 +1299,8 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 		InstallOutput: &failedScreen,
 		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: failedRoot}, Host: installHost{}},
 		NodePreflight: func() error { return nil },
-		ProjectRegistrar: func(string) (string, error) {
-			return "", errors.New("project registry unavailable")
+		ProjectRegistrar: func(string) (projectRegistrationResult, error) {
+			return projectRegistrationResult{}, errors.New("project registry unavailable")
 		},
 	})
 	if failedCode != 1 || failure == nil || failure.Code != contracts.CodeProjectRegistrationFailed ||
@@ -1292,9 +1327,9 @@ func TestHumanInstallRejectsMissingProjectBeforeCreatingPlatformRoot(t *testing.
 		Operation: "install", Index: index,
 		Direct:     directRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot},
 		Executable: launcher,
-		ProjectRegistrar: func(string) (string, error) {
+		ProjectRegistrar: func(string) (projectRegistrationResult, error) {
 			registrarCalled = true
-			return "", nil
+			return projectRegistrationResult{}, nil
 		},
 	})
 	if code != 2 || failure == nil || failure.Code != contracts.CodeInputRequired || !strings.Contains(failure.Hint, contracts.ShellCommand("mkdir", "-p", projectRoot)) {
@@ -1378,7 +1413,7 @@ func TestJSONScenarioInstallRegistersCanonicalProject(t *testing.T) {
 	if err := os.Mkdir(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := filepath.EvalSymlinks(project)
+	canonical, err := contracts.AbsolutePath(project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1389,12 +1424,12 @@ func TestJSONScenarioInstallRegistersCanonicalProject(t *testing.T) {
 		Direct:          directRequest{PlatformRoot: root, ProjectRoot: project},
 		RuntimeDeps:     &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
 		NodePreflight:   func() error { return nil },
-		ProjectRegistrar: func(path string) (string, error) {
-			registry[path] = "prj_json"
-			return registry[path], nil
+		ProjectRegistrar: func(path string) (projectRegistrationResult, error) {
+			registry[path] = "prj_0123456789abcdef"
+			return projectRegistrationResult{ID: registry[path], CanonicalPath: canonical}, nil
 		},
 	})
-	if code != 0 || registry[canonical] != "prj_json" {
+	if code != 0 || registry[canonical] != "prj_0123456789abcdef" {
 		t.Fatalf("JSON scenario install exit=%d registry=%v failure=%v output=%s", code, registry, failure, raw)
 	}
 }
@@ -1503,7 +1538,7 @@ func TestJSONRequestFileInstallRegistersCanonicalProject(t *testing.T) {
 	if err := os.Mkdir(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := filepath.EvalSymlinks(project)
+	canonical, err := contracts.AbsolutePath(project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1522,12 +1557,12 @@ func TestJSONRequestFileInstallRegistersCanonicalProject(t *testing.T) {
 		Operation: "install", JSON: true, Index: index, Input: requestPath,
 		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
 		NodePreflight: func() error { return nil },
-		ProjectRegistrar: func(path string) (string, error) {
-			registry[path] = "prj_input"
-			return registry[path], nil
+		ProjectRegistrar: func(path string) (projectRegistrationResult, error) {
+			registry[path] = "prj_0123456789abcdef"
+			return projectRegistrationResult{ID: registry[path], CanonicalPath: canonical}, nil
 		},
 	})
-	if code != 0 || registry[canonical] != "prj_input" {
+	if code != 0 || registry[canonical] != "prj_0123456789abcdef" {
 		t.Fatalf("JSON request install exit=%d registry=%v failure=%v output=%s", code, registry, failure, raw)
 	}
 }

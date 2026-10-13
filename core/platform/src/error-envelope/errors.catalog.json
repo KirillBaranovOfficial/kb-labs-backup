@@ -352,6 +352,24 @@
       "hint": "Inspect the reported service failures, fix their cause, then rerun `kb-deploy apply`."
     },
     {
+      "code": "KB_DEVKIT_CHECK_EXECUTION_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Workspace check {check} could not complete.",
+      "hint": "Rerun this check alone with `kb-devkit check --only {check}`, then correct the check's execution problem."
+    },
+    {
+      "code": "KB_DEVKIT_STANDARDS_VIOLATIONS",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Workspace standards violations were found.",
+      "hint": "Review the findings, correct them, then rerun `kb-devkit check`."
+    },
+    {
       "code": "KB_ENV_PROFILE_MISMATCH",
       "area": "config",
       "stage": "apply",

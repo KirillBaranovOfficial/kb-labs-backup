@@ -14,6 +14,15 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 )
 
+type UnsupportedSchemaError struct {
+	Found    string
+	Expected string
+}
+
+func (failure UnsupportedSchemaError) Error() string {
+	return fmt.Sprintf("unsupported receipt schema %q; expected %q", failure.Found, failure.Expected)
+}
+
 func Path(platformRoot string) string {
 	return filepath.Join(platformRoot, ".kb", "v2", "receipt.json")
 }
@@ -79,7 +88,7 @@ func Write(platformRoot string, receipt contracts.InstallReceipt) error {
 		receipt.Schema = contracts.ReceiptSchema
 	}
 	if receipt.Schema != contracts.ReceiptSchema {
-		return fmt.Errorf("unsupported receipt schema %q", receipt.Schema)
+		return UnsupportedSchemaError{Found: receipt.Schema, Expected: contracts.ReceiptSchema}
 	}
 	if err := contracts.ValidatePlanArtifactIdentities(receipt.Plan); err != nil {
 		return err
@@ -230,7 +239,7 @@ func Read(platformRoot string) (contracts.InstallReceipt, error) {
 		return contracts.InstallReceipt{}, err
 	}
 	if result.Schema != contracts.ReceiptSchema {
-		return contracts.InstallReceipt{}, fmt.Errorf("unsupported receipt schema %q", result.Schema)
+		return contracts.InstallReceipt{}, UnsupportedSchemaError{Found: result.Schema, Expected: contracts.ReceiptSchema}
 	}
 	if err := contracts.ValidatePlanArtifactIdentities(result.Plan); err != nil {
 		return contracts.InstallReceipt{}, err

@@ -1,4 +1,4 @@
-import { defineCommand, useEnv, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, parseJsonc, useEnv, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 
 import { post } from '../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../scope.js';
@@ -65,10 +65,19 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
       const configRoot = scopeCtx.scope === 'project' && scopeCtx.projectRoot
         ? scopeCtx.projectRoot
         : cwd;
-      const syncConfig = await loadSyncConfig(configRoot);
+      let syncConfig: { include?: string[]; exclude?: string[] };
+      try {
+        syncConfig = await loadSyncConfig(configRoot);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : `Cannot read marketplace sync config in ${configRoot}/.kb.`;
+        return validationError(message, `Correct the config, then rerun \`kb marketplace sync --scope ${scopeCtx.scope}\`.`);
+      }
 
       if (!syncConfig.include?.length) {
-        return validationError(`No marketplace.sync.include configured.\n\nAdd to ${configRoot}/.kb/kb.config.json:\n\n  "marketplace": {\n    "sync": {\n      "include": ["plugins/*/entry", "plugins/*/core", "adapters/*"]\n    }\n  }`);
+        return validationError(
+          `No marketplace.sync.include configured in ${configRoot}/.kb/kb.config.jsonc.`,
+          `Add marketplace.sync.include, then rerun \`kb marketplace sync --scope ${scopeCtx.scope}\`.`,
+        );
       }
 
       try {
@@ -104,20 +113,41 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
 async function loadSyncConfig(root: string): Promise<{ include?: string[]; exclude?: string[] }> {
   for (const name of ['kb.config.jsonc', 'kb.config.json']) {
     const p = path.join(root, '.kb', name);
+    let raw: string;
     try {
-      const raw = await fs.readFile(p, 'utf-8');
-      // .json files are strict JSON — strip only for .jsonc to avoid mangling URLs (e.g. ws://).
-      const parsed = JSON.parse(name.endsWith('.jsonc') ? stripJsonc(raw) : raw);
-      return parsed?.marketplace?.sync ?? {};
-    } catch { continue; }
+      raw = await fs.readFile(p, 'utf-8');
+    } catch (error) {
+      if (isMissingFileError(error)) continue;
+      throw new Error(`Cannot read marketplace sync config ${p}: ${errorMessage(error)}`);
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = name.endsWith('.jsonc') ? parseJsonc(raw) : JSON.parse(raw);
+    } catch (error) {
+      throw new Error(`Invalid marketplace sync config ${p}: ${errorMessage(error)}`);
+    }
+
+    if (typeof parsed !== 'object' || parsed === null || !('marketplace' in parsed)) return {};
+    const marketplace = parsed.marketplace;
+    if (typeof marketplace !== 'object' || marketplace === null || !('sync' in marketplace)) return {};
+    const sync = marketplace.sync;
+    if (typeof sync !== 'object' || sync === null) return {};
+    const include = 'include' in sync && Array.isArray(sync.include) && sync.include.every((item): item is string => typeof item === 'string')
+      ? sync.include
+      : undefined;
+    const exclude = 'exclude' in sync && Array.isArray(sync.exclude) && sync.exclude.every((item): item is string => typeof item === 'string')
+      ? sync.exclude
+      : undefined;
+    return { include, exclude };
   }
   return {};
 }
 
-/** Minimal JSONC stripper — removes // line and /* block comments plus trailing commas. */
-function stripJsonc(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1')
-    .replace(/,(\s*[}\]])/g, '$1');
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error';
 }

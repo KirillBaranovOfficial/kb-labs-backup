@@ -8,9 +8,72 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
+
+type rejectingResultWriter struct{ err error }
+
+func (writer rejectingResultWriter) Write([]byte) (int, error) { return 0, writer.err }
+
+func TestReturnedEmitterRecordsOnlyAfterSuccessfulResultWrite(t *testing.T) {
+	for _, mode := range []struct {
+		name string
+		args []string
+	}{
+		{name: "human"},
+		{name: "json", args: []string{"--json"}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			var emitted int
+			root := &cobra.Command{Use: "tool"}
+			root.Flags().Bool("json", false, "emit JSON")
+			root.RunE = func(*cobra.Command, []string) error {
+				return result.ReturnWithEmitter(map[string]string{"credential": "sentinel"}, func(write func() error) *diag.Diag {
+					if err := write(); err != nil {
+						return diag.New("KB_RUNTIME_UNEXPECTED", "The result write failed.", diag.WithCauseAndReason("writer rejected the result"))
+					}
+					emitted++
+					return nil
+				})
+			}
+			var stderr bytes.Buffer
+			if code := Execute(root, mode.args, rejectingResultWriter{err: fmt.Errorf("closed output")}, &stderr); code == 0 {
+				t.Fatal("failed result write returned success")
+			}
+			if emitted != 0 {
+				t.Fatalf("post-write callback ran %d times after failed output", emitted)
+			}
+			if !strings.Contains(stderr.String(), "The result write failed.") {
+				t.Fatalf("output failure was not rendered as a typed diagnostic: %s", stderr.String())
+			}
+
+			var stdout, successStderr bytes.Buffer
+			root = &cobra.Command{Use: "tool"}
+			root.Flags().Bool("json", false, "emit JSON")
+			root.RunE = func(*cobra.Command, []string) error {
+				return result.ReturnWithEmitter(map[string]string{"credential": "sentinel"}, func(write func() error) *diag.Diag {
+					if err := write(); err != nil {
+						return diag.New("KB_RUNTIME_UNEXPECTED", "The result write failed.", diag.WithCauseAndReason("writer rejected the result"))
+					}
+					emitted++
+					return nil
+				})
+			}
+			if code := Execute(root, mode.args, &stdout, &successStderr); code != 0 {
+				t.Fatalf("successful result write exit code = %d, stderr=%s", code, successStderr.String())
+			}
+			if emitted != 1 {
+				t.Fatalf("post-write callback count = %d, want 1", emitted)
+			}
+			if !strings.Contains(stdout.String(), "sentinel") {
+				t.Fatalf("successful result was not written before callback: %s", stdout.String())
+			}
+		})
+	}
+}
 
 func TestExecuteResetsUnsetStringSliceToItsEmptyDefault(t *testing.T) {
 	var values []string

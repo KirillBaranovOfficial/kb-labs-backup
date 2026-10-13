@@ -286,6 +286,11 @@ export async function disablePlugin(root: string, packageId: string, scope: Mark
 // Validation
 // ---------------------------------------------------------------------------
 
+/**
+ * Validate the lock against its resolved owner scope. Call
+ * `resolveMarketplaceLockScope` when selecting scope from runtime roots; a
+ * development lock shared by platform and project roles is platform-owned.
+ */
 export function validateMarketplaceLock(value: unknown, scope: MarketplaceLockScope): MarketplaceLockValidationResult {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {return { valid: false, reason: 'lock must be an object' };}
   const obj = value as Record<string, unknown>;

@@ -2,8 +2,7 @@
  * workflow:run command - Run workflow by workflow ID
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
-import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { createErrorEnvelope, defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import type { WorkflowRunRequest } from '@kb-labs/workflow-contracts';
 import { WorkflowDaemonClient } from '../http-client.js';
 

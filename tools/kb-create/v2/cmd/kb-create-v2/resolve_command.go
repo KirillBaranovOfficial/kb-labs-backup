@@ -271,12 +271,13 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
 		knownByRoot := make(map[string]gateway.Root, len(input.KnownGateways))
 		for _, candidate := range input.KnownGateways {
-			if candidate.PlatformRoot == "" || filepath.Clean(candidate.PlatformRoot) == filepath.Clean(root) {
+			candidateRoot := filepath.Clean(candidate.PlatformRoot)
+			if candidate.PlatformRoot == "" || candidateRoot == filepath.Clean(root) || (installed && candidateRoot == filepath.Clean(activeRoot)) {
 				continue
 			}
 			if activeOwner, ownerErr := receipt.Read(candidate.PlatformRoot); ownerErr == nil {
 				if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" {
-					knownByRoot[filepath.Clean(candidate.PlatformRoot)] = gateway.Root{PlatformRoot: filepath.Clean(candidate.PlatformRoot), URL: ownerURL}
+					knownByRoot[candidateRoot] = gateway.Root{PlatformRoot: candidateRoot, URL: ownerURL}
 				}
 			}
 		}
@@ -290,15 +291,19 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 				requestedURL = recordedGatewayURL(active)
 			}
 		}
+		allocationRoot := root
+		if installed {
+			allocationRoot = activeRoot
+		}
 		defaultURL, originErr := gateway.OriginFromHealthURL(response.Plan.Host.HealthURL)
 		if originErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeHostSpecInvalid, "the release Gateway address is invalid", "select a release with a valid loopback Gateway health URL", originErr)
 		}
-		selectedURL, allocErr := registry.AllocateWithKnown(root, defaultURL, requestedURL, known)
+		selectedURL, allocErr := registry.AllocateWithKnown(allocationRoot, defaultURL, requestedURL, known)
 		if allocErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", allocErr)
 		}
-		claimant, claimed, claimErr := registry.ClaimantAmong(root, selectedURL, known)
+		claimant, claimed, claimErr := registry.ClaimantAmong(allocationRoot, selectedURL, known)
 		if claimErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", claimErr)
 		}

@@ -31,21 +31,39 @@ var buildCommit = "none"
 
 type repeatedValue []string
 
-type applyCommandResult struct {
-	OK         bool                     `json:"ok"`
-	Operation  string                   `json:"operation"`
-	Receipt    contracts.InstallReceipt `json:"receipt"`
-	LogPath    string                   `json:"logPath"`
-	Profile    string                   `json:"profile"`
-	Services   []contracts.Service      `json:"services"`
-	Shim       *shim.EnsureResult       `json:"shim,omitempty"`
-	FirstAdmin *firstAdminCredential    `json:"firstAdmin,omitempty"`
+type projectRegistrationResult struct {
+	ID             string
+	CanonicalPath  string
+	AlreadyExisted bool
 }
 
+type applyCommandResult struct {
+	OK                  bool                     `json:"ok"`
+	Operation           string                   `json:"operation"`
+	Receipt             contracts.InstallReceipt `json:"receipt"`
+	LogPath             string                   `json:"logPath"`
+	Profile             string                   `json:"profile"`
+	Services            []contracts.Service      `json:"services"`
+	Shim                *shim.EnsureResult       `json:"shim,omitempty"`
+	FirstAdmin          *firstAdminCredential    `json:"firstAdmin,omitempty"`
+	disclosureStoreRoot string
+}
+
+type firstAdminState string
+
+const (
+	firstAdminDisclosed           firstAdminState = "disclosed"
+	firstAdminPreviouslyDisclosed firstAdminState = "previously-disclosed"
+)
+
 type firstAdminCredential struct {
-	Email     string `json:"email"`
-	Password  string `json:"password"`
-	ShownOnce bool   `json:"shownOnce"`
+	State           firstAdminState `json:"state"`
+	Email           string          `json:"email"`
+	Password        string          `json:"password,omitempty"`
+	Notice          string          `json:"notice,omitempty"`
+	RecoveryCommand string          `json:"recoveryCommand,omitempty"`
+	StopCommand     string          `json:"stopCommand,omitempty"`
+	StartCommand    string          `json:"startCommand,omitempty"`
 }
 
 func (values *repeatedValue) String() string { return strings.Join(*values, ",") }
@@ -93,7 +111,7 @@ type commandDependencies struct {
 	NodeCheck        func() error
 	InstallInput     io.Reader
 	InstallOutput    io.Writer
-	ProjectRegistrar func(string, string) (string, error)
+	ProjectRegistrar func(string, string) (projectRegistrationResult, error)
 	Command          *cobra.Command
 	Executable       string
 }
@@ -106,7 +124,7 @@ func productionCommandDependencies(command *cobra.Command) commandDependencies {
 		InstallOutput: clikitcommand.FromCommand(command).ProgressWriter(),
 		Command:       command,
 		Executable:    executablePath(),
-		ProjectRegistrar: func(platformRoot, projectRoot string) (string, error) {
+		ProjectRegistrar: func(platformRoot, projectRoot string) (projectRegistrationResult, error) {
 			return registerInstalledProject(platformRoot, projectRoot, nil)
 		},
 	}

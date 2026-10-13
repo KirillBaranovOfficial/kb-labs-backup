@@ -12,7 +12,7 @@ pnpm --filter @kb-labs/sdk docs:exports
 
 Source: `src/index.ts`
 
-Total exports: **200**
+Total exports: **206**
 
 | Export | Kind | From |
 |---|---|---|
@@ -47,6 +47,7 @@ Total exports: **200**
 | `commonErrors` | `value` | `@kb-labs/shared-command-kit` |
 | `ConfirmData` | `type` | `@kb-labs/studio-contracts` |
 | `ContextForHost` | `type` | `./utils/index.js` |
+| `createErrorEnvelope` | `value` | `@kb-labs/core-platform` |
 | `createTestContext` | `value` | `./test/index.js` |
 | `CreateTestContextOptions` | `type` | `./test/index.js` |
 | `createTool` | `value` | `@kb-labs/shared-tool-kit` |
@@ -66,6 +67,7 @@ Total exports: **200**
 | `DegradedLevel` | `type` | `@kb-labs/core-runtime` |
 | `DegradedOptions` | `type` | `@kb-labs/core-runtime` |
 | `DegradedStatus` | `type` | `@kb-labs/core-runtime` |
+| `deriveProjectId` | `value` | `@kb-labs/core-project-registry` |
 | `DiffData` | `type` | `@kb-labs/studio-contracts` |
 | `displayArtifacts` | `value` | `@kb-labs/shared-cli-ui` |
 | `displayArtifactsCompact` | `value` | `@kb-labs/shared-cli-ui` |
@@ -85,6 +87,7 @@ Total exports: **200**
 | `FileFeedbackStoreOptions` | `type` | `@kb-labs/core-platform` |
 | `FileHistoryStore` | `value` | `@kb-labs/core-platform` |
 | `FileHistoryStoreOptions` | `type` | `@kb-labs/core-platform` |
+| `findRegisteredProjectContainingPathSync` | `value` | `@kb-labs/core-project-registry` |
 | `findRepoRoot` | `value` | `@kb-labs/core-sys` |
 | `FlagSchema` | `type` | `@kb-labs/shared-command-kit` |
 | `FlagSchemaDefinition` | `type` | `@kb-labs/shared-command-kit` |
@@ -157,6 +160,7 @@ Total exports: **200**
 | `NumberFlagSchema` | `type` | `@kb-labs/shared-command-kit` |
 | `OutputSection` | `type` | `./contracts/index.js` |
 | `parseEnvFromRuntime` | `value` | `@kb-labs/shared-cli-ui` |
+| `parseJsonc` | `value` | `@kb-labs/core-config` |
 | `PermissionPreset` | `type` | `@kb-labs/perm-presets` |
 | `PermissionSpec` | `type` | `./contracts/index.js` |
 | `PieSlice` | `type` | `@kb-labs/studio-contracts` |
@@ -167,6 +171,8 @@ Total exports: **200**
 | `PluginError` | `value` | `@kb-labs/shared-command-kit` |
 | `PresetBuilder` | `type` | `@kb-labs/perm-presets` |
 | `presets` | `value` | `@kb-labs/perm-presets` |
+| `ProjectEntry` | `type` | `@kb-labs/core-contracts` |
+| `requireProjectContext` | `value` | `@kb-labs/core-project-registry` |
 | `RestInput` | `type` | `@kb-labs/shared-command-kit` |
 | `RouteDefinition` | `type` | `./command/index.js` |
 | `RouteHandler` | `type` | `./command/index.js` |

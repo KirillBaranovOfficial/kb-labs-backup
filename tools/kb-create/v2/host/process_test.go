@@ -22,6 +22,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
@@ -736,8 +737,8 @@ func TestReadyTimeoutKillsHost(t *testing.T) {
 
 func TestTypedStartupEnvelopeIsTheHostFailureCause(t *testing.T) {
 	f := newRunner(t, 10, 5, "-startup-error")
-	f.runner.SecretEnv = func() (map[string]string, error) {
-		return map[string]string{"API_TOKEN": "fake-secret-token"}, nil
+	f.runner.SecretEnv = func() (secrets.Environment, error) {
+		return secrets.Environment{Values: map[string]string{"API_TOKEN": "fake-secret-token"}}, nil
 	}
 	_, err := startProcessForTest(t, f.runner, context.Background())
 	var typed *diag.Diag
@@ -750,6 +751,29 @@ func TestTypedStartupEnvelopeIsTheHostFailureCause(t *testing.T) {
 		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "[REDACTED]") ||
 		typed.Message != "Adapter option \"platform.adapterOptions.analytics.retentionDays\" is invalid: must be a positive integer." {
 		t.Fatalf("typed startup diagnostic = %#v; want original catalogued config error with host evidence", err)
+	}
+}
+
+// case: S-222.11
+func TestHostEnvironmentSuppressesCompletedBootstrapPasswordFromAllSources(t *testing.T) {
+	t.Setenv(secrets.BootstrapPasswordEnvironment, "inherited-bootstrap-password")
+	runner := newRunner(t, 10, 5)
+	runner.runner.Spec.Env = map[string]string{secrets.BootstrapPasswordEnvironment: "spec-bootstrap-password"}
+	runner.runner.SecretEnv = func() (secrets.Environment, error) {
+		return secrets.Environment{
+			Values:     map[string]string{secrets.BootstrapPasswordEnvironment: "stored-bootstrap-password"},
+			Suppressed: []string{secrets.BootstrapPasswordEnvironment},
+		}, nil
+	}
+
+	environment, err := runner.runner.environment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, secrets.BootstrapPasswordEnvironment+"=") {
+			t.Fatalf("completed host environment contains bootstrap password: %q", entry)
+		}
 	}
 }
 

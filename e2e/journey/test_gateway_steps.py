@@ -148,6 +148,7 @@ class GatewayStepTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, output, "")
 
             journey = Journey("local", "provider-green")
+            journey.step("registered project setup", "journey.setup", lambda: None)
             run_llm_provider_steps(journey, runner=successful)
 
         claims = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
@@ -257,6 +258,7 @@ class GatewayStepTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED", "message": "fixture failed"}}), "")
 
             journey = Journey("local", "fake-gateway")
+            journey.step("registered project setup", "journey.setup", lambda: None)
             run_gateway_steps(journey, token="fixture-token", runner=failed,
                               opener=lambda *_args, **_kwargs: FakeResponse())
 
