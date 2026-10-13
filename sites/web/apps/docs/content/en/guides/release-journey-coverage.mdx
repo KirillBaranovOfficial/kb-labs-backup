@@ -29,8 +29,8 @@ claim changes with:
 
 ```bash
 mkdir -p .kb/qa
-kb qa cases coverage --level all --mode local --json > .kb/qa/case-coverage-local.json
-kb qa cases coverage --level all --mode secured --json > .kb/qa/case-coverage-secured.json
+kb qa coverage show --level all --mode local --json > .kb/qa/case-coverage-local.json
+kb qa coverage show --level all --mode secured --json > .kb/qa/case-coverage-secured.json
 node scripts/generate-qa-case-coverage-docs.mjs
 ```
 
@@ -38,7 +38,7 @@ To enforce the release level, include a run result produced by a journey or test
 runner:
 
 ```bash
-kb qa cases coverage --level release --mode local --run .journey/reports/service-local.json
+kb qa coverage show --level release --mode local --run .journey/reports/service-local.json
 ```
 
 The JSON schema is versioned as `kb.qa-case-coverage/v1`. Each applicable step

@@ -244,7 +244,7 @@ class DispatchRegistryTests(unittest.TestCase):
         node = shutil.which("node")
         self.assertIsNotNone(node, "Node.js 24 is required to run the workspace CLI")
         for mode in ("local", "secured"):
-            command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "cases", "coverage", "--level", "all",
+            command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "coverage", "show", "--level", "all",
                        "--mode", mode, "--json"]
             result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -591,7 +591,7 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertIsNotNone(node)
         results = []
         for mode in ("local", "secured"):
-            command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "cases", "coverage", "--level", "all",
+            command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "coverage", "show", "--level", "all",
                        "--mode", mode, "--json"]
             result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120)
             self.assertEqual(result.returncode, 0, result.stderr)

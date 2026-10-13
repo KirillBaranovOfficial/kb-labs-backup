@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { defineCommand, handleError, type CLIInput, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { workflowCommandError } from './errors.js';
 
-interface InitFlags { json?: boolean; }
+interface CreateFlags { json?: boolean; }
 
 const EXAMPLE = `name: hello
 version: 1.0.0
@@ -21,11 +21,11 @@ jobs:
           command: echo hello-workflow
 `;
 
-export default defineCommand<unknown, CLIInput<InitFlags>, unknown>({
-  id: 'workflow:init',
+export default defineCommand<unknown, CLIInput<CreateFlags>, unknown>({
+  id: 'workflow:create',
   description: 'Create a runnable local workflow example',
   handler: {
-    async execute(ctx: PluginCommandContextV3, input: CLIInput<InitFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<CreateFlags>): Promise<CommandResult> {
       const output = join(process.cwd(), '.kb', 'workflows', 'hello.yml');
       try {
         await mkdir(join(process.cwd(), '.kb', 'workflows'), { recursive: true });
@@ -39,7 +39,7 @@ export default defineCommand<unknown, CLIInput<InitFlags>, unknown>({
         return result;
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
-          return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow init`.');
+          return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow create`.');
         }
         return handleError(error);
       }

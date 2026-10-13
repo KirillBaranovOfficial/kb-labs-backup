@@ -48,7 +48,7 @@ When the case's steps pass, change `status: planned` to `active`. The implementa
 
 - **Docs:** update the user docs the change affects (follow `docs-authoring`). Docs describe what the cases promise, not more.
 - **Decisions:** if you made a product call, add a dated entry to `docs/product/decisions.md` naming the cases it affects.
-- **Coverage:** `node ./cli/bin/dist/bin.js qa cases coverage --level release --json` shows PASS, FAIL, NOT RUN or NOT COVERED per step. A release case isn't done until its steps are PASS in a journey run.
+- **Coverage:** `node ./cli/bin/dist/bin.js qa coverage show --level release --json` shows PASS, FAIL, NOT RUN or NOT COVERED per step. A release case isn't done until its steps are PASS in a journey run.
 
 ## Report
 

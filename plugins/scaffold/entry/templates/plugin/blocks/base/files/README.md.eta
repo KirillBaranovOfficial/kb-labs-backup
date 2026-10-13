@@ -152,7 +152,7 @@ pnpm kb <%= it.name %> hello
 
 ```bash
 cd ../../..
-kb marketplace link --link .kb/plugins/<%= it.name %>/packages/<%= it.name %>-entry
+kb marketplace plugins add --link .kb/plugins/<%= it.name %>/packages/<%= it.name %>-entry
 ```
 
 **Health check**

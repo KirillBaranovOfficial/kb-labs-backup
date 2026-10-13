@@ -9364,11 +9364,15 @@
 - **marketplace:plugins:disable**
   - PD-01: disables plugin successfully
   - PD-02: --dry-run shows intent, HTTP post is NOT called
-- **marketplace:link**
-  - links a project-relative local plugin successfully
+- **marketplace plugins add**
+  - S-179.32: declares --json on the mutating add command
+  - registers add and remove under the same singular plugin noun path
+  - adds a project-relative local plugin successfully
   - rejects absolute paths before calling the marketplace
-- **marketplace:plugins:unlink**
-  - PU-01: unlinks plugin successfully
+- **marketplace:plugins:remove**
+  - declares --json on the mutating remove command
+  - removes a project plugin registration
+  - PU-01: removes a plugin registration successfully
   - PU-02: --dry-run shows intent, HTTP post is NOT called
 
 **`plugins/marketplace/entry/src/__tests__/cli/sync.cli.test.ts`**
@@ -12714,7 +12718,7 @@
   - SS-02: --dry-run — writeFiles is not called, exitCode 0
   - SS-03: loadEntity throws — command propagates the error
   - SS-04: successful scaffold — exitCode 0, success message shown
-  - prints an explicit marketplace link step after generating files
+  - prints an explicit marketplace registration step after generating files
   - SS-05: --dry-run returns the plain scaffold result
 
 #### Unit tests
@@ -14757,9 +14761,9 @@
   - CH-02: --json returns { ok: true, data: { ok, service } }
   - CH-03: daemon unavailable — prints error, returns exitCode 1
 
-**`plugins/workflow/entry/src/__tests__/cli/init.cli.test.ts`**
+**`plugins/workflow/entry/src/__tests__/cli/create.cli.test.ts`**
 
-- **workflow:init**
+- **workflow:create**
   - writes a no-network example and refuses to overwrite it
 
 **`plugins/workflow/entry/src/__tests__/cli/job-list.cli.test.ts`**
@@ -14789,9 +14793,9 @@
   - CLI-04: directory path lints every file and fails if any is invalid
   - CLI-05: --strict on a valid file still passes (no warnings to promote)
 
-**`plugins/workflow/entry/src/__tests__/cli/logs.cli.test.ts`**
+**`plugins/workflow/entry/src/__tests__/cli/log-show.cli.test.ts`**
 
-- **workflow job logs**
+- **workflow log show**
   - CLG-01: positional job ID outputs log lines via job endpoint
   - CLG-02: --json returns { ok: true, data: { logs } }
   - CLG-03: missing positional job ID returns exitCode 1

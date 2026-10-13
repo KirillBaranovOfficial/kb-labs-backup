@@ -16,7 +16,7 @@ into that runner.
 2. Create and lint the no-network sample:
 
    ```bash
-   kb workflow init
+   kb workflow create
    kb workflow lint
    ```
 

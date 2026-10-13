@@ -83,8 +83,8 @@ kb qa baseline status                  # show current baseline snapshot
 ```bash
 kb qa cases list
 kb qa cases validate
-kb qa cases coverage --json
-kb qa cases coverage --level release --mode local --run .journey/reports/service-local.json
+kb qa coverage show --json
+kb qa coverage show --level release --mode local --run .journey/reports/service-local.json
 ```
 
 The catalog defaults to `docs/qa/scenarios`; set `qa.casesPath` to use another
@@ -108,7 +108,7 @@ comma-separated paths to `--run`.
 | `kb qa baseline status` | Show baseline snapshot |
 | `kb qa cases list` | List cases in the configured catalog |
 | `kb qa cases validate` | Validate catalog metadata, step ids, and test claims |
-| `kb qa cases coverage` | Generate per-step coverage from claims and run results |
+| `kb qa coverage show` | Generate per-step coverage from claims and run results |
 
 ---
 

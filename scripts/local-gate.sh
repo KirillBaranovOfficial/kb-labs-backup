@@ -279,8 +279,8 @@ else
   block_stage "${STAGE_NAMES[$((AGGREGATION_STAGE + 2))]}" 'blocked because journey candidate is unavailable'
 fi
 if ((JOURNEY_CANDIDATE_READY)); then
-  stage 'local release-case coverage' pnpm kb qa cases coverage --level release --mode local --run .journey/reports/service-local.json || exit 1
-  stage 'secured release-case coverage' pnpm kb qa cases coverage --level release --mode secured --run .journey/reports/service-secured.json || exit 1
+  stage 'local release-case coverage' pnpm kb qa coverage show --level release --mode local --run .journey/reports/service-local.json || exit 1
+  stage 'secured release-case coverage' pnpm kb qa coverage show --level release --mode secured --run .journey/reports/service-secured.json || exit 1
 fi
 [[ "$STATUS" == 0 ]] || exit 1
 exit 0

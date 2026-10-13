@@ -2,7 +2,7 @@
  * @module @kb-labs/core-runtime/discover-adapters
  * Lock-based adapter discovery — reads from .kb/marketplace.lock.
  *
- * All adapters must be registered via `kb marketplace link` or `kb marketplace install`.
+ * All adapters must be registered via `kb marketplace plugins add` or `kb marketplace install`.
  * No filesystem scanning.
  *
  * Adapters are platform-owned. Project locks are never read for adapter

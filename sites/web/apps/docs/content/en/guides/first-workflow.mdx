@@ -21,11 +21,11 @@ The workflow CLI resolves the current project from its directory and sends API r
 From the project directory:
 
 ```bash
-kb workflow init
+kb workflow create
 kb workflow lint
 ```
 
-`kb workflow init` creates `.kb/workflows/hello.yml` and will stop with an error if that file already exists. The example contains one manual workflow and one local shell step:
+`kb workflow create` creates `.kb/workflows/hello.yml` and will stop with an error if that file already exists. The example contains one manual workflow and one local shell step:
 
 ```yaml
 name: hello
