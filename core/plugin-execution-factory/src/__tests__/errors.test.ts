@@ -5,6 +5,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { AdapterCredentialsMissingError } from '@kb-labs/core-platform';
+import { normalizeError } from '../utils.js';
 import {
   ExecutionLayerError,
   isExecutionLayerError,
@@ -25,7 +27,7 @@ import {
 describe('isKnownErrorCode()', () => {
   it('returns true for all known codes', () => {
     const codes = [
-      'TIMEOUT', 'ABORTED', 'PERMISSION_DENIED', 'HANDLER_ERROR',
+      'TIMEOUT', 'ABORTED', 'PERMISSION_DENIED',
       'HANDLER_CONTRACT_ERROR', 'HANDLER_NOT_FOUND', 'WORKSPACE_ERROR',
       'VALIDATION_ERROR', 'UNKNOWN_ERROR',
       'QUEUE_FULL', 'ACQUIRE_TIMEOUT', 'WORKER_CRASHED', 'WORKER_UNHEALTHY',
@@ -49,10 +51,10 @@ describe('isKnownErrorCode()', () => {
 
 describe('ExecutionLayerError', () => {
   it('sets name, message, code', () => {
-    const err = new ExecutionLayerError('something failed', 'HANDLER_ERROR');
+    const err = new ExecutionLayerError('something failed', 'UNKNOWN_ERROR');
     expect(err.name).toBe('ExecutionLayerError');
     expect(err.message).toBe('something failed');
-    expect(err.code).toBe('HANDLER_ERROR');
+    expect(err.code).toBe('UNKNOWN_ERROR');
     expect(err instanceof Error).toBe(true);
   });
 
@@ -73,6 +75,55 @@ describe('ExecutionLayerError', () => {
     expect(json.code).toBe('TIMEOUT');
     expect(json.details).toEqual({ ms: 5000 });
     expect(typeof json.stack).toBe('string');
+  });
+});
+
+describe('normalizeError handler boundary', () => {
+  // case: S-203.2
+  it('retains a typed plugin product error with its hint and flat details', () => {
+    const error = Object.assign(new Error('The plan is invalid.'), {
+      code: 'COMMIT_PLAN_INVALID',
+      hint: 'Run `kb commit generate` and inspect the proposed plan.',
+      details: { reason: 'empty' },
+    });
+    const normalized = normalizeError(error);
+    expect(normalized).toMatchObject({
+      code: 'COMMIT_PLAN_INVALID',
+      message: 'The plan is invalid.',
+      hint: 'Run `kb commit generate` and inspect the proposed plan.',
+      details: { reason: 'empty' },
+    });
+  });
+
+  // case: S-054.5, S-054.8, S-203.2
+  it('retains a catalogued adapter credentials error thrown by a handler', () => {
+    const normalized = normalizeError(new AdapterCredentialsMissingError(
+      'llm', 'OPENAI_API_KEY', 'platform.adapterOptions.llm.apiKey',
+    ));
+    expect(normalized).toMatchObject({
+      code: 'KB_ADAPTER_CREDENTIALS_MISSING',
+      message: 'Adapter llm is bound but is missing required credential OPENAI_API_KEY.',
+      hint: expect.stringContaining('kb config set --scope platform platform.adapterOptions.llm.apiKey'),
+      details: { service: 'llm', credential: 'OPENAI_API_KEY' },
+      actions: [{ id: 'configure-adapter-credential', command: expect.stringContaining('OPENAI_API_KEY') }],
+    });
+  });
+
+  // case: S-203.2, S-203.3
+  it('normalizes an execution timeout for the unexpected plugin failure boundary', () => {
+    expect(normalizeError(new TimeoutError('Timed out after 50ms', 50))).toMatchObject({
+      code: 'KB_RUNTIME_UNEXPECTED',
+      hint: expect.stringContaining('correlationId'),
+    });
+  });
+
+  // case: S-203.2
+  it('uses a platform unexpected code for an untyped thrown value instead of HANDLER_ERROR', () => {
+    expect(normalizeError(new Error('private cause'))).toMatchObject({
+      code: 'KB_RUNTIME_UNEXPECTED',
+      message: 'An unexpected error occurred.',
+    });
+    expect(normalizeError(new Error('private cause')).code).not.toBe('HANDLER_ERROR');
   });
 });
 

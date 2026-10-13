@@ -160,7 +160,8 @@ describe('RemoteBackend + GatewayDispatchTransport integration', () => {
 
     const result = await backend.execute(makeRequest());
     expect(result.ok).toBe(false);
-    expect(result.error?.message).toContain('403');
+    expect(result.error?.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(result.error?.message).not.toContain('403');
   });
 
   it('returns ok:false when no host registered (503)', async () => {
@@ -174,6 +175,7 @@ describe('RemoteBackend + GatewayDispatchTransport integration', () => {
 
     const result = await backend.execute(makeRequest());
     expect(result.ok).toBe(false);
-    expect(result.error?.message).toContain('503');
+    expect(result.error?.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(result.error?.message).not.toContain('503');
   });
 });

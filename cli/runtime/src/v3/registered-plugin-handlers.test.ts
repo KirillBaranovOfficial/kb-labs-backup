@@ -23,6 +23,22 @@ function property(node: ts.ObjectLiteralExpression, name: string): ts.Expression
   return match?.initializer;
 }
 
+function hasProperty(node: ts.ObjectLiteralExpression, name: string): boolean {
+  return node.properties.some((item) => ts.isPropertyAssignment(item) &&
+    ((ts.isIdentifier(item.name) && item.name.text === name) ||
+      (ts.isStringLiteral(item.name) && item.name.text === name)));
+}
+
+function isFailureErrorObject(node: ts.ObjectLiteralExpression): boolean {
+  const errorProperty = node.parent;
+  if (!ts.isPropertyAssignment(errorProperty) || errorProperty.initializer !== node ||
+      !ts.isIdentifier(errorProperty.name) || errorProperty.name.text !== 'error') return false;
+  const result = errorProperty.parent;
+  if (!ts.isObjectLiteralExpression(result)) return false;
+  return result.properties.some((item) => ts.isPropertyAssignment(item) &&
+    ts.isIdentifier(item.name) && item.name.text === 'ok' && item.initializer.kind === ts.SyntaxKind.FalseKeyword);
+}
+
 function registeredCliHandlers(): string[] {
   const handlers = new Set<string>();
   for (const manifestPath of sourceFiles(pluginsRoot).filter((file) => /\/manifest(?:\.v3)?\.ts$/.test(file))) {
@@ -58,10 +74,16 @@ function registeredCliHandlers(): string[] {
 }
 
 describe('registered plugin CLI handler result contract', () => {
-  // case: S-203.1, S-203.2
-  it('discovers handlers from every plugin manifest and prevents direct JSON or string failures', () => {
+  // case: S-203.1, S-203.2, S-203.6
+  it('covers every registered handler through the shared result and error boundary', () => {
     const handlers = registeredCliHandlers();
     expect(handlers.length).toBeGreaterThan(0);
+    const pluginExecutor = readFileSync(
+      path.join(workspaceRoot, 'cli/bin/src/runtime/plugin-executor.ts'),
+      'utf8',
+    );
+    expect(pluginExecutor).toContain('await executeCommandV3({');
+    expect(pluginExecutor).toContain('commandPath,');
 
     const violations = handlers.flatMap((handler) => {
       if (!handler.startsWith(pluginsRoot) || !statSync(handler, { throwIfNoEntry: false })?.isFile()) {
@@ -69,10 +91,23 @@ describe('registered plugin CLI handler result contract', () => {
       }
       const source = readFileSync(handler, 'utf8');
       const findings: string[] = [];
+      if (/\bHANDLER_ERROR\b/.test(source)) findings.push(`${handler}: constructs a generic handler error`);
       if (/\b(?:ctx|context|ui)\s*(?:\?\.)?\s*(?:\.\s*ui\s*)?(?:\?\.|\.)\s*json\s*(?:\?\.)?\s*\(/.test(source)) findings.push(`${handler}: calls UI json`);
       if (/\b(?:ctx|context|ui)\s*(?:\?\.)?\s*(?:\.\s*ui\s*)?(?:\?\.|\.)\s*error\s*(?:\?\.)?\s*\(/.test(source)) findings.push(`${handler}: calls UI error`);
       if (/\bok\s*:\s*false\s*,\s*error\s*:\s*(['"`])/.test(source)) findings.push(`${handler}: returns a string error`);
       const handlerSource = ts.createSourceFile(handler, source, ts.ScriptTarget.Latest, true);
+      const inspectProductFailures = (node: ts.Node): void => {
+        if (ts.isObjectLiteralExpression(node)) {
+          const code = property(node, 'code');
+          if (isFailureErrorObject(node) && code && ts.isStringLiteral(code) && !code.text.startsWith('KB_') &&
+            hasProperty(node, 'message') &&
+            !hasProperty(node, 'hint')) {
+            findings.push(`${handler}: constructs product error ${code.text} without a hint`);
+          }
+        }
+        ts.forEachChild(node, inspectProductFailures);
+      };
+      inspectProductFailures(handlerSource);
       const inspectReturnedFailures = (node: ts.Node): void => {
         if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) &&
           ['handleError', 'validationError'].includes(node.expression.text) &&

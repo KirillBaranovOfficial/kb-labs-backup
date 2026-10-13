@@ -43,7 +43,8 @@ describe('RemoteBackend', () => {
       const result = await backend.execute(makeRequest());
 
       expect(result.ok).toBe(false);
-      expect(result.error?.message).toContain('connection refused');
+      expect(result.error?.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(result.error?.message).not.toContain('connection refused');
     });
 
     it('passes the (possibly remapped) request to transport', async () => {

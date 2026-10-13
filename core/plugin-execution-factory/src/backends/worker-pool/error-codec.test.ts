@@ -3,23 +3,24 @@ import { createErrorEnvelope, createProductErrorEnvelope, ErrorEnvelopeError } f
 import { rebuildCataloguedError, serializeCataloguedError } from './error-codec.js';
 
 describe('worker IPC error codec', () => {
-  it('round-trips the complete platform error context', () => {
-    const original = new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
-      message: 'Prompt input is required.',
-      hint: 'Supply the value as command input and retry.',
-      cause: 'The prompt "workspace" has no responder.',
-      details: { field: 'workspace', source: 'prompt' },
+  // case: S-203.2, S-054.5
+  it('round-trips the complete platform error envelope', () => {
+    const original = new ErrorEnvelopeError(createErrorEnvelope('KB_ADAPTER_CREDENTIALS_MISSING', {
+      message: 'The LLM adapter is missing its credential.',
+      hint: 'Set OPENAI_API_KEY and retry.',
+      cause: 'The platform environment does not contain OPENAI_API_KEY.',
+      correlationId: 'corr-credential-1',
+      details: { service: 'llm', credential: 'OPENAI_API_KEY', path: 'platform.adapterOptions.llm.apiKey' },
+      actions: [{ id: 'configure-key', label: 'Configure API key', command: 'kb config set ...' }],
+      docs: 'https://docs.kblabs.ru/llm',
+      diagnostics: [{ code: 'CREDENTIAL_MISSING', message: 'OPENAI_API_KEY is unset.', severity: 'error' }],
     }));
 
-    const decoded = rebuildCataloguedError(serializeCataloguedError(original));
+    const serialized = serializeCataloguedError(original);
+    const decoded = rebuildCataloguedError(serialized);
 
-    expect(decoded.envelope).toMatchObject({
-      code: 'KB_RUNTIME_INPUT_INVALID',
-      message: 'Prompt input is required.',
-      hint: 'Supply the value as command input and retry.',
-      cause: 'The prompt "workspace" has no responder.',
-      details: { field: 'workspace', source: 'prompt' },
-    });
+    expect(decoded.envelope).toEqual(original.envelope);
+    expect(serialized).toEqual(original.envelope);
   });
 
   it('round-trips a product code through the shared product validator', () => {
