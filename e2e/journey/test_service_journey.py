@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
 from runner import login_and_configure_secured_admin
-from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_installed_cli_path, declared_capabilities,
+from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_selection_groups,
+                            configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
                             request as request_result,
@@ -207,7 +208,6 @@ class ServiceJourneyTests(unittest.TestCase):
                     "KB_JOURNEY_SELECTED_STEPS": selected,
                     "KB_JOURNEY_CASES": selected,
                     "KB_JOURNEY_SELECTED_CAPABILITIES": "gateway,projects",
-                    "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/service_runner.py",
                 }, clear=True), patch("service_runner.open_http", side_effect=fake_open_http):
                     journey = Journey(mode, f"selected-smoke-{mode}")
                     groups = SERVICE_GROUPS
@@ -268,19 +268,19 @@ class ServiceJourneyTests(unittest.TestCase):
             "KB_JOURNEY_SELECTED_STEPS": selected,
             "KB_JOURNEY_CASES": selected,
             "KB_JOURNEY_SELECTED_CAPABILITIES": "marketplace",
-            "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/marketplace_steps.py",
         }, clear=True):
             journey = Journey("local", "selected-marketplace-flow")
+            groups = service_selection_groups()
             graph = FlowGraph(
                 journey,
-                {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+                {name: spec["depends_on"] for name, spec in groups.items()},
                 states={
                     "host-running": {"passed": True, "evidence": "host ready"},
                     "project-registered": {"passed": True, "evidence": "project registered"},
                     "service-api-session": {"passed": True, "evidence": "API session ready"},
                 },
                 state_producers=STATE_PRODUCERS,
-                groups=SERVICE_GROUPS,
+                groups=groups,
             )
             producer = graph.flow("produce Commit project fixture", "marketplace-fixture-producer",
                                   "marketplace-fixtures", lambda: calls.append("producer"),
@@ -291,6 +291,7 @@ class ServiceJourneyTests(unittest.TestCase):
                 "marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
                 lambda: journey.step("install exact marketplace plugin", "marketplace", lambda: None,
                                      cases=["S-010.1"]),
+                cases=["S-010.1"],
                 record_empty_success=False,
             )
 
@@ -307,14 +308,13 @@ class ServiceJourneyTests(unittest.TestCase):
         with patch.dict(os.environ, {
             "KB_JOURNEY_SELECTED_STEPS": selected,
             "KB_JOURNEY_CASES": selected,
-            "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/marketplace_steps.py",
         }, clear=True):
             journey = Journey("local", "named-flow-error")
             graph = FlowGraph(journey, {"marketplace-lifecycle": ()}, groups={
-                "marketplace-lifecycle": {"claim_sources": ("e2e/journey/marketplace_steps.py",)},
+                "marketplace-lifecycle": {"cases": ("S-010.1",)},
             })
             graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
-                       lambda: (_ for _ in ()).throw(RuntimeError("fixture setup failed")))
+                       lambda: (_ for _ in ()).throw(RuntimeError("fixture setup failed")), cases=("S-010.1",))
         result = journey.result()
         self.assertEqual(result.first_failure["name"], "marketplace lifecycle assertions")
         self.assertEqual(result.first_failure["message"], "fixture setup failed")
@@ -325,6 +325,35 @@ class ServiceJourneyTests(unittest.TestCase):
         blocked_result = blocked.result()
         self.assertEqual(blocked_result.status, "BLOCKED")
         self.assertIsNone(blocked_result.first_failure)
+
+    def test_project_b_claims_stay_registered_when_fixture_state_is_missing(self):
+        selected = "S-199.3,S-199.4,S-199.5"
+        groups = service_selection_groups()
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selected,
+            "KB_JOURNEY_CASES": selected,
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "mcp",
+            "KB_JOURNEY_SELECTED_OWNING_STEPS": "{}",
+        }, clear=True):
+            journey = Journey("secured", "missing-project-b-claims")
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in groups.items()},
+                states={
+                    "project-registered": {"passed": True, "evidence": "project registered",
+                                           "value": {"id": "prj_a", "root": "/tmp/project-a"}},
+                    "service-api-session": {"passed": True, "evidence": "service API session ready",
+                                            "value": "token"},
+                },
+                state_producers=STATE_PRODUCERS,
+                groups=groups,
+            )
+            declarations = checks("secured", graph)
+        by_claim = {claim: name for name, _capability, _check, cases, _requires, _runners in declarations
+                    for claim in cases}
+        self.assertEqual(by_claim["S-199.3"], "project plugin catalog isolation")
+        self.assertEqual(by_claim["S-199.4"], "project MCP read-only tool isolation")
+        self.assertEqual(by_claim["S-199.5"], "secured project MCP catalog selection")
 
     def test_auth_group_failure_does_not_invalidate_service_api_session(self):
         selected = "PC-002.8"

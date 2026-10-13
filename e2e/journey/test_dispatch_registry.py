@@ -8,6 +8,7 @@ import re
 import shutil
 import tempfile
 import unittest
+import shlex
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
@@ -22,10 +23,10 @@ from select_from_cases import (read_coverage_result, selection_from_coverage,
                                validate_dependency_declarations,
                                lint_direct_module_global_state_handoffs,
                                validate_runner_conditions, validate_journey_environment_reads,
-                               full_runner_plans)
+                               full_runner_plans, resolve_selection, journey_source_group_declaration)
 from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
-from service_steps import FlowGraph, Journey, source_selected
+from service_steps import FlowGraph, Journey
 
 
 def helper_read(memory, key):
@@ -33,6 +34,127 @@ def helper_read(memory, key):
 
 
 class DispatchRegistryTests(unittest.TestCase):
+    def test_literal_kb_command_paths_resolve_to_registered_leaf_commands(self):
+        root = Path(__file__).resolve().parents[2]
+        registered = set()
+        for manifest in root.glob("plugins/**/entry/src/manifest.ts"):
+            text = manifest.read_text(encoding="utf-8")
+            group_meta = set(re.findall(r"groupMeta\s*:\s*\[([^\]]*)\]", text, re.S))
+            group_paths = {path for block in group_meta
+                           for path in re.findall(r"path\s*:\s*['\"]([^'\"]+)['\"]", block)}
+            command_paths = set(re.findall(r"path\s*:\s*['\"]([a-zA-Z0-9][a-zA-Z0-9 -]*)['\"]", text))
+            registered.update(command_paths - group_paths)
+        for manifest in (root / "e2e/journey/fixtures").glob("**/manifest.js"):
+            text = manifest.read_text(encoding="utf-8")
+            group_paths = set(re.findall(r"groupMeta\s*:\s*\[([^\]]*)\]", text, re.S))
+            group_paths = {path for block in group_paths
+                           for path in re.findall(r"path\s*:\s*['\"]([^'\"]+)['\"]", block)}
+            command_paths = set(re.findall(r"path\s*:\s*['\"]([a-zA-Z0-9][a-zA-Z0-9 -]*)['\"]", text))
+            registered.update(command_paths - group_paths)
+
+        system_commands = {}
+        system_root = root / "cli/commands/src/commands/system"
+        for source_path in system_root.rglob("*.ts"):
+            text = source_path.read_text(encoding="utf-8")
+            for variable, name in re.findall(
+                    r"export const (\w+)\s*=\s*defineSystemCommand[\s\S]*?\{\s*name\s*:\s*['\"]([^'\"]+)['\"]",
+                    text):
+                system_commands[variable] = name
+        groups_text = (system_root / "groups.ts").read_text(encoding="utf-8")
+        for group, members in re.findall(
+                r"defineSystemCommandGroup\(\s*['\"]([^'\"]+)['\"][^\[]*\[([^\]]*)\]", groups_text, re.S):
+            for member in re.findall(r"\b[A-Za-z_$][\w$]*\b", members):
+                if member in system_commands:
+                    registered.add(f"{group} {system_commands[member]}")
+
+        paths = {}
+        for directory in (root / "e2e", root / "scripts"):
+            for path in directory.rglob("*"):
+                if not path.is_file() or "node_modules" in path.parts:
+                    continue
+                if path.suffix not in {".py", ".sh", ".js", ".mjs", ".ts", ".yaml", ".yml"}:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+                relative = path.relative_to(root).as_posix()
+                if path.suffix == ".py":
+                    try:
+                        tree = ast.parse(text, filename=relative)
+                    except SyntaxError:
+                        continue
+                    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+                    for node in ast.walk(tree):
+                        values = ([item.value if isinstance(item, ast.Constant) else None for item in node.elts]
+                                  if isinstance(node, ast.List) else [])
+                        if values and values[0] == "kb":
+                            parent = parents.get(node)
+                            if isinstance(parent, (ast.Compare, ast.Subscript, ast.Set)):
+                                continue
+                            command = []
+                            for value in values[1:]:
+                                if not isinstance(value, str) or value.startswith("-"):
+                                    break
+                                command.append(value)
+                            if command:
+                                paths.setdefault(" ".join(command), []).append(f"{relative}:{node.lineno}")
+                    for node in ast.walk(tree):
+                        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                            continue
+                        current = node
+                        execution_context = False
+                        while current in parents:
+                            current = parents[current]
+                            if isinstance(current, ast.Call):
+                                function_name = (current.func.id if isinstance(current.func, ast.Name)
+                                                 else current.func.attr if isinstance(current.func, ast.Attribute)
+                                                 else "")
+                                execution_context = function_name in {
+                                    "run", "run_command", "run_pty_command", "_run", "exec", "spawn",
+                                    "execFile", "execFileSync", "spawnSync",
+                                }
+                                break
+                        if not execution_context:
+                            continue
+                        for match in re.finditer(r"(?<![\w-])kb((?:\s+[A-Za-z0-9_-]+){1,6})", node.value):
+                            tokens = shlex.split(match.group(0))
+                            command = []
+                            for token in tokens[1:]:
+                                if token.startswith("-") or token.startswith("$"):
+                                    break
+                                command.append(token)
+                            if command:
+                                paths.setdefault(" ".join(command), []).append(f"{relative}:{node.lineno}")
+                elif path.suffix == ".sh":
+                    for line_number, line in enumerate(text.splitlines(), start=1):
+                        if line.lstrip().startswith("#"):
+                            continue
+                        for match in re.finditer(r"(?<![\w-])kb((?:\s+[A-Za-z0-9_-]+){1,6})", line):
+                            tokens = shlex.split(match.group(0))
+                            command = []
+                            for token in tokens[1:]:
+                                if token.startswith("-") or token.startswith("$"):
+                                    break
+                                command.append(token)
+                            if command:
+                                paths.setdefault(" ".join(command), []).append(f"{relative}:{line_number}")
+                elif path.suffix in {".mjs", ".js", ".ts"}:
+                    for match in re.finditer(
+                            r"\b(?:exec|execFile|execFileSync|spawn|spawnSync|execa)\s*\(\s*['\"]kb['\"]\s*,\s*\[([^\]]*)\]",
+                            text):
+                        command = re.findall(r"['\"]([^'\"]+)['\"]", match.group(1))
+                        command = [item for item in command if not item.startswith("-")]
+                        if command:
+                            line = text.count("\n", 0, match.start()) + 1
+                            paths.setdefault(" ".join(command), []).append(f"{relative}:{line}")
+
+        failures = {}
+        for command, locations in paths.items():
+            tokens = command.split()
+            resolved = next((" ".join(tokens[:index]) for index in range(len(tokens), 0, -1)
+                             if " ".join(tokens[:index]) in registered), None)
+            if resolved is None:
+                failures[command] = locations
+        self.assertEqual(failures, {}, str(list(failures.items())[:30]))
+
     def test_fixture_default_runner_comes_from_registered_mode(self):
         with tempfile.TemporaryDirectory(prefix="journey-fixture-mode-") as temporary:
             root = Path(temporary)
@@ -441,18 +563,61 @@ class DispatchRegistryTests(unittest.TestCase):
                                  [declaration["name"] for _, declaration in full_plan])
                 self.assertTrue(all(step.status == "PASS" for step in journey.steps))
 
-    def test_base_update_and_variant_claims_dispatch_both_step_modules(self):
-        resolved = selection_from_coverage(self._coverage(), "S-023.2,S-023.9")
-        self.assertIn("e2e/journey/platform_update_steps.py", resolved["stepSources"])
-        self.assertIn("e2e/journey/platform_update_variant_steps.py", resolved["stepSources"])
-        self.assertTrue({"candidate provenance", "launcher version", "start host"}.issubset(
-            set(resolved["prerequisiteSteps"])))
-        self.assertIn("start platform host", resolved["prerequisiteFlows"])
-        env = {"KB_JOURNEY_SELECTED_STEPS": ",".join(resolved["steps"]),
-               "KB_JOURNEY_SELECTED_SOURCES": ",".join(resolved["stepSources"])}
-        with patch.dict(os.environ, env, clear=False):
-            self.assertTrue(source_selected(run_platform_update_steps.__code__.co_filename))
-            self.assertTrue(source_selected(run_platform_update_variant_steps.__code__.co_filename))
+    def test_resolver_names_update_owners_and_prerequisites(self):
+        resolved = resolve_selection(
+            ["S-023.2"],
+            {"S-023.2": {"e2e/journey/platform_update_steps.py"}},
+            {"S-023.2": [{"kind": "step", "name": "plan the newer sealed release",
+                           "requires": ["step:candidate provenance"]}]},
+            {"step:candidate provenance": {"sources": {"e2e/journey/runner.py"}, "requires": []}},
+            {"S-023.2": {"agent:commit": {"S-023.2"}}},
+            "",
+        )
+        self.assertEqual(resolved["selectedOwningSteps"], {
+            "candidate provenance": ["S-023.2"],
+            "plan the newer sealed release": ["S-023.2"],
+        })
+
+    def test_flow_graph_uses_resolved_step_names_to_select_update_journey(self):
+        with patch.dict(os.environ, {
+                "KB_JOURNEY_SELECTED_STEPS": "S-023.2",
+                "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps({"plan the newer sealed release": ["S-023.2"]}),
+                "KB_JOURNEY_PREREQUISITE_STEPS": "candidate provenance",
+        }, clear=True):
+            journey = Journey("local", "update-step-selection")
+            graph = FlowGraph(journey, {}, groups={"update": {
+                "cases": ("S-023.2",), "steps": ("plan the newer sealed release",),
+            }})
+            self.assertTrue(graph.group_selected("update"))
+            self.assertTrue(graph.selects_steps("plan the newer sealed release"))
+
+    def test_resolver_group_declaration_follows_local_helper_imports(self):
+        with tempfile.TemporaryDirectory(prefix="journey-source-group-") as temporary:
+            root = Path(temporary)
+            helper = root / "e2e/journey/owner_steps.py"
+            runner = root / "e2e/journey/update_steps.py"
+            helper.parent.mkdir(parents=True)
+            helper.write_text(
+                "def register(journey):\n"
+                "    journey.step('helper-owned claim', 'update', lambda: None, cases=['TEST-UPDATE.1'])\n",
+                encoding="utf-8",
+            )
+            runner.write_text("from owner_steps import register\ndef run(journey):\n    register(journey)\n",
+                              encoding="utf-8")
+            declaration = journey_source_group_declaration("e2e/journey/update_steps.py", root)
+        self.assertEqual(declaration, {
+            "cases": ("TEST-UPDATE.1",), "steps": ("helper-owned claim",),
+        })
+
+    def test_source_file_selection_gate_is_removed(self):
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "e2e/journey/runner.py").read_text()
+        values = (root / "e2e/journey/service_steps.py").read_text()
+        shell = (root / "e2e/journey/run.sh").read_text()
+        self.assertNotIn("def source_selected", source)
+        self.assertNotIn("source_selected", values)
+        self.assertNotIn("KB_JOURNEY_SELECTED_SOURCES", shell + values)
+        self.assertIn("journey_source_group_declaration", source)
 
     def test_selected_update_and_marketplace_claims_select_the_declared_units(self):
         coverage = self._coverage()

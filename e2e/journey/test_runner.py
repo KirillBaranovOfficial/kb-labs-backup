@@ -5,6 +5,7 @@ import io
 import json
 import os
 import ast
+import sys
 import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stdout
@@ -63,6 +64,91 @@ def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
+    def test_ordered_prompt_responder_consumes_new_pty_output_once(self):
+        runner = importlib.import_module("runner")
+        responder = runner.OrderedPromptResponder([
+            (r"Project directory", "/tmp/project"),
+            (r"Platform channel", "stable"),
+        ])
+        transcript = "Project directory:"
+        self.assertEqual(responder(transcript), "/tmp/project\n")
+        self.assertIsNone(responder(transcript))
+        transcript += "\rPlatform channel [stable]:"
+        self.assertEqual(responder(transcript), "stable\n")
+        transcript += "\rPlatform channel [stable]:"
+        self.assertIsNone(responder(transcript))
+        responder.finish()
+
+    def test_ordered_prompt_responder_rejects_unexpected_prompt(self):
+        runner = importlib.import_module("runner")
+        responder = runner.OrderedPromptResponder([
+            (r"Project directory", "/tmp/project"),
+            (r"Platform channel", "stable"),
+        ])
+        with self.assertRaisesRegex(RuntimeError, "unexpected wizard prompt"):
+            responder("Unexpected choice [yes/no]:")
+
+    def test_ordered_prompt_responder_rejects_missing_expected_prompt(self):
+        runner = importlib.import_module("runner")
+        responder = runner.OrderedPromptResponder([
+            (r"Project directory", "/tmp/project"),
+            (r"Platform channel", "stable"),
+        ])
+        responder("Project directory:")
+        with self.assertRaisesRegex(RuntimeError, "ended before expected prompt: Platform channel"):
+            responder.finish()
+
+    def test_pty_prompt_responder_handles_redraws_and_stops_on_unexpected_prompt(self):
+        runner = importlib.import_module("runner")
+        responder = runner.OrderedPromptResponder([
+            (r"Project directory", "/tmp/project"),
+            (r"Platform channel", "stable"),
+        ])
+        child = (
+            "import os; "
+            "os.write(1, b'Project directory:'); os.read(0, 4096); "
+            "os.write(1, b'\\rProject directory:'); "
+            "os.write(1, b'\\rPlatform channel [stable]:'); os.read(0, 4096); "
+            "os.write(1, b'\\rPlatform channel [stable]:'); "
+            "os.write(1, b'\\rUnexpected prompt [yes/no]:'); os.read(0, 4096)"
+        )
+        with self.assertRaisesRegex(RuntimeError, "unexpected wizard prompt"):
+            runner.run_pty_command([sys.executable, "-c", child], timeout=5,
+                                   on_output=responder, start_new_session=True)
+
+    def test_secured_commit_scenario_installs_commit_through_marketplace_and_checks_its_group(self):
+        runner = importlib.import_module("runner")
+        setup = runner.runner_scenario("commit", secured=True)
+        self.assertEqual(setup["installer"], "custom")
+        self.assertEqual(setup["marketplace_packages"], ("@kb-labs/commit-entry",))
+        self.assertEqual(setup["command_groups"], ("commit",))
+
+    def test_local_commit_scenario_uses_commit_installer_scenario(self):
+        runner = importlib.import_module("runner")
+        setup = runner.runner_scenario("commit", secured=False)
+        self.assertEqual(setup["installer"], "commit")
+        self.assertEqual(setup["marketplace_packages"], ())
+        self.assertEqual(setup["command_groups"], ("commit",))
+
+    def test_selected_step_completion_names_unrun_step_and_claim(self):
+        runner = importlib.import_module("runner")
+        with patch.object(runner, "FIRST_FAILURE", ""):
+            runner.CASE_JOURNEY = Journey("secured", "selected-step-completeness")
+            missing = runner.check_selected_step_completion([], {
+                "verify bootstrap credential after rollback": ["S-100.1"],
+            })
+        self.assertEqual(missing, ["verify bootstrap credential after rollback"])
+        row = runner.CASE_JOURNEY.steps[-1]
+        self.assertIn("selected step never ran", row.message)
+        self.assertIn("S-100.1", row.message)
+        runner.CASE_JOURNEY = None
+
+    def test_selected_step_completion_passes_when_row_exists(self):
+        runner = importlib.import_module("runner")
+        self.assertEqual(runner.check_selected_step_completion([{
+            "steps": [{"name": "selected owner", "status": "PASS"}],
+        }], {"selected owner": ["S-100.1"]}), [])
+
     def test_state_environment_exports_are_not_read_back_by_runner(self):
         sources = {path.name: path.read_text(encoding="utf-8")
                    for path in Path(__file__).parent.glob("*.py") if not path.name.startswith("test_")}
@@ -86,7 +172,10 @@ class RunnerInstallFailureTests(unittest.TestCase):
                             for item in state_environment_reader_violations(sources)))
 
     def _run_selected_main(self, root: Path, mode: str, *, selection: str | None = None,
-                           update_variant_runner=None, selector: str | None = None) -> tuple[int, str, dict, dict, dict]:
+                           update_variant_runner=None, selector: str | None = None,
+                           scenario: str = "explore", selected_owners: dict | None = None,
+                           extra_update_group: dict | None = None,
+                           update_runner=None) -> tuple[int, str, dict, dict, dict]:
         runner = importlib.import_module("runner")
         summary = root / "reports" / "journey-summary.md"
         summary.parent.mkdir(parents=True)
@@ -116,7 +205,6 @@ class RunnerInstallFailureTests(unittest.TestCase):
         selection = selection if selection is not None else "PC-001.2,PC-002.3,PC-002.8"
         mode_variant = "default" if mode == "local" else "human-secured"
         front = "agent" if mode == "local" else "human"
-        scenario = "explore"
         fixture_calls = []
         host_cycle = []
         events = []
@@ -135,6 +223,8 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 output = json.dumps({"ok": True, "data": {"version": "2.120.1", "commit": "fixture-commit"}})
             elif argv[:2] == ["git", "status"]:
                 output = "?? note.txt"
+            elif "commit commit" in " ".join(argv):
+                output = 'scope "root"'
             elif "doctor" in argv:
                 output = json.dumps({"ok": True, "data": {"installed": True, "running": True,
                                     "reachable": True, "platform": {"ok": True}}})
@@ -194,13 +284,14 @@ class RunnerInstallFailureTests(unittest.TestCase):
             url = request.full_url
             if url.endswith("/ready"):
                 return 200, b"ok", None
-            return 200, json.dumps({"versions": {"stable": "2.120.1"}}).encode(), None
+            return 200, json.dumps({"channels": {"stable": "2.120.2", "canary": "2.120.3"}}).encode(), None
 
         base_env = {
             **runner.BASE_ENV,
             "KB_JOURNEY_SERVICE_PROFILE": "nightly",
             "KB_JOURNEY_SUMMARY": str(summary),
             "KB_JOURNEY_SELECTED_STEPS": selection,
+            "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selected_owners or {}),
             "KB_JOURNEY_SELECTED_CAPABILITIES": (
                 "workflow" if "S-002.1" in selection else
                 "mcp" if "S-140.5" in selection else "platform.install,gateway,projects"),
@@ -221,6 +312,18 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 runner, "run_command", side_effect=lambda command, **kwargs: fake_run(command, **kwargs)[0]))
             stack.enter_context(patch.object(runner, "open_http", side_effect=fake_http))
             stack.enter_context(patch.object(runner, "write_scoreboards"))
+            if extra_update_group:
+                original_outer_selection_groups = runner.outer_selection_groups
+                def groups_with_update_owner():
+                    groups = original_outer_selection_groups()
+                    groups["update"] = {
+                        **groups.get("update", {}),
+                        "cases": tuple(extra_update_group.get("cases", ())),
+                        "steps": tuple(extra_update_group.get("steps", ())),
+                    }
+                    return groups
+                stack.enter_context(patch.object(runner, "outer_selection_groups",
+                                                  side_effect=groups_with_update_owner))
             def fixture_result(name, claim=None):
                 fixture_calls.append(name)
                 events.append(name)
@@ -247,6 +350,9 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 ("runner.run_missing_project_request_steps", {"side_effect": lambda **_kwargs:
                     fixture_result("run_missing_project_request_steps")}),
                 ("runner.run_cli_auth_status", {"return_value": None}),
+                ("runner.run_platform_update_steps", {"side_effect": update_runner} if update_runner else {}),
+                ("runner.run_platform_channel_steps", {"return_value": Journey(mode, "platform-channel")}),
+                ("runner.verify_project_mcp", {}),
                 ("runner.prepare_workflow_fixtures", {}),
                 ("runner.run_workflow_journey", {"side_effect": lambda journey, **_kwargs:
                     journey.step("selected workflow claim", "workflow", lambda: None, cases=["S-002.1"])}),
@@ -276,6 +382,7 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 service_claims = {claim for step in service["steps"] for claim in step.get("cases", [])}
                 self.assertTrue({"PC-002.3", "PC-002.8"}.issubset(service_claims))
                 self.assertIn("SKIPPED workflow execution journey: not selected", summary)
+                self.assertEqual(summary.count("SKIPPED platform update journey: not selected"), 1)
                 self.assertIn("SKIPPED installed platform bootstrap: not selected; the install operation ran earlier; this flow is only a selection marker", summary)
                 self.assertEqual(observed["fixture_calls"], [])
                 self.assertEqual(observed["host_cycle"], ["stop", "start"])
@@ -298,6 +405,38 @@ class RunnerInstallFailureTests(unittest.TestCase):
         service_claims = {claim for step in service["steps"] for claim in step.get("cases", [])}
         self.assertIn("S-140.5", service_claims)
         self.assertTrue(service["states"]["fixtures-installed"]["value"]["projectBRoot"])
+
+    def test_main_runs_selected_update_journey_owner_and_fails_when_it_registers_no_row(self):
+        owner_name = "helper-owned selected claim"
+        claim = "S-100.1"
+        selected_owners = {owner_name: [claim]}
+        update_group = {"cases": [claim], "steps": [owner_name]}
+
+        def update_with_owner(**_kwargs):
+            journey = _kwargs["parent_journey"]
+            journey.step(owner_name, "platform.update", lambda: None, cases=[claim])
+            return journey
+
+        with tempfile.TemporaryDirectory(prefix="journey-main-selected-update-") as temporary:
+            code, output, _service, outer, _observed = self._run_selected_main(
+                Path(temporary), "local", selection=claim, selector="agent:commit",
+                scenario="commit", selected_owners=selected_owners,
+                extra_update_group=update_group, update_runner=update_with_owner)
+        self.assertEqual(code, 0, output)
+        self.assertIn(owner_name, [step["name"] for step in outer["steps"]])
+        self.assertNotIn(f"SKIPPED {owner_name}: not selected", output)
+
+        with tempfile.TemporaryDirectory(prefix="journey-main-missing-update-row-") as temporary:
+            code, output, _service, outer, _observed = self._run_selected_main(
+                Path(temporary), "local", selection=claim, selector="agent:commit",
+                scenario="commit", selected_owners=selected_owners,
+                extra_update_group=update_group,
+                update_runner=lambda **_kwargs: Journey("local", "unregistrable-update-journey"))
+        self.assertEqual(code, 1)
+        self.assertIn("selected step never ran", output)
+        self.assertIn(owner_name, output)
+        self.assertIn(claim, output)
+        self.assertTrue(any(step["name"].startswith("selected step never ran") for step in outer["steps"]))
 
     def test_main_full_plan_completes_without_a_claim_selection(self):
         runner = importlib.import_module("runner")

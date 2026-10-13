@@ -725,7 +725,6 @@ class MarketplaceStepTests(unittest.TestCase):
                         trial.selected_claims = set(selected_steps)
                         if selected_steps:
                             trial.selected_capabilities = {"marketplace"}
-                            trial.selected_sources = {"e2e/journey/marketplace_steps.py"}
                     trial_fixture_entry = prepare_commit_project_fixture(
                         trial, project, "http://registry.test", env, fake_run)
                     self.assertEqual(trial_fixture_entry, original_commit_entry)
@@ -796,12 +795,12 @@ class MarketplaceStepTests(unittest.TestCase):
                             "marketplace-lifecycle": {
                                 "capabilities": {"marketplace"},
                                 "depends_on": ("marketplace-available",),
-                                "claim_sources": ("e2e/journey/marketplace_steps.py",),
+                                "cases": tuple(all_case_claims),
                             },
                             "marketplace-fixtures": {
                                 "capabilities": set(),
                                 "depends_on": ("marketplace-available",),
-                                "claim_sources": ("e2e/journey/marketplace_steps.py",),
+                                "cases": tuple(all_case_claims),
                             },
                         },
                     )
