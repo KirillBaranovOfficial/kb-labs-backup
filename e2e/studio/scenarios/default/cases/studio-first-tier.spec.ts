@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test'
-import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
+import { runKbCommand, runProcessSync } from '../../../kb-command'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 const enabled = process.env.KB_STUDIO_FIRST_TIER_JOURNEY === '1'
@@ -247,20 +247,20 @@ test('install Commit, inspect real changes, generate a plan, and uninstall it @S
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
   expect(projectRoot, 'KB_STUDIO_PROJECT_ROOT must identify the isolated journey project').toBeTruthy()
   expect(kb, 'KB_STUDIO_KB_BIN must identify the isolated platform CLI').toBeTruthy()
-  const runKb = (args: string[]) => execFileSync(kb!, args, { cwd: projectRoot!, encoding: 'utf8', env: process.env })
+  const processOptions = { cwd: projectRoot!, env: process.env }
   const marker = join(projectRoot!, 'studio-commit-journey.txt')
   const lockFile = join(projectRoot!, '.kb', 'marketplace.lock')
 
-  execFileSync('git', ['init'], { cwd: projectRoot! })
-  execFileSync('git', ['config', 'user.email', 'journey@example.test'], { cwd: projectRoot! })
-  execFileSync('git', ['config', 'user.name', 'Studio Journey'], { cwd: projectRoot! })
+  runProcessSync('git', ['init'], processOptions)
+  runProcessSync('git', ['config', 'user.email', 'journey@example.test'], processOptions)
+  runProcessSync('git', ['config', 'user.name', 'Studio Journey'], processOptions)
   writeFileSync(marker, 'baseline\n')
-  execFileSync('git', ['add', 'studio-commit-journey.txt'], { cwd: projectRoot! })
-  execFileSync('git', ['commit', '-m', 'test: create Studio journey baseline'], { cwd: projectRoot! })
-  const baselineCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot!, encoding: 'utf8' }).trim()
+  runProcessSync('git', ['add', 'studio-commit-journey.txt'], processOptions)
+  runProcessSync('git', ['commit', '-m', 'test: create Studio journey baseline'], processOptions)
+  const baselineCommit = runProcessSync('git', ['rev-parse', 'HEAD'], processOptions).trim()
   writeFileSync(marker, 'baseline\nchanged for the deterministic plan\n')
 
-  runKb(['marketplace', 'install', '@kb-labs/commit-entry', '--json'])
+  runKbCommand(['marketplace', 'install', '@kb-labs/commit-entry', '--json'], processOptions, kb!)
   const lock = JSON.parse(readFileSync(lockFile, 'utf8')) as {
     plugins?: Record<string, { version?: string; resolvedPath?: string }>
   }
@@ -292,17 +292,17 @@ test('install Commit, inspect real changes, generate a plan, and uninstall it @S
   expect(errorEnvelope.error?.code).toBe('KB_ADAPTER_NOT_CONFIGURED')
   await expect(page.getByText('LLM adapter required', { exact: true })).toBeVisible()
   await expect(page.getByText('kb adapter bind llm @kb-labs/adapters-openai', { exact: false })).toBeVisible()
-  expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot!, encoding: 'utf8' }).trim()).toBe(baselineCommit)
+  expect(runProcessSync('git', ['rev-parse', 'HEAD'], processOptions).trim()).toBe(baselineCommit)
 
-  runKb(['marketplace', 'install', '@kb-labs/e2e-llm-deterministic', '--scope', 'platform', '--json'])
-  runKb(['adapter', 'bind', 'llm', '@kb-labs/e2e-llm-deterministic'])
+  runKbCommand(['marketplace', 'install', '@kb-labs/e2e-llm-deterministic', '--scope', 'platform', '--json'], processOptions, kb!)
+  runKbCommand(['adapter', 'bind', 'llm', '@kb-labs/e2e-llm-deterministic'], processOptions, kb!)
   await page.reload()
   await page.getByRole('button', { name: 'Generate plan', exact: true }).click()
   await expect(page.getByText('use deterministic journey plan', { exact: false })).toBeVisible()
   await expect(page.getByText('studio-commit-journey.txt', { exact: true })).toBeVisible()
-  expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot!, encoding: 'utf8' }).trim()).toBe(baselineCommit)
+  expect(runProcessSync('git', ['rev-parse', 'HEAD'], processOptions).trim()).toBe(baselineCommit)
 
-  runKb(['marketplace', 'uninstall', '@kb-labs/commit-entry', '--json'])
+  runKbCommand(['marketplace', 'uninstall', '@kb-labs/commit-entry', '--json'], processOptions, kb!)
   const afterUninstall = JSON.parse(readFileSync(lockFile, 'utf8')) as { plugins?: Record<string, unknown> }
   expect(afterUninstall.plugins?.['@kb-labs/commit-entry']).toBeUndefined()
   await page.goto(`${GATEWAY}/`)

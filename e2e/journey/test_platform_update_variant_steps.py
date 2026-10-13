@@ -41,7 +41,7 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             registered = []
 
             def capture_step(journey, name, capability, check, cases=(), details=None, *, requires=()):
-                registered.append((name, list(cases), check))
+                registered.append((name, list(cases), check, tuple(requires)))
 
             def fake_runner(args, cwd):
                 if args[1] == "update":
@@ -71,11 +71,17 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
                     failed_host_index=indexes["failed"], healthy_host_index=indexes["healthy"],
                     run=fake_runner, run_interactive=fake_runner,
                 )
-            claims = {case for _, cases, _ in registered for case in cases}
+            claims = {case for _, cases, _, _ in registered for case in cases}
             self.assertTrue({"S-023.9", "S-023.10", "S-023.11", "S-023.12", "S-023.13",
                              "S-023.14", "S-023.15", "S-024.6", "S-194.7"}.issubset(claims))
-            self.assertEqual(len(registered), 11)
-            checksum_step = next(check for name, _, check in registered
+            self.assertEqual(len(registered), 12)
+            fixture_step = next(requires for name, _, _, requires in registered
+                                if name == "prepare update preservation baseline")
+            self.assertEqual(fixture_step, ("state:project-registered",))
+            for claim in ("S-023.10", "S-023.15"):
+                dependencies = next(requires for _, cases, _, requires in registered if claim in cases)
+                self.assertIn("step:prepare update preservation baseline", dependencies)
+            checksum_step = next(check for name, _, check, _ in registered
                                  if name == "reject corrupted sealed binary without changing N")
             checksum_step()
 
