@@ -42,6 +42,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
             active_root = install_root / "versions" / "v1"
             active_root.mkdir(parents=True)
             (install_root / "current").symlink_to("versions/v1", target_is_directory=True)
+            secondary_root = home / "secondary"
+            secondary_active = secondary_root / "versions" / "v1"
+            secondary_active.mkdir(parents=True)
+            (secondary_root / "current").symlink_to("versions/v1", target_is_directory=True)
             launcher = home / ".local" / "bin" / "kb-create"
             launcher.parent.mkdir(parents=True)
             (launcher.parent / "kb").symlink_to("platform/current/.kb/v2/bin/kb")
@@ -51,18 +55,41 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                                       "installationId": "00112233445566778899aabbccddeeff",
                                                                       "url": "http://127.0.0.1:4100"}]}))
             calls = []
+            shim_owner = None
+            root_spellings = {
+                str(install_root): install_root.resolve(),
+                str(install_root / "current"): install_root.resolve(),
+                str(active_root.resolve()): install_root.resolve(),
+                str(secondary_root): secondary_root.resolve(),
+                str(secondary_root / "current"): secondary_root.resolve(),
+                str(secondary_active.resolve()): secondary_root.resolve(),
+            }
 
             def run_command(args):
+                nonlocal shim_owner
                 calls.append(args)
                 operation = args[1]
                 if operation == "plan":
                     payload = {"plan": {"request": {"gatewayUrl": "http://127.0.0.1:4100"},
                                          "serviceGraph": {"platformVersion": "1.2.3"}}}
                 elif operation == "apply":
+                    requested_root = Path(args[args.index("--platform-root") + 1])
+                    requested_installation = root_spellings.get(str(requested_root), requested_root.resolve())
+                    if shim_owner is None:
+                        shim_owner = requested_installation
                     payload = {"operation": "apply", "receipt": {"id": "receipt-one",
                                                                        "installationId": "00112233445566778899aabbccddeeff",
                                                                        "plan": {"request": {"gatewayUrl": "http://127.0.0.1:4100"}}},
-                               "shim": {"linked": True, "owner": str(install_root.resolve())}}
+                               "shim": {"linked": requested_installation == shim_owner,
+                                        "owner": str(shim_owner)}}
+                elif operation == "uninstall":
+                    requested_root = Path(args[args.index("--platform-root") + 1])
+                    if root_spellings.get(str(requested_root), requested_root.resolve()) == shim_owner:
+                        shim_owner = None
+                    payload = {"operation": "uninstall"}
+                elif operation == "remove-shim":
+                    shim_owner = None
+                    payload = {"operation": "remove-shim"}
                 elif operation == "status":
                     payload = {"installation": {"receiptId": "receipt-one", "platformVersion": "1.2.3",
                                                  "platformChannel": "stable"}}
@@ -80,18 +107,30 @@ class InstallerCaseStepsTest(unittest.TestCase):
             for operation_index in range(4):
                 self.assertEqual([calls[index][-1] for index in range(operation_index, 12, 4)], expected_spellings)
 
-    def test_shim_owner_expectation_uses_the_product_owner_classification(self):
+            secondary_result = run_command([launcher, "apply", "--platform-root", str(secondary_root)])
+            secondary_data = json.loads(secondary_result.stdout)["data"]
+            self.assertEqual(secondary_data["shim"], {"linked": False, "owner": str(install_root.resolve())})
+            self.assertTrue(shim_owner_matches(
+                secondary_data, install_root=secondary_root, expected_owner=install_root))
+            self.assertFalse(
+                shim_owner_matches(
+                    secondary_data, install_root=secondary_root, expected_owner=secondary_root),
+                "mutation: treating the secondary apply root as owner must fail against the first owner's result",
+            )
+
+    def test_shim_owner_expectation_uses_the_first_product_owner(self):
         with tempfile.TemporaryDirectory(prefix="journey-shim-owner-") as temp:
             root = Path(temp) / "platform"
             root.mkdir()
             other = Path(temp) / "other"
             other.mkdir()
             owner_result = {"shim": {"linked": True, "owner": str(root.resolve())}}
-            other_result = {"shim": {"linked": False, "owner": str(other.resolve())}}
-            self.assertTrue(shim_owner_matches(owner_result, install_root=root))
-            self.assertTrue(shim_owner_matches(other_result, install_root=root))
+            other_result = {"shim": {"linked": False, "owner": str(root.resolve())}}
+            self.assertTrue(shim_owner_matches(owner_result, install_root=root, expected_owner=root))
+            self.assertTrue(shim_owner_matches(other_result, install_root=other, expected_owner=root))
             self.assertFalse(shim_owner_matches(
-                {"shim": {"linked": False, "owner": str(root.resolve())}}, install_root=root),
+                {"shim": {"linked": False, "owner": str(root.resolve())}},
+                install_root=other, expected_owner=other),
                 "mutating owner expectation from linked=true to false must fail")
 
     def test_foreign_shim_expectation_requires_context_and_ordered_commands(self):
