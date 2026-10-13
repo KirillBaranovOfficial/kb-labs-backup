@@ -71,6 +71,7 @@ class ServiceJourneyTests(unittest.TestCase):
 
         with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
                                      "KB_JOURNEY_CASES": selected,
+                                     "KB_JOURNEY_SELECTED_CAPABILITIES": "gateway,projects",
                                      "KB_JOURNEY_PROJECT_ROOT": "/work/project",
                                      "KB_JOURNEY_ADMIN_PASSWORD": "synthetic-password"}), \
                 patch("service_runner.ADMIN_PASSWORD", "synthetic-password"), \
@@ -87,6 +88,7 @@ class ServiceJourneyTests(unittest.TestCase):
                     "host-running": {"passed": True, "evidence": "host ready"},
                     "project-registered": {"passed": True, "evidence": "project registered"},
                 },
+                groups=SERVICE_GROUPS,
             )
             journey.step("registered project setup", "journey.setup", lambda: None, role="lifecycle")
             prepare_service_api_session(graph, mode)
@@ -192,6 +194,139 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertNotIn("secured admin CLI login", names)
         self.assertEqual(names[0], "platform readiness (gateway + project workflow)")
         self.assertNotIn("service-api-session", STATE_PRODUCERS)
+
+    def test_selected_smoke_runs_only_selected_checks_and_required_states_in_both_modes(self):
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode):
+                token = "synthetic-service-token" if mode == "secured" else ""
+                seen = []
+
+                def fake_open_http(_opener, request, **_kwargs):
+                    seen.append(dict(request.header_items()))
+                    return 200, b'{"ok":true,"data":{"ready":true}}', {"content-type": "application/json"}
+
+                selected = "PC-002.3,PC-002.8"
+                with patch.dict(os.environ, {
+                    "KB_JOURNEY_SELECTED_STEPS": selected,
+                    "KB_JOURNEY_CASES": selected,
+                    "KB_JOURNEY_SELECTED_CAPABILITIES": "gateway,projects",
+                    "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/service_runner.py",
+                    "KB_JOURNEY_SERVICE_TOKEN": token,
+                }, clear=True), patch("service_runner.open_http", side_effect=fake_open_http):
+                    journey = Journey(mode, f"selected-smoke-{mode}")
+                    groups = SERVICE_GROUPS
+                    graph = FlowGraph(
+                        journey,
+                        {name: spec["depends_on"] for name, spec in groups.items()},
+                        states={
+                            "host-running": {"passed": True, "evidence": "host ready"},
+                            "project-registered": {"passed": True, "evidence": "project registered"},
+                            "service-api-session": {"passed": True, "evidence": "service API session ready"},
+                        },
+                        state_producers=STATE_PRODUCERS,
+                        groups=groups,
+                    )
+                    graph.probe_state("service-api-session", "auth", "service API login", lambda: None)
+                    setup_calls = []
+                    graph.flow("produce Commit project fixture", "marketplace-fixture-producer",
+                               "marketplace-fixtures", lambda: setup_calls.append("Commit"),
+                               record_empty_success=False)
+                    graph.probe_state("marketplace-available", "marketplace-fixture-producer",
+                                      "Commit project fixture", lambda: None)
+                    graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
+                               lambda: setup_calls.append("MCP"), record_empty_success=False)
+                    graph.probe_state("fixtures-installed", "marketplace-fixtures",
+                                      "project fixture handoff", lambda: None)
+                    graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                               lambda: setup_calls.append("marketplace"), record_empty_success=False)
+                    graph.flow("adapter defaults flow", "adapters", "adapter",
+                               lambda: setup_calls.append("adapters"), cases=["S-054.1"],
+                               record_empty_success=False)
+                    adapter_probe = graph.probe_state(
+                        "adapter-defaults", "adapters", "restore adapter fixture",
+                        lambda: "cleanup should not run", after_flow="adapter defaults flow")
+                    for name, claim in (("selected readiness", "PC-002.3"),
+                                        ("selected project runtime", "PC-002.8")):
+                        graph.step(name, "projects", "projects",
+                                   lambda: (None if request_result("/ready", token=service_api_token(graph))[0] == 200
+                                            else "selected request failed"), cases=[claim])
+
+                self.assertEqual(setup_calls, [])
+                self.assertEqual(adapter_probe.status, "SKIPPED")
+                self.assertNotIn("BLOCKED", [step.status for step in journey.steps])
+                self.assertEqual(journey.result().status, "PASS")
+                selected_steps = [step for step in journey.steps if step.cases and step.status == "PASS"]
+                self.assertEqual({step.name for step in selected_steps},
+                                 {"selected readiness", "selected project runtime"})
+                self.assertEqual(len(seen), 2)
+                self.assertTrue(all(headers.get("Authorization") == f"Bearer {token}" if token
+                                    else "Authorization" not in headers for headers in seen))
+
+    def test_marketplace_claim_selects_its_flow_and_state_producer(self):
+        calls = []
+        selected = "S-010.1"
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selected,
+            "KB_JOURNEY_CASES": selected,
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "marketplace",
+            "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/marketplace_steps.py",
+        }, clear=True):
+            journey = Journey("local", "selected-marketplace-flow")
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                    "service-api-session": {"passed": True, "evidence": "API session ready"},
+                },
+                state_producers=STATE_PRODUCERS,
+                groups=SERVICE_GROUPS,
+            )
+            producer = graph.flow("produce Commit project fixture", "marketplace-fixture-producer",
+                                  "marketplace-fixtures", lambda: calls.append("producer"),
+                                  record_empty_success=False)
+            probe = graph.probe_state("marketplace-available", "marketplace-fixture-producer",
+                                      "Commit project fixture", lambda: None)
+            lifecycle = graph.flow(
+                "marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                lambda: journey.step("install exact marketplace plugin", "marketplace", lambda: None,
+                                     cases=["S-010.1"]),
+                record_empty_success=False,
+            )
+
+        self.assertEqual(producer, "PASS")
+        self.assertEqual(probe.status, "PASS")
+        self.assertEqual(lifecycle, "PASS")
+        self.assertEqual(calls, ["producer"])
+        self.assertEqual(journey.result().case_run["claims"], [
+            {"claimId": "S-010.1", "kind": "journey", "status": "PASS"},
+        ])
+
+    def test_flow_exception_and_blocked_only_run_have_named_first_failure(self):
+        selected = "S-010.1"
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selected,
+            "KB_JOURNEY_CASES": selected,
+            "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/marketplace_steps.py",
+        }, clear=True):
+            journey = Journey("local", "named-flow-error")
+            graph = FlowGraph(journey, {"marketplace-lifecycle": ()}, groups={
+                "marketplace-lifecycle": {"claim_sources": ("e2e/journey/marketplace_steps.py",)},
+            })
+            graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                       lambda: (_ for _ in ()).throw(RuntimeError("fixture setup failed")))
+        result = journey.result()
+        self.assertEqual(result.first_failure["name"], "marketplace lifecycle assertions")
+        self.assertEqual(result.first_failure["message"], "fixture setup failed")
+
+        blocked = Journey("local", "named-blocked-only")
+        blocked.blocked("required project state", "projects", "project registration was not verified",
+                        cases=["PC-002.8"])
+        blocked_result = blocked.result()
+        self.assertEqual(blocked_result.status, "BLOCKED")
+        self.assertEqual(blocked_result.first_failure["name"], "required project state")
+        self.assertEqual(blocked_result.first_failure["message"], "project registration was not verified")
 
     def test_auth_group_failure_does_not_invalidate_service_api_session(self):
         selected = "PC-002.8"
@@ -406,7 +541,8 @@ raise SystemExit(1)
                     }
                     if selected:
                         env.update({"KB_JOURNEY_CASES": "S-201.3",
-                                    "KB_JOURNEY_SELECTED_STEPS": "S-201.3"})
+                                    "KB_JOURNEY_SELECTED_STEPS": "S-201.3",
+                                    "KB_JOURNEY_SELECTED_CAPABILITIES": "analytics"})
                     executed: list[str] = []
 
                     def execute_declared_steps(journey, steps, step_mode, *, graph):
@@ -451,8 +587,6 @@ raise SystemExit(1)
                             "state probe: fixtures-installed",
                             "state probe: marketplace-available",
                             "state probe: service-api-session",
-                            "state probe: session",
-                            "state probe: agent-plugin-installed",
                             "archive runtime service logs",
                         }
                         self.assertTrue(all(

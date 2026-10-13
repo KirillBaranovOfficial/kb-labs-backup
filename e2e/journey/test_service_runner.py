@@ -53,6 +53,30 @@ class SecuredCliLoginTests(unittest.TestCase):
 
 
 class AdapterDefaultsProbeTests(unittest.TestCase):
+    def test_cleanup_probe_is_skipped_when_its_flow_did_not_run(self):
+        selected = "S-054.3"
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selected,
+            "KB_JOURNEY_CASES": selected,
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "workflow",
+            "KB_JOURNEY_NEEDED_STATES": "adapter-defaults",
+        }, clear=True):
+            journey = Journey("local", "adapter-cleanup-tied-to-flow")
+            graph = FlowGraph(journey, {"workflow": ("adapter-defaults",)}, groups={
+                "workflow": {"capabilities": {"workflow"}, "depends_on": ("adapter-defaults",)},
+                "adapters": {"capabilities": {"adapter"}, "depends_on": ()},
+            })
+            flow = graph.flow("adapter defaults flow", "adapters", "adapter",
+                              lambda: None, cases=["S-054.1"], record_empty_success=False)
+            tied = graph.probe_state("adapter-defaults", "adapters", "restore adapter fixture",
+                                     lambda: "cleanup ran without its flow", after_flow="adapter defaults flow")
+            untied = graph.probe_state("adapter-defaults", "adapters", "mutated cleanup probe",
+                                       lambda: "BLOCKED: adapter defaults flow did not run")
+
+        self.assertEqual(flow, "SKIPPED")
+        self.assertEqual(tied.status, "SKIPPED")
+        self.assertEqual(untied.status, "BLOCKED")
+
     def test_probe_detects_valid_but_different_config_after_successful_restore_row(self):
         with tempfile.TemporaryDirectory(prefix="journey-adapter-probe-") as directory:
             config_path = Path(directory) / "kb.config.json"

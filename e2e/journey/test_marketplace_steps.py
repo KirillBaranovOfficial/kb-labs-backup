@@ -360,6 +360,11 @@ class MarketplaceStepTests(unittest.TestCase):
                 lock_file.parent.mkdir(parents=True, exist_ok=True)
                 lock_file.write_text(json.dumps(value))
 
+            save_lock(active_platform, {"schema": "kb.marketplace/3", "plugins": {
+                "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit-entry",
+                                    "source": "platform", "integrity": "sha512-shipped"},
+            }, "adapters": {}})
+
             def fake_run(command, *, cwd, env, capture_output, text, timeout):
                 nonlocal host_running
                 calls.append(tuple(command))

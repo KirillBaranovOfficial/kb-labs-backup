@@ -87,7 +87,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                            "service-secured:explore": ["S-042.1"]},
                 "runners": ["service-local:explore", "service-secured:explore"],
                 "prerequisiteSteps": ["registered project setup"], "prerequisiteFlows": [],
-                "stepSources": ["e2e/journey/service_runner.py"],
+                "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
             })
 
     def test_selector_failure_includes_decoded_cli_error_envelope(self):
@@ -138,7 +138,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                        "service-secured:explore": ["S-042.1"]},
             "runners": ["service-local:explore", "service-secured:explore"],
             "prerequisiteSteps": ["registered project setup"], "prerequisiteFlows": [],
-            "stepSources": ["e2e/journey/service_runner.py"],
+            "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
         })
 
     def test_rejects_unknown_case_or_step_id_by_name(self):
