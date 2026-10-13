@@ -71,62 +71,84 @@ def gateway_registry_rows_for_installation(registry_path: Path, installation_id:
 
 def verify_installation_spellings(*, launcher: str, index: Path, install_root: Path,
                                   channel: str, version: str, gateway_url: str,
-                                  installation_id: str,
+                                  installation_id: str, receipt_id: str,
+                                  operations: tuple[str, ...], shim_owner_root: Path,
                                   run_command: CommandRunner) -> None:
-    """Prove the installed root's aliases keep one receipt, Gateway row, and shim."""
+    """Prove the installed root's aliases resolve one receipt, Gateway row, and shim."""
     install_root = Path(install_root)
     spellings = (install_root, install_root / "current", active_platform_root(install_root))
     registry_path = Path(launcher).absolute().parents[2] / ".kb" / "launcher" / "gateway-roots.json"
     shim_path = Path(launcher).absolute().parent / "kb"
     before_shim = shim_path.readlink() if shim_path.is_symlink() else None
     registry_before = registry_path.read_bytes()
+    expected_shim = Path(shim_owner_root).resolve() / "current/.kb/v2/bin/kb"
+    if before_shim is None or (shim_path.parent / before_shim).resolve() != expected_shim.resolve():
+        raise RuntimeError(f"kb shim does not point to the scenario owner {shim_owner_root}: {before_shim}")
     matching = gateway_registry_rows_for_installation(registry_path, installation_id)
     if (len(matching) != 1 or matching[0].get("installationId") != installation_id
             or matching[0].get("url") != gateway_url):
         raise RuntimeError(f"Gateway registry does not have one row for {install_root}: {matching}")
 
     for spelling in spellings:
-        plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(index),
-                                           "--platform-channel", channel, "--policy", "compatible",
-                                           "--platform-root", str(spelling)],
-                             f"{channel} plan through {spelling}").get("plan", {})
-        request = plan.get("request", {})
-        if (request.get("gatewayUrl") != gateway_url
-                or plan.get("serviceGraph", {}).get("platformVersion") != version):
-            raise RuntimeError(f"plan through {spelling} changed installation identity or Gateway allocation: {plan}")
+        for operation in operations:
+            arguments = [launcher, operation, "--json"]
+            if operation in ("plan", "update"):
+                arguments.extend(["--index", str(index), "--platform-channel", channel,
+                                  "--policy", "compatible"])
+            arguments.extend(["--platform-root", str(spelling)])
+            result = _data(run_command(arguments), f"{channel} {operation} through {spelling}")
 
-        applied = _json_command(run_command, [launcher, "apply", "--json", "--index", str(index),
-                                              "--platform-channel", channel, "--policy", "compatible",
-                                              "--platform-root", str(spelling)],
-                                f"{channel} apply through {spelling}")
-        applied_receipt = applied.get("receipt", {})
-        if (applied.get("operation") != "apply"
-                or applied_receipt.get("installationId") != installation_id
-                or applied_receipt.get("plan", {}).get("request", {}).get("gatewayUrl") != gateway_url
-                or not shim_owner_matches(applied, install_root=install_root, expected_owner=install_root)):
-            raise RuntimeError(f"apply through {spelling} changed the installation, Gateway, or shim owner: {applied}")
-        receipt_id = applied_receipt.get("id", "")
-
-        status = _json_command(run_command, [launcher, "status", "--json", "--platform-root", str(spelling)],
-                               f"{channel} status through {spelling}")
-        installation = status.get("installation", {})
-        if (installation.get("receiptId") != receipt_id
-                or installation.get("platformChannel") != channel
-                or installation.get("platformVersion") != version):
-            raise RuntimeError(f"status through {spelling} did not resolve the same installation: {status}")
-
-        update = _json_command(run_command, [launcher, "update", "--json", "--index", str(index),
-                                             "--platform-channel", channel, "--policy", "compatible",
-                                             "--platform-root", str(spelling)],
-                               f"{channel} update through {spelling}")
-        if update.get("operation") != "update" or update.get("alreadyUpToDate") is not True:
-            raise RuntimeError(f"update through {spelling} did not preserve the installed selection: {update}")
+            if operation == "plan":
+                plan = result.get("plan", {})
+                request = plan.get("request", {})
+                if (request.get("gatewayUrl") != gateway_url
+                        or plan.get("serviceGraph", {}).get("platformVersion") != version):
+                    raise RuntimeError(f"plan through {spelling} changed installation identity or Gateway allocation: {plan}")
+            elif operation == "status":
+                installation = result.get("installation", {})
+                if (installation.get("receiptId") != receipt_id
+                        or installation.get("platformChannel") != channel
+                        or installation.get("platformVersion") != version):
+                    raise RuntimeError(f"status through {spelling} did not resolve the same installation: {result}")
+            elif operation == "update":
+                if result.get("operation") != "update" or result.get("alreadyUpToDate") is not True:
+                    raise RuntimeError(f"update through {spelling} did not preserve the installed selection: {result}")
+            else:
+                raise ValueError(f"unsupported installation spelling operation: {operation}")
 
         if registry_path.read_bytes() != registry_before:
             raise RuntimeError(f"{channel} {spelling} changed or duplicated the Gateway registry row")
         after_shim = shim_path.readlink() if shim_path.is_symlink() else None
         if after_shim != before_shim:
             raise RuntimeError(f"{channel} {spelling} changed the kb shim target: {before_shim} -> {after_shim}")
+
+
+def verify_primary_installation_spellings(*, launcher: str, index: Path, install_root: Path,
+                                          run_command: CommandRunner) -> None:
+    receipt = json.loads((active_platform_root(install_root) / ".kb/v2/receipt.json").read_text())
+    plan = receipt["plan"]
+    health_url = urlsplit(receipt["verification"]["hostHealthUrl"])
+    verify_installation_spellings(
+        launcher=launcher, index=index, install_root=install_root,
+        channel=plan["platformChannel"], version=plan["serviceGraph"]["platformVersion"],
+        gateway_url=f"{health_url.scheme}://{health_url.netloc}",
+        installation_id=receipt["installationId"], receipt_id=receipt["id"],
+        operations=("plan", "update"), shim_owner_root=install_root,
+        run_command=run_command)
+
+
+def verify_stable_installation_spellings(*, launcher: str, index: Path, install_root: Path,
+                                         shim_owner_root: Path,
+                                         run_command: CommandRunner) -> None:
+    receipt = json.loads((active_platform_root(install_root) / ".kb/v2/receipt.json").read_text())
+    plan = receipt["plan"]
+    verify_installation_spellings(
+        launcher=launcher, index=index, install_root=install_root,
+        channel="stable", version=plan["serviceGraph"]["platformVersion"],
+        gateway_url=plan["request"]["gatewayUrl"],
+        installation_id=receipt["installationId"], receipt_id=receipt["id"],
+        operations=("status", "plan", "update"), shim_owner_root=shim_owner_root,
+        run_command=run_command)
 
 
 def assert_foreign_shim_diagnosis(data: dict, human_output: str, link: Path,
@@ -803,13 +825,18 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
 
         explicit_installed = False
         try:
-            result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+            project_root = explicit_root.parent / "pc001-explicit-gateway-project"
+            project_root.mkdir(parents=True, exist_ok=True)
+            result = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                   "--platform-channel", "stable", "--platform-root", str(explicit_root),
-                                  "--gateway-url", "http://127.0.0.1:4200"])
+                                  "--service-profile", "default", "--scenario", "custom",
+                                  "--scenario-answers", json.dumps({"access.mode": "local"}),
+                                  "--gateway-url", "http://127.0.0.1:4200",
+                                  "--project-root", str(project_root)])
             explicit_installed = (active_platform_root(explicit_root) / ".kb/v2/receipt.json").is_file()
-            data = _data(result, "explicit Gateway apply")
+            data = _data(result, "explicit Gateway install")
             if not shim_owner_matches(data, install_root=explicit_root, expected_owner=primary_root):
-                raise RuntimeError(f"explicit secondary apply reported the wrong shim owner: {data.get('shim')}")
+                raise RuntimeError(f"explicit secondary install reported the wrong shim owner: {data.get('shim')}")
             explicit_receipt = data.get("receipt", {})
             explicit_url = explicit_receipt.get("verification", {}).get("hostHealthUrl", "")
             if explicit_url != "http://127.0.0.1:4200/health":
@@ -838,20 +865,6 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
     journey.step("allocate an unused Gateway address by default and honor an explicit override",
                  "platform.install", verify_gateway_addresses, cases=["PC-001.10", "PC-001.16"])
 
-    def verify_primary_spellings() -> None:
-        receipt = json.loads((active_platform_root(primary_root) / ".kb/v2/receipt.json").read_text())
-        plan = receipt.get("plan", {})
-        origin = urlsplit(receipt.get("verification", {}).get("hostHealthUrl", ""))
-        verify_installation_spellings(
-            launcher=launcher, index=stable_index, install_root=primary_root,
-            channel=plan.get("platformChannel", "stable"),
-            version=plan.get("serviceGraph", {}).get("platformVersion", ""),
-            gateway_url=f"{origin.scheme}://{origin.netloc}",
-            installation_id=receipt.get("installationId", ""),
-            run_command=run_command)
-
-    journey.step("plan, apply, status, and update the primary install through all root spellings",
-                 "platform.install", verify_primary_spellings, cases=["PC-001.10"])
     return journey
 
 
@@ -1593,14 +1606,9 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             raise RuntimeError(f"receipt-backed status did not confirm {channel} {exact_version}")
     def verify_stable_spellings() -> None:
         stable_root = platform_root.parent / "s181-stable-root"
-        receipt = json.loads((active_platform_root(stable_root) / ".kb/v2/receipt.json").read_text())
-        plan = receipt["plan"]
-        verify_installation_spellings(
+        verify_stable_installation_spellings(
             launcher=launcher, index=stable_index, install_root=stable_root,
-            channel="stable", version=plan["serviceGraph"]["platformVersion"],
-            gateway_url=plan["request"]["gatewayUrl"],
-            installation_id=receipt["installationId"],
-            run_command=run_command)
+            shim_owner_root=platform_root, run_command=run_command)
 
     secret_root = platform_root.parent / "s181-secret-root"
     explicit_gateway_root = platform_root.parent / "pc001-explicit-gateway-root"
@@ -1630,17 +1638,25 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         if secret_value in serialized or "KB_JOURNEY_ADMIN_PASSWORD" in serialized:
             raise RuntimeError("secret apply serialized the secret value or environment-variable name")
 
+    journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
+                 cases=["S-181.3", "PC-001.10"])
+
     run_fixture_group(journey, "gateway allocation", lambda: run_gateway_allocation_step(
         mode=mode, launcher=launcher, stable_index=stable_index,
         primary_root=platform_root, automatic_root=secret_root,
         explicit_root=explicit_gateway_root, run_command=run_command))
 
-    journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
-                 cases=["S-181.3", "PC-001.10"])
+    def verify_primary_spellings() -> None:
+        verify_primary_installation_spellings(
+            launcher=launcher, index=stable_index, install_root=platform_root,
+            run_command=run_command)
+
+    journey.step("plan and update the primary install through all root spellings",
+                 "platform.install", verify_primary_spellings, cases=["PC-001.10"])
 
     journey.step("plan, apply, and verify stable install", "platform.install",
                  lambda: channel_plan("stable", stable_index, "s181-stable-root"), cases=["S-181.1"])
-    journey.step("plan, apply, status, and update stable install through all root spellings", "platform.install",
+    journey.step("check status, plan, and update stable install through all root spellings", "platform.install",
                  verify_stable_spellings, cases=["S-181.1"])
     journey.step("plan, apply, and verify canary install", "platform.install",
                  lambda: channel_plan("canary", canary_index, "s181-canary-root"), cases=["S-181.2"])
@@ -1751,7 +1767,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     for generated_root in (apply_root, platform_root.parent / "s181-stable-root",
                            platform_root.parent / "s181-canary-root", secret_root,
-                           explicit_gateway_root,
+                           explicit_gateway_root, platform_root.parent / "pc001-explicit-gateway-project",
                            platform_root.parent / "removed-shim-owner",
                            platform_root.parent / "s181-offline-root"):
         shutil.rmtree(generated_root, ignore_errors=True)
