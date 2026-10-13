@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { manifest } from '../manifest.js';
 
 describe('QA CLI manifest', () => {
+  it('places case coverage under a noun followed by the show verb', () => {
+    const command = manifest.cli?.commands.find(({ path }) => path === 'qa coverage show');
+    expect(command?.examples).toContain('kb qa coverage show --level release --json');
+  });
+
   // case: S-203.21
   it('declares lowercase kebab-case CLI flag names so commands register', () => {
     const flags = manifest.cli?.commands.flatMap(command => command.flags ?? []) ?? [];

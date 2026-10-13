@@ -1336,20 +1336,19 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(journey.steps[0].status, "FAIL")
 
     # case: S-050.3
-    def test_uninstall_decline_timeout_keeps_transcript_and_candidate_state(self):
+    def test_uninstall_decline_timeout_keeps_transcript_without_exported_state(self):
         with tempfile.TemporaryDirectory(prefix="journey-uninstall-timeout-") as temp:
             receipt = Path(temp) / "receipt.json"
             receipt.write_text('{"id":"unchanged"}')
 
             def fake_pty(args, *, on_output):
-                raise PtyCommandTimeout(args, 120, "partial confirmation prompt", '{"host":"running"}')
+                raise PtyCommandTimeout(args, 120, "partial confirmation prompt")
 
             journey = run_uninstall_decline_step(mode="local", args=["kb-create", "uninstall"],
                                                  receipt_path=receipt, run_pty=fake_pty)
             self.assertEqual(journey.steps[0].cases, ["S-050.3"])
             self.assertEqual(journey.steps[0].status, "FAIL")
             self.assertIn("partial confirmation prompt", journey.steps[0].message)
-            self.assertIn('{"host":"running"}', journey.steps[0].message)
 
     def test_each_claim_fails_when_the_cli_returns_a_failed_envelope(self):
         with tempfile.TemporaryDirectory(prefix="journey-installer-cases-") as temp:

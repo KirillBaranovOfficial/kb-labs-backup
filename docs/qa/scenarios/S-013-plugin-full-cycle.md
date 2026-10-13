@@ -13,7 +13,7 @@ surfaces: [cli]
 
 ## Goal
 
-This older standalone author-cycle scenario is retained as a design record. Its shipped capability is covered by [S-003](S-003-solo-plugin-author.md), which includes V2 scaffold, `marketplace link --link`, invocation, and iteration.
+This older standalone author-cycle scenario is retained as a design record. Its shipped capability is covered by [S-003](S-003-solo-plugin-author.md), which includes V2 scaffold, `marketplace plugins add --link`, invocation, and iteration.
 
 ## Supersession
 

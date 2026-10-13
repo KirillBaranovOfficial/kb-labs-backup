@@ -68,7 +68,7 @@ jobs:
         run: |
           run_files=$(find .journey/nightly-results -type f -name 'service-*.json' -print | sort | paste -sd, -)
           for mode in local secured; do
-            args=(qa cases coverage --level release --mode "$mode" --json)
+            args=(qa coverage show --level release --mode "$mode" --json)
             if [ -n "$run_files" ]; then args+=(--run "$run_files"); fi
             node ./cli/bin/dist/bin.js "${args[@]}" > ".journey/nightly-results/case-coverage-${mode}.json" || true
           done

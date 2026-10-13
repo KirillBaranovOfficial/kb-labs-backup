@@ -65,7 +65,7 @@ export interface QACaseCoverage {
   releasePassed: boolean;
 }
 
-/** Versioned schema for `kb qa cases coverage --json`. */
+/** Versioned schema for `kb qa coverage show --json`. */
 export const QA_CASE_COVERAGE_JSON_SCHEMA = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   $id: 'https://kb-labs.dev/schemas/qa-case-coverage-v1.json',

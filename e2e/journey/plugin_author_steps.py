@@ -53,7 +53,7 @@ def _plugins(kb: Path, *, cwd: Path, env: dict[str, str], command_runner) -> lis
 def _lock_entry(project: Path) -> tuple[dict, dict]:
     lock_path = project / ".kb/marketplace.lock"
     if not lock_path.is_file():
-        raise RuntimeError("project .kb/marketplace.lock was not created by marketplace link")
+        raise RuntimeError("project .kb/marketplace.lock was not created by marketplace plugins add")
     try:
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
@@ -466,13 +466,13 @@ def run_plugin_author_flow(
 
     def _link() -> None:
         nonlocal linked
-        _run([str(kb_path), "marketplace", "link", "--link", ".kb/plugins/demo/packages/demo-entry"],
+        _run([str(kb_path), "marketplace", "plugins", "add", "--link", ".kb/plugins/demo/packages/demo-entry"],
              cwd=project, env=child_env, command_runner=command_runner)
         linked = True
         listed = _plugins(kb_path, cwd=project, env=child_env, command_runner=command_runner)
         if not any(item.get("id") == PLUGIN_NAME and item.get("source") == "local"
                    and item.get("scope") == "project" for item in listed if isinstance(item, dict)):
-            raise RuntimeError("demo is not listed as a local project plugin after marketplace link")
+            raise RuntimeError("demo is not listed as a local project plugin after marketplace plugins add")
         _, lock_entry = _lock_entry(project)
         if lock_entry.get("source") != "local" or lock_entry.get("link") != str(ENTRY_DIR):
             raise RuntimeError("project marketplace.lock does not record demo's local relative link path")
@@ -501,49 +501,49 @@ def run_plugin_author_flow(
         if "Edited demo greeting for World!" not in output:
             raise RuntimeError("kb demo hello did not show the greeting after rebuilding the edited source")
 
-    def _unlink() -> None:
-        _run([str(kb_path), "marketplace", "plugins", "unlink", PLUGIN_NAME],
+    def _remove() -> None:
+        _run([str(kb_path), "marketplace", "plugins", "remove", PLUGIN_NAME],
              cwd=project, env=child_env, command_runner=command_runner)
         if any(item.get("id") == PLUGIN_NAME for item in _plugins(
                 kb_path, cwd=project, env=child_env, command_runner=command_runner)
                if isinstance(item, dict)):
-            raise RuntimeError("demo remains in the project plugin list after unlink")
+            raise RuntimeError("demo remains in the project plugin list after removal")
         lock_path = project / ".kb/marketplace.lock"
         if lock_path.exists():
             try:
                 plugins = json.loads(lock_path.read_text(encoding="utf-8")).get("plugins", {})
             except json.JSONDecodeError as error:
-                raise RuntimeError("project .kb/marketplace.lock became invalid after unlink") from error
+                raise RuntimeError("project .kb/marketplace.lock became invalid after removal") from error
             if PLUGIN_NAME in plugins:
-                raise RuntimeError("demo remains in project .kb/marketplace.lock after unlink")
+                raise RuntimeError("demo remains in project .kb/marketplace.lock after removal")
 
-    def _record_unlink() -> bool:
-        return record("unlink plugin", cases=["S-003.6"], check=_unlink)
+    def _record_remove() -> bool:
+        return record("remove plugin registration", cases=["S-003.6"], check=_remove)
 
     scaffolded = record("scaffold plugin", cases=["S-003.1"], check=_scaffold)
     if not scaffolded:
-        for name in ("build generated plugin", "link plugin to project", "invoke generated plugin",
-                     "rebuild edited plugin", "unlink plugin"):
+        for name in ("build generated plugin", "add plugin to project", "invoke generated plugin",
+                     "rebuild edited plugin", "remove plugin registration"):
             journey.blocked(name, "plugin-author", "blocked because plugin scaffolding failed")
         shutil.rmtree(plugin_root, ignore_errors=True)
         return
 
     built = record("build generated plugin", cases=["S-003.2"], check=_build)
     if not built:
-        for name in ("link plugin to project", "invoke generated plugin",
-                     "rebuild edited plugin", "unlink plugin"):
+        for name in ("add plugin to project", "invoke generated plugin",
+                     "rebuild edited plugin", "remove plugin registration"):
             journey.blocked(name, "plugin-author", "blocked because the generated plugin did not build")
         shutil.rmtree(plugin_root, ignore_errors=True)
         return
 
-    link_passed = record("link plugin to project", cases=["S-003.3"], check=_link)
+    link_passed = record("add plugin to project", cases=["S-003.3"], check=_link)
     if not link_passed:
         for name in ("invoke generated plugin", "rebuild edited plugin"):
-            journey.blocked(name, "plugin-author", "blocked because marketplace link verification failed")
+            journey.blocked(name, "plugin-author", "blocked because marketplace plugins add verification failed")
         if linked:
-            _record_unlink()
+            _record_remove()
         else:
-            journey.blocked("unlink plugin", "plugin-author", "plugin was not linked")
+            journey.blocked("remove plugin registration", "plugin-author", "plugin was not added")
         shutil.rmtree(plugin_root, ignore_errors=True)
         return
 
@@ -552,5 +552,5 @@ def run_plugin_author_flow(
         record("rebuild edited plugin", cases=["S-003.5"], check=_edit_build_invoke)
     finally:
         if linked:
-            _record_unlink()
+            _record_remove()
         shutil.rmtree(plugin_root, ignore_errors=True)

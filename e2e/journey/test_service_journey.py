@@ -27,9 +27,9 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_i
                             expect_html, install_project_agents_plugin,
                             request as request_result,
                             project_plugin_settings_isolation, repository_git_status,
-                            PROJECT_ID,
-                            _prepare_and_export_mcp_projects,
+                            _prepare_mcp_projects,
                             journey_result_exit_code, main as service_main, mcp_probe,
+                            prepare_service_api_session, service_api_token,
                             run_grouped_service_steps, run_service_steps)
 from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
 from invocations import run_pty_command, store_report_secret
@@ -89,6 +89,314 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def _selected_service_checks(self, mode, responses, *, login_fails=False):
+        selected = "PC-002.3,PC-002.8"
+        requests = []
+
+        def fake_request(path, *, token="", **_kwargs):
+            requests.append((path, token))
+            if path == "/auth/login/cli":
+                if login_fails:
+                    return 401, {"message": "credentials rejected"}, {}
+                return 200, {"accessToken": "synthetic-service-token"}, {}
+            if path == "/auth/me":
+                return 200, {}, {}
+            return responses(path, token)
+
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                     "KB_JOURNEY_CASES": selected,
+                                     "KB_JOURNEY_SELECTED_CAPABILITIES": "gateway,projects",
+                                     "KB_JOURNEY_ADMIN_PASSWORD": "synthetic-password"}), \
+                patch("service_runner.ADMIN_PASSWORD", "synthetic-password"), \
+                patch("service_runner.project_service_path",
+                      side_effect=lambda project_id, service, *parts:
+                      f"/api/v1/projects/{project_id}/{service}/{'/'.join(parts)}"), \
+                patch("service_runner.request", side_effect=fake_request):
+            journey = Journey(mode, "service-api-session-selection")
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered",
+                                           "value": {"id": "project-123", "root": "/work/project"}},
+                },
+                groups=SERVICE_GROUPS,
+            )
+            prepare_service_api_session(graph, mode)
+            run_service_steps(journey, checks(mode, graph), mode, graph=graph)
+        return journey, graph, requests
+
+    # Regression for PC-002.3 and PC-002.8: the selected checks must acquire runner-owned API state.
+    def test_selected_secured_checks_run_after_service_api_session_and_send_token(self):
+        def responses(path, _token):
+            if path == "/ready":
+                return 200, {"status": "ready"}, {}
+            if path.endswith("/workflow/health"):
+                return 200, {"status": "healthy"}, {}
+            if path == "/api/v1/projects/project-123":
+                return 200, {"path": "/work/project"}, {}
+            if path == "/health":
+                return 200, {"projectRuntimes": {"runtimes": [{"projectId": "project-123", "state": "ready"}]}}, {}
+            if path.endswith("/rest/health"):
+                return 200, {"status": "healthy"}, {}
+            self.fail(f"unexpected request {path}")
+
+        journey, graph, requests = self._selected_service_checks("secured", responses)
+        selected = [step for step in journey.steps if step.cases and set(step.cases) & {"PC-002.3", "PC-002.8"}]
+        self.assertEqual([step.status for step in selected], ["PASS", "PASS"])
+        self.assertTrue(graph.states["service-api-session"]["passed"])
+        self.assertIn(("/auth/login/cli", ""), requests)
+        self.assertIn(("/auth/me", "synthetic-service-token"), requests)
+        self.assertTrue(any(token == "synthetic-service-token" for path, token in requests
+                            if path != "/auth/me"))
+
+    def test_selected_secured_checks_block_when_service_api_session_fails(self):
+        journey, _graph, requests = self._selected_service_checks(
+            "secured", lambda path, _token: self.fail(f"check sent unexpected request {path}"),
+            login_fails=True,
+        )
+        selected = [step for step in journey.steps if step.cases and set(step.cases) & {"PC-002.3", "PC-002.8"}]
+        self.assertEqual([step.status for step in selected], ["BLOCKED", "BLOCKED"])
+        self.assertTrue(all("service-api-session" in step.message and "HTTP 401" in step.message
+                            for step in selected))
+        self.assertEqual([path for path, _token in requests], ["/auth/login/cli"])
+        self.assertEqual(journey.result().status, "FAIL")
+
+    def test_selected_local_checks_need_no_service_api_login(self):
+        def responses(path, token):
+            if path == "/ready":
+                return 200, {"status": "ready"}, {}
+            if path.endswith("/workflow/health"):
+                return 200, {"status": "healthy"}, {}
+            if path == "/api/v1/projects/project-123":
+                return 200, {"path": "/work/project"}, {}
+            if path == "/health":
+                return 200, {"projectRuntimes": {"runtimes": [{"projectId": "project-123", "state": "ready"}]}}, {}
+            if path.endswith("/rest/health"):
+                return 200, {"status": "healthy"}, {}
+            self.fail(f"unexpected request {path}")
+
+        journey, graph, requests = self._selected_service_checks("local", responses)
+        self.assertTrue(graph.states["service-api-session"]["passed"])
+        self.assertFalse(any(path == "/auth/login/cli" for path, _token in requests))
+        self.assertTrue(any(path.endswith("/workflow/health") and not token for path, token in requests))
+        selected = [step for step in journey.steps if step.cases and set(step.cases) & {"PC-002.3", "PC-002.8"}]
+        self.assertEqual([step.status for step in selected], ["PASS", "PASS"])
+
+    def test_service_api_token_accessor_fails_before_unauthenticated_request_if_group_gate_is_removed(self):
+        journey = Journey("secured", "service-api-session-missing-dependency")
+        graph = FlowGraph(journey, {"projects": ()}, states={
+            "service-api-session": {"passed": True, "evidence": "session established"},
+        })
+        selected = "PC-002.8"
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                    "KB_JOURNEY_CASES": selected}, clear=True):
+            step = graph.step("project registry check", "projects", "projects",
+                              lambda: service_api_token(graph), cases=["PC-002.8"])
+        self.assertEqual(step.status, "BLOCKED")
+        self.assertIn("service-api-session", step.message)
+
+        flow_journey = Journey("secured", "service-api-flow-missing-dependency")
+        flow_graph = FlowGraph(flow_journey, {"analytics": ()}, states={
+            "service-api-session": {"passed": True, "evidence": "session established"},
+        })
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                    "KB_JOURNEY_CASES": selected}, clear=True):
+            outcome = flow_graph.flow("analytics API flow", "analytics", "analytics",
+                                      lambda: service_api_token(flow_graph), cases=["PC-002.8"])
+        self.assertEqual(outcome, "BLOCKED")
+        self.assertIn("service-api-session", flow_journey.steps[-1].message)
+
+    def test_ordinary_unclaimed_credential_step_is_skipped_and_selected_check_blocks(self):
+        selected = "PC-002.3,PC-002.8"
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                     "KB_JOURNEY_CASES": selected}, clear=True):
+            journey = Journey("secured", "ordinary-unclaimed-session-mutation")
+            graph = FlowGraph(journey, {"projects": ("service-api-session",)}, states={})
+            ordinary = journey.step("service API login", "auth.secured", lambda: None)
+            consumer = graph.step("project registry check", "projects", "projects",
+                                  lambda: service_api_token(graph), cases=["PC-002.8"])
+        self.assertEqual(ordinary.status, "SKIPPED")
+        self.assertEqual(consumer.status, "BLOCKED")
+        self.assertIn("service-api-session", consumer.message)
+
+    def test_service_check_order_changes_only_for_api_credential_lifecycle_row(self):
+        names = [step[0] for step in checks("secured")]
+        self.assertNotIn("secured admin CLI login", names)
+        self.assertEqual(names[0], "platform readiness (gateway + project workflow)")
+        self.assertNotIn("service-api-session", STATE_PRODUCERS)
+
+    def test_selected_smoke_runs_only_selected_checks_and_required_states_in_both_modes(self):
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode):
+                token = "synthetic-service-token" if mode == "secured" else ""
+                seen = []
+
+                def fake_open_http(_opener, request, **_kwargs):
+                    seen.append(dict(request.header_items()))
+                    return 200, b'{"ok":true,"data":{"ready":true}}', {"content-type": "application/json"}
+
+                selected = "PC-002.3,PC-002.8"
+                with patch.dict(os.environ, {
+                    "KB_JOURNEY_SELECTED_STEPS": selected,
+                    "KB_JOURNEY_CASES": selected,
+                    "KB_JOURNEY_SELECTED_CAPABILITIES": "gateway,projects",
+                    "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/service_runner.py",
+                }, clear=True), patch("service_runner.open_http", side_effect=fake_open_http):
+                    journey = Journey(mode, f"selected-smoke-{mode}")
+                    groups = SERVICE_GROUPS
+                    graph = FlowGraph(
+                        journey,
+                        {name: spec["depends_on"] for name, spec in groups.items()},
+                        states={
+                            "host-running": {"passed": True, "evidence": "host ready"},
+                            "project-registered": {"passed": True, "evidence": "project registered",
+                                                   "value": {"id": "project-123", "root": "/work/project"}},
+                            "service-api-session": {"passed": True, "evidence": "service API session ready",
+                                                     "value": token or None},
+                        },
+                        state_producers=STATE_PRODUCERS,
+                        groups=groups,
+                    )
+                    graph.probe_state("service-api-session", "auth", "service API login", lambda: None,
+                                      value=lambda: token or None)
+                    setup_calls = []
+                    graph.flow("produce Commit project fixture", "marketplace-fixture-producer",
+                               "marketplace-fixtures", lambda: setup_calls.append("Commit"),
+                               record_empty_success=False)
+                    graph.probe_state("marketplace-available", "marketplace-fixture-producer",
+                                      "Commit project fixture", lambda: None)
+                    graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
+                               lambda: setup_calls.append("MCP"), record_empty_success=False)
+                    graph.probe_state("fixtures-installed", "marketplace-fixtures",
+                                      "project fixture handoff", lambda: None)
+                    graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                               lambda: setup_calls.append("marketplace"), record_empty_success=False)
+                    graph.flow("adapter defaults flow", "adapters", "adapter",
+                               lambda: setup_calls.append("adapters"), cases=["S-054.1"],
+                               record_empty_success=False)
+                    adapter_probe = graph.probe_state(
+                        "adapter-defaults", "adapters", "restore adapter fixture",
+                        lambda: "cleanup should not run", after_flow="adapter defaults flow")
+                    for name, claim in (("selected readiness", "PC-002.3"),
+                                        ("selected project runtime", "PC-002.8")):
+                        graph.step(name, "projects", "projects",
+                                   lambda: (None if request_result("/ready", token=service_api_token(graph))[0] == 200
+                                            else "selected request failed"), cases=[claim])
+
+                self.assertEqual(setup_calls, [])
+                self.assertEqual(adapter_probe.status, "SKIPPED")
+                self.assertNotIn("BLOCKED", [step.status for step in journey.steps])
+                self.assertEqual(journey.result().status, "PASS")
+                selected_steps = [step for step in journey.steps if step.cases and step.status == "PASS"]
+                self.assertEqual({step.name for step in selected_steps},
+                                 {"selected readiness", "selected project runtime"})
+                self.assertEqual(len(seen), 2)
+                self.assertTrue(all(headers.get("Authorization") == f"Bearer {token}" if token
+                                    else "Authorization" not in headers for headers in seen))
+
+    def test_marketplace_claim_selects_its_flow_and_state_producer(self):
+        calls = []
+        selected = "S-010.1"
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selected,
+            "KB_JOURNEY_CASES": selected,
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "marketplace",
+            "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/marketplace_steps.py",
+        }, clear=True):
+            journey = Journey("local", "selected-marketplace-flow")
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                    "service-api-session": {"passed": True, "evidence": "API session ready"},
+                },
+                state_producers=STATE_PRODUCERS,
+                groups=SERVICE_GROUPS,
+            )
+            producer = graph.flow("produce Commit project fixture", "marketplace-fixture-producer",
+                                  "marketplace-fixtures", lambda: calls.append("producer"),
+                                  record_empty_success=False)
+            probe = graph.probe_state("marketplace-available", "marketplace-fixture-producer",
+                                      "Commit project fixture", lambda: None)
+            lifecycle = graph.flow(
+                "marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                lambda: journey.step("install exact marketplace plugin", "marketplace", lambda: None,
+                                     cases=["S-010.1"]),
+                record_empty_success=False,
+            )
+
+        self.assertEqual(producer, "PASS")
+        self.assertEqual(probe.status, "PASS")
+        self.assertEqual(lifecycle, "PASS")
+        self.assertEqual(calls, ["producer"])
+        self.assertEqual(journey.result().case_run["claims"], [
+            {"claimId": "S-010.1", "kind": "journey", "status": "PASS"},
+        ])
+
+    def test_flow_exception_and_blocked_only_run_have_named_first_failure(self):
+        selected = "S-010.1"
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selected,
+            "KB_JOURNEY_CASES": selected,
+            "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/marketplace_steps.py",
+        }, clear=True):
+            journey = Journey("local", "named-flow-error")
+            graph = FlowGraph(journey, {"marketplace-lifecycle": ()}, groups={
+                "marketplace-lifecycle": {"claim_sources": ("e2e/journey/marketplace_steps.py",)},
+            })
+            graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                       lambda: (_ for _ in ()).throw(RuntimeError("fixture setup failed")))
+        result = journey.result()
+        self.assertEqual(result.first_failure["name"], "marketplace lifecycle assertions")
+        self.assertEqual(result.first_failure["message"], "fixture setup failed")
+
+        blocked = Journey("local", "named-blocked-only")
+        blocked.blocked("required project state", "projects", "project registration was not verified",
+                        cases=["PC-002.8"])
+        blocked_result = blocked.result()
+        self.assertEqual(blocked_result.status, "BLOCKED")
+        self.assertIsNone(blocked_result.first_failure)
+
+    def test_auth_group_failure_does_not_invalidate_service_api_session(self):
+        selected = "PC-002.8"
+        sent_headers = []
+
+        def fake_open_http(_opener, request, **_kwargs):
+            sent_headers.append(dict(request.header_items()))
+            return 200, b'{"ok":true,"data":{"projects":[]}}', {"content-type": "application/json"}
+
+        journey = Journey("secured", "auth-failure-preserves-service-api-session")
+        graph = FlowGraph(
+            journey,
+            {"auth": ("host-running",), "projects": ("host-running", "service-api-session")},
+            states={
+                "host-running": {"passed": True, "evidence": "host ready"},
+            },
+            state_producers=STATE_PRODUCERS,
+        )
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": selected,
+                                     "KB_JOURNEY_CASES": selected}), \
+                patch("service_runner.open_http", side_effect=fake_open_http):
+            graph.probe_state("service-api-session", "auth", "service API login", lambda: None,
+                              value=lambda: "synthetic-service-token")
+            outcome = graph.flow("auth group flow", "auth", "auth.secured",
+                                 lambda: "unrelated auth assertion failed")
+            check = graph.step(
+                "project registry check", "projects", "projects",
+                lambda: (None if request_result("/api/v1/projects", token=service_api_token(graph))[0] == 200
+                         else "project registry request failed"),
+                cases=["PC-002.8"],
+            )
+
+        self.assertEqual(outcome, "FAIL")
+        self.assertTrue(graph.states["service-api-session"]["passed"])
+        self.assertEqual(check.status, "PASS")
+        self.assertEqual(sent_headers[0].get("Authorization"), "Bearer synthetic-service-token")
+
     # case: S-204.1, S-204.2
     def test_repository_status_detects_files_created_by_settings_commands(self):
         with tempfile.TemporaryDirectory(prefix="journey-project-settings-tree-") as temp:
@@ -163,7 +471,7 @@ raise SystemExit(1)
                                          "KB_JOURNEY_FIXTURE_STATE": str(state)}):
                 settings = journey.step(
                     "project plugin settings isolation and clean repositories", "projects",
-                    project_plugin_settings_isolation, cases=settings_cases,
+                    lambda: project_plugin_settings_isolation("synthetic-service-token"), cases=settings_cases,
                 )
                 following = journey.step("workflow discovery", "workflow", lambda: None)
                 self.assertEqual(settings.status, "FAIL")
@@ -257,7 +565,8 @@ raise SystemExit(1)
                     output = Path(directory) / f"service-{mode}.json"
                     inherited = json.dumps({
                         "host-running": {"passed": True, "evidence": "stubbed"},
-                        "project-registered": {"passed": True, "evidence": "stubbed"},
+                        "project-registered": {"passed": True, "evidence": "stubbed",
+                                               "value": {"id": "prj_fixture", "root": str(Path(directory))}},
                     })
                     env = {
                         "KB_JOURNEY_PLATFORM_ROOT": str(Path(directory) / "platform"),
@@ -265,12 +574,15 @@ raise SystemExit(1)
                     }
                     if selected:
                         env.update({"KB_JOURNEY_CASES": "S-201.3",
-                                    "KB_JOURNEY_SELECTED_STEPS": "S-201.3"})
+                                    "KB_JOURNEY_SELECTED_STEPS": "S-201.3",
+                                    "KB_JOURNEY_SELECTED_CAPABILITIES": "analytics"})
                     executed: list[str] = []
+                    fixture_project_ids: list[str] = []
 
                     def execute_declared_steps(journey, steps, step_mode, *, graph):
                         for state, producer in STATE_PRODUCERS.items():
-                            graph.probe_state(state, producer, f"producer {state}", lambda: None)
+                            if state not in graph.states:
+                                graph.probe_state(state, producer, f"producer {state}", lambda: None)
                         for name, capability, check, cases in steps:
                             group = next(group for group, spec in SERVICE_GROUPS.items()
                                          if capability in spec["capabilities"])
@@ -278,14 +590,39 @@ raise SystemExit(1)
                             if result.status == "PASS":
                                 executed.append(name)
 
+                    def prepare_project_fixtures(_project_id, _project_root, _registry, child_env, *_args):
+                        fixture_project_ids.append(_project_id)
+                        fixture_file = Path(directory) / "fixtures.json"
+                        fixture_file.write_text(json.dumps({
+                            "projectAId": "prj_fixture", "projectARoot": str(Path(directory)),
+                            "projectBId": "prj_fixture_b", "projectBRoot": str(Path(directory) / "project-b"),
+                        }))
+                        child_env["KB_JOURNEY_PROJECT_FIXTURES_FILE"] = str(fixture_file)
+
+                    def produce_commit_fixture(_journey, project_root, _registry, _env):
+                        lock_path = Path(project_root) / ".kb" / "marketplace.lock"
+                        lock_path.parent.mkdir(parents=True, exist_ok=True)
+                        lock_path.write_text(json.dumps({"plugins": {"@kb-labs/commit": {
+                            "package": "@kb-labs/commit-entry", "version": "2.120.1",
+                        }}}))
+                        return {"name": "@kb-labs/commit", "package": "@kb-labs/commit-entry",
+                                "version": "2.120.1"}
+
                     with patch("service_runner.checks", return_value=iter(declared)), \
                             patch("service_runner.run_service_steps", side_effect=execute_declared_steps), \
+                            patch("service_runner.prepare_service_api_session",
+                                  side_effect=lambda graph, _mode: graph.probe_state(
+                                      "service-api-session", "auth", "service API login", lambda: None,
+                                      value=lambda: None)), \
+                            patch("service_runner.prepare_commit_project_fixture",
+                                  side_effect=produce_commit_fixture), \
+                            patch("service_runner._prepare_mcp_projects",
+                                  side_effect=prepare_project_fixtures), \
                             patch("service_runner.configure_installed_cli_path"), \
                             patch("service_runner.restore_secured_cli_login", return_value=None), \
                             patch("service_runner.run_analytics_steps"), \
                             patch("service_runner.run_gateway_steps"), \
                             patch("service_runner.archive_service_logs"), \
-                            patch("service_runner.PROJECT_ID", ""), \
                             patch.dict(os.environ, env, clear=True), \
                             patch("sys.argv", ["service_runner.py", "--mode", mode, "--output", str(output)]), \
                             redirect_stdout(io.StringIO()):
@@ -296,22 +633,22 @@ raise SystemExit(1)
                         "selected analytics check", "unselected mcp check"}
                     self.assertEqual(set(executed), expected)
                     self.assertEqual(len(executed), len(expected))
-                    status_by_name = {step["name"]: step["status"] for step in result["steps"]}
+                    self.assertEqual(fixture_project_ids, ["prj_fixture"])
+                    status_by_name = {step["name"]: (step["status"], step["message"]) for step in result["steps"]}
                     if selected:
-                        self.assertEqual(status_by_name["unselected mcp check"], "SKIPPED")
-                        self.assertEqual(status_by_name["selected analytics check"], "PASS")
-                        self.assertEqual(status_by_name["state probe: fixtures-installed"], "PASS")
-                        self.assertEqual(status_by_name["state probe: marketplace-available"], "PASS")
+                        self.assertEqual(status_by_name["unselected mcp check"][0], "SKIPPED")
+                        self.assertEqual(status_by_name["selected analytics check"][0], "PASS")
+                        self.assertEqual(status_by_name["state probe: fixtures-installed"][0], "PASS")
+                        self.assertEqual(status_by_name["state probe: marketplace-available"][0], "PASS")
                         allowed_passes = {
                             "selected analytics check",
                             "state probe: fixtures-installed",
                             "state probe: marketplace-available",
-                            "state probe: session",
-                            "state probe: agent-plugin-installed",
+                            "state probe: service-api-session",
                             "archive runtime service logs",
                         }
                         self.assertTrue(all(
-                            status == ("PASS" if name in allowed_passes else "SKIPPED")
+                            status[0] == ("PASS" if name in allowed_passes else "SKIPPED")
                             for name, status in status_by_name.items()
                         ), status_by_name)
 
@@ -592,7 +929,7 @@ raise SystemExit(1)
             journey.write_json(run_file)
 
             # Load through the real consumer CLI
-            command = [node, str(cli_bin), "qa", "cases", "coverage", "--mode", "local",
+            command = [node, str(cli_bin), "qa", "coverage", "show", "--mode", "local",
                        "--run", str(run_file), "--json"]
             env = dict(os.environ)
             env["HOME"] = directory
@@ -601,7 +938,7 @@ raise SystemExit(1)
             env.pop("KB_NET_OFFSET", None)
             from hermetic_cli import run_hermetic_cli
             proc = run_hermetic_cli(command, cwd=root, env=env, timeout=120)
-            self.assertEqual(proc.returncode, 0, f"qa cases coverage failed: {proc.stderr or proc.stdout}")
+            self.assertEqual(proc.returncode, 0, f"qa coverage show failed: {proc.stderr or proc.stdout}")
             payload = json.loads(proc.stdout)
             self.assertTrue(payload.get("ok"), payload)
             coverage_data = payload.get("data", {})
@@ -620,7 +957,7 @@ raise SystemExit(1)
             corrupted_data["case_run"]["claims"].append({"claimId": "PC-001.3", "kind": "journey", "status": "BLOCKED"})
             corrupted_run_file.write_text(json.dumps(corrupted_data))
 
-            corrupted_proc = run_hermetic_cli([node, str(cli_bin), "qa", "cases", "coverage", "--mode", "local",
+            corrupted_proc = run_hermetic_cli([node, str(cli_bin), "qa", "coverage", "show", "--mode", "local",
                                               "--run", str(corrupted_run_file), "--json"], cwd=root, env=env, timeout=120)
             self.assertIn("claims[2].status must be PASS or FAIL", corrupted_proc.stdout + corrupted_proc.stderr)
 
@@ -636,6 +973,7 @@ raise SystemExit(1)
         ], states={
             "host-running": {"passed": True, "evidence": "healthy", "group": "install", "step": "start", "claim": "PC-002.1"},
             "project-registered": {"passed": True, "evidence": "registered", "group": "project", "step": "add", "claim": "no case claim"},
+            "service-api-session": {"passed": True, "evidence": "session ready", "group": "auth", "step": "login", "claim": "no case claim"},
         })
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "service-local.json"
@@ -960,12 +1298,13 @@ raise SystemExit(1)
                 commands.append((args, cwd))
                 return subprocess.CompletedProcess(args, 0, "{}", ""), 0.0
 
-            result = login_and_configure_secured_admin(
-                env={"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
-                     "KB_JOURNEY_PLATFORM_ROOT": str(root / "platform"),
-                     "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
-                     "KB_JOURNEY_ADMIN_PASSWORD": "password"},
-                launcher="kb-create", run_command=fake_run)
+            with patch("runner.PROJECT", project):
+                result = login_and_configure_secured_admin(
+                    env={"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
+                         "KB_JOURNEY_PLATFORM_ROOT": str(root / "platform"),
+                         "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+                         "KB_JOURNEY_ADMIN_PASSWORD": "password"},
+                    launcher="kb-create", run_command=fake_run)
 
         self.assertIsNone(result)
         self.assertEqual(len(commands), 1)
@@ -1038,7 +1377,7 @@ raise SystemExit(1)
             failure = mcp_probe("prj_test", "token")
         self.assertIn("kb-labs-workflow__workflow_run", failure)
 
-    def test_prepare_mcp_projects_exports_id_and_canonical_root_from_same_registration(self):
+    def test_prepare_mcp_projects_writes_id_and_canonical_root_to_fixture_handoff(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             home = root / "home"
@@ -1068,10 +1407,10 @@ raise SystemExit(1)
 
             with patch("service_runner._registry_version", return_value="2.120.1"):
                 with patch.dict(os.environ, {}, clear=False):
-                    project_b_id, project_b_root = _prepare_and_export_mcp_projects(
-                        str(project_a), "http://registry.test", env, fake_runner)
-                    self.assertEqual(os.environ["KB_JOURNEY_PROJECT_B_ID"], project_b_id)
-                    self.assertEqual(os.environ["KB_JOURNEY_PROJECT_B_ROOT"], project_b_root)
+                    project_b_id, project_b_root = _prepare_mcp_projects(
+                        "prj_project_a", str(project_a), "http://registry.test", env, fake_runner)
+                    self.assertNotIn("KB_JOURNEY_PROJECT_B_ID", os.environ)
+                    self.assertNotIn("KB_JOURNEY_PROJECT_B_ROOT", os.environ)
             project_id = "prj_" + hashlib.sha256(
                 str(project_a.resolve()).encode("utf-8")).hexdigest()[:16]
             plan_path = home / ".kb" / "state" / project_id / "commit" / "plans" / "root" / "current" / "plan.json"
@@ -1080,10 +1419,10 @@ raise SystemExit(1)
 
         self.assertEqual(project_b_id, "prj_b")
         self.assertEqual(registered_project_roots, [project_b_root])
-        self.assertEqual(env["KB_JOURNEY_PROJECT_B_ID"], project_b_id)
-        self.assertEqual(env["KB_JOURNEY_PROJECT_B_ROOT"], project_b_root)
+        self.assertNotIn("KB_JOURNEY_PROJECT_B_ID", env)
+        self.assertNotIn("KB_JOURNEY_PROJECT_B_ROOT", env)
         self.assertEqual(handoff, {
-            "projectAId": PROJECT_ID,
+            "projectAId": "prj_project_a",
             "projectARoot": str(project_a.resolve()),
             "projectBId": project_b_id,
             "projectBRoot": project_b_root,

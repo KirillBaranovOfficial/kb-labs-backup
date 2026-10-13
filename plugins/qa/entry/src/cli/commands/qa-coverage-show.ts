@@ -27,7 +27,7 @@ function parseRunResult(value: unknown, knownSteps: Set<string>, declaredClaims:
 }
 
 export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
-  id: 'qa:cases:coverage',
+  id: 'qa:coverage:show',
   description: 'Compute QA case coverage from claims and run results',
   handler: { async execute(ctx: PluginCommandContextV3, input: CLIInput<QaCasesCoverageFlags>): Promise<CommandResult> {
     const cwd = ctx.cwd ?? process.cwd();
@@ -54,7 +54,7 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
     if (diagnostics.length) {
       const result = { schema: 'kb.qa-case-coverage/v1', mode, releasePassed: false, cases: [], diagnostics };
       if (!input.flags.json) ctx.ui?.warn?.('QA case coverage input is invalid.');
-      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'QA case coverage input is invalid', hint: 'Fix the listed case coverage inputs, then rerun `kb qa cases coverage`.', diagnostics: diagnostics.map((item) => ({ code: 'KB_QA_CASE_COVERAGE_INPUT_INVALID', severity: 'error', path: item.file, message: item.message })) } };
+      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'QA case coverage input is invalid', hint: 'Fix the listed case coverage inputs, then rerun `kb qa coverage show`.', diagnostics: diagnostics.map((item) => ({ code: 'KB_QA_CASE_COVERAGE_INPUT_INVALID', severity: 'error', path: item.file, message: item.message })) } };
     }
     const coverage = computeQACaseCoverage(catalog.cases, scanned.claims, runs, mode as QACaseMode);
     const ok = level === 'all' || coverage.releasePassed;
@@ -68,8 +68,8 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
       ok: false,
       error: {
         code: 'KB_RUNTIME_COMMAND_FAILED',
-        message: `Release cases are not passing for ${mode}; rerun with completed results using \`kb qa cases coverage --level release --mode ${mode} --run <results.json>\``,
-        hint: `Run \`kb qa cases coverage --level release --mode ${mode} --run <results.json>\` after completing the release case steps.`,
+        message: `Release cases are not passing for ${mode}; rerun with completed results using \`kb qa coverage show --level release --mode ${mode} --run <results.json>\``,
+        hint: `Run \`kb qa coverage show --level release --mode ${mode} --run <results.json>\` after completing the release case steps.`,
         diagnostics: coverage.cases
           .filter((item) => item.statusResult !== 'PASS' && item.statusResult !== 'NOT REQUIRED')
           .map((item) => ({

@@ -230,10 +230,10 @@ Then link the package from your KB Labs workspace:
 
 ```bash
 cd /path/to/kb-labs-workspace
-pnpm kb marketplace link /path/to/packages/my-cache-adapter
+pnpm kb marketplace plugins add /path/to/packages/my-cache-adapter
 ```
 
-`marketplace link` adds an entry to `.kb/marketplace.lock` with `source: 'local'`, which means integrity mismatches auto-refresh on rebuild.
+`marketplace plugins add` adds an entry to `.kb/marketplace.lock` with `source: 'local'`, which means integrity mismatches auto-refresh on rebuild.
 
 ## Step 7 — Configure and use
 

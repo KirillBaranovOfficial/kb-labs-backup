@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { manifest } from '../manifest.js';
 
 describe('workflow CLI manifest', () => {
-  it('registers raw job inspection under the job subgroup and removes deprecated aliases', () => {
+  it('registers raw job inspection under the job subgroup', () => {
     const commands = manifest.cli?.commands ?? [];
     const paths = commands.map((command) => command.path);
 
     expect(paths).toContain('workflow job status');
-    expect(paths).toContain('workflow job logs');
+    expect(paths).toContain('workflow log show');
+    expect(paths).toContain('workflow create');
     expect(paths).toContain('workflow job list');
     expect(paths).toContain('workflow runs status');
     expect(paths).toContain('workflow runs logs');

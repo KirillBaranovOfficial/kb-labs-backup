@@ -174,7 +174,7 @@ The cache clear is mandatory — the CLI caches the command registry aggressivel
 You don't have to publish to test. The marketplace supports linking local paths:
 
 ```bash
-pnpm kb marketplace link /path/to/your-plugin-repo/packages/your-plugin-entry
+pnpm kb marketplace plugins add /path/to/your-plugin-repo/packages/your-plugin-entry
 ```
 
 This writes a `source: 'local'` entry in `.kb/marketplace.lock` pointing at the absolute path. Discovery loads the manifest from that path on every startup. Integrity mismatches on local packages auto-refresh (because the content changes on every rebuild), so you can iterate without re-linking.
@@ -182,7 +182,7 @@ This writes a `source: 'local'` entry in `.kb/marketplace.lock` pointing at the 
 Unlink:
 
 ```bash
-pnpm kb marketplace unlink @your-scope/your-plugin-entry
+pnpm kb marketplace plugins remove @your-scope/your-plugin-entry
 ```
 
 Use linked installs during development, publish only when you're ready to ship.

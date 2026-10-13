@@ -25,7 +25,7 @@ A local plugin can be linked explicitly after building it:
 
 ```bash
 pnpm build
-kb marketplace link --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry
 ```
 
 Build the generated workspace before linking its entry package. The path is relative to the project root, and the link is recorded in `.kb/marketplace.lock`.

@@ -213,7 +213,7 @@ pnpm --filter @kb-labs/steward-entry run test:cli  # CLI handler tests
 **Link into a workspace**
 
 ```bash
-kb marketplace link --link plugins/steward/entry
+kb marketplace plugins add --link plugins/steward/entry
 ```
 
 **Health check**

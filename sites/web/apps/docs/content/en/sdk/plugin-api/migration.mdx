@@ -148,7 +148,7 @@ After upgrading:
 1. `pnpm build` — catch any TypeScript errors from renamed types.
 2. `pnpm kb plugin:validate --manifest ./path/to/manifest.ts` — catch manifest schema violations.
 3. `pnpm test` — make sure mocks still behave as expected.
-4. Run the plugin in dev mode via `pnpm kb marketplace link` and smoke-test it.
+4. Run the plugin in dev mode via `pnpm kb marketplace plugins add` and smoke-test it.
 
 If everything passes, commit the bump and publish a new version of your plugin. Consumers who `pnpm kb marketplace update` will pick it up automatically.
 

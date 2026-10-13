@@ -177,8 +177,9 @@ export const manifest = {
         handler: './cli/commands/qa-cases-validate.js#default', flags: defineCommandFlags(qaCasesValidateFlags.schema), permissions: pluginPermissions,
       },
       {
-        path: 'qa cases coverage', category: 'Cases', describe: 'Compute case coverage from test claims and run results', operationType: 'analyze' as const,
-        handler: './cli/commands/qa-cases-coverage.js#default', flags: defineCommandFlags(qaCasesCoverageFlags.schema), permissions: pluginPermissions,
+        path: 'qa coverage show', category: 'Cases', describe: 'Compute case coverage from test claims and run results', operationType: 'analyze' as const,
+        handler: './cli/commands/qa-coverage-show.js#default', flags: defineCommandFlags(qaCasesCoverageFlags.schema), permissions: pluginPermissions,
+        examples: ['kb qa coverage show --level release --json'],
       },
       {
         path: 'qa baseline update',
