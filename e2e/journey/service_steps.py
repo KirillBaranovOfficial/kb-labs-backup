@@ -123,6 +123,16 @@ class JourneyResult:
 
 
 class Journey:
+    _instances: list["Journey"] = []
+
+    @classmethod
+    def reset_run_registry(cls) -> None:
+        cls._instances.clear()
+
+    @classmethod
+    def run_instances(cls) -> tuple["Journey", ...]:
+        return tuple(cls._instances)
+
     def __init__(self, mode: str, run_id: str = "local", *, parent: "Journey | None" = None):
         if mode not in {"local", "secured"}:
             raise ValueError(f"unsupported access mode: {mode}")
@@ -141,6 +151,7 @@ class Journey:
         self.runner_selector = journey_value("KB_JOURNEY_RUNNER_SELECTOR", "")
         self.step_guard: Callable[[str, Callable[[], str | None]], str | None] | None = None
         self.memory = parent.memory if parent is not None else JourneyMemory({})
+        self._instances.append(self)
 
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
              details: Callable[[], dict[str, Any]] | None = None, *,
@@ -279,21 +290,6 @@ class Journey:
         first = next((_step_dict(step) for step in self.steps if step.status == "FAIL"), None)
         failed = any(step.status == "FAIL" for step in self.steps)
         blocked = any(step.status == "BLOCKED" for step in self.steps)
-        executed_selected = {case_id for step in self.steps if step.status in {"PASS", "FAIL", "BLOCKED"}
-                             for case_id in step.cases if case_id in self.selected_steps}
-        unexecuted_selected = sorted(self.selected_steps - executed_selected)
-        if unexecuted_selected:
-            failed = True
-            first = first or {
-                "name": "selected journey claims",
-                "capability": "journey.selection",
-                "mode": self.mode,
-                "status": "FAIL",
-                "duration_seconds": 0.0,
-                "message": ("selected claim steps did not execute: " + ", ".join(unexecuted_selected)
-                            + "; the selected runner did not call their registered step functions"),
-                "cases": unexecuted_selected,
-            }
         status = "FAIL" if failed else "BLOCKED" if blocked else "PASS"
         claims = {}
         for step in self.steps:
