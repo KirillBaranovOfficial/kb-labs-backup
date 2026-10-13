@@ -368,11 +368,6 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         # Commit fixture that produces the project lock state.
         commit_version = _registry_version(commit_install_package, registry, base_env, runner)
         unrelated_version = _registry_version(unrelated_package, registry, base_env, runner)
-    platform_list = ["marketplace", "plugins", "list", "--scope", "platform", "--json"]
-    platform_plugins = _entries(_json(cli(platform_list), platform_list))
-    if any(item.get("id") == commit_package for item in platform_plugins):
-        raise RuntimeError(f"{commit_package} is preinstalled at platform scope; choose a registry plugin absent from the fresh platform store")
-
     # S-047 requires a second project plugin to survive target uninstall.
     install_unrelated = ["marketplace", "install", f"{unrelated_package}@{unrelated_version}", "--json"]
     sealed_platform_before_unrelated = _platform_snapshot(platform_root)

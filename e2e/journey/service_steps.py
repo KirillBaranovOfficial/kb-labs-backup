@@ -144,6 +144,8 @@ class Journey:
         self.steps: list[StepResult] = []
         self.selected_steps = set(filter(None, journey_value("KB_JOURNEY_SELECTED_STEPS", "").split(",")))
         self.selected_claims = set(self.selected_steps)
+        self.selected_sources = set(filter(None, journey_value("KB_JOURNEY_SELECTED_SOURCES", "").split(",")))
+        self.selected_capabilities = set(filter(None, journey_value("KB_JOURNEY_SELECTED_CAPABILITIES", "").split(",")))
         self.prerequisite_steps = set(filter(None, journey_value("KB_JOURNEY_PREREQUISITE_STEPS", "").split(",")))
         self.prerequisite_flows = set(filter(None, journey_value("KB_JOURNEY_PREREQUISITE_FLOWS", "").split(",")))
         self.flows: dict[str, tuple[str, str]] = {}
@@ -287,7 +289,10 @@ class Journey:
         return result
 
     def result(self) -> JourneyResult:
-        first = next((_step_dict(step) for step in self.steps if step.status == "FAIL"), None)
+        first_step = next((step for step in self.steps if step.status == "FAIL"), None)
+        if first_step is None:
+            first_step = next((step for step in self.steps if step.status == "BLOCKED"), None)
+        first = _step_dict(first_step) if first_step is not None else None
         failed = any(step.status == "FAIL" for step in self.steps)
         blocked = any(step.status == "BLOCKED" for step in self.steps)
         status = "FAIL" if failed else "BLOCKED" if blocked else "PASS"
@@ -347,13 +352,51 @@ class FlowGraph:
     def __init__(self, journey: Journey, dependencies: dict[str, tuple[str, ...]],
                  diagnostics_path: str | Path | None = None,
                  states: dict[str, dict[str, object]] | None = None,
-                 state_producers: dict[str, str] | None = None):
+                 state_producers: dict[str, str] | None = None,
+                 groups: Mapping[str, Mapping[str, object]] | None = None):
         self.journey = journey
         self.dependencies = dependencies
         self.diagnostics_path = Path(diagnostics_path) if diagnostics_path else None
         self.states = dict(states or {})
-        self.state_producers = dict(state_producers or {})
+        self.groups = dict(groups or {})
+        self.state_producers = dict(state_producers or {
+            state: group for group, spec in self.groups.items()
+            for state in spec.get("produces", ())
+        })
         self.resources: list[Any] = []
+        self.selected_groups = {
+            group for group, spec in self.groups.items()
+            if (self.journey.selected_capabilities.intersection(spec.get("capabilities", ()))
+                or self.journey.selected_sources.intersection(spec.get("claim_sources", ())))
+        }
+        self.needed_states = set(filter(None, journey_value("KB_JOURNEY_NEEDED_STATES", "").split(",")))
+        for group in self.selected_groups:
+            self.needed_states.update(self.dependencies.get(
+                group, self.groups.get(group, {}).get("depends_on", ())))
+        pending_states = list(self.needed_states)
+        while pending_states:
+            producer = self.state_producers.get(pending_states.pop())
+            if producer is None:
+                continue
+            for state in self.dependencies.get(
+                    producer, self.groups.get(producer, {}).get("depends_on", ())):
+                if state not in self.needed_states:
+                    self.needed_states.add(state)
+                    pending_states.append(state)
+
+    @property
+    def selection_active(self) -> bool:
+        return bool(self.journey.selected_claims)
+
+    def _group_produces_needed_state(self, group: str) -> bool:
+        return bool(set(self.groups.get(group, {}).get("produces", ())) & self.needed_states)
+
+    def _flow_owns_selected_claim(self, group: str, cases: Iterable[str],
+                                  owner_sources: Iterable[str]) -> bool:
+        if self.journey.selected_claims.intersection(cases):
+            return True
+        declared_sources = set(owner_sources) | set(self.groups.get(group, {}).get("claim_sources", ()))
+        return bool(self.journey.selected_sources.intersection(declared_sources))
 
     def _blocker(self, group: str) -> tuple[str, dict[str, object]] | None:
         for state in self.dependencies.get(group, ()):
@@ -365,8 +408,16 @@ class FlowGraph:
                 return state, result
         return None
 
-    def probe_state(self, state: str, group: str, step: str, check: Callable[[], str | None]) -> StepResult:
+    def probe_state(self, state: str, group: str, step: str, check: Callable[[], str | None],
+                    *, after_flow: str | None = None) -> StepResult:
         """Run and record an explicit state precondition probe."""
+        if self.selection_active:
+            tied_flow = self.journey.flows.get(after_flow) if after_flow else None
+            if after_flow and (tied_flow is None or tied_flow[0] == "SKIPPED"):
+                return self.journey.skipped(f"state probe: {state}", "journey.state")
+            if state not in self.needed_states and not after_flow:
+                return self.journey.skipped(f"state probe: {state}", "journey.state")
+
         def checked() -> str | None:
             try:
                 return check()
@@ -419,13 +470,16 @@ class FlowGraph:
 
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object],
              cases: Iterable[str] = (), *, role: str = "step",
-             record_empty_success: bool = True, runners: Iterable[str] = ()) -> str:
+             record_empty_success: bool = True, runners: Iterable[str] = (),
+             owner_sources: Iterable[str] = ()) -> str:
         """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
         case_ids = list(cases)
         prerequisite = name in self.journey.prerequisite_flows
         lifecycle = role == "lifecycle"
-        if (self.journey.selected_claims and case_ids
-                and not self.journey.selected_claims.intersection(case_ids) and not prerequisite and not lifecycle):
+        selected_owner = self._flow_owns_selected_claim(group, case_ids, owner_sources)
+        producer = self._group_produces_needed_state(group)
+        selected_by_flow_rule = selected_owner or prerequisite or producer
+        if (self.selection_active and not selected_by_flow_rule):
             self.journey.skipped(name, capability)
             self.journey.record_flow(name, "SKIPPED", "not selected")
             return "SKIPPED"
@@ -443,12 +497,15 @@ class FlowGraph:
         try:
             outcome = action()
         except MissingJourneyState as error:
-            self.journey.step(name, capability, lambda: f"BLOCKED: {error}", cases=case_ids, role=role,
+            self.journey.step(name, capability, lambda: f"BLOCKED: {error}", cases=case_ids,
+                              role="lifecycle" if selected_by_flow_rule else role,
                               runners=runners)
             outcome = None
         except Exception as error:
             self._write_traceback(group, name)
-            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__, role=role)
+            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__,
+                              role="lifecycle" if selected_by_flow_rule else role,
+                              runners=runners)
             outcome = None
         emitted = self.journey.steps[start:]
         if isinstance(outcome, str):

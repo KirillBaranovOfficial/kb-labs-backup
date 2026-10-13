@@ -575,9 +575,10 @@ def service_api_token(graph: FlowGraph | None) -> str:
     state = graph.states.get("service-api-session") if graph is not None else None
     if not state or state.get("passed") is not True:
         raise MissingJourneyState("service-api-session")
-    if "KB_JOURNEY_SERVICE_TOKEN" not in os.environ:
+    token = journey_value("KB_JOURNEY_SERVICE_TOKEN")
+    if token is None:
         raise MissingJourneyState("service-api-session")
-    return os.environ["KB_JOURNEY_SERVICE_TOKEN"]
+    return token
 
 
 def prepare_service_api_session(graph: FlowGraph, mode: str) -> None:
@@ -712,7 +713,8 @@ SERVICE_GROUPS = {
     "marketplace": {"capabilities": {"marketplace"},
                      "depends_on": ("host-running", "project-registered", "service-api-session")},
     "marketplace-lifecycle": {"capabilities": set(),
-                              "depends_on": ("host-running", "project-registered", "marketplace-available", "service-api-session")},
+                              "depends_on": ("host-running", "project-registered", "marketplace-available", "service-api-session"),
+                              "claim_sources": ("e2e/journey/marketplace_steps.py",)},
     "marketplace-fixtures": {"capabilities": set(),
                              "depends_on": ("host-running", "project-registered", "marketplace-available"),
                              "produces": ("fixtures-installed",)},
@@ -728,7 +730,8 @@ SERVICE_GROUPS = {
     "workspace": {"capabilities": {"workspace"}, "depends_on": ("host-running",)},
     "plugin-availability": {"capabilities": {"plugin-availability"},
                             "depends_on": ("project-registered", "fixtures-installed")},
-    "adapters": {"capabilities": {"adapter"}, "depends_on": ("host-running", "project-registered")},
+    "adapters": {"capabilities": {"adapter"}, "depends_on": ("host-running", "project-registered"),
+                 "produces": ("adapter-defaults",)},
     "plugin-author": {"capabilities": {"plugin-author"},
                        "depends_on": ("host-running", "project-registered", "fixtures-installed", "session")},
     "worktree": {"capabilities": {"worktree"}, "depends_on": ("host-running", "project-registered")},
@@ -749,7 +752,8 @@ def run_grouped_service_steps(journey: Journey, steps, mode: str = "local", grou
         for capability in spec["capabilities"]
     }
     flow_graph = graph or FlowGraph(
-        journey, {name: spec["depends_on"] for name, spec in group_specs.items()}, states=states)
+        journey, {name: spec["depends_on"] for name, spec in group_specs.items()}, states=states,
+        groups=group_specs)
     for name, capability, check, cases, requires, runners in steps:
         group = capability_groups.get(capability, capability)
 
@@ -846,7 +850,8 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                cases=["S-054.1", "S-048.1"], record_empty_success=False)
     platform_root = Path(env.get("KB_JOURNEY_PLATFORM_ROOT", project_root))
     graph.probe_state("adapter-defaults", "adapters", "restore original platform adapter fixture state",
-                      lambda: _adapter_defaults_probe_error(journey, adapter_fixture_snapshot, platform_root))
+                      lambda: _adapter_defaults_probe_error(journey, adapter_fixture_snapshot, platform_root),
+                      after_flow="adapter defaults flow")
     graph.flow("plugin author flow", "plugin-author", "plugin-author",
                lambda: run_plugin_author_flow(journey, Path(project_root),
                                               Path.home() / ".local/bin/kb", registry,
@@ -1059,7 +1064,7 @@ def main() -> int:
     graph = FlowGraph(
         journey, {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
         diagnostics_path=Path(args.output).resolve().with_name("journey-diagnostics.log"),
-        states=inherited_states, state_producers=STATE_PRODUCERS,
+        states=inherited_states, state_producers=STATE_PRODUCERS, groups=SERVICE_GROUPS,
     )
     try:
         declared_steps = list(checks(args.mode, graph))

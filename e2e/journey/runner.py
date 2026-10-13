@@ -783,7 +783,15 @@ def main():
     CASE_JOURNEY = Journey(mode, f"installer-{mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}")
     diagnostics = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
         "journey-diagnostics.log")
-    outer_graph = FlowGraph(CASE_JOURNEY, OUTER_GROUP_DEPENDENCIES, diagnostics_path=diagnostics)
+    from service_runner import SERVICE_GROUPS
+    selection_groups = dict(SERVICE_GROUPS)
+    for group, dependencies in OUTER_GROUP_DEPENDENCIES.items():
+        spec = dict(selection_groups.get(group, {}))
+        spec["capabilities"] = set(spec.get("capabilities", ())) | {group}
+        spec["depends_on"] = tuple(dict.fromkeys((*spec.get("depends_on", ()), *dependencies)))
+        selection_groups[group] = spec
+    outer_graph = FlowGraph(CASE_JOURNEY, OUTER_GROUP_DEPENDENCIES,
+                            diagnostics_path=diagnostics, groups=selection_groups)
     ACTIVE_OUTER_GRAPH = outer_graph
     ACTIVE_MAIN_ENV = env
     # Agent flows pass --registry explicitly. Human `install` uses the package
@@ -1695,6 +1703,7 @@ def main():
         service_env["KB_JOURNEY_STUDIO_FIXTURE_FILE"] = str(studio_fixture_file)
         service_env["KB_JOURNEY_PROJECT_FIXTURES_FILE"] = str(project_fixture_file)
         service_env["KB_JOURNEY_STATES"] = json.dumps(outer_graph.states)
+        service_env["KB_JOURNEY_NEEDED_STATES"] = ",".join(sorted(outer_graph.needed_states))
         service_env.pop("KB_JOURNEY_PROJECT_B_ID", None)
         service_env.pop("KB_JOURNEY_PROJECT_B_ROOT", None)
         result, elapsed = run(["python3", str(journey_module("service_runner.py")), "--mode", mode, "--output", str(service_report)],
