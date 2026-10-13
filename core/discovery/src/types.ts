@@ -122,7 +122,7 @@ export type DiscoveryScope = 'platform' | 'project';
  * `workspace` > `linked` > `node_modules`.
  *
  * - `workspace`: a pnpm workspace package under the scope root (monorepo development).
- * - `linked`: a marketplace lock entry with `source: 'local'` (`kb marketplace plugins link`).
+ * - `linked`: a marketplace lock entry with `source: 'local'` (`kb marketplace plugins add`).
  * - `node_modules`: a marketplace lock entry with `source: 'marketplace'` (installed package).
  */
 export type DiscoveryOrigin = 'workspace' | 'linked' | 'node_modules';

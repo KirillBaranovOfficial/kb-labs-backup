@@ -60,7 +60,7 @@ Return to the project root and link the built entry package. The relative path i
 
 ```bash
 cd ../../..
-kb marketplace link --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry
 ```
 
 Now run the generated commands:
@@ -221,7 +221,7 @@ This requires an LLM adapter configured in `kb.config.json`. See [Adapters → O
 
 - **Code change?** `pnpm build` — cache updates automatically, then re-run.
 - **Something broken?** `kb scaffold doctor --path .kb/plugins` scans for common issues.
-- **Want to unlink?** `kb marketplace plugins unlink @kb-labs/my-plugin`.
+- **Want to remove it?** `kb marketplace plugins remove @kb-labs/my-plugin`.
 
 ## What to read next
 

@@ -244,7 +244,7 @@ export async function scanRoot(
  * plugin's entry package is registered in `.kb/marketplace.lock`.
  *
  * Produces:
- *  - warn  "plugin not registered in marketplace.lock (run `kb marketplace link --link ...`)"
+ *  - warn  "plugin not registered in marketplace.lock (run `kb marketplace plugins add --link ...`)"
  *  - warn  "lock entry points elsewhere"
  *  - info  "plugin disabled in lock"
  */
@@ -286,7 +286,7 @@ async function checkLockSync(
       out.push({
         severity: 'warn',
         package: pkgName,
-        message: `not registered in marketplace.lock — run: kb marketplace link --link ${hint}`,
+        message: `not registered in marketplace.lock — run: kb marketplace plugins add --link ${hint}`,
       });
       continue;
     }

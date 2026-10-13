@@ -147,7 +147,7 @@ jobs:
           run_files=$(find .journey/reports -type f -name 'service-*.json' -print | sort | paste -sd, -)
           coverage_status=0
           for mode in local secured; do
-            args=(qa cases coverage --level release --mode "$mode")
+            args=(qa coverage show --level release --mode "$mode")
             if [ -n "$run_files" ]; then args+=(--run "$run_files"); fi
             node ./cli/bin/dist/bin.js "${args[@]}" || coverage_status=1
           done

@@ -1,5 +1,5 @@
 /**
- * workflow job logs command - Get raw job logs
+ * workflow log show command - Get raw job logs
  */
 
 import { defineCommand, validationError, handleError, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
@@ -27,7 +27,7 @@ function renderLogs(ctx: PluginCommandContextV3, logs: LogEntry[], outputJson: b
 }
 
 export default defineCommand<unknown, LogsInput, unknown>({
-  id: 'workflow:job-logs',
+  id: 'workflow:log:show',
   description: 'Get logs for a raw workflow job',
 
   handler: {
@@ -37,7 +37,7 @@ export default defineCommand<unknown, LogsInput, unknown>({
       const jobId = input.argv?.[0];
 
       if (!jobId) {
-        return validationError('Missing job ID', 'Usage: kb workflow job logs <jobId>');
+        return validationError('Missing job ID', 'Usage: kb workflow log show <jobId>');
       }
 
       try {

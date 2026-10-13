@@ -22,7 +22,7 @@ image or starts a container:
 KB_JOURNEY_CASES="S-042,S-005.2" e2e/journey/run.sh --no-build
 ```
 
-The selector resolves IDs from `qa cases coverage`, so a case ID expands to its
+The selector resolves IDs from `qa coverage show`, so a case ID expands to its
 journey/e2e-claimed steps and a step ID selects that claim directly. A case with
 any unclaimed step or a claim with no executable runner variant is refused with
 the step ID before Docker work begins. To restrict execution, `KB_JOURNEY_ONLY`

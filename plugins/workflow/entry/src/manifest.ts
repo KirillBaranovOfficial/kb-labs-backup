@@ -73,13 +73,13 @@ export const manifest = {
     ],
     commands: [
       {
-        path: 'workflow init',
+        path: 'workflow create',
         category: 'Workflows',
         operationType: 'mutate' as const,
         describe: 'Create a runnable local workflow example.',
-        handler: './commands/init.js#default',
+        handler: './commands/create.js#default',
         flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
-        examples: ['kb workflow init'],
+        examples: ['kb workflow create'],
       },
       {
         path: 'workflow health',
@@ -136,17 +136,17 @@ export const manifest = {
         examples: ['kb workflow job status abc123', 'kb workflow job status abc123 --json'],
       },
       {
-        path: 'workflow job logs',
+        path: 'workflow log show',
         category: 'Jobs',
         operationType: 'read' as const,
         describe: 'Get raw job logs.',
         longDescription:
           'Fetches execution logs for a specific raw job by ID.',
-        handler: './commands/logs.js#default',
+        handler: './commands/log-show.js#default',
         flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
         examples: [
-          'kb workflow job logs abc123',
-          'kb workflow job logs abc123 --json',
+          'kb workflow log show abc123',
+          'kb workflow log show abc123 --json',
         ],
       },
       {

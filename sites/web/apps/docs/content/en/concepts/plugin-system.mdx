@@ -66,7 +66,7 @@ Plugin handlers themselves never import from Node's `fs`, `fetch`, or `child_pro
 
 ## Discovery is marketplace-driven
 
-There is no filesystem scanning. A package becomes a plugin only after it's registered in `.kb/marketplace.lock` via `kb marketplace install` or `kb marketplace link`. The lock is the single source of truth: remove an entry and the plugin disappears on the next startup; add one and it shows up.
+There is no filesystem scanning. A package becomes a plugin only after it's registered in `.kb/marketplace.lock` via `kb marketplace install` or `kb marketplace plugins add`. The lock is the single source of truth: remove an entry and the plugin disappears on the next startup; add one and it shows up.
 
 This design has two consequences worth internalizing:
 
