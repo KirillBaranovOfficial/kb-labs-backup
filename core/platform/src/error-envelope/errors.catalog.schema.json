@@ -21,6 +21,7 @@
           "stage": { "$ref": "error-envelope.schema.json#/properties/stage" },
           "severity": { "$ref": "error-envelope.schema.json#/properties/severity" },
           "retryable": { "type": "boolean" },
+          "processExitCode": { "type": "integer", "minimum": 0, "maximum": 2, "description": "Canonical process status for Go CLI use, when the diagnostic has one." },
           "message": { "type": "string", "minLength": 1, "description": "Template; {name} placeholders are filled from details." },
           "hint": { "type": "string", "minLength": 1, "description": "Template; {name} placeholders are filled from details." },
           "deprecated": { "type": "boolean" }

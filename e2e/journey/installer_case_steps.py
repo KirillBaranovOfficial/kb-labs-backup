@@ -212,8 +212,8 @@ def read_gateway_index_refusal(result: subprocess.CompletedProcess, label: str,
     envelope = read_kb_create_cli_result(result.args[1], result.stdout, result.returncode)
     error = decode_ux_error_result(envelope)
     exit_code = result.returncode
-    if exit_code != 2:
-        raise RuntimeError(f"{label}: expected input-refusal exit 2, got {exit_code}")
+    if exit_code != 1:
+        raise RuntimeError(f"{label}: expected operation-failure exit 1, got {exit_code}")
     assert_gateway_index_diagnosis({"error": error}, path, root)
     return error
 

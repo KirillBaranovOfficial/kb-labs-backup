@@ -12,6 +12,9 @@ func ExitCode(d *Diag) int {
 	if d == nil {
 		return ExitOK
 	}
+	if entry, ok := LookupCatalog(d.Code); ok && entry.ProcessExitCode != ExitOK {
+		return entry.ProcessExitCode
+	}
 	if d.ProcessExitCode != ExitOK {
 		return d.ProcessExitCode
 	}

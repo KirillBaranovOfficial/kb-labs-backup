@@ -20,20 +20,21 @@ import (
 )
 
 type operationDescriptor struct {
-	Name    string
-	Short   string
-	Hidden  bool
-	Args    cobra.PositionalArgs
-	Flags   []string
-	Human   func(any) string
-	Handler func(context.Context, *cobra.Command, *commandFlagReader, commandDependencies) (any, *diag.Diag)
+	Name       string
+	Short      string
+	Hidden     bool
+	JSONStream bool
+	Args       cobra.PositionalArgs
+	Flags      []string
+	Human      func(any) string
+	Handler    func(context.Context, *cobra.Command, *commandFlagReader, commandDependencies) (any, *diag.Diag)
 }
 
 type versionCommandInput struct{}
 type streamCompletion struct{ ExitCode int }
 
 var operationDescriptors = []operationDescriptor{
-	{Name: "install", Short: "Install KB Labs interactively", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderInstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+	{Name: "install", JSONStream: true, Short: "Install KB Labs interactively", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderInstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		deps.Command = cmd
 		input := installCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Resume: flags.Bool("resume"), SecretEnv: flags.String("secret-env"), Registry: flags.String("registry"), Executable: deps.Executable, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
 		if jsonMode(cmd) {
@@ -45,7 +46,7 @@ var operationDescriptors = []operationDescriptor{
 		input := planCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Registry: flags.String("registry"), Resume: flags.Bool("resume"), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable), TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
 		return executePlan(ctx, input)
 	}},
-	{Name: "apply", Short: "Apply an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "scenario", "scenario-answers", "telemetry-endpoint", "telemetry-consent"}, Human: renderApply, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+	{Name: "apply", JSONStream: true, Short: "Apply an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "scenario", "scenario-answers", "telemetry-endpoint", "telemetry-consent"}, Human: renderApply, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		deps.Command = cmd
 		input := applyCommandInput{Plan: planInput{Operation: "apply", Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable)}, Registry: flags.String("registry"), SecretEnv: flags.String("secret-env"), Executable: deps.Executable, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
 		if jsonMode(cmd) {

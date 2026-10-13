@@ -16,6 +16,7 @@ type Writer struct {
 	finished bool
 	result   bool
 	exitCode int
+	failure  *diag.Diag
 }
 
 // New creates a JSONL writer for one command invocation.
@@ -64,6 +65,7 @@ func (w *Writer) Fail(d *diag.Diag) error {
 		return fmt.Errorf("cannot write an error after the stream result record")
 	}
 	d = diag.FromError(d)
+	w.failure = d
 	if code := diag.ExitCode(d); code > w.exitCode {
 		w.exitCode = code
 	}
@@ -78,7 +80,9 @@ func (w *Writer) Finish(exitCode int) error {
 	if exitCode != diag.ExitOK && exitCode != diag.ExitInput && exitCode != diag.ExitError {
 		return fmt.Errorf("invalid stream exit code %d", exitCode)
 	}
-	if w.exitCode > exitCode {
+	if w.failure != nil {
+		exitCode = diag.ExitCode(w.failure)
+	} else if w.exitCode > exitCode {
 		exitCode = w.exitCode
 	}
 	record := map[string]any{
