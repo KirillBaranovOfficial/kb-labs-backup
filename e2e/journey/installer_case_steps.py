@@ -19,6 +19,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from platform_update_steps import _json_command
+from platform_layout import secret_state_relative_path
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
                          read_ux_cli_stream, run_command as evidence_run_command)
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
@@ -1509,7 +1510,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         empty_before = {name: snapshot_tree(root) for name, root in refusal_roots.items()}
         active = active_platform_root(platform_root)
         installed_paths = [active / ".kb/v2/receipt.json", active / ".kb/kb.config.jsonc",
-                           active / ".kb/v2/secret-state.json"]
+                           active / secret_state_relative_path()]
         installed_before = snapshot_paths(installed_paths)
         commands = (
             ("install", [launcher, "install", "--json", "--index", str(stable_index),

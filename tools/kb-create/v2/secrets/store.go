@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kb-labs/clikit/operationlock"
 	"github.com/kb-labs/clikit/secretstate"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -69,6 +70,7 @@ type Store struct {
 	PlatformRoot string
 	ReadOnly     bool
 	atomicWrite  func(string, []byte, os.FileMode) error
+	beforeWrite  func() error
 }
 
 const (
@@ -227,14 +229,48 @@ func (store Store) writeRecord(record secretStoreRecord) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	data, err := secretstate.Encode(record)
+	if store.beforeWrite != nil {
+		if err := store.beforeWrite(); err != nil {
+			return err
+		}
+	}
+	layout, err := versionroot.ForPlatformPath(store.PlatformRoot)
 	if err != nil {
 		return err
 	}
-	if store.atomicWrite != nil {
-		return store.atomicWrite(path, data, 0o600)
+	lockPath := filepath.Join(layout.HostStateDir(), "operation.lock")
+	lease := operationlock.Held(lockPath)
+	if lease == nil {
+		lease, err = operationlock.Acquire(lockPath, "secret-state")
+		if err != nil {
+			if errors.Is(err, operationlock.ErrInProgress) {
+				return contracts.NewDiag(contracts.CodeOperationInProgress,
+					"Another launcher operation is already running.",
+					"Wait for it to finish, then rerun `"+contracts.ShellCommand("kb-create", "apply", "--platform-root", store.PlatformRoot)+"`.", err)
+			}
+			return err
+		}
+		defer lease.Release()
 	}
-	return versionroot.AtomicWriteFile(path, data, 0o600)
+	return lease.With(func() error {
+		current, err := store.readRecord()
+		if err != nil {
+			return err
+		}
+		if !record.AdvanceFrom(current) {
+			return contracts.NewDiag(contracts.CodeOperationInProgress,
+				"The installation secret state changed while this command was preparing an update.",
+				"Rerun `"+contracts.ShellCommand("kb-create", "apply", "--platform-root", store.PlatformRoot)+"` to apply it to the current state.", nil)
+		}
+		data, err := secretstate.Encode(record)
+		if err != nil {
+			return err
+		}
+		if store.atomicWrite != nil {
+			return store.atomicWrite(path, data, 0o600)
+		}
+		return versionroot.AtomicWriteFile(path, data, 0o600)
+	})
 }
 
 func (store Store) readRecord() (secretStoreRecord, error) {
@@ -347,9 +383,10 @@ func (store Store) Environment() (Environment, error) {
 }
 
 func (store Store) path() (string, error) {
-	marker := filepath.Join(store.PlatformRoot, ".kb", "v2", "platform-layout.json")
+	sharedRecordPath := filepath.FromSlash(contracts.SharedRecordPath())
+	marker := filepath.Join(store.PlatformRoot, filepath.Dir(sharedRecordPath), "platform-layout.json")
 	if _, err := os.Stat(marker); err == nil {
-		return filepath.Join(store.PlatformRoot, ".kb", "v2", "secret-state.json"), nil
+		return filepath.Join(store.PlatformRoot, sharedRecordPath), nil
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
@@ -357,7 +394,7 @@ func (store Store) path() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return layout.SharedRuntimePath(".kb/v2/secret-state.json")
+	return layout.SharedRuntimePath(contracts.SharedRecordPath())
 }
 
 func validate(name string) error {

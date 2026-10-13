@@ -17,6 +17,7 @@ from invocations import (decode_ux_error_result, decode_ux_success_result,
                          read_ux_cli_result, start_background_command)
 from service_steps import Journey
 from journey_resources import active_platform_root, snapshot_state_tree
+from platform_layout import secret_state_relative_path
 
 
 Run = Callable[[list[str], Path], subprocess.CompletedProcess]
@@ -52,9 +53,10 @@ def _component_version(payload: dict) -> str | None:
 
 
 def _file_fingerprints(root: Path, projects: tuple[Path, ...]) -> dict[str, str]:
-    names = {"current/.kb/kb.config.jsonc", "current/.kb/v2/secret-state.json"}
+    names = {"current/.kb/kb.config.jsonc"}
     result = {}
     paths = [root / name for name in names]
+    paths.append(root / "current" / secret_state_relative_path())
     paths.extend(project / ".kb" / name for project in projects
                  for name in ("marketplace.lock.json", "project.json", "kb.config.jsonc"))
     for path in paths:
@@ -203,7 +205,8 @@ def run_platform_update_variant_steps(
         _request_for(request_file, target, request)
         before_receipt = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
         before_config = hashlib.sha256((platform_root / "current/.kb/kb.config.jsonc").read_bytes()).hexdigest()
-        before_secrets = hashlib.sha256((platform_root / "current/.kb/v2/secret-state.json").read_bytes()).hexdigest()
+        secret_path = platform_root / "current" / secret_state_relative_path()
+        before_secrets = hashlib.sha256(secret_path.read_bytes()).hexdigest()
         shared_before = capture_shared_update_state()
         error = _error(cli([launcher, "update", "--platform-root", root, "--json", "--index",
                             str(bad_checksum_index), "--input", str(request)]), "bad-checksum update")
@@ -213,7 +216,7 @@ def run_platform_update_variant_steps(
             raise RuntimeError("checksum failure changed the active receipt")
         if hashlib.sha256((platform_root / "current/.kb/kb.config.jsonc").read_bytes()).hexdigest() != before_config:
             raise RuntimeError("checksum failure changed generated config")
-        if hashlib.sha256((platform_root / "current/.kb/v2/secret-state.json").read_bytes()).hexdigest() != before_secrets:
+        if hashlib.sha256(secret_path.read_bytes()).hexdigest() != before_secrets:
             raise RuntimeError("checksum failure changed installation secrets")
         assert_shared_update_state_unchanged("checksum failure", shared_before)
         status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]), "status after checksum failure")
@@ -232,7 +235,7 @@ def run_platform_update_variant_steps(
             _request_for(request_file, target, request)
             receipt_hash = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
             config_path = platform_root / "current/.kb/kb.config.jsonc"
-            secret_path = platform_root / "current/.kb/v2/secret-state.json"
+            secret_path = platform_root / "current" / secret_state_relative_path()
             config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
             secret_hash = hashlib.sha256(secret_path.read_bytes()).hexdigest()
             shared_before = capture_shared_update_state()

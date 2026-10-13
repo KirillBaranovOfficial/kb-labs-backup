@@ -3,12 +3,13 @@ package host
 import (
 	"errors"
 	"fmt"
-	"github.com/kb-labs/clikit/diag"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/operationlock"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -80,47 +81,15 @@ func (s State) AcquireOperation(operation string) (func(), error) {
 		return nil, s.unwritable(err)
 	}
 	path := s.OperationLock()
-	for attempt := 0; attempt < 2; attempt++ {
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			_, writeErr := fmt.Fprintf(file, "%d %s\n", os.Getpid(), operation)
-			if err := errors.Join(writeErr, file.Close()); err != nil {
-				_ = os.Remove(path)
-				return nil, s.unwritable(err)
-			}
-			released := false
-			return func() {
-				if !released {
-					released = true
-					_ = os.Remove(path)
-				}
-			}, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, s.unwritable(err)
-		}
-		if holder, alive := s.lockHolder(); alive {
-			failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %d).", holder), "Wait for it to finish; if no launcher is running, remove the stale lock with `"+contracts.ShellCommand("rm", path)+"`.", nil)
-			failure.Meta = map[string]any{"pid": strconv.Itoa(holder), "path": path}
-			return nil, failure
-		}
-		_ = os.Remove(path)
+	lease, err := operationlock.Acquire(path, operation)
+	if err == nil {
+		return lease.Release, nil
 	}
-	return nil, contracts.NewDiag(contracts.CodeOperationInProgress, "Another launcher operation is already running.", "Wait for it to finish; if no launcher is running, remove the stale lock with `"+contracts.ShellCommand("rm", path)+"`.", nil)
-}
-
-func (s State) lockHolder() (int, bool) {
-	data, err := os.ReadFile(s.OperationLock())
-	if err != nil {
-		return 0, false
+	if !errors.Is(err, operationlock.ErrInProgress) {
+		return nil, s.unwritable(err)
 	}
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return 0, false
-	}
-	pid, err := strconv.Atoi(fields[0])
-	if err != nil || !processAlive(pid) {
-		return 0, false
-	}
-	return pid, true
+	holder, _ := operationlock.Holder(path)
+	failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %d).", holder), "Wait for it to finish; if no launcher is running, remove the stale lock with `"+contracts.ShellCommand("rm", path)+"`.", nil)
+	failure.Meta = map[string]any{"pid": strconv.Itoa(holder), "path": path}
+	return nil, failure
 }

@@ -39,6 +39,7 @@ type layoutDirectory struct {
 }
 
 type SharedRuntimePath struct {
+	ID           string `json:"id,omitempty"`
 	PlatformPath string `json:"platformPath"`
 	StatePath    string `json:"statePath"`
 	Kind         string `json:"kind"`
@@ -206,6 +207,17 @@ func SharedRuntimePaths() []SharedRuntimePath {
 		panic("invalid embedded platform layout contract: " + err.Error())
 	}
 	return append([]SharedRuntimePath(nil), layout.SharedRuntimePaths...)
+}
+
+// SharedRecordPath resolves the private runtime record from the platform
+// layout contract so callers never repeat its storage path.
+func SharedRecordPath() string {
+	for _, entry := range SharedRuntimePaths() {
+		if entry.ID == "secretState" {
+			return entry.PlatformPath
+		}
+	}
+	panic("embedded platform layout has no secret-state record")
 }
 
 func PlatformDataRootPath() PlatformDataRoot {

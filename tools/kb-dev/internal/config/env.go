@@ -24,7 +24,7 @@ func expandEnv(yf *yamlFile, rootDir string) error {
 	// with mode 0600 under .kb/v2 and never appear in generated config,
 	// receipts, diagnostics, or the terminal. Keep .env as the documented
 	// fallback for hand-managed services.
-	projection, err := secretstate.HostEnvironment(filepath.Join(rootDir, ".kb", "v2", "secret-state.json"))
+	projection, err := secretstate.HostEnvironmentAtRoot(rootDir)
 	if err != nil {
 		return fmt.Errorf("load launcher secret state: %w", err)
 	}

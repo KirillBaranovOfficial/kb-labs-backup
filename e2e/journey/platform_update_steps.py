@@ -15,6 +15,7 @@ from journey_resources import (active_platform_root, current_link_path,
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
                          run_command as invoke_command, run_with_runner)
 from service_port_assertions import assert_service_ports_preserved
+from platform_layout import secret_state_relative_path
 
 
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
@@ -124,7 +125,7 @@ def run_platform_update_steps(
     root = str(platform_root)
     receipt_path = platform_root / "current/.kb/v2/receipt.json"
     config_paths = [platform_root / "current/.kb/kb.config.jsonc"]
-    secrets_path = platform_root / "current/.kb/v2/secret-state.json"
+    secrets_path = platform_root / "current" / secret_state_relative_path()
     snapshot_id = ""
     runtime_log_path = platform_root / "current/.kb/logs/post-update-before-restart.log"
     updated_plan_hash = ""
@@ -613,7 +614,7 @@ def run_platform_update_steps(
     journey.step("restart the installed host and run an adapter command", "platform.restart",
                  restart_and_verify_identity, cases=["PC-001.15"])
     def update_secret_policy() -> None:
-        secrets_path = active_platform_root(platform_root) / ".kb/v2/secret-state.json"
+        secrets_path = active_platform_root(platform_root) / secret_state_relative_path()
         values = json.loads(secrets_path.read_text(encoding="utf-8")).get("requirements", {})
         if not values:
             raise RuntimeError("the installed journey fixture did not provide a stored secret for update policy")

@@ -14,6 +14,7 @@ from typing import Mapping
 from typing import Any
 
 from journey_resources import active_platform_root, installer_record_path
+from platform_layout import secret_state_relative_path
 
 MAX_DUMP_BYTES = 5 * 1024 * 1024
 CONTENT_BUDGET = MAX_DUMP_BYTES - 64 * 1024
@@ -310,7 +311,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                          Path(".kb/v2/receipt.json")):
             add(active / relative, relative)
         fingerprint_bytes = _write_secret_fingerprints(
-            active / ".kb/v2/secret-state.json", destination / "installation-secret-fingerprints.json"
+            active / secret_state_relative_path(), destination / "installation-secret-fingerprints.json"
         )
         if fingerprint_bytes and used + fingerprint_bytes <= CONTENT_BUDGET:
             used += fingerprint_bytes

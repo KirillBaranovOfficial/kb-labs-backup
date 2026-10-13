@@ -8,13 +8,14 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/kb-labs/clikit/diag"
 )
 
 const (
-	SchemaVersion                = 1
+	SchemaVersion                = 2
 	UnsupportedCode              = "KB_INSTALL_SECRET_STORE_UNSUPPORTED"
 	BootstrapPasswordEnvironment = "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"
 	BootstrapPasswordRequirement = "gateway.bootstrap.password"
@@ -31,6 +32,7 @@ const (
 
 type Record struct {
 	schema       int
+	generation   uint64
 	requirements map[string]string
 	bootstrap    bootstrapState
 }
@@ -43,6 +45,7 @@ type bootstrapState struct {
 
 type wireRecord struct {
 	Schema       int               `json:"schema"`
+	Generation   uint64            `json:"generation"`
 	Requirements map[string]string `json:"requirements"`
 	Bootstrap    wireBootstrap     `json:"bootstrap"`
 }
@@ -61,7 +64,7 @@ type HostProjection struct {
 var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func NewRecord() Record {
-	return Record{schema: SchemaVersion, requirements: map[string]string{}}
+	return Record{schema: SchemaVersion, generation: 1, requirements: map[string]string{}}
 }
 
 func Decode(data []byte) (Record, error) {
@@ -74,11 +77,12 @@ func Decode(data []byte) (Record, error) {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return Record{}, unsupported()
 	}
-	if wire.Schema != SchemaVersion || wire.Requirements == nil {
+	if wire.Schema != SchemaVersion || wire.Generation == 0 || wire.Requirements == nil {
 		return Record{}, unsupported()
 	}
 	return Record{
 		schema:       wire.Schema,
+		generation:   wire.Generation,
 		requirements: wire.Requirements,
 		bootstrap: bootstrapState{
 			completed:         wire.Bootstrap.Completed,
@@ -94,6 +98,7 @@ func Encode(record Record) ([]byte, error) {
 	}
 	return json.Marshal(wireRecord{
 		Schema:       record.schema,
+		Generation:   record.generation,
 		Requirements: record.requirements,
 		Bootstrap: wireBootstrap{
 			Completed:         record.bootstrap.completed,
@@ -101,6 +106,37 @@ func Encode(record Record) ([]byte, error) {
 			PasswordDisclosed: record.bootstrap.passwordDisclosed,
 		},
 	})
+}
+
+// Generation identifies the serialized base from which this record was read.
+func (record Record) Generation() uint64 { return record.generation }
+
+// AdvanceFrom accepts a commit only when it was based on the current record.
+// It also preserves the irreversible lifecycle facts when deciding whether a
+// candidate may replace the current state.
+func (record *Record) AdvanceFrom(current Record) bool {
+	if record.generation != current.generation {
+		return false
+	}
+	if current.bootstrap.passwordDisclosed {
+		if !record.bootstrap.passwordDisclosed {
+			return false
+		}
+		if record.bootstrap.passwordOrigin != current.bootstrap.passwordOrigin {
+			return false
+		}
+		if _, present := record.requirements[BootstrapPasswordRequirement]; present {
+			return false
+		}
+		if _, present := record.requirements[BootstrapPasswordEnvironment]; present {
+			return false
+		}
+	}
+	if current.bootstrap.completed != "" && record.bootstrap.completed == "" {
+		return false
+	}
+	record.generation = current.generation + 1
+	return true
 }
 
 func (record Record) Requirement(name string) (string, bool) {
@@ -190,6 +226,16 @@ func HostEnvironment(path string) (HostProjection, error) {
 		projection.Suppressed = []string{BootstrapPasswordEnvironment}
 	}
 	return projection, nil
+}
+
+// RecordPath resolves the active version's shared launcher secret record.
+func RecordPath(root string) string {
+	return filepath.Join(root, ".kb", "v2", "secret-state.json")
+}
+
+// HostEnvironmentAtRoot loads the active version's shared launcher secrets.
+func HostEnvironmentAtRoot(root string) (HostProjection, error) {
+	return HostEnvironment(RecordPath(root))
 }
 
 func unsupported() error {
