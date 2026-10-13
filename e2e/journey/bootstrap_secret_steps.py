@@ -34,10 +34,10 @@ def password_absence_failure(install_root: Path,
                              outside_roots: tuple[tuple[str, Path], ...],
                              password: str | None) -> str | None:
     if not password:
-        return "BLOCKED: bootstrap password was unavailable for the post-rollback disk scan"
+        return "BLOCKED: bootstrap password was unavailable for the install-file scan"
     location = bootstrap_password_file(install_root, outside_roots, password)
     if location is not None:
-        return f"disclosed bootstrap credential remains at {location}"
+        return f"bootstrap credential remains at {location}"
     return None
 
 
@@ -49,3 +49,16 @@ def register_install_password_absence_step(
 
     journey.step("verify disclosed bootstrap credential absent after install", "platform.install",
                  check, cases=["S-100.1"], runners=("service-secured:explore",))
+
+
+def register_supplied_password_absence_step(
+        journey: Journey, scan_root: Path, password: str | None) -> None:
+    if journey.runner_selector not in {"agent-secured:commit", "agent:commit"}:
+        return
+
+    def check() -> str | None:
+        return password_absence_failure(scan_root, (), password)
+
+    journey.step("verify supplied bootstrap credential absent from install files", "platform.install",
+                 check, cases=["S-181.3"],
+                 runners=("agent-secured:commit", "agent:commit"))

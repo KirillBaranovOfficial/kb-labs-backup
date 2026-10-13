@@ -47,8 +47,14 @@ func EnsureGenerated(plan *contracts.ResolvedInstallPlan, store Store) error {
 			if _, err := rand.Read(random); err != nil {
 				return fmt.Errorf("generate secret %s: %w", requirement.ID, err)
 			}
-			if err := store.Put(requirement.ID, hex.EncodeToString(random)); err != nil {
-				return fmt.Errorf("store generated secret %s: %w", requirement.ID, err)
+			var storeErr error
+			if requirement.ID == BootstrapPassword {
+				storeErr = store.PutBootstrapPassword(hex.EncodeToString(random), BootstrapOriginGenerated)
+			} else {
+				storeErr = store.Put(requirement.ID, hex.EncodeToString(random))
+			}
+			if storeErr != nil {
+				return fmt.Errorf("store generated secret %s: %w", requirement.ID, storeErr)
 			}
 		}
 	}
@@ -68,12 +74,58 @@ const (
 	BootstrapPasswordEnvironment = "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"
 )
 
+type BootstrapPasswordOrigin string
+
+const (
+	BootstrapOriginSupplied  BootstrapPasswordOrigin = "false"
+	BootstrapOriginGenerated BootstrapPasswordOrigin = "true"
+)
+
 type Environment struct {
 	Values     map[string]string
 	Suppressed []string
 }
 
 func (store Store) Put(name, value string) error {
+	if name == BootstrapPassword {
+		return store.PutBootstrapPassword(value, BootstrapOriginSupplied)
+	}
+	return store.put(name, value)
+}
+
+// PutBootstrapPassword stores the password and its origin in one atomic secret
+// store write. This is the only boundary that records whether a result may
+// disclose the value.
+func (store Store) PutBootstrapPassword(value string, origin BootstrapPasswordOrigin) error {
+	if store.ReadOnly {
+		return fmt.Errorf("secret store is read-only during staged update verification")
+	}
+	if value == "" {
+		return fmt.Errorf("secret %q is empty", BootstrapPassword)
+	}
+	if err := validate(BootstrapPassword); err != nil {
+		return err
+	}
+	if origin != BootstrapOriginGenerated && origin != BootstrapOriginSupplied {
+		return errors.New("bootstrap password origin is invalid")
+	}
+	disclosed, err := store.Exists(BootstrapDisclosed)
+	if err != nil {
+		return err
+	}
+	if disclosed {
+		return ErrBootstrapPasswordDisclosed
+	}
+	values, err := store.readRaw()
+	if err != nil {
+		return err
+	}
+	values[BootstrapPassword] = value
+	values[BootstrapGenerated] = string(origin)
+	return store.write(values)
+}
+
+func (store Store) put(name, value string) error {
 	if store.ReadOnly {
 		return fmt.Errorf("secret store is read-only during staged update verification")
 	}
@@ -200,7 +252,7 @@ func (store Store) BindEnvironments(patches []contracts.ConfigPatch) error {
 			continue
 		}
 		if previous, seen := delivered[patch.Environment]; seen && previous != value {
-			return fmt.Errorf("secrets bound to environment variable %q hold different values", patch.Environment)
+			return errors.New("secrets bound to the same environment variable hold different values")
 		}
 		delivered[patch.Environment] = value
 		if existing, present, err := store.Get(patch.Environment); err != nil {

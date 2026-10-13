@@ -43,8 +43,43 @@ type applyCommandInput struct {
 	JSON                       bool
 	TelemetryEndpoint          string
 	TelemetryConsent           bool
-	AdminPasswordGenerated     bool
 	AllowBootstrapRegistration bool
+}
+
+func secretRedactionValues(store secrets.Store, plan contracts.ResolvedInstallPlan, mappings string) ([]string, error) {
+	values := make([]string, 0)
+	seen := make(map[string]struct{})
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	for _, artifact := range plan.Artifacts {
+		for _, requirement := range artifact.Config {
+			if !requirement.Secret {
+				continue
+			}
+			add(requirement.ID)
+			add(requirement.Env)
+			value, present, err := store.Get(requirement.ID)
+			if err != nil {
+				return nil, err
+			}
+			if present {
+				add(value)
+			}
+		}
+	}
+	for _, mapping := range splitSecretMappings(mappings) {
+		add(mapping[0])
+		add(mapping[1])
+	}
+	return values, nil
 }
 
 func executeApply(ctx context.Context, applyInput applyCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
@@ -204,11 +239,6 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		}
 	}
 	correlationID := fmt.Sprintf("apply-%d", time.Now().UTC().UnixNano())
-	transcript, err := logs.New(layout.OperationLogsDir(), correlationID, nil)
-	if err != nil {
-		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the platform root is writable", err)
-	}
-	defer transcript.Close()
 	store := secrets.Store{PlatformRoot: operationRoot}
 	if err := populateSecrets(store, input.SecretEnv); err != nil {
 		if errors.Is(err, secrets.ErrBootstrapPasswordDisclosed) {
@@ -222,13 +252,9 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	adminEmail, securedAdmin := configuredFirstAdmin(planned.Request)
 	bootstrapCompleted := false
-	adminPasswordPresent := false
 	if securedAdmin {
 		var existsErr error
 		bootstrapCompleted, existsErr = store.Exists(secrets.BootstrapCompleted)
-		if existsErr == nil && !bootstrapCompleted {
-			adminPasswordPresent, existsErr = store.Exists(secrets.BootstrapPassword)
-		}
 		if existsErr != nil {
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read from the secret store", "check that the platform root is writable, then rerun `kb-create install`", existsErr)
 		}
@@ -238,16 +264,15 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 			"the session signing secret could not be generated or stored.",
 			"check that the platform root is writable, then rerun `kb-create install`", err)
 	}
-	if securedAdmin && !bootstrapCompleted && !adminPasswordPresent && input.AdminPasswordGenerated == false {
-		if err := store.Put(secrets.BootstrapGenerated, "true"); err != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the generated bootstrap credential state could not be stored", "check that the platform root is writable, then rerun `kb-create install`", err)
-		}
+	redactions, err := secretRedactionValues(store, planned, input.SecretEnv)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the installation secret state could not be read for safe logging", "check that the platform root is writable, then rerun `kb-create install`", err)
 	}
-	if securedAdmin && input.AdminPasswordGenerated {
-		if err := store.Put(secrets.BootstrapGenerated, "true"); err != nil {
-			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the generated bootstrap credential state could not be stored", "check that the platform root is writable, then rerun `kb-create install`", err)
-		}
+	transcript, err := logs.New(layout.OperationLogsDir(), correlationID, redactions)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the platform root is writable", err)
 	}
+	defer transcript.Close()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -288,7 +313,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	applied, applyErr := runtime.Apply(applyCtx, planned, runtimeDeps)
 	if applyErr != nil {
-		return applyCommandResult{}, applyDossier(root, correlationID, transcript.Path(), planned, applyErr)
+		return applyCommandResult{}, applyDossier(root, correlationID, transcript.Path(), planned, redactions, applyErr)
 	}
 	var firstAdmin *firstAdminCredential
 	if initialInstall {
@@ -466,7 +491,7 @@ func (starter installedHostStarter) Start(ctx context.Context, spec contracts.Ho
 	}, nil
 }
 
-func applyDossier(root, correlationID, logPath string, plan contracts.ResolvedInstallPlan, cause error) *diag.Diag {
+func applyDossier(root, correlationID, logPath string, plan contracts.ResolvedInstallPlan, redactions []string, cause error) *diag.Diag {
 	var failure *diag.Diag
 	if !errors.As(cause, &failure) {
 		failure = contracts.NewDiag(contracts.CodeApplyFailed, "V2 operation did not reach a verified installation", "Inspect the local log and diagnostic dossier, then fix the reported prerequisite or run doctor --fix.", cause)
@@ -478,7 +503,7 @@ func applyDossier(root, correlationID, logPath string, plan contracts.ResolvedIn
 	if layoutErr != nil {
 		return contracts.NewDiag("KB_INSTALL_DIAGNOSTIC_UNAVAILABLE", "The operation failed and the diagnostic dossier could not be written.", "inspect the local operation log", layoutErr)
 	}
-	path, err := diagnostics.Write(layout.FailureDossiersDir(), dossier, nil)
+	path, err := diagnostics.Write(layout.FailureDossiersDir(), dossier, redactions)
 	if err != nil {
 		return contracts.NewDiag("KB_INSTALL_DIAGNOSTIC_UNAVAILABLE", "The operation failed and the diagnostic dossier could not be written.", "inspect the local operation log", err)
 	}

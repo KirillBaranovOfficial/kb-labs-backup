@@ -147,7 +147,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	deps.Runtime.Progress = &humanProgress{out: out, started: map[string]time.Time{}}
 	result, failure := executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
 		Executable: input.Executable, Progress: deps.Runtime.Progress, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent,
-		AdminPasswordGenerated: generatedSecrets[secrets.BootstrapPassword] != "", AllowBootstrapRegistration: !bootstrapCompleted}, deps)
+		AllowBootstrapRegistration: !bootstrapCompleted}, deps)
 	if failure != nil {
 		return applyCommandResult{}, failure
 	}

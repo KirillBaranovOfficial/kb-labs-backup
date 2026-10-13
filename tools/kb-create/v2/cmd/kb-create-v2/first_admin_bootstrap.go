@@ -162,6 +162,13 @@ func firstAdminResult(store secrets.Store, adminEmail string, platformRoot strin
 	if !present || bootstrapState != "provisioned" {
 		return nil, nil
 	}
+	generated, provenancePresent, provenanceErr := store.Get(secrets.BootstrapGenerated)
+	if provenanceErr != nil {
+		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator credential origin could not be read", "check that the platform root is writable, then rerun `kb-create install`", provenanceErr)
+	}
+	if !provenancePresent || generated != "true" {
+		return &firstAdminCredential{State: firstAdminSupplied, Email: adminEmail}, nil
+	}
 	if disclosed {
 		return previouslyDisclosedFirstAdmin(adminEmail, platformRoot), nil
 	}
@@ -187,7 +194,7 @@ func emitFirstAdminResult(value applyCommandResult, operation string, emit func(
 			"the command result could not be written",
 			"Restore writable stdout, then rerun `"+retry+"` to receive the first-administrator result.", err)
 	}
-	if value.FirstAdmin == nil || value.FirstAdmin.Password == "" {
+	if value.FirstAdmin == nil || (value.FirstAdmin.State != firstAdminDisclosed && value.FirstAdmin.State != firstAdminSupplied) {
 		return true, nil
 	}
 	if value.disclosureStoreRoot == "" {

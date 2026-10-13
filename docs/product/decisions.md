@@ -719,3 +719,12 @@ with project identity confirms that install recorded registration; without
 that identity, a later command succeeds with a notice and the exact commands
 for the user to register under their own login. Cases: S-100.1, S-100.2,
 S-222.11–S-222.12.
+
+Only an installer-generated first-administrator password is serialized once
+to disclose a credential the user cannot otherwise know. When the operator
+supplies that password through a secret reference, the result reports
+`firstAdmin.state="supplied"` and the administrator email without a password
+field; the value and source environment-variable name never enter installer
+output or persisted artifacts. The provenance is stored atomically with the
+bootstrap password and survives retries until the successful result removes
+the supplied value. Cases: S-100.1, S-181.3.

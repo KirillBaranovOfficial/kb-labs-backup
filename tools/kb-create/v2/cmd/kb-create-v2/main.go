@@ -5,6 +5,7 @@ package v2cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -54,6 +55,7 @@ type firstAdminState string
 
 const (
 	firstAdminDisclosed           firstAdminState = "disclosed"
+	firstAdminSupplied            firstAdminState = "supplied"
 	firstAdminPreviouslyDisclosed firstAdminState = "previously-disclosed"
 )
 
@@ -228,11 +230,11 @@ func populateSecrets(store secrets.Store, mappings string) error {
 	for _, mapping := range splitSecretMappings(mappings) {
 		name, environment := mapping[0], mapping[1]
 		if environment == "" {
-			return fmt.Errorf("secret mapping %q must be requirement=ENV_VAR", name)
+			return errors.New("secret mapping must use requirement=ENV_VAR")
 		}
 		value, exists := os.LookupEnv(environment)
 		if !exists || value == "" {
-			return fmt.Errorf("environment variable %q is not set", environment)
+			return errors.New("the required secret environment value is not set")
 		}
 		if err := store.Put(name, value); err != nil {
 			return err

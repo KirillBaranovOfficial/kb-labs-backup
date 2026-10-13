@@ -262,6 +262,8 @@ func withFirstAdmin(message string, credential *firstAdminCredential) string {
 	switch credential.State {
 	case firstAdminDisclosed:
 		return fmt.Sprintf("%s\nFirst administrator credentials (shown once):\n  Email: %s\n  Password: %s", message, credential.Email, credential.Password)
+	case firstAdminSupplied:
+		return fmt.Sprintf("%s\nFirst administrator is ready; its password was supplied by the operator.\n  Email: %s", message, credential.Email)
 	case firstAdminPreviouslyDisclosed:
 		return fmt.Sprintf("%s\n%s\n  1. `%s`\n  2. `%s`\n  3. `%s`", message, credential.Notice, credential.StopCommand, credential.RecoveryCommand, credential.StartCommand)
 	default:

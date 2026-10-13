@@ -252,13 +252,18 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		if !ok {
 			continue // named by the request but not entered here (supplied another way)
 		}
-		if err := store.Put(id, value); err != nil {
-			return contracts.InstallRequest{}, fmt.Errorf("store secret %s: %w", id, err)
-		}
-		if id == secrets.BootstrapPassword && generatedValues[id] {
-			if err := store.Put(secrets.BootstrapGenerated, "true"); err != nil {
-				return contracts.InstallRequest{}, fmt.Errorf("record generated bootstrap secret: %w", err)
+		var storeErr error
+		if id == secrets.BootstrapPassword {
+			origin := secrets.BootstrapOriginSupplied
+			if generatedValues[id] {
+				origin = secrets.BootstrapOriginGenerated
 			}
+			storeErr = store.PutBootstrapPassword(value, origin)
+		} else {
+			storeErr = store.Put(id, value)
+		}
+		if storeErr != nil {
+			return contracts.InstallRequest{}, fmt.Errorf("store secret %s: %w", id, storeErr)
 		}
 	}
 	return request, nil
