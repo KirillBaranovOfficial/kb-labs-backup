@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from platform_update_steps import run_platform_update_steps
+from platform_layout import secret_state_relative_path
 from service_steps import FlowGraph, Journey
 
 
@@ -17,9 +18,10 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="journey-update-test-")
         self.root = Path(self.temp.name) / "install"
         self.version_root = self.root / "versions" / "3.0.0"
-        (self.version_root / ".kb/v2").mkdir(parents=True)
-        (self.version_root / ".kb/v2/secret-state.json").write_text(json.dumps({
-            "schema": 1,
+        (self.version_root / secret_state_relative_path().parent).mkdir(parents=True)
+        (self.version_root / secret_state_relative_path()).write_text(json.dumps({
+            "schema": 2,
+            "generation": 1,
             "requirements": {"gateway.jwtSecret": "install-secret", "GATEWAY_JWT_SECRET": "install-secret"},
             "bootstrap": {},
         }))
@@ -29,7 +31,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         (self.version_root / ".kb/marketplace.lock").write_text('{"plugins":[]}\n')
         self.root.joinpath("current").symlink_to(Path("versions") / "3.0.0")
         self.config = self.root / "current/.kb/kb.config.jsonc"
-        self.secrets = self.root / "current/.kb/v2/secret-state.json"
+        self.secrets = self.root / "current" / secret_state_relative_path()
         self.receipt = self.root / "current/.kb/v2/receipt.json"
         self.update_index = self.root / "update-index.json"
         self.update_index.write_text(json.dumps({"platforms": [{"version": "3.0.1", "releaseNotes": "Patch notes."}]}))

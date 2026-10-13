@@ -12,6 +12,7 @@ from platform_state_dump import (MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDu
                                  _write_auth_state_probe, archive_service_logs, dump_platform_state,
                                  )
 from journey_resources import installer_record_path
+from platform_layout import secret_state_relative_path
 from test_install_layout import create_test_install_container, move_test_platform_into_container
 
 
@@ -158,9 +159,10 @@ class PlatformStateDumpTests(unittest.TestCase):
             reports = root / "reports"
             binaries = root / "bin"
             binaries.mkdir()
-            (platform / ".kb/v2").mkdir(parents=True)
-            (platform / ".kb/v2/secret-state.json").write_text(json.dumps({
-                "schema": 1,
+            (platform / secret_state_relative_path().parent).mkdir(parents=True)
+            (platform / secret_state_relative_path()).write_text(json.dumps({
+                "schema": 2,
+                "generation": 1,
                 "requirements": {"gateway.jwtSecret": "signing-value", "GATEWAY_JWT_SECRET": "signing-value"},
                 "bootstrap": {},
             }))

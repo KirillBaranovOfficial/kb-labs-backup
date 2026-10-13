@@ -3,7 +3,17 @@ package contracts
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/kb-labs/clikit/secretstate"
 )
+
+func TestSharedSecretRecordPathMatchesSharedLoader(t *testing.T) {
+	root := t.TempDir()
+	want := filepath.Join(root, filepath.FromSlash(SharedRecordPath()))
+	if got := secretstate.RecordPath(root); got != want {
+		t.Fatalf("shared secret record path = %q; layout contract resolves %q", got, want)
+	}
+}
 
 func TestRuntimeStatePathsAreUniqueRootRelativePaths(t *testing.T) {
 	seen := map[string]bool{}

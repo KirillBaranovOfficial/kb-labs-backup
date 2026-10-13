@@ -36,6 +36,25 @@ func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 	}
 }
 
+func TestStoreRejectsUnknownRecordFieldWithCataloguedDiagnosis(t *testing.T) {
+	store := Store{PlatformRoot: t.TempDir()}
+	path, err := store.path()
+	if err != nil {
+		t.Fatal("resolve secret-state location")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal("create secret-state directory")
+	}
+	if err := os.WriteFile(path, []byte(`{"schema":2,"generation":1,"requirements":{},"bootstrap":{},"extra":true}`), 0o600); err != nil {
+		t.Fatal("write malformed record fixture")
+	}
+	_, err = store.readRecord()
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != secretstate.UnsupportedCode {
+		t.Fatalf("unknown-field diagnosis = %v; want %s", err, secretstate.UnsupportedCode)
+	}
+}
+
 // case: S-100.1
 func TestBootstrapValueAndFactsShareOneAtomicRecord(t *testing.T) {
 	root := t.TempDir()
@@ -59,6 +78,38 @@ func TestBootstrapValueAndFactsShareOneAtomicRecord(t *testing.T) {
 	} {
 		if _, err := os.Lstat(oldPath); !os.IsNotExist(err) {
 			t.Fatal("bootstrap value or facts were persisted outside the atomic record")
+		}
+	}
+}
+
+// case: S-100.1
+func TestStaleWriterCannotRestoreDisclosedBootstrapPassword(t *testing.T) {
+	root := t.TempDir()
+	base := Store{PlatformRoot: root}
+	if err := base.PutBootstrapPassword("writer-order-sentinel", BootstrapOriginGenerated); err != nil {
+		t.Fatal("seed lifecycle record")
+	}
+	if err := base.MarkBootstrapCompleted("provisioned"); err != nil {
+		t.Fatal("complete bootstrap")
+	}
+	writerB := Store{PlatformRoot: root}
+	writerA := Store{PlatformRoot: root}
+	writerA.beforeWrite = func() error {
+		return writerB.MarkBootstrapDisclosed()
+	}
+	writeErr := writerA.Put("unrelated.requirement", "unrelated-value")
+	var refusal *diag.Diag
+	if !errors.As(writeErr, &refusal) || refusal.Code != contracts.CodeOperationInProgress {
+		t.Fatalf("stale writer error code = %v; want %s", writeErr, contracts.CodeOperationInProgress)
+	}
+
+	disclosed, err := base.BootstrapDisclosed()
+	if err != nil || !disclosed {
+		t.Fatalf("disclosure state after overlapping writer: disclosed=%v err=%v", disclosed, err)
+	}
+	for _, name := range []string{BootstrapPassword, BootstrapPasswordEnvironment} {
+		if _, present, err := base.Get(name); err != nil || present {
+			t.Fatalf("disclosed password entry %q present=%v err=%v", name, present, err)
 		}
 	}
 }
@@ -330,7 +381,7 @@ func secretsPath(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := layout.SharedRuntimePath(".kb/v2/secret-state.json")
+	path, err := layout.SharedRuntimePath(contracts.SharedRecordPath())
 	if err != nil {
 		t.Fatal(err)
 	}

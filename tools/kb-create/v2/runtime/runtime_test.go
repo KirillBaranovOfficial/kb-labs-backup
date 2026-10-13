@@ -153,7 +153,7 @@ func TestUpdateAndRollbackCannotRestoreDisclosedBootstrapPassword(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			secretPath, err := layout.SharedRuntimePath(".kb/v2/secret-state.json")
+			secretPath, err := layout.SharedRuntimePath(contracts.SharedRecordPath())
 			if err != nil {
 				t.Fatal(err)
 			}

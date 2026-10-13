@@ -8,6 +8,7 @@ from pathlib import Path
 from bootstrap_secret_steps import (bootstrap_password_file,
                                     register_supplied_password_absence_step)
 from invocations import store_report_secret, write_report_json
+from platform_layout import secret_state_name
 
 
 class BootstrapSecretStepsTest(unittest.TestCase):
@@ -53,7 +54,7 @@ class BootstrapSecretStepsTest(unittest.TestCase):
             scan_root = Path(temporary) / "home"
             nested = scan_root / "platform" / "versions" / "version-a" / ".kb" / "v2"
             nested.mkdir(parents=True)
-            secret_file = nested / "secret-state.json.bak"
+            secret_file = nested / f"{secret_state_name()}.bak"
             secret_file.write_bytes(password.encode())
 
             class CapturingJourney:
@@ -70,7 +71,7 @@ class BootstrapSecretStepsTest(unittest.TestCase):
             self.assertEqual(kwargs["cases"], ["S-181.3"])
             self.assertEqual(kwargs["runners"], ("agent-secured:commit", "agent:commit"))
             failure = args[2]()
-            self.assertEqual(failure, "bootstrap credential remains at install/platform/versions/version-a/.kb/v2/secret-state.json.bak")
+            self.assertEqual(failure, f"bootstrap credential remains at install/platform/versions/version-a/.kb/v2/{secret_state_name()}.bak")
             report_path = Path(temporary) / "report.json"
             report = write_report_json(report_path, {"message": failure}, env=env)
             self.assertNotIn(password, json.dumps(report))

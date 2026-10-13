@@ -280,7 +280,7 @@ func readInstall(t *testing.T, root string, plan contracts.ResolvedInstallPlan) 
 		t.Fatal(err)
 	}
 	result.environment = environment.Values
-	if data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "secret-state.json")); err == nil {
+	if data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(contracts.SharedRecordPath()))); err == nil {
 		record, err := secretstate.Decode(data)
 		if err != nil {
 			t.Fatal("decode private secret state")
@@ -305,7 +305,7 @@ func everywhereExcept(t *testing.T, root, value string) []string {
 	t.Helper()
 	var hits []string
 	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || strings.HasSuffix(path, filepath.Join(".kb", "v2", "secret-state.json")) {
+		if err != nil || entry.IsDir() || strings.HasSuffix(path, filepath.FromSlash(contracts.SharedRecordPath())) {
 			return nil
 		}
 		if data, readErr := os.ReadFile(path); readErr == nil && bytes.Contains(data, []byte(value)) {
@@ -377,7 +377,7 @@ func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) 
 			t.Fatalf("a secret leaked outside the private store: %v", hits)
 		}
 	}
-	info, err := os.Stat(filepath.Join(result.root, ".kb", "v2", "secret-state.json"))
+	info, err := os.Stat(filepath.Join(result.root, filepath.FromSlash(contracts.SharedRecordPath())))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("secret store must be private: %v / %v", info, err)
 	}

@@ -284,7 +284,7 @@ func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
 				}
 			}
 			stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
-			secretsPath := filepath.Join(activeRoot, ".kb", "v2", "secret-state.json")
+			secretsPath := filepath.Join(activeRoot, filepath.FromSlash(contracts.SharedRecordPath()))
 			secretBefore, readErr := os.ReadFile(secretsPath)
 			if os.IsNotExist(readErr) {
 				secretBefore = nil

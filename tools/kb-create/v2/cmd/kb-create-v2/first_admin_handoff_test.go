@@ -72,7 +72,7 @@ func TestUnsupportedSecretStoreFormatUsesItsOwnCataloguedDiagnostic(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	statePath, err := layout.SharedRuntimePath(".kb/v2/secret-state.json")
+	statePath, err := layout.SharedRuntimePath(contracts.SharedRecordPath())
 	if err != nil {
 		t.Fatal(err)
 	}

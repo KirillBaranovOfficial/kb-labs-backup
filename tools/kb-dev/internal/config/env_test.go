@@ -175,7 +175,7 @@ func TestExpandEnvFromDotEnvFile(t *testing.T) {
 
 func TestExpandEnvFromV2LauncherSecretStore(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".kb", "v2", "secret-state.json")
+	path := secretstate.RecordPath(dir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestExpandEnvFromV2LauncherSecretStore(t *testing.T) {
 
 func TestExpandEnvDoesNotInjectBootstrapPasswordAfterCompletion(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".kb", "v2", "secret-state.json")
+	path := secretstate.RecordPath(dir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestExpandEnvDoesNotInjectBootstrapPasswordAfterCompletion(t *testing.T) {
 
 func TestExpandEnvReturnsSharedSecretStateDiagnosis(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".kb", "v2", "secret-state.json")
+	path := secretstate.RecordPath(dir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -235,6 +235,22 @@ func TestExpandEnvReturnsSharedSecretStateDiagnosis(t *testing.T) {
 	}
 	if failure.Code != secretstate.UnsupportedCode {
 		t.Fatalf("diagnosis code = %q", failure.Code)
+	}
+}
+
+func TestExpandEnvRejectsUnknownSecretStateField(t *testing.T) {
+	dir := t.TempDir()
+	path := secretstate.RecordPath(dir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema":2,"generation":1,"requirements":{},"bootstrap":{},"extra":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := expandEnv(minimalYAMLWithEnvVar("${ANY_VALUE}"), dir)
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != secretstate.UnsupportedCode {
+		t.Fatalf("unknown-field diagnosis = %v; want %s", err, secretstate.UnsupportedCode)
 	}
 }
 
