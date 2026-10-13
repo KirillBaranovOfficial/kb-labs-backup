@@ -95,6 +95,19 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     expect(mocks.initializePlatform.mock.calls[0]![0].projectRoot).toBe(projectRoot);
   });
 
+  // case: S-048.7
+  it('uses explicit platform scope before project initialization for config commands', async () => {
+    const cwd = await isolateEnvironment();
+    const platformConfig = mockConfig(cwd);
+    mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
+    mockInitialization();
+
+    await executeCli(['config', 'get', '--scope', 'platform', '--help'], { cwd, registerBuiltinCommands: () => {} });
+
+    expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
+    expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false });
+  });
+
   it("uses the root-resolution project for plugin discovery while initializing adapters from platform config", async () => {
     const cwd = await isolateEnvironment();
     const projectRoot = path.join(cwd, "registered-project");

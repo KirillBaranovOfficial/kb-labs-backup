@@ -113,6 +113,8 @@ function createMockSource(pluginDirs: Map<string, { dir: string; version: string
     async remove(_packageId: string, _root: string): Promise<void> {
       // noop in tests
     },
+    async commitInstall() {},
+    async rollbackInstall() {},
   };
 }
 
@@ -144,6 +146,8 @@ describe('MarketplaceService', () => {
         },
         install,
         async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
       };
       const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const { PackageClassificationError } = await import('../marketplace-service.js');
@@ -299,6 +303,8 @@ describe('MarketplaceService', () => {
         },
         async install(): Promise<InstalledPackage> { throw new Error('platform plugin must use the extension store'); },
         async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
       };
       const sourceInstall = vi.spyOn(source, 'install');
       const storeResolve = vi.fn(async () => {
@@ -343,6 +349,8 @@ describe('MarketplaceService', () => {
           return { id: packageId, version: '1.0.0', packageRoot, integrity: 'sha256-fixture' };
         },
         async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
       };
       const sourceInstall = vi.spyOn(source, 'install');
       const storeResolve = vi.fn(async () => { throw new Error('Platform adapters must not use the plugin store'); });
@@ -460,6 +468,67 @@ describe('MarketplaceService', () => {
       // Lock must NOT contain the bogus entry.
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
       expect(lock?.plugins['mind']).toBeUndefined();
+    });
+
+    // case: S-220.11
+    it('rolls back package-manager state when adapter validation fails after installation', async () => {
+      const packageRoot = path.join(tmpDir, 'packages', 'broken-adapter');
+      await fs.mkdir(packageRoot, { recursive: true });
+      await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+        name: '@kb-labs/broken-adapter', version: '1.0.0', type: 'module', kb: { manifest: './manifest.mjs' },
+      }));
+      await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = { schema: "kb.adapter/1", implements: "ICache" };');
+      const state = { installed: false, committed: false };
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: '@kb-labs/broken-adapter', version: '1.0.0', integrity: 'sha256-fixture', source: 'marketplace', primaryKind: 'adapter' };
+        },
+        async install(pkg): Promise<InstalledPackage> {
+          state.installed = true;
+          return { id: pkg.id, version: pkg.version, packageRoot, integrity: pkg.integrity };
+        },
+        async remove() {},
+        async commitInstall() { state.committed = true; },
+        async rollbackInstall() { state.installed = false; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+
+      await expect(service.install({ scope: 'platform' }, ['@kb-labs/broken-adapter']))
+        .rejects.toMatchObject({ code: 'KB_ADAPTER_MANIFEST_LOAD' });
+
+      expect(state).toEqual({ installed: false, committed: false });
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.adapters?.['@kb-labs/broken-adapter']).toBeUndefined();
+    });
+
+    // case: S-220.11
+    it('restores the exact prior lock and manifest cache when install commit fails', async () => {
+      const packageId = '@kb-labs/commit-failure-adapter';
+      const packageRoot = await createAdapterDir(tmpDir, 'commit-failure-adapter', packageId);
+      await fs.writeFile(path.join(packageRoot, 'dist', 'index.js'), `export const manifest = ${JSON.stringify({
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: packageId, name: packageId,
+        version: '1.0.0', type: 'core', implements: 'ITestAdapter', networkRequired: false,
+      })};`);
+      const source = createMockSource(new Map([[packageId, {
+        dir: packageRoot,
+        version: '1.0.0',
+        integrity: 'sha256-fixture',
+      }]]));
+      vi.spyOn(source, 'commitInstall').mockRejectedValueOnce(new Error('candidate activation failed'));
+
+      const lockPath = path.join(tmpDir, '.kb', 'marketplace.lock');
+      const cachePath = path.join(tmpDir, '.kb', 'marketplace.manifests.json');
+      await fs.mkdir(path.dirname(lockPath), { recursive: true });
+      const lockBefore = '{\n  "schema": "kb.marketplace/3",\n  "plugins": {},\n  "adapters": {}\n}\n';
+      const cacheBefore = '{\n  "schema": "kb.marketplace.manifests/1",\n  "entries": {"preserved": {"id": "preserved"}}\n}\n';
+      await fs.writeFile(lockPath, lockBefore);
+      await fs.writeFile(cachePath, cacheBefore);
+
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await expect(service.install({ scope: 'platform' }, [packageId])).rejects.toThrow('candidate activation failed');
+
+      expect(await fs.readFile(lockPath, 'utf8')).toBe(lockBefore);
+      expect(await fs.readFile(cachePath, 'utf8')).toBe(cacheBefore);
     });
   });
 

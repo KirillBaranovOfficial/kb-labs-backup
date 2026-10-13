@@ -255,6 +255,53 @@ describe('NpmPackageSource', () => {
       expect(lock).toContain(resolved.integrity);
       expect(workspace).toContain(`"${packageId}@1.0.0"`);
       expect(workspace).toContain('unrelated-package: 1.0.0');
+      await source.commitInstall(packageId, root);
+    } finally {
+      await registry.close();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // case: S-220.11
+  it('restores the exact package-manager files and installed graph after marketplace validation fails', async () => {
+    const { root, home } = await createInstallRoot();
+    const registry = await createLocalRegistry(root);
+    try {
+      const packageId = '@kb-labs/rollback-adapter';
+      await registry.publish(packageId);
+      await isolatePnpmEnvironment(home, registry.url, path.join(root, 'pnpm-store'));
+      const sealedPackage = '@kb-labs/sealed-runtime';
+      const sealedDigest = 'sealed-runtime-digest';
+      const receiptPath = path.join(root, '.kb', 'v2', 'receipt.json');
+      await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+      const receipt = JSON.stringify({ plan: { artifacts: [
+        { package: sealedPackage, sha256: sealedDigest, tarball: 'registry/sealed-runtime.tgz', kind: 'sdk' },
+      ] } }) + '\n';
+      await fs.writeFile(receiptPath, receipt);
+      const workspacePath = path.join(root, 'pnpm-workspace.yaml');
+      const workspace = (await fs.readFile(workspacePath, 'utf8')).replace(
+        'overrides:\n  unrelated-package: 1.0.0',
+        `overrides:\n  "${sealedPackage}": "file:.kb/v2/cache/packages/${sealedDigest}.tgz"\n  unrelated-package: 1.0.0`,
+      );
+      await fs.writeFile(workspacePath, workspace);
+      const sealedInstalledPackage = path.join(root, 'node_modules', ...sealedPackage.split('/'), 'package.json');
+      await fs.mkdir(path.dirname(sealedInstalledPackage), { recursive: true });
+      await fs.writeFile(sealedInstalledPackage, JSON.stringify({ name: sealedPackage, version: '2.120.1' }) + '\n');
+      const packageJsonBefore = await fs.readFile(path.join(root, 'package.json'));
+      const workspaceBefore = await fs.readFile(workspacePath);
+      const sealedPackageBefore = await fs.readFile(sealedInstalledPackage);
+      const source = new NpmPackageSource({ registryUrl: registry.url });
+      const resolved = await source.resolve(packageId);
+      const installed = await source.install(resolved, root);
+
+      await source.rollbackInstall(packageId, root);
+
+      expect(await fs.readFile(path.join(root, 'package.json'))).toEqual(packageJsonBefore);
+      expect(await fs.readFile(workspacePath)).toEqual(workspaceBefore);
+      expect(await fs.readFile(receiptPath, 'utf8')).toBe(receipt);
+      expect(await fs.readFile(sealedInstalledPackage)).toEqual(sealedPackageBefore);
+      await expect(fs.access(path.join(root, 'pnpm-lock.yaml'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.access(installed.packageRoot)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await registry.close();
       await fs.rm(root, { recursive: true, force: true });
@@ -414,7 +461,7 @@ describe('NpmPackageSource', () => {
 
       expect(error).toMatchObject({
         name: 'PlatformArtifactPinsError',
-        code: 'MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING',
+        code: 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING',
         message: "The installed platform is missing kb-create's sealed artifact overrides. No package was installed.",
         hint: `Run "kb-create update --platform-root ${JSON.stringify(root)}" and retry "kb marketplace install @kb-labs/adapters-analytics-file@2.120.1 --scope platform".`,
       });
@@ -442,7 +489,7 @@ describe('NpmPackageSource', () => {
       await fs.writeFile(path.join(root, 'pnpm-workspace.yaml'), 'overrides:\n  lodash: 4.17.21\n');
 
       await expect(assertSealedPlatformOverrides(root, '@kb-labs/adapters-analytics-file', '2.120.1'))
-        .rejects.toMatchObject({ code: 'MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING' });
+        .rejects.toMatchObject({ code: 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING' });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

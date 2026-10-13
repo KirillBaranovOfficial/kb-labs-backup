@@ -235,27 +235,30 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 if args[:3] == ["adapter", "list", "--json"]:
                     value = config(root)
                     project_platform = value.get("platform", {})
-                    if ("adapters" in project_platform or "adapterOptions" in project_platform or
+                    registry_path = Path(env["HOME"]) / ".kb" / "projects.json"
+                    registry_data = json.loads(registry_path.read_text())
+                    registered_paths = {Path(item["path"]).resolve() for item in registry_data.get("projects", [])}
+                    if root.resolve() in registered_paths and ("adapters" in project_platform or "adapterOptions" in project_platform or
                             "adapters" in value or "adapterOptions" in value):
                         error = {"code": "KB_ADAPTER_PROJECT_SCOPE", "message": "Project adapter configuration is unsupported.",
                                  "hint": "Move `platform.adapters` and `platform.adapterOptions` to the platform config."}
                         return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                     platform_value = config(platform_root)
-                    platform_config = platform_value.get("platform", {})
-                    options = platform_config.get("adapterOptions", {}).get("storage", {})
-                    document_path = platform_config.get("adapterOptions", {}).get("documentDatabase", {}).get("filename")
+                    platform_settings = platform_value.get("platform", {})
+                    options = platform_settings.get("adapterOptions", {}).get("storage", {})
+                    document_path = platform_settings.get("adapterOptions", {}).get("documentDatabase", {}).get("filename")
                     if isinstance(document_path, str) and (document_path.startswith(".kb/") or document_path.startswith("../")):
                         corrected = "database/kb.sqlite" if document_path.startswith(".kb/") else Path(document_path).name
                         error = {"code": "KB_CONFIG_INVALID", "message": "Platform adapter path is outside the platform data root.",
                                  "hint": f"Run `kb config set --scope platform platform.adapterOptions.documentDatabase '{{\"filename\":\"{corrected}\"}}'`."}
                         return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                     for slot, key in (("documentDatabase", "filename"), ("analytics", "dbPath")):
-                        raw_path = platform_config.get("adapterOptions", {}).get(slot, {}).get(key)
+                        raw_path = platform_settings.get("adapterOptions", {}).get(slot, {}).get(key)
                         if isinstance(raw_path, str) and not Path(raw_path).is_absolute():
                             output = Path(os.path.realpath(platform_root / ".kb" / "data")) / raw_path
                             output.parent.mkdir(parents=True, exist_ok=True)
                             output.touch()
-                    analytics_provider = platform_config.get("adapters", {}).get(
+                    analytics_provider = platform_settings.get("adapters", {}).get(
                         "analytics", "@kb-labs/adapters-analytics-sqlite")
                     storage_base = Path(options.get("baseDir", storage_default))
                     if not storage_base.is_absolute():
@@ -299,7 +302,14 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     value = config(platform_root)
                     value.setdefault("platform", {}).setdefault("adapterOptions", {})[parts[2]] = json.loads(raw)
                     write_config(platform_root, value)
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "scope": "platform"}), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                        "ok": True, "file": str(platform_config), "scope": "platform",
+                    }), "")
+                if args[:2] == ["config", "get"] and args[2:4] == ["--scope", "platform"]:
+                    value = config(platform_root).get("platform", {}).get("adapterOptions", {}).get("storage")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                        "value": value, "file": str(platform_config),
+                    }}), "")
                 if args[:2] == ["adapter", "bind"]:
                     value = config(platform_root)
                     value.setdefault("platform", {}).setdefault("adapters", {})[args[2]] = args[3]
@@ -433,7 +443,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 with patch("adapter_defaults_steps.urllib.request.urlopen", side_effect=fake_urlopen):
                     run_adapter_default_steps(journey, project_a, env, fake_run)
 
-            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {"S-054.21", "S-054.22"} | {f"S-048.{number}" for number in range(1, 7)}
+            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {"S-054.21", "S-054.22"} | {f"S-048.{number}" for number in range(1, 8)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             cleanup = next(step for step in journey.steps if step.name == "restore adapter journey fixture state")
@@ -451,6 +461,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 self.assertIn("[discover]", row["stderr"])
             self.assertIn(("kb", "adapter", "list", "--json"), calls)
             self.assertIn(("kb", "adapter", "unbind", "storage", "--json"), calls)
+            self.assertIn(("kb", "config", "get", "--scope", "platform", "platform.adapterOptions.storage", "--json"), calls)
             self.assertIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)
             self.assertIn(("kb", "commit", "generate", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
