@@ -26,6 +26,8 @@ from installer_case_steps import (_data, _seed_doctor_fixture,
                                   _snapshot_installation_owned_tree, shim_owner_matches,
                                   assert_foreign_shim_diagnosis, assert_other_shim_diagnosis,
                                   assert_gateway_index_diagnosis, verify_installation_spellings)
+from installer_case_steps import (verify_primary_installation_spellings,
+                                  verify_stable_installation_spellings)
 from invocations import PtyCommandTimeout
 from journey_resources import (active_platform_root, case_catalog_root,
                                create_fixture_install_container)
@@ -35,20 +37,16 @@ from service_port_assertions import assert_service_ports_preserved
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
-    def test_installation_spelling_matrix_checks_one_gateway_row_and_receipt(self):
+    def test_installation_spelling_matrix_uses_case_verbs_and_scenario_shim_owner(self):
         with tempfile.TemporaryDirectory(prefix="journey-install-spellings-") as temp:
             home = Path(temp)
             install_root = home / "platform"
             active_root = install_root / "versions" / "v1"
             active_root.mkdir(parents=True)
             (install_root / "current").symlink_to("versions/v1", target_is_directory=True)
-            secondary_root = home / "secondary"
-            secondary_active = secondary_root / "versions" / "v1"
-            secondary_active.mkdir(parents=True)
-            (secondary_root / "current").symlink_to("versions/v1", target_is_directory=True)
             launcher = home / ".local" / "bin" / "kb-create"
             launcher.parent.mkdir(parents=True)
-            (launcher.parent / "kb").symlink_to("platform/current/.kb/v2/bin/kb")
+            (launcher.parent / "kb").symlink_to(install_root / "current/.kb/v2/bin/kb")
             registry = home / ".kb" / "launcher" / "gateway-roots.json"
             registry.parent.mkdir(parents=True)
             writer_fixture = Path(__file__).parent / "testdata" / "gateway-roots-schema2.json"
@@ -58,69 +56,57 @@ class InstallerCaseStepsTest(unittest.TestCase):
             installation_id = writer_registry["roots"][0]["installationId"]
             gateway_url = writer_registry["roots"][0]["url"]
             registry.write_bytes(writer_fixture.read_bytes())
+            (active_root / ".kb/v2").mkdir(parents=True)
+            (active_root / ".kb/v2/receipt.json").write_text(json.dumps({
+                "id": "receipt-one", "installationId": installation_id,
+                "plan": {"platformChannel": "stable", "serviceGraph": {"platformVersion": "1.2.3"},
+                         "request": {"gatewayUrl": gateway_url}},
+                "verification": {"hostHealthUrl": gateway_url + "/health"},
+            }))
             calls = []
-            shim_owner = None
-            root_spellings = {
-                str(install_root): install_root.resolve(),
-                str(install_root / "current"): install_root.resolve(),
-                str(active_root.resolve()): install_root.resolve(),
-                str(secondary_root): secondary_root.resolve(),
-                str(secondary_root / "current"): secondary_root.resolve(),
-                str(secondary_active.resolve()): secondary_root.resolve(),
-            }
 
             def run_command(args):
-                nonlocal shim_owner
                 calls.append(args)
                 operation = args[1]
+                requested_root = Path(args[args.index("--platform-root") + 1])
+                # Model the installed product's already registered installation. The
+                # response depends on the command and root, never on the helper's expectation.
+                if requested_root not in (install_root, install_root / "current", active_root.resolve()):
+                    raise AssertionError(f"unregistered install spelling: {requested_root}")
                 if operation == "plan":
                     payload = {"plan": {"request": {"gatewayUrl": gateway_url},
                                          "serviceGraph": {"platformVersion": "1.2.3"}}}
-                elif operation == "apply":
-                    requested_root = Path(args[args.index("--platform-root") + 1])
-                    requested_installation = root_spellings.get(str(requested_root), requested_root.resolve())
-                    if shim_owner is None:
-                        shim_owner = requested_installation
-                    payload = {"operation": "apply", "receipt": {"id": "receipt-one",
-                                                                       "installationId": installation_id,
-                                                                       "plan": {"request": {"gatewayUrl": gateway_url}}},
-                               "shim": {"linked": requested_installation == shim_owner,
-                                        "owner": str(shim_owner)}}
-                elif operation == "uninstall":
-                    requested_root = Path(args[args.index("--platform-root") + 1])
-                    if root_spellings.get(str(requested_root), requested_root.resolve()) == shim_owner:
-                        shim_owner = None
-                    payload = {"operation": "uninstall"}
-                elif operation == "remove-shim":
-                    shim_owner = None
-                    payload = {"operation": "remove-shim"}
                 elif operation == "status":
                     payload = {"installation": {"receiptId": "receipt-one", "platformVersion": "1.2.3",
                                                  "platformChannel": "stable"}}
-                else:
+                elif operation == "update":
                     payload = {"operation": "update", "alreadyUpToDate": True}
+                else:
+                    raise AssertionError(f"unexpected operation: {operation}")
                 return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": payload}), "")
 
-            verify_installation_spellings(
-                launcher=str(launcher), index=home / "stable-index.json", install_root=install_root,
-                channel="stable", version="1.2.3", gateway_url=gateway_url,
-                installation_id=installation_id, run_command=run_command)
-
             expected_spellings = [str(install_root), str(install_root / "current"), str(active_root.resolve())]
-            self.assertEqual(len(calls), 12)
-            for operation_index in range(4):
-                self.assertEqual([calls[index][-1] for index in range(operation_index, 12, 4)], expected_spellings)
+            verify_primary_installation_spellings(
+                launcher=str(launcher), index=home / "stable-index.json", install_root=install_root,
+                run_command=run_command)
+            self.assertEqual([call[1] for call in calls], ["plan", "update"] * 3)
+            self.assertEqual([call[-1] for call in calls],
+                             [spelling for spelling in expected_spellings for _ in (0, 1)])
 
-            secondary_result = run_command([launcher, "apply", "--platform-root", str(secondary_root)])
-            secondary_data = json.loads(secondary_result.stdout)["data"]
-            self.assertEqual(secondary_data["shim"], {"linked": False, "owner": str(install_root.resolve())})
-            self.assertTrue(shim_owner_matches(
-                secondary_data, install_root=secondary_root, expected_owner=install_root))
-            self.assertFalse(
-                shim_owner_matches(
-                    secondary_data, install_root=secondary_root, expected_owner=secondary_root),
-                "mutation: treating the secondary apply root as owner must fail against the first owner's result",
-            )
+            calls.clear()
+            verify_stable_installation_spellings(
+                launcher=str(launcher), index=home / "stable-index.json", install_root=install_root,
+                shim_owner_root=install_root, run_command=run_command)
+            self.assertEqual([call[1] for call in calls], ["status", "plan", "update"] * 3)
+            self.assertEqual([call[-1] for call in calls],
+                             [spelling for spelling in expected_spellings for _ in (0, 1, 2)])
+
+            with self.assertRaisesRegex(RuntimeError, "scenario owner"):
+                verify_installation_spellings(
+                    launcher=str(launcher), index=home / "stable-index.json", install_root=install_root,
+                    channel="stable", version="1.2.3", gateway_url=gateway_url,
+                    installation_id=installation_id, receipt_id="receipt-one", operations=("plan", "update"),
+                    shim_owner_root=home / "secondary", run_command=run_command)
 
     def test_shim_owner_expectation_uses_the_first_product_owner(self):
         with tempfile.TemporaryDirectory(prefix="journey-shim-owner-") as temp:
@@ -844,9 +830,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                }},
                            })}]}}
                 (active / ".kb/v2/receipt.json").write_text(json.dumps(receipt))
-                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
-                    "receipt": receipt, "shim": {"linked": False, "owner": str(primary.resolve())},
-                }}), "")
+                payload = {"receipt": receipt, "shim": {"linked": False, "owner": str(primary.resolve())}}
+                records = [
+                    {"ok": True, "data": {"phase": "Install packages", "state": "completed"}},
+                    {"ok": True, "data": payload, "meta": {"stream": {"result": True}}},
+                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 0}}},
+                ]
+                return subprocess.CompletedProcess(args, 0, "\n".join(json.dumps(record) for record in records) + "\n", "")
 
             journey = run_gateway_allocation_step(mode="local", launcher="kb-create", stable_index=index,
                                                   primary_root=primary, automatic_root=automatic,
@@ -854,8 +844,10 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["PC-001.10", "PC-001.16"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual([call[1] for call in calls], ["stop", "apply", "plan", "plan", "status", "stop"])
+        self.assertEqual([call[1] for call in calls], ["stop", "install", "plan", "plan", "status", "stop"])
         self.assertEqual(calls[1][calls[1].index("--gateway-url") + 1], "http://127.0.0.1:4200")
+        self.assertEqual(calls[1][calls[1].index("--project-root") + 1],
+                         str(explicit.parent / "pc001-explicit-gateway-project"))
         self.assertEqual(calls[2][calls[2].index("--platform-root") + 1], str(explicit.parent / "root-d"))
 
     def test_port_conflict_claim_binds_the_gateway_port_from_the_plan(self):

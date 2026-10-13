@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,37 @@ import (
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
 )
+
+func TestJourneySchema2FixtureRoundTripsThroughRegistryReaderAndWriter(t *testing.T) {
+	fixturePath := filepath.Join("..", "..", "..", "..", "e2e", "journey", "testdata", "gateway-roots-schema2.json")
+	original, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(t.TempDir(), "gateway-roots.json")
+	if err := os.WriteFile(input, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	roots, err := (Registry{Path: input}).Read()
+	if err != nil {
+		t.Fatalf("strict reader rejected shared journey fixture: %v", err)
+	}
+	if len(roots) != 1 || roots[0].PlatformRoot == "" || !validInstallationID(roots[0].InstallationID) || !validOrigin(roots[0].URL) {
+		t.Fatalf("shared fixture roots = %#v, want one complete schema-2 root", roots)
+	}
+
+	output := filepath.Join(t.TempDir(), "gateway-roots.json")
+	if err := (Registry{Path: output}).write(roots); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(actual, original) {
+		t.Fatalf("shared journey fixture differs from Registry.write output:\nfixture:\n%s\nwriter:\n%s", original, actual)
+	}
+}
 
 func TestRegistryUnreadableIndexReturnsActionableCataloguedDiagnostic(t *testing.T) {
 	base := t.TempDir()
