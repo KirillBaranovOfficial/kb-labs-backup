@@ -7,12 +7,20 @@ from pathlib import Path
 from typing import Callable
 
 from platform_update_steps import _json_command
-from invocations import decode_ux_error_result, decode_ux_success_result, read_ux_cli_result
+from invocations import (decode_ux_error_result, decode_ux_success_result,
+                         read_kb_create_cli_result)
 from journey_resources import active_platform_root
 from service_steps import Journey
 
 
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
+
+
+def decode_canary_apply_result(command: subprocess.CompletedProcess) -> dict:
+    """Decode the result frame from apply's command-registered JSON stream."""
+    envelope = read_kb_create_cli_result("apply", command.stdout, command.returncode)
+    return (decode_ux_success_result(envelope) if command.returncode == 0
+            else decode_ux_error_result(envelope))
 
 
 def run_platform_channel_steps(
@@ -65,9 +73,7 @@ def run_platform_channel_steps(
                     "--project-root", str(project_root)]
             command = run_command(args)
             try:
-                envelope = read_ux_cli_result(command.stdout, command.returncode)
-                result = (decode_ux_success_result(envelope) if command.returncode == 0
-                          else decode_ux_error_result(envelope))
+                result = decode_canary_apply_result(command)
             except ValueError as error:
                 raise RuntimeError(f"apply canary: expected an ADR-0049 result: {error}") from error
             if not isinstance(result, dict):
@@ -192,7 +198,7 @@ def run_platform_channel_steps(
         request_file.write_text(json.dumps(request) + "\n")
         result = run_command([launcher, "update", "--json", "--index", str(stable_index), "--input", str(request_file)])
         try:
-            envelope = read_ux_cli_result(result.stdout, result.returncode)
+            envelope = read_kb_create_cli_result("update", result.stdout, result.returncode)
             failure = decode_ux_error_result(envelope)
         except ValueError as error:
             raise RuntimeError(f"stable downgrade refusal returned an invalid ADR-0049 result: {error}") from error

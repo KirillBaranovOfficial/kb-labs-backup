@@ -11,7 +11,8 @@ from typing import Callable
 from service_steps import Journey
 from journey_resources import (active_platform_root, current_link_path,
                                parse_shell_commands, snapshot_state_tree)
-from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
+from invocations import (decode_ux_error_result, decode_ux_success_result,
+                         read_kb_create_cli_result, read_ux_cli_result,
                          run_command as invoke_command, run_with_runner)
 from service_port_assertions import assert_service_ports_preserved
 
@@ -22,10 +23,10 @@ CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
 def _json_command(run_command: CommandRunner, args: list[str], label: str) -> dict:
     result = run_command(args)
     try:
-        value = read_ux_cli_result(result.stdout, result.returncode)
+        value = read_kb_create_cli_result(args[1], result.stdout, result.returncode)
         if result.returncode != 0:
             error = decode_ux_error_result(value)
-            raise RuntimeError(f"{label}: {error!r}{_log_tail(result.stdout, result.returncode)}")
+            raise RuntimeError(f"{label}: {error!r}{_log_tail(args[1], result.stdout, result.returncode)}")
         payload = decode_ux_success_result(value)
     except ValueError as error:
         raise RuntimeError(f"{label}: expected a valid ADR-0049 result: {error}") from error
@@ -34,10 +35,10 @@ def _json_command(run_command: CommandRunner, args: list[str], label: str) -> di
     return payload
 
 
-def _log_tail(stdout: str, returncode: int) -> str:
+def _log_tail(command: str, stdout: str, returncode: int) -> str:
     """The end of the operation log named by a failed launcher result, so the journey report shows the cause."""
     try:
-        envelope = read_ux_cli_result(stdout, returncode)
+        envelope = read_kb_create_cli_result(command, stdout, returncode)
         payload = decode_ux_error_result(envelope) if returncode else decode_ux_success_result(envelope)
         log_path = payload.get("logPath")
         text = Path(log_path).read_text(encoding="utf-8", errors="replace") if log_path else ""
@@ -475,7 +476,7 @@ def run_platform_update_steps(
         if result.returncode == 0:
             raise RuntimeError("rollback unexpectedly accepted an unknown snapshot")
         try:
-            envelope = read_ux_cli_result(result.stdout, result.returncode)
+            envelope = read_kb_create_cli_result("rollback", result.stdout, result.returncode)
             error = decode_ux_error_result(envelope)
         except ValueError as error:
             raise RuntimeError(f"unknown-snapshot rollback returned an invalid ADR-0049 result: {error}") from error
@@ -621,7 +622,7 @@ def run_platform_update_steps(
         refused = run_command([launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
                                "--input", str(request_file), "--secret-env", f"{secret}={env_name}"])
         try:
-            envelope = read_ux_cli_result(refused.stdout, refused.returncode)
+            envelope = read_kb_create_cli_result("update", refused.stdout, refused.returncode)
             failure = decode_ux_error_result(envelope)
         except ValueError as error:
             raise RuntimeError(f"changed update secret did not return a typed refusal: {error}") from error

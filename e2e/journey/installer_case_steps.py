@@ -19,8 +19,9 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from platform_update_steps import _json_command
-from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_failure, read_ux_cli_result,
-                         read_ux_cli_stream, run_command as evidence_run_command)
+from invocations import (decode_ux_error_result, decode_ux_success_result, read_kb_create_cli_result,
+                         read_ux_cli_result, read_kb_create_cli_stream,
+                         run_command as evidence_run_command)
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
                                active_platform_root, create_fixture_install_container,
                                snapshot_tree, workspace_resource)
@@ -31,14 +32,14 @@ from service_steps import Journey
 CommandRunner = Callable[..., subprocess.CompletedProcess]
 
 
-def parse_install_refusal(stdout: str) -> dict | None:
+def parse_install_refusal(stdout: str, returncode: int) -> dict | None:
     """Return the typed product envelope from a failed JSON install stream."""
-    for line in stdout.splitlines():
-        try:
-            return decode_ux_error_result(json.loads(line))
-        except (json.JSONDecodeError, ValueError, AttributeError):
-            continue
-    return None
+    try:
+        envelope = read_kb_create_cli_stream("install", stdout, returncode)
+    except ValueError:
+        return None
+    return next((decode_ux_error_result(record) for record in envelope[:-1]
+                 if record.get("ok") is False), None)
 
 
 def _hint_has_argv(text: str, expected: list[str]) -> bool:
@@ -198,7 +199,9 @@ def assert_gateway_index_diagnosis(data: dict, path: Path, root: Path) -> None:
 
 def read_gateway_index_refusal(result: subprocess.CompletedProcess, label: str,
                                path: Path, root: Path) -> dict:
-    error, exit_code = read_ux_cli_failure(result.stdout, result.returncode)
+    envelope = read_kb_create_cli_result(result.args[1], result.stdout, result.returncode)
+    error = decode_ux_error_result(envelope)
+    exit_code = result.returncode
     if exit_code != 2:
         raise RuntimeError(f"{label}: expected input-refusal exit 2, got {exit_code}")
     assert_gateway_index_diagnosis({"error": error}, path, root)
@@ -278,27 +281,20 @@ def _assert_repeat_install_applied(result: subprocess.CompletedProcess, *, launc
 
 
 def _payload(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dict]:
+    command = result.args[1]
     if result.returncode != 0:
         try:
-            error, _ = read_ux_cli_failure(result.stdout, result.returncode)
+            envelope = read_kb_create_cli_result(command, result.stdout, result.returncode)
+            error = decode_ux_error_result(envelope)
         except ValueError as failure:
             raise RuntimeError(f"{label}: expected a structured CLI failure: {failure}") from failure
         return {"ok": False, "error": error}, error
 
     try:
-        envelope = read_ux_cli_result(result.stdout, result.returncode)
+        envelope = read_kb_create_cli_result(command, result.stdout, result.returncode)
         data = decode_ux_success_result(envelope)
     except ValueError as error:
-        try:
-            records = read_ux_cli_stream(result.stdout, result.returncode)
-        except ValueError:
-            raise RuntimeError(f"{label}: expected an ADR-0049 JSON result or stream: {error}") from error
-        if result.returncode == 0:
-            envelope = next((record for record in reversed(records[:-1])
-                             if record.get("meta", {}).get("stream", {}).get("result") is True), None)
-            if envelope is None:
-                raise RuntimeError(f"{label}: successful CLI stream omitted its result record")
-            data = decode_ux_success_result(envelope)
+        raise RuntimeError(f"{label}: expected the registered kb-create JSON result form: {error}") from error
     return envelope, data if isinstance(data, dict) else {}
 
 
@@ -1274,8 +1270,7 @@ def run_apply_scenario_step(*, mode: str, launcher: str, stable_index: Path,
                               "--platform-root", str(apply_root), "--service-profile", "default",
                               "--scenario", "commit", "--scenario-answers", answers])
         try:
-            records = [read_ux_cli_result(line, result.returncode)
-                       for line in result.stdout.splitlines() if line.strip()]
+            records = read_kb_create_cli_stream("apply", result.stdout, result.returncode)
             terminal = records[-1] if records else {}
             stream = terminal.get("meta", {}).get("stream", {})
             apply_results = [decode_ux_success_result(record) for record in records[:-1]
@@ -1564,7 +1559,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             before = hashlib.sha256(legacy_receipt.read_bytes()).digest()
             refused = run_command([launcher, "update", "--json", "--index", str(stable_index),
                                    "--input", str(legacy_request)])
-            error = decode_ux_error_result(read_ux_cli_result(refused.stdout, refused.returncode))
+            error = decode_ux_error_result(read_kb_create_cli_result("update", refused.stdout, refused.returncode))
             after = hashlib.sha256(legacy_receipt.read_bytes()).digest()
             if (refused.returncode == 0 or error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
                     or "kb-create install --platform-root" not in error.get("hint", "") or before != after):
@@ -1574,7 +1569,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 ("rollback", ["--platform-root", str(legacy_root), "--snapshot", "snapshot-from-copy", "--yes", "--json"]),
             ):
                 refused = run_command([launcher, operation, *arguments])
-                error = decode_ux_error_result(read_ux_cli_result(refused.stdout, refused.returncode))
+                error = decode_ux_error_result(read_kb_create_cli_result(operation, refused.stdout, refused.returncode))
                 if (refused.returncode == 0 or error.get("code") != "KB_INSTALL_LAYOUT_UNSUPPORTED"
                         or "kb-create install --platform-root" not in error.get("hint", "")
                         or hashlib.sha256(legacy_receipt.read_bytes()).digest() != before):

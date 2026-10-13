@@ -32,6 +32,10 @@ _SECRET_ARGUMENT_TEXT = re.compile(
     rf"(?i)(--{_SECRET_ARGUMENT_NAME}(?:=\s*|\s+))([^\s,;]+)"
 )
 
+# `root.go` routes these registered commands to JSON stream executors. Every
+# other registered kb-create command returns one ADR-0049 document.
+KB_CREATE_JSON_STREAM_COMMANDS = frozenset({"install", "apply"})
+
 
 def is_secret_key(key: str) -> bool:
     """Return whether an environment key is covered by the report redactor."""
@@ -162,26 +166,29 @@ def read_ux_cli_stream(stdout: str, returncode: int) -> list[dict[str, Any]]:
     return records
 
 
-def read_ux_cli_failure(stdout: str, returncode: int) -> tuple[dict[str, Any], int]:
-    """Read a typed CLI failure from either a result document or JSONL stream."""
-    try:
-        envelope = read_ux_cli_result(stdout, returncode)
-    except ValueError as document_error:
-        try:
-            records = read_ux_cli_stream(stdout, returncode)
-        except ValueError as stream_error:
-            raise stream_error from document_error
-        failures = [record for record in records[:-1] if record.get("ok") is False]
-        if len(failures) != 1:
-            _invalid_ux_result("failed CLI stream must contain exactly one error result")
-        terminal = records[-1]
-        terminal_meta = terminal.get("meta", {})
-        stream = terminal_meta.get("stream", {}) if isinstance(terminal_meta, dict) else {}
-        return decode_ux_error_result(failures[0]), stream["exitCode"]
+def read_kb_create_cli_stream(command: str, stdout: str, returncode: int) -> list[dict[str, Any]]:
+    """Validate that a kb-create command registered for streams emitted a valid stream."""
+    if command not in KB_CREATE_JSON_STREAM_COMMANDS:
+        _invalid_ux_result(f"kb-create {command} is registered for a single JSON document, not a stream")
+    return read_ux_cli_stream(stdout, returncode)
 
+
+def read_kb_create_cli_result(command: str, stdout: str, returncode: int) -> dict[str, Any]:
+    """Validate the registered kb-create command's JSON output form and return its result."""
+    if command not in KB_CREATE_JSON_STREAM_COMMANDS:
+        return read_ux_cli_result(stdout, returncode)
+    records = read_kb_create_cli_stream(command, stdout, returncode)
     if returncode == 0:
-        _invalid_ux_result("CLI command succeeded when a failure was expected")
-    return decode_ux_error_result(envelope), returncode
+        results = [record for record in records[:-1]
+                   if record.get("ok") is True
+                   and record.get("meta", {}).get("stream", {}).get("result") is True]
+        if len(results) != 1:
+            _invalid_ux_result(f"kb-create {command} stream must contain exactly one result record")
+        return results[0]
+    failures = [record for record in records[:-1] if record.get("ok") is False]
+    if len(failures) != 1:
+        _invalid_ux_result(f"kb-create {command} stream must contain exactly one error result")
+    return failures[0]
 
 
 def describe_cli_failure(command: str, stdout: str, stderr: str, returncode: int) -> str:

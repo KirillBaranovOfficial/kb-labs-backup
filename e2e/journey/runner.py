@@ -42,7 +42,8 @@ from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps,
 from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
 from scoreboard import release_claims_for_case, write_scoreboards
 from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
-                         invocation_context, open_http, print_report_text, read_ux_cli_result,
+                         invocation_context, open_http, print_report_text, read_kb_create_cli_result,
+                         read_kb_create_cli_stream, read_ux_cli_result,
                          store_report_secret, run_command, run_pty_command,
                          start_background_command, write_report_text)
 
@@ -195,7 +196,7 @@ def probe_platform_state(graph: FlowGraph, env: dict[str, str], launcher: str,
     def host_probe() -> str | None:
         result, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
         try:
-            payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+            payload = decode_ux_success_result(read_kb_create_cli_result("status", result.stdout, result.returncode))
             if (result.returncode != 0 or payload.get("running") is not True
                     or payload.get("reachable") is not True):
                 return f"kb-create status reports running={payload.get('running')!r}, reachable={payload.get('reachable')!r}"
@@ -271,7 +272,7 @@ def record_case(name: str, passed: bool, message: str, *, cases: list[str],
 def handle_json_install_failure(operation: str, result: subprocess.CompletedProcess) -> bool:
     if operation != "install" or result.returncode == 0:
         return False
-    refusal = parse_install_refusal(result.stdout)
+    refusal = parse_install_refusal(result.stdout, result.returncode)
     if refusal is None:
         fail("kb-create install --json: failed without a parseable product error envelope")
         return True
@@ -708,7 +709,7 @@ def uninstall_removed_platform_root():
 def restart_host(launcher: str, env: dict[str, str]) -> str:
     result, _ = run([launcher, "restart", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=180)
     try:
-        payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+        payload = decode_ux_success_result(read_kb_create_cli_result("restart", result.stdout, result.returncode))
     except json.JSONDecodeError:
         payload = {}
     restarted = (result.returncode == 0 and payload.get("operation") == "restart"
@@ -730,7 +731,7 @@ def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     try:
         result, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
         try:
-            diagnostic = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
+            diagnostic = decode_ux_error_result(read_kb_create_cli_result("doctor", result.stdout, result.returncode))
         except (json.JSONDecodeError, AttributeError):
             diagnostic = {}
         human, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM)], env=env, timeout=120)
@@ -747,7 +748,7 @@ def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     restored, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
     restored_message = "doctor did not return a healthy result after restoring the receipt"
     try:
-        restored_payload = decode_ux_success_result(read_ux_cli_result(restored.stdout, restored.returncode))
+        restored_payload = decode_ux_success_result(read_kb_create_cli_result("doctor", restored.stdout, restored.returncode))
     except (json.JSONDecodeError, ValueError):
         restored_payload = {}
         restored_message = describe_cli_failure("kb-create doctor", restored.stdout, restored.stderr,
@@ -775,7 +776,7 @@ def run_uninstall_group(graph: FlowGraph, env: dict[str, str], launcher: str) ->
         dump_failure_state()
     refused, _ = run([*uninstall_args, "--json"], env=env, timeout=120)
     try:
-        refusal_payload = read_ux_cli_result(refused.stdout, refused.returncode)
+        refusal_payload = read_kb_create_cli_result("uninstall", refused.stdout, refused.returncode)
     except json.JSONDecodeError:
         refusal_payload = {}
     refusal_error = decode_ux_error_result(refusal_payload)
@@ -820,7 +821,7 @@ def run_uninstall_group(graph: FlowGraph, env: dict[str, str], launcher: str) ->
                        cases=["S-050.5"], runners=("human:default", "human:nondefault"))
         else:
             try:
-                uninstall_payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+                uninstall_payload = decode_ux_success_result(read_kb_create_cli_result("uninstall", result.stdout, result.returncode))
             except json.JSONDecodeError:
                 uninstall_payload = {}
             uninstall_ok = (result.returncode == 0 and uninstall_payload.get("operation") == "uninstall"
@@ -1033,7 +1034,7 @@ def main(*, update_variant_runner=None):
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
             try:
-                payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+                payload = decode_ux_success_result(read_kb_create_cli_result("apply", result.stdout, result.returncode))
                 root = payload.get("plan", {}).get("request", {}).get("platformRoot", "")
             except json.JSONDecodeError:
                 root = ""
@@ -1048,8 +1049,7 @@ def main(*, update_variant_runner=None):
             return finalize_run(False)
         if operation == "install":
             try:
-                records = [read_ux_cli_result(line, result.returncode)
-                           for line in result.stdout.splitlines() if line.strip()]
+                records = read_kb_create_cli_stream("install", result.stdout, result.returncode)
             except json.JSONDecodeError:
                 records = []
             terminal = records[-1] if records else {}
@@ -1100,7 +1100,7 @@ def main(*, update_variant_runner=None):
             payload = {}
         else:
             try:
-                envelope = read_ux_cli_result(result.stdout, result.returncode)
+                envelope = read_kb_create_cli_result(operation, result.stdout, result.returncode)
             except json.JSONDecodeError:
                 fail(f"kb-create {operation} --json: output was not valid JSON")
                 cleanup_partial_install(outer_graph, env, launcher)
@@ -1141,7 +1141,7 @@ def main(*, update_variant_runner=None):
                     cleanup_partial_install(outer_graph, env, launcher)
                     return finalize_run(False)
                 try:
-                    read_ux_cli_result(result.stdout, result.returncode)
+                    read_kb_create_cli_result("apply", result.stdout, result.returncode)
                     if result.returncode != 0:
                         fail("kb-create apply --input: result did not report ok=true")
                 except json.JSONDecodeError:
@@ -1159,7 +1159,7 @@ def main(*, update_variant_runner=None):
     installed_status, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"],
                               env=env, timeout=120)
     try:
-        installed_payload = decode_ux_success_result(read_ux_cli_result(installed_status.stdout, installed_status.returncode))
+        installed_payload = decode_ux_success_result(read_kb_create_cli_result("status", installed_status.stdout, installed_status.returncode))
         installed_state = installed_payload.get("host", {})
         install_running = (installed_status.returncode == 0 and installed_payload.get("installed") is True
                            and installed_payload.get("running") is True and installed_payload.get("reachable") is True
@@ -1184,7 +1184,7 @@ def main(*, update_variant_runner=None):
     installed_doctor, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"],
                               env=env, timeout=120)
     try:
-        installed_health = decode_ux_success_result(read_ux_cli_result(installed_doctor.stdout, installed_doctor.returncode))
+        installed_health = decode_ux_success_result(read_kb_create_cli_result("doctor", installed_doctor.stdout, installed_doctor.returncode))
         install_healthy = (installed_doctor.returncode == 0 and installed_health.get("installed") is True
                            and installed_health.get("running") is True and installed_health.get("reachable") is True
                            and installed_health.get("platform", {}).get("ok") is True)
@@ -1394,7 +1394,7 @@ def main(*, update_variant_runner=None):
                 write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: doctor-json (exit {diagnostic.returncode}) ==\n{(diagnostic.stdout or '')[-12000:]}\n{(diagnostic.stderr or '')[-4000:]}\n", env=env)
         elif command == "doctor":
             try:
-                health = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+                health = decode_ux_success_result(read_kb_create_cli_result("doctor", result.stdout, result.returncode))
                 passed = (result.returncode == 0 and health.get("installed") is True and health.get("running") is True
                           and health.get("reachable") is True and health.get("platform", {}).get("ok") is True)
             except json.JSONDecodeError:
@@ -1417,7 +1417,7 @@ def main(*, update_variant_runner=None):
             fail(f"kb-create {command}: expected human summary '{key}'")
         if command == "status":
             try:
-                status_payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+                status_payload = decode_ux_success_result(read_kb_create_cli_result("status", result.stdout, result.returncode))
                 active_receipt = json.loads((PLATFORM_CURRENT / ".kb/v2/receipt.json").read_text())
                 host_status = status_payload.get("host", {})
                 installation = status_payload.get("installation", {})
@@ -1433,7 +1433,7 @@ def main(*, update_variant_runner=None):
                 spelling_result = run_command([launcher, "status", "--platform-root", str(status_root), "--json"])
                 try:
                     spelling_status = decode_ux_success_result(
-                        read_ux_cli_result(spelling_result.stdout, spelling_result.returncode))
+                        read_kb_create_cli_result("status", spelling_result.stdout, spelling_result.returncode))
                     spelling_installation = spelling_status.get("installation", {})
                     spelling_ok = (spelling_result.returncode == 0
                                    and spelling_status.get("running") is True
@@ -1639,7 +1639,7 @@ def main(*, update_variant_runner=None):
                     raise AssertionError("secured install did not disclose a first administrator credential exactly once")
                 installed, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"],
                                    env=service_env, timeout=120)
-                status_result = read_ux_cli_result(installed.stdout, installed.returncode)
+                status_result = read_kb_create_cli_result("status", installed.stdout, installed.returncode)
                 status_payload = decode_ux_success_result(status_result)
                 if status_payload.get("bootstrapCompleted") is not True:
                     raise AssertionError("kb-create status did not report completed first-administrator bootstrap")
