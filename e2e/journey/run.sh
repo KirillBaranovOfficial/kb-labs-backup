@@ -80,12 +80,15 @@ if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
   export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
   export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
   export KB_JOURNEY_SELECTED_SOURCES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["stepSources"]))' <<< "$selection_json")"
+  export KB_JOURNEY_SELECTED_CAPABILITIES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<< "$selection_json")"
   selected_selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["runners"]))' <<< "$selection_json")"
 else
   unset KB_JOURNEY_SELECTED_STEPS
   unset KB_JOURNEY_PREREQUISITE_STEPS
   unset KB_JOURNEY_PREREQUISITE_FLOWS
   unset KB_JOURNEY_SELECTED_SOURCES
+  unset KB_JOURNEY_SELECTED_CAPABILITIES
+  unset KB_JOURNEY_NEEDED_STATES
 fi
 
 dispatch_selector() {
@@ -133,7 +136,7 @@ run_journey() {
     "${COMPOSE[@]}" run --rm -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
     -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_SELECTED_STEPS \
     -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS \
-    -e KB_JOURNEY_SELECTED_SOURCES runner < /dev/null; then
+    -e KB_JOURNEY_SELECTED_SOURCES -e KB_JOURNEY_SELECTED_CAPABILITIES runner < /dev/null; then
     status=1
   fi
 }

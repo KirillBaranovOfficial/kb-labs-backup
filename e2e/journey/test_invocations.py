@@ -129,7 +129,7 @@ class PtyInvocationTest(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(MissingJourneyState, "KB_JOURNEY_PROJECT_ID"):
                 journey_value("KB_JOURNEY_PROJECT_ID", required=True)
-            with self.assertRaisesRegex(MissingJourneyState, "KB_JOURNEY_PROJECT_ID"):
+            with self.assertRaisesRegex(MissingJourneyState, "project-registered"):
                 project_service_path("", "rest", "workflow/health")
 
     def test_pty_timeout_without_output_is_explicit_in_error_and_invocation(self):
@@ -146,7 +146,7 @@ class PtyInvocationTest(unittest.TestCase):
             self.assertEqual(call["stdout"], "")
             self.assertIn("no output received before the timeout", call["error"])
 
-    def test_pty_timeout_retains_partial_transcript_and_candidate_state(self):
+    def test_pty_timeout_retains_partial_transcript_without_exported_state(self):
         with tempfile.TemporaryDirectory(prefix="journey-pty-timeout-") as temp, \
                 invocations.invocation_context(report_root=temp):
             with self.assertRaises(invocations.PtyCommandTimeout) as raised:
@@ -156,11 +156,11 @@ class PtyInvocationTest(unittest.TestCase):
                 )
 
             self.assertIn("confirmation prompt", raised.exception.output)
-            self.assertIn("candidate state", str(raised.exception))
-            self.assertIn('"candidate":"running"', str(raised.exception))
+            self.assertNotIn("candidate state", str(raised.exception))
+            self.assertNotIn('"candidate":"running"', str(raised.exception))
             call = json.loads((Path(temp) / "invocations/calls.jsonl").read_text())
             self.assertIn("confirmation prompt", call["stdout"])
-            self.assertIn('"candidate":"running"', call["error"])
+            self.assertNotIn('"candidate":"running"', call["error"])
 
     def test_pty_eof_waits_for_child_exit_instead_of_recording_timeout(self):
         class ExitingProcess:

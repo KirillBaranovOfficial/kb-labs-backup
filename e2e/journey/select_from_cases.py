@@ -73,6 +73,11 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
                 runners.append(item.value)
         function = call.func.attr if isinstance(call.func, ast.Attribute) else (
             call.func.id if isinstance(call.func, ast.Name) else "")
+        capability_index = 2 if function == "flow" else 1
+        capability = (call.args[capability_index].value
+                      if len(call.args) > capability_index
+                      and isinstance(call.args[capability_index], ast.Constant)
+                      and isinstance(call.args[capability_index].value, str) else None)
         if prerequisites is None:
             required = []
         elif isinstance(prerequisites, (ast.Tuple, ast.List)):
@@ -98,6 +103,7 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         else:
             raise ValueError(f"provides= in {source}:{call.lineno} must contain a literal sequence")
         declaration = {"name": name, "kind": "flow" if function == "flow" else "step",
+                       "capability": capability,
                        "requires": required, "provides": provides,
                        "role": role_name, "runners": runners}
         cases_node = keywords.get("cases")
@@ -748,10 +754,14 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
     selected = set(selected_steps)
     names: set[str] = set()
     sources: set[str] = set()
+    capabilities: set[str] = set()
     pending: list[str] = []
     for step_id in selected:
         sources.update(sources_by_step.get(step_id, set()))
         for declaration in declarations_by_step.get(step_id, []):
+            capability = declaration.get("capability")
+            if isinstance(capability, str):
+                capabilities.add(capability)
             name = declaration.get("name") or step_id
             names.add(str(Dependency(declaration.get("kind", "step"), name)))
             pending.extend(declaration.get("requires", []))
@@ -820,7 +830,7 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
     return {"runners": sorted(runners), "owners": {key: sorted(value) for key, value in sorted(owners.items())},
             "steps": sorted(selected),
             "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
-            "stepSources": sorted(sources)}
+            "stepSources": sorted(sources), "capabilities": sorted(capabilities)}
 
 
 def read_coverage_result(stdout: str, returncode: int) -> dict:
@@ -936,7 +946,7 @@ def main() -> int:
         return 0
     results = []
     for mode in ("local", "secured"):
-        command = ["pnpm", "-s", "kb", "qa", "cases", "coverage", "--level", "all", "--mode", mode, "--json"]
+        command = ["pnpm", "-s", "kb", "qa", "coverage", "show", "--level", "all", "--mode", mode, "--json"]
         with invocation_context(step_id="journey.case-selection"):
             result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120)
         if result.returncode != 0:

@@ -246,9 +246,9 @@ class DispatchRegistryTests(unittest.TestCase):
             "--write-plan-baseline, then review the ordered plan diff before updating the golden",
         )
 
-    def test_service_readiness_claim_resolves_registered_project_setup(self):
+    def test_service_readiness_claim_uses_registered_project_state(self):
         resolved = selection_from_coverage(self._coverage(), "PC-002.3")
-        self.assertEqual(resolved["prerequisiteSteps"], ["registered project setup"])
+        self.assertEqual(resolved["prerequisiteSteps"], [])
         self.assertIn("e2e/journey/service_runner.py", resolved["stepSources"])
 
     def test_fresh_install_claim_resolves_candidate_provenance(self):
@@ -296,7 +296,6 @@ class DispatchRegistryTests(unittest.TestCase):
                             owners.append((source, declaration))
                     self.assertEqual(len(owners), 1, f"{claim_id} must have one registration on {selector}")
                     claim_source, declaration = owners[0]
-                    self.assertTrue(declaration["requires"], f"{claim_id} must declare its setup producer")
                     for prerequisite_name in declaration["requires"]:
                         prerequisite = declarations[prerequisite_name]
                         self.assertTrue(prerequisite["sources"].intersection(runner_sources[selector]))

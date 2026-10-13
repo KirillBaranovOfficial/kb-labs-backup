@@ -27,7 +27,7 @@ function parseRunResult(value: unknown, knownSteps: Set<string>, declaredClaims:
 }
 
 export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
-  id: 'qa:cases:coverage',
+  id: 'qa:coverage:show',
   description: 'Compute QA case coverage from claims and run results',
   handler: { async execute(ctx: PluginCommandContextV3, input: CLIInput<QaCasesCoverageFlags>): Promise<CommandResult> {
     const cwd = ctx.cwd ?? process.cwd();

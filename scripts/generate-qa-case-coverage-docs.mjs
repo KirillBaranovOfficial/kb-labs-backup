@@ -7,7 +7,7 @@ const startMarker = '<!-- generated-case-coverage:start -->';
 const endMarker = '<!-- generated-case-coverage:end -->';
 
 function coverage(mode) {
-  const output = execFileSync('node', ['./cli/bin/dist/bin.js', 'qa', 'cases', 'coverage', '--level', 'all', '--mode', mode, '--json'], { encoding: 'utf8' });
+  const output = execFileSync('node', ['./cli/bin/dist/bin.js', 'qa', 'coverage', 'show', '--level', 'all', '--mode', mode, '--json'], { encoding: 'utf8' });
   const result = JSON.parse(output);
   if (result.schema !== 'kb.qa-case-coverage/v1') throw new Error(`Unexpected coverage schema for ${mode}`);
   return result;

@@ -48,7 +48,7 @@ class StudioFixtureStepTests(unittest.TestCase):
                 "KB_JOURNEY_INVOCATIONS": directory,
             }, clear=False):
                 fixture_env = prepare_studio_fixtures(
-                    {"KB_JOURNEY_PROJECT_B_ID": "project-b"},
+                    {}, project_b_id="project-b",
                     project_a=project_a,
                     project_b=project_b,
                     runner=runner,
@@ -77,7 +77,7 @@ class StudioFixtureStepTests(unittest.TestCase):
                 "KB_JOURNEY_INVOCATIONS": directory,
             }, clear=False):
                 with self.assertRaisesRegex(RuntimeError, "marketplace install"):
-                    prepare_studio_fixtures({"KB_JOURNEY_PROJECT_B_ID": "project-b"},
+                    prepare_studio_fixtures({}, project_b_id="project-b",
                                             project_a=project_a, project_b=project_b,
                                             runner=failed)
 

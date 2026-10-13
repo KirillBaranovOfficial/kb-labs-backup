@@ -85,7 +85,9 @@ class AnalyticsStepTests(unittest.TestCase):
                 return JsonResponse(payload)
 
             journey = Journey("local", "analytics-green")
-            run_analytics_steps(journey, token="fixture-token", runner=runner, opener=opener)
+            run_analytics_steps(journey, token="fixture-token", project_id="project-a",
+                                project_root="/fixture/project-a", project_b_id="project-b",
+                                project_b_root="/fixture/project-b", runner=runner, opener=opener)
             fixture_body = (Path(directory) / "studio-fixtures.json").read_text()
         self.assertIn("/api/v1/projects/project-a/rest/analytics/events", paths)
         self.assertIn("/api/v1/projects/project-b/rest/analytics/events", paths)
@@ -111,7 +113,9 @@ class AnalyticsStepTests(unittest.TestCase):
                 "ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED", "message": "fixture failed"},
             }), "")
             journey = Journey("local", "fake-analytics")
-            run_analytics_steps(journey, token="fixture-token", runner=failed,
+            run_analytics_steps(journey, token="fixture-token", project_id="project-a",
+                                project_root="/fixture/project-a", project_b_id="project-b",
+                                project_b_root="/fixture/project-b", runner=failed,
                                 opener=lambda *_args, **_kwargs: FakeResponse())
 
         statuses = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
