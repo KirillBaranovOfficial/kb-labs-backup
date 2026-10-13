@@ -86,7 +86,7 @@ class RunnerInstallFailureTests(unittest.TestCase):
                             for item in state_environment_reader_violations(sources)))
 
     def _run_selected_main(self, root: Path, mode: str, *, selection: str | None = None,
-                           update_variant_runner=None) -> tuple[int, str, dict, dict]:
+                           update_variant_runner=None, selector: str | None = None) -> tuple[int, str, dict, dict, dict]:
         runner = importlib.import_module("runner")
         summary = root / "reports" / "journey-summary.md"
         summary.parent.mkdir(parents=True)
@@ -116,9 +116,16 @@ class RunnerInstallFailureTests(unittest.TestCase):
         selection = selection if selection is not None else "PC-001.2,PC-002.3,PC-002.8"
         mode_variant = "default" if mode == "local" else "human-secured"
         front = "agent" if mode == "local" else "human"
+        scenario = "explore"
+        fixture_calls = []
+        host_cycle = []
+        events = []
 
         def fake_run(command, *, env=None, cwd=None, **_kwargs):
             argv = [str(item) for item in command]
+            if len(argv) > 1 and argv[1] in {"stop", "start"}:
+                host_cycle.append(argv[1])
+                events.append(f"host:{argv[1]}")
             output = ""
             if argv[0].endswith("install.sh"):
                 output = "installer ready"
@@ -198,14 +205,14 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 "workflow" if "S-002.1" in selection else
                 "mcp" if "S-140.5" in selection else "platform.install,gateway,projects"),
             "KB_JOURNEY_GIT_REVISION": "fixture-commit",
-            "KB_JOURNEY_RUNNER_SELECTOR": f"service-{mode}:explore",
+            "KB_JOURNEY_RUNNER_SELECTOR": selector or f"service-{mode}:explore",
             "KB_CREATE_DOWNLOAD_BASE_URL": "http://journey.invalid/candidate",
         }
         console = io.StringIO()
         with ExitStack() as stack:
             for name, value in (("HOME", root), ("BIN", binary_dir), ("PLATFORM", platform),
                                 ("PLATFORM_CURRENT", platform_current), ("PROJECT", project),
-                                ("FRONT_DOOR", front), ("SCENARIO", "explore"),
+                                ("FRONT_DOOR", front), ("SCENARIO", scenario),
                                 ("VARIANT", mode_variant), ("BASE_ENV", base_env)):
                 stack.enter_context(patch.object(runner, name, value))
             stack.enter_context(patch.dict("os.environ", base_env, clear=True))
@@ -214,18 +221,32 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 runner, "run_command", side_effect=lambda command, **kwargs: fake_run(command, **kwargs)[0]))
             stack.enter_context(patch.object(runner, "open_http", side_effect=fake_http))
             stack.enter_context(patch.object(runner, "write_scoreboards"))
+            def fixture_result(name, claim=None):
+                fixture_calls.append(name)
+                events.append(name)
+                journey = Journey(mode, name)
+                if claim:
+                    journey.step("selected isolated installer claim", "platform.install",
+                                 lambda: None, cases=[claim])
+                return journey
+
             for target, kwargs in (
                 ("service_runner.restore_secured_cli_login", {"return_value": None}),
                 ("runner.login_and_configure_secured_admin", {"return_value": None}),
                 ("runner.run_local_auth_steps", {"return_value": Journey(mode, "local-auth")}),
                 ("runner.verify_broken_install_doctor", {}),
                 ("runner.verify_listener_ownership", {}),
-                ("runner.run_installer_case_steps", {"return_value": Journey(mode, "installer-cases")}),
-                ("runner.run_apply_scenario_step", {"return_value": Journey(mode, "apply-scenario")}),
-                ("runner.run_invalid_request_step", {"return_value": Journey(mode, "invalid-request")}),
-                ("runner.run_doctor_root_isolation_step", {"return_value": Journey(mode, "root-isolation")}),
+                ("runner.run_installer_case_steps", {"side_effect": lambda **_kwargs:
+                    fixture_result("run_installer_case_steps", "PC-001.4")}),
+                ("runner.run_apply_scenario_step", {"side_effect": lambda **_kwargs:
+                    fixture_result("run_apply_scenario_step")}),
+                ("runner.run_invalid_request_step", {"side_effect": lambda **_kwargs:
+                    fixture_result("run_invalid_request_step")}),
+                ("runner.run_doctor_root_isolation_step", {"side_effect": lambda **_kwargs:
+                    fixture_result("run_doctor_root_isolation_step")}),
+                ("runner.run_missing_project_request_steps", {"side_effect": lambda **_kwargs:
+                    fixture_result("run_missing_project_request_steps")}),
                 ("runner.run_cli_auth_status", {"return_value": None}),
-                ("runner.run_fixture_group", {}),
                 ("runner.prepare_workflow_fixtures", {}),
                 ("runner.run_workflow_journey", {"side_effect": lambda journey, **_kwargs:
                     journey.step("selected workflow claim", "workflow", lambda: None, cases=["S-002.1"])}),
@@ -236,25 +257,40 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 stack.enter_context(patch(target, **kwargs))
             stack.enter_context(redirect_stdout(console))
             code = runner.main(update_variant_runner=update_variant_runner)
-        payload = json.loads(summary.with_name(f"service-{mode}.json").read_text())
-        return code, console.getvalue(), payload, runner.CASE_JOURNEY.result().__dict__
+        service_report = summary.with_name(f"service-{mode}.json")
+        payload = json.loads(service_report.read_text()) if service_report.is_file() else {}
+        return code, console.getvalue(), payload, runner.CASE_JOURNEY.result().__dict__, {
+            "fixture_calls": fixture_calls,
+            "host_cycle": host_cycle,
+            "events": events,
+        }
 
     def test_main_smoke_selection_completes_in_both_modes(self):
+        runner = importlib.import_module("runner")
+        isolated_groups = [group.__name__ for group in runner.ISOLATED_FIXTURE_GROUPS]
         for mode in ("local", "secured"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="journey-main-smoke-") as temporary:
-                code, summary, service, outer = self._run_selected_main(Path(temporary), mode)
+                code, summary, service, outer, observed = self._run_selected_main(Path(temporary), mode)
                 self.assertEqual(code, 0)
                 self.assertNotIn("runner crash", summary)
                 service_claims = {claim for step in service["steps"] for claim in step.get("cases", [])}
                 self.assertTrue({"PC-002.3", "PC-002.8"}.issubset(service_claims))
                 self.assertIn("SKIPPED workflow execution journey: not selected", summary)
                 self.assertIn("SKIPPED installed platform bootstrap: not selected; the install operation ran earlier; this flow is only a selection marker", summary)
+                self.assertEqual(observed["fixture_calls"], [])
+                self.assertEqual(observed["host_cycle"], ["stop", "start"])
+                self.assertEqual(observed["events"], ["host:stop", "host:start"])
+                skipped_groups = [group for group in isolated_groups
+                                  if f"SKIPPED {group}: not selected" in summary]
+                self.assertEqual(skipped_groups, isolated_groups)
+                for group in isolated_groups:
+                    self.assertEqual(summary.count(f"SKIPPED {group}: not selected"), 1)
                 self.assertIn({"claimId": "PC-001.2", "kind": "journey", "status": "PASS"},
                               outer["case_run"]["claims"])
 
     def test_main_project_b_selection_runs_its_state_handoff(self):
         with tempfile.TemporaryDirectory(prefix="journey-main-project-b-") as temporary:
-            code, output, service, outer = self._run_selected_main(
+            code, output, service, outer, _observed = self._run_selected_main(
                 Path(temporary), "local", selection="S-140.5")
         self.assertEqual(code, 0)
         self.assertNotIn("runner crash", output)
@@ -264,6 +300,8 @@ class RunnerInstallFailureTests(unittest.TestCase):
         self.assertTrue(service["states"]["fixtures-installed"]["value"]["projectBRoot"])
 
     def test_main_full_plan_completes_without_a_claim_selection(self):
+        runner = importlib.import_module("runner")
+        isolated_groups = [group.__name__ for group in runner.ISOLATED_FIXTURE_GROUPS]
         variant_args = []
 
         def fake_update_variants(**kwargs):
@@ -271,7 +309,7 @@ class RunnerInstallFailureTests(unittest.TestCase):
             return Journey("local", "update-variants")
 
         with tempfile.TemporaryDirectory(prefix="journey-main-full-plan-") as temporary:
-            code, output, service, outer = self._run_selected_main(
+            code, output, service, outer, observed = self._run_selected_main(
                 Path(temporary), "local", selection="", update_variant_runner=fake_update_variants)
         self.assertEqual(code, 0, output)
         self.assertNotIn("SKIPPED", output)
@@ -281,6 +319,27 @@ class RunnerInstallFailureTests(unittest.TestCase):
         self.assertEqual(len(variant_args), 1)
         self.assertEqual(variant_args[0]["project_b"],
                          Path(service["states"]["fixtures-installed"]["value"]["projectBRoot"]))
+        self.assertEqual(observed["fixture_calls"], isolated_groups)
+        self.assertEqual(observed["host_cycle"], ["stop", "start", "stop", "start"])
+        self.assertEqual(observed["events"], [
+            "host:stop", "host:start", "host:stop", *isolated_groups, "host:start",
+        ])
+
+    def test_main_selected_installer_claim_runs_only_its_fixture_group_and_host_cycle(self):
+        runner = importlib.import_module("runner")
+        installer_group = runner.INSTALLER_CASE_GROUP.__name__
+        with tempfile.TemporaryDirectory(prefix="journey-main-installer-claim-") as temporary:
+            code, output, _service, outer, observed = self._run_selected_main(
+                Path(temporary), "local", selection="PC-001.4", selector="agent:commit")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(observed["fixture_calls"], [installer_group])
+        self.assertEqual(observed["host_cycle"], ["stop", "start", "stop", "start"])
+        self.assertEqual(observed["events"], [
+            "host:stop", "host:start", "host:stop", installer_group, "host:start",
+        ])
+        self.assertEqual(output.count(f"SKIPPED {installer_group}: not selected"), 0)
+        claim_status = {claim["claimId"]: claim["status"] for claim in outer["case_run"]["claims"]}
+        self.assertEqual(claim_status["PC-001.4"], "PASS")
 
     @staticmethod
     def _project_command(command, **_kwargs):

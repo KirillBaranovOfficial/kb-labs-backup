@@ -1,6 +1,7 @@
 """Keep selected-case routing complete for every active journey claim."""
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from select_from_cases import (read_coverage_result, selection_from_coverage,
                                _case_declarations,
                                _step_declaration, _source_step_declarations,
                                _imported_journey_sources, selectors_from_coverage,
+                               fixture_group_declarations,
                                validate_dependency_declarations,
                                lint_direct_module_global_state_handoffs,
                                validate_runner_conditions, validate_journey_environment_reads,
@@ -31,6 +33,109 @@ def helper_read(memory, key):
 
 
 class DispatchRegistryTests(unittest.TestCase):
+    def test_fixture_default_runner_comes_from_registered_mode(self):
+        with tempfile.TemporaryDirectory(prefix="journey-fixture-mode-") as temporary:
+            root = Path(temporary)
+            source_path = root / "e2e/journey/fixture_group.py"
+            source_path.parent.mkdir(parents=True)
+            source_path.write_text(
+                "def selected_fixture(journey):\n"
+                "    journey.step('secured fixture claim', 'test', lambda: None, cases=['TEST-MODE.1'])\n"
+            )
+            namespace = {"__file__": str(source_path)}
+            exec(compile(source_path.read_text(), str(source_path), "exec"), namespace)
+            registered_runner = SimpleNamespace(
+                journey_sources=("e2e/journey/fixture_group.py",),
+                mode="secured",
+                claim_family="journey",
+            )
+            local_runner = SimpleNamespace(
+                journey_sources=("e2e/journey/fixture_group.py",),
+                mode="local",
+                claim_family="journey",
+            )
+            with patch.dict("dispatch_registry.RUNNERS", {
+                    "runner:blue": registered_runner,
+                    "runner:green": local_runner,
+            }, clear=True):
+                declarations = fixture_group_declarations(
+                    (namespace["selected_fixture"],), "runner:blue", root)
+                local_declarations = fixture_group_declarations(
+                    (namespace["selected_fixture"],), "runner:green", root)
+                full_declarations = fixture_group_declarations(
+                    (namespace["selected_fixture"],), "", root)
+
+            self.assertEqual(declarations["selected_fixture"]["cases"], ("TEST-MODE.1",))
+            self.assertEqual(local_declarations["selected_fixture"]["cases"], ("TEST-MODE.1",))
+            self.assertEqual(full_declarations, declarations)
+
+    def test_installer_fixture_claims_are_declared_for_the_outer_graph(self):
+        from installer_case_steps import (run_apply_scenario_step, run_doctor_root_isolation_step,
+                                          run_installer_case_steps, run_invalid_request_step,
+                                          run_missing_project_request_steps)
+        root = Path(__file__).resolve().parents[2]
+        groups = (run_doctor_root_isolation_step, run_installer_case_steps,
+                  run_apply_scenario_step, run_invalid_request_step,
+                  run_missing_project_request_steps)
+        declarations = fixture_group_declarations(groups, "agent:commit", root)
+        self.assertIn("PC-001.4", declarations[run_installer_case_steps.__name__]["cases"])
+        self.assertEqual(declarations[run_apply_scenario_step.__name__]["cases"], ("S-039.1",))
+        self.assertIn("run_installer_case_steps", declarations)
+
+    def test_fixture_claim_prerequisites_use_the_shared_resolver_steps(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory(prefix="journey-fixture-registry-") as temporary:
+            root = Path(temporary)
+            source_path = root / "fixture_group.py"
+            source_path.write_text(
+                "def fixture_producer(journey):\n"
+                "    journey.step('fixture producer', 'test', lambda: None, "
+                "runners=['agent:commit'])\n"
+                "def selected_consumer(journey):\n"
+                "    journey.step('selected consumer', 'test', lambda: None, "
+                "cases=['TEST-CLAIM.1'], requires=('step:fixture producer',), "
+                "runners=['agent:commit'])\n"
+            )
+            namespace = {"__file__": str(source_path)}
+            exec(compile(source_path.read_text(), str(source_path), "exec"), namespace)
+            with patch("select_from_cases.RUNNERS", {
+                    "agent:commit": SimpleNamespace(journey_sources=("fixture_group.py",), mode="local")}):
+                declarations = fixture_group_declarations(
+                    (namespace["fixture_producer"], namespace["selected_consumer"]), "agent:commit", root)
+            self.assertEqual(declarations["selected_consumer"]["cases"], ("TEST-CLAIM.1",))
+            self.assertIn("selected consumer", declarations["selected_consumer"]["steps"])
+            self.assertIn("fixture producer", declarations["fixture_producer"]["steps"])
+
+            with patch.dict("os.environ", {
+                    "KB_JOURNEY_SELECTED_STEPS": "TEST-CLAIM.1",
+                    "KB_JOURNEY_PREREQUISITE_STEPS": "fixture producer",
+            }, clear=True):
+                journey = Journey("local", "fixture-group-selection")
+                graph = FlowGraph(journey, {}, groups={
+                    f"isolated-fixture:{name}": {
+                        "cases": declaration["cases"],
+                        "steps": declaration["steps"],
+                    } for name, declaration in declarations.items()
+                })
+            self.assertTrue(graph.group_selected("isolated-fixture:selected_consumer"))
+            self.assertTrue(graph.group_selected("isolated-fixture:fixture_producer"))
+
+    def test_fixture_execution_and_host_cycle_use_outer_flow_graph(self):
+        root = Path(__file__).resolve().parents[2]
+        source = ast.parse((root / "e2e/journey/runner.py").read_text())
+        calls = [node for node in ast.walk(source) if isinstance(node, ast.Call)]
+        self.assertTrue(any(isinstance(call.func, ast.Attribute) and call.func.attr == "flow"
+                            and isinstance(call.func.value, ast.Name) and call.func.value.id == "outer_graph"
+                            and call.args and isinstance(call.args[0], ast.Attribute)
+                            and call.args[0].attr == "__name__" for call in calls))
+        self.assertTrue(any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                            and node.func.attr == "group_selected" for node in ast.walk(source)))
+        host_commands = {call.args[0].elts[1].value for call in calls
+                         if isinstance(call.func, ast.Name) and call.func.id == "run"
+                         and call.args and isinstance(call.args[0], ast.List)
+                         and len(call.args[0].elts) > 1 and isinstance(call.args[0].elts[1], ast.Constant)}
+        self.assertTrue({"stop", "start"}.issubset(host_commands))
+
     def test_registered_memory_rejects_helper_read_without_prerequisite(self):
         from service_steps import JourneyMemory, JourneyContractError
         memory = JourneyMemory({"setup": ((), ("project",))})
@@ -301,7 +406,7 @@ class DispatchRegistryTests(unittest.TestCase):
                         routes = declaration.get("runners") or runners_for_source(source, mode)
                         expected_routes.update(selector for selector in routes
                                                if selector in RUNNERS and
-                                               RUNNERS[selector].variant.endswith("secured") == (mode == "secured"))
+                                               RUNNERS[selector].mode == mode)
                     try:
                         resolved = selection_from_coverage([coverage], step_id)
                     except ValueError as error:
@@ -349,8 +454,7 @@ class DispatchRegistryTests(unittest.TestCase):
                     "KB_JOURNEY_CASES": "", "KB_JOURNEY_SELECTED_STEPS": "",
                     "KB_JOURNEY_RUNNER_SELECTOR": selector,
             }, clear=False):
-                journey = Journey("secured" if runner.variant.endswith("secured") else "local",
-                                  f"full-plan-{selector}")
+                journey = Journey(runner.mode, f"full-plan-{selector}")
                 for _, declaration in full_plan:
                     journey.step(declaration["name"], "journey.registry", lambda: None)
                 self.assertEqual([step.name for step in journey.steps],
