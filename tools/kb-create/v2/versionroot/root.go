@@ -850,6 +850,9 @@ func (l Layout) activate(stage, version, planHash, runningRoot string, after fun
 	if err := l.Validate(); err != nil {
 		return "", err
 	}
+	if err := l.validateSealedVersionRoot(stage); err != nil {
+		return "", err
+	}
 	previous, err := l.Active()
 	if err != nil {
 		return "", err
@@ -931,6 +934,26 @@ func (l Layout) activate(stage, version, planHash, runningRoot string, after fun
 		return recovery, fmt.Errorf("prune obsolete version roots: %w", err)
 	}
 	return recovery, nil
+}
+
+func (l Layout) validateSealedVersionRoot(stage string) error {
+	absolute, err := filepath.Abs(stage)
+	if err != nil {
+		return fmt.Errorf("resolve staged version root: %w", err)
+	}
+	relative, err := filepath.Rel(l.VersionsDir(), absolute)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return fmt.Errorf("staged version root is outside the declared version roots")
+	}
+	for _, shared := range contracts.SharedRuntimePaths() {
+		path := filepath.Join(absolute, filepath.FromSlash(shared.PlatformPath))
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("staged version root contains shared runtime state at %s", shared.PlatformPath)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect staged shared runtime path %s: %w", shared.PlatformPath, err)
+		}
+	}
+	return nil
 }
 
 func (l Layout) prepareCurrentLink(target string) (string, error) {

@@ -15,15 +15,19 @@ import (
 // Binaries installs immutable platform tools after verifying their release
 // checksum. Files are private to the V2 platform root, never global PATH.
 type Binaries struct {
-	Root    string
-	Offline bool
-	Client  *http.Client
+	Root      string
+	CacheRoot string
+	Offline   bool
+	Client    *http.Client
 }
 
 func (b Binaries) Install(items []contracts.Artifact) error {
 	for _, item := range items {
 		if !item.IsBinary() {
 			continue
+		}
+		if b.CacheRoot == "" {
+			return fmt.Errorf("binary cache root is required")
 		}
 		if item.URL == "" || item.SHA256 == "" || item.Target == "" {
 			return fmt.Errorf("binary %q lacks url, hash or target", item.ID)
@@ -37,7 +41,7 @@ func (b Binaries) Install(items []contracts.Artifact) error {
 			return fmt.Errorf("binary %s checksum mismatch", item.ID)
 		}
 		if !b.Offline {
-			cachePath := filepath.Join(b.Root, ".kb", "v2", "cache", "binaries", item.SHA256)
+			cachePath := filepath.Join(b.CacheRoot, "binaries", item.SHA256)
 			if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
 				return err
 			}
@@ -61,7 +65,7 @@ func (b Binaries) Install(items []contracts.Artifact) error {
 
 func (b Binaries) download(item contracts.Artifact) ([]byte, error) {
 	if b.Offline {
-		path := filepath.Join(b.Root, ".kb", "v2", "cache", "binaries", item.SHA256)
+		path := filepath.Join(b.CacheRoot, "binaries", item.SHA256)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("offline binary %s is absent from V2 cache: %w", item.ID, err)

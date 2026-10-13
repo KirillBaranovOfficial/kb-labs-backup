@@ -46,6 +46,7 @@ type rollbackCommandInput struct {
 	PlatformRoot, Registry, Executable, Snapshot string
 	Yes, JSON                                    bool
 	Command                                      *cobra.Command
+	Artifacts                                    runtime.ArtifactInstaller
 }
 type recoveryRuntimeInput struct {
 	Registry, Executable string
@@ -207,7 +208,7 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 		return recoveryCommandResult{}, asDiag(err)
 	}
 	defer release()
-	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable}, root, state, "rollback", target, false, func(_ context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
+	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable, Artifacts: input.Artifacts}, root, state, "rollback", target, false, func(_ context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
 		installer := deps.Artifacts
 		return lifecycle.Mutate(platformRoot, platformRoot, layout.SnapshotsDir(), time.Now().UTC(), func() error {
 			_, rollbackErr := runtime.Rollback(platformRoot, target, deps)
@@ -260,7 +261,7 @@ func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root s
 	defer transcript.Close()
 	var installer runtime.ArtifactInstaller = input.Artifacts
 	if installer == nil {
-		installer = artifacts.Composite{Packages: artifacts.Pnpm{Root: activeRoot, Registry: input.Registry, Log: transcript}, Binaries: artifacts.Binaries{Root: activeRoot}}
+		installer = artifacts.Composite{Packages: artifacts.Pnpm{Root: activeRoot, Registry: input.Registry, Log: transcript}, Binaries: artifacts.Binaries{Root: activeRoot, CacheRoot: filepath.Join(activeRoot, ".kb", "v2", "cache")}}
 	}
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: correlationID}
 	command := hostCommand{PlatformRoot: root, Executable: input.Executable, Version: buildVersion}
