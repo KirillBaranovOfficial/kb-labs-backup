@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from adapter_defaults_steps import (_assert_required_upstreams_ready, _restore_platform_adapter_fixture,
+from adapter_defaults_steps import (_assert_required_upstreams_ready, _json, _restore_platform_adapter_fixture,
                                     _run_from_registered_project, run_adapter_default_steps)
 from invocations import invocation_context
 from service_steps import Journey
@@ -20,6 +20,20 @@ from test_install_layout import create_test_install_container
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
+    def test_kb_create_install_json_uses_registered_stream_reader(self):
+        result_payload = {"operation": "install", "receipt": {"id": "receipt-1"}}
+        stdout = "\n".join((
+            json.dumps({"ok": True, "data": {"phase": "Apply"}}),
+            json.dumps({"ok": True, "data": result_payload,
+                        "meta": {"stream": {"result": True}}}),
+            json.dumps({"ok": True, "data": None,
+                        "meta": {"stream": {"terminal": True, "exitCode": 0}}}),
+        )) + "\n"
+        command = ["kb-create", "install", "--json"]
+        result = subprocess.CompletedProcess(command, 0, stdout, "")
+
+        self.assertEqual(_json(result, command), {"ok": True, **result_payload})
+
     def test_registered_project_command_fails_when_it_changes_the_repository(self):
         with tempfile.TemporaryDirectory(prefix="kb-project-repository-guard-") as directory:
             project = Path(directory) / "project"

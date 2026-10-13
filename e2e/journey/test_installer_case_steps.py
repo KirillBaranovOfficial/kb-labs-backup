@@ -55,6 +55,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             launcher = home / ".local" / "bin" / "kb-create"
             launcher.parent.mkdir(parents=True)
             (launcher.parent / "kb").symlink_to(install_root / "current/.kb/v2/bin/kb")
+            first_owner = [install_root]
             registry = home / ".kb" / "launcher" / "gateway-roots.json"
             registry.parent.mkdir(parents=True)
             writer_fixture = Path(__file__).parent / "testdata" / "gateway-roots-schema2.json"
@@ -85,8 +86,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     payload = {"plan": {"request": {"gatewayUrl": gateway_url},
                                          "serviceGraph": {"platformVersion": "1.2.3"}}}
                 elif operation == "status":
+                    is_installation_spelling = requested_root in {
+                        install_root, install_root / "current", active_root.resolve()
+                    }
                     payload = {"installation": {"receiptId": "receipt-one", "platformVersion": "1.2.3",
-                                                 "platformChannel": "stable"}}
+                                                 "platformChannel": "stable"},
+                               "shim": {"linked": is_installation_spelling and first_owner[0] == install_root,
+                                        "owner": str(first_owner[0].resolve())}}
                 elif operation == "update":
                     payload = {"operation": "update", "alreadyUpToDate": True}
                 else:
@@ -97,17 +103,20 @@ class InstallerCaseStepsTest(unittest.TestCase):
             verify_primary_installation_spellings(
                 launcher=str(launcher), index=home / "stable-index.json", install_root=install_root,
                 run_command=run_command)
-            self.assertEqual([call[1] for call in calls], ["plan", "update"] * 3)
+            self.assertEqual([call[1] for call in calls], ["plan", "status", "update", "status"] * 3)
             self.assertEqual([call[-1] for call in calls],
-                             [spelling for spelling in expected_spellings for _ in (0, 1)])
+                             [spelling for spelling in expected_spellings for _ in (0, 1, 2, 3)])
 
             calls.clear()
+            first_owner[0] = home / "primary-platform"
+            (launcher.parent / "kb").unlink()
+            (launcher.parent / "kb").symlink_to(first_owner[0] / "current/.kb/v2/bin/kb")
             verify_stable_installation_spellings(
                 launcher=str(launcher), index=home / "stable-index.json", install_root=install_root,
-                shim_owner_root=install_root, run_command=run_command)
-            self.assertEqual([call[1] for call in calls], ["status", "plan", "update"] * 3)
+                shim_owner_root=first_owner[0], run_command=run_command)
+            self.assertEqual([call[1] for call in calls], ["status", "plan", "status", "update", "status"] * 3)
             self.assertEqual([call[-1] for call in calls],
-                             [spelling for spelling in expected_spellings for _ in (0, 1, 2)])
+                             [spelling for spelling in expected_spellings for _ in (0, 1, 2, 3, 4)])
 
             with self.assertRaisesRegex(RuntimeError, "scenario owner"):
                 verify_installation_spellings(

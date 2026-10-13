@@ -168,14 +168,21 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv(host.KBHomeEnv, filepath.Join(home, ".kb"))
 	root := filepath.Join(home, "kb-platform")
-	launcher, err := os.Executable()
+	hostBinary, err := os.Executable()
 	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(home, ".local", "bin", "kb-create")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexit 0\n"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	indexPath := filepath.Join(home, "release-index.json")
 	port := freeLoopbackPort(t)
 	source := testReleaseCatalog(t, "2.0.0")
-	source.Platforms[0].Host = &contracts.HostSpec{Command: launcher, Args: []string{"-test.run=^TestHostExecLauncher$"},
+	source.Platforms[0].Host = &contracts.HostSpec{Command: hostBinary, Args: []string{"-test.run=^TestHostExecLauncher$"},
 		Env:       map[string]string{"KB_TEST_FAKEHOST": fakehost, "KB_TEST_FAKEHOST_PORT": fmt.Sprint(port)},
 		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}}
@@ -193,7 +200,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	if err := os.WriteFile(indexPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
+	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Executable: launcher,
 		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
 	commandFactory := func(cmd *cobra.Command) commandDependencies {
 		deps.Command = cmd
@@ -225,7 +232,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	}
 	for _, spelling := range []string{root, layout.PlatformRoot(), physicalRoot} {
 		var stdout, stderr bytes.Buffer
-		code := clikitcommand.Execute(newRootCommand(), []string{"status", "--platform-root", spelling, "--json"}, &stdout, &stderr)
+		code := clikitcommand.Execute(newRootCommandWithDependencyFactory(commandFactory), []string{"status", "--platform-root", spelling, "--json"}, &stdout, &stderr)
 		var response struct {
 			Data map[string]any `json:"data"`
 		}
@@ -234,6 +241,10 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		}
 		if code != 0 || response.Data["installed"] != true || response.Data["running"] != true || response.Data["reachable"] != true {
 			t.Fatalf("status for %q after Execute install: code=%d data=%#v stdout=%s stderr=%s", spelling, code, response.Data, stdout.String(), stderr.String())
+		}
+		shimState, ok := response.Data["shim"].(map[string]any)
+		if !ok || shimState["linked"] != true || shimState["owner"] != layout.InstallRoot() {
+			t.Fatalf("status for %q did not report the canonical kb command owner: %#v", spelling, response.Data["shim"])
 		}
 	}
 	launcherState, err := host.StateHome()
@@ -1042,6 +1053,21 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	install(rootB, false)
+	var secondaryStatus struct {
+		Data struct {
+			Shim map[string]any `json:"shim"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(run(rootB, "status", "--platform-root", rootB, "--json")), &secondaryStatus); err != nil {
+		t.Fatalf("decode secondary status: %v", err)
+	}
+	primaryLayout, err := versionroot.New(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondaryStatus.Data.Shim["linked"] != false || secondaryStatus.Data.Shim["owner"] != primaryLayout.InstallRoot() {
+		t.Fatalf("secondary status did not report the first install's command owner: %#v", secondaryStatus.Data.Shim)
+	}
 	install(rootC, false, "--gateway-url", fmt.Sprintf("http://127.0.0.1:%d", gatewayPort+200), "--project-root", project)
 
 	activeRoot, err := activeA.Active()
