@@ -53,12 +53,11 @@ type Diag struct {
 	// the human renderer; wrapped Go errors remain available only via Unwrap.
 	Cause string `json:"-"`
 	// Meta carries structured context (paths, hosts, per-action failures, …).
-	Meta            map[string]any `json:"meta,omitempty"`
-	Data            any            `json:"-"`
-	Actions         []Action       `json:"-"`
-	Docs            string         `json:"-"`
-	CorrelationID   string         `json:"correlationId,omitempty"`
-	ProcessExitCode int            `json:"-"`
+	Meta          map[string]any `json:"meta,omitempty"`
+	Data          any            `json:"-"`
+	Actions       []Action       `json:"-"`
+	Docs          string         `json:"-"`
+	CorrelationID string         `json:"correlationId,omitempty"`
 
 	// cause is the wrapped error; surfaced via Unwrap, never serialized.
 	cause error
@@ -89,9 +88,6 @@ func WithReason(reason string) Opt { return func(d *Diag) { d.Reason = RedactTex
 // WithHint preserves a command-specific next step while retaining the
 // catalog's remaining canonical envelope fields.
 func WithHint(hint string) Opt { return func(d *Diag) { d.Hint = hint } }
-
-// WithProcessExitCode preserves an operation's process status across wrappers.
-func WithProcessExitCode(code int) Opt { return func(d *Diag) { d.ProcessExitCode = code } }
 
 // WithCause sets a safe cause for the canonical machine error envelope.
 func WithCause(cause string) Opt { return func(d *Diag) { d.Cause = RedactText(cause) } }

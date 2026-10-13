@@ -12,14 +12,10 @@ func ExitCode(d *Diag) int {
 	if d == nil {
 		return ExitOK
 	}
-	if entry, ok := LookupCatalog(d.Code); ok && entry.ProcessExitCode != ExitOK {
-		return entry.ProcessExitCode
-	}
-	if d.ProcessExitCode != ExitOK {
-		return d.ProcessExitCode
-	}
-	if d.Code == "KB_RUNTIME_INPUT_INVALID" {
-		return ExitInput
+	if entry, ok := LookupCatalog(d.Code); ok {
+		if entry.ProcessExitClass == ExitClassInputRefusal {
+			return ExitInput
+		}
 	}
 	return ExitError
 }

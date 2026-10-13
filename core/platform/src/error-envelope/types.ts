@@ -151,6 +151,8 @@ export interface ErrorCatalogEntry {
   stage: ErrorStage;
   severity: ErrorSeverity;
   retryable: boolean;
+  /** Canonical Go CLI process-exit class; TS CLI mapping remains owned separately. */
+  processExitClass: 'input-refusal' | 'operation-failure';
   /** Template; `{name}` placeholders are filled from `details`. */
   message: string;
   /** Template; `{name}` placeholders are filled from `details`. */

@@ -56,7 +56,6 @@ func (i *Interaction) Confirm(prompt, hint string) (bool, *diag.Diag) {
 	confirmed := strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes")
 	if !confirmed {
 		failure := diag.New("KB_INSTALL_OPERATION_CANCELLED", "The operation was cancelled.", diag.WithHint("rerun the command and confirm when prompted"))
-		failure.ProcessExitCode = 1
 		return false, failure
 	}
 	return true, nil
@@ -67,13 +66,11 @@ func (i *Interaction) Confirm(prompt, hint string) (bool, *diag.Diag) {
 func (i *Interaction) Ask(prompt, hint string) (string, *diag.Diag) {
 	if !i.available() {
 		failure := diag.New("KB_RUNTIME_INPUT_INVALID", "Interactive input requires a terminal.", diag.WithHint(hint), diag.WithCause("input is unavailable without an interactive terminal"))
-		failure.ProcessExitCode = diag.ExitInput
 		return "", failure
 	}
 	answer, err := i.readLine(prompt)
 	if err != nil {
 		failure := diag.New("KB_RUNTIME_INPUT_INVALID", "The prompt could not be written.", diag.WithHint(hint), diag.WithCause(err.Error()))
-		failure.ProcessExitCode = diag.ExitInput
 		return "", failure
 	}
 	return answer, nil
@@ -100,7 +97,6 @@ func (i *Interaction) readLine(prompt string) (string, error) {
 
 func confirmationRequired(hint string, cause error) *diag.Diag {
 	failure := diag.New("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.", diag.WithHint(hint), diag.WithCause(cause.Error()))
-	failure.ProcessExitCode = diag.ExitInput
 	return failure
 }
 

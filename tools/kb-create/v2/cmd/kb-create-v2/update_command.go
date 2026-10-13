@@ -50,13 +50,12 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	if err := commandDeps.NodeCheck(); err != nil {
 		failure := contracts.NewDiag(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.",
 			"Install Node.js 24, then run `kb-create update` (for nvm: `nvm install 24 && nvm use 24`).", err)
-		failure.ProcessExitCode = diag.ExitInput
 		return updateCommandResult{}, failure
 	}
 	resolved, failure := resolvePlan(planInput{Operation: "update", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
 		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable})
 	if failure != nil {
-		return updateCommandResult{}, inputFailure(updateCompatibilityDiag(failure))
+		return updateCommandResult{}, updateCompatibilityDiag(failure)
 	}
 	plan := resolved.Plan
 	layout, layoutErr := versionroot.ForPlatformPath(plan.Request.PlatformRoot)
@@ -64,16 +63,15 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		layoutErr = layout.Validate()
 	}
 	if layoutErr != nil {
-		return updateCommandResult{}, inputFailure(unsupportedPlatformLayout(plan.Request.PlatformRoot, layoutErr))
+		return updateCommandResult{}, unsupportedPlatformLayout(plan.Request.PlatformRoot, layoutErr)
 	}
 	platformRoot := layout.PlatformRoot()
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		if failure := receiptArtifactIdentityFailure(err, input.Index, plan.Request.PlatformRoot); failure != nil {
-			return updateCommandResult{}, inputFailure(failure)
+			return updateCommandResult{}, failure
 		}
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
-		failure.ProcessExitCode = diag.ExitInput
 		return updateCommandResult{}, failure
 	}
 	activeRoot, err := layout.Active()
@@ -86,23 +84,23 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	}
 	disposition, err := resolve.ValidateUpdate(active, plan, resolved.Catalog)
 	if err != nil {
-		return updateCommandResult{}, inputFailure(updateCompatibilityDiag(asDiag(err)))
+		return updateCommandResult{}, updateCompatibilityDiag(asDiag(err))
 	}
 	if disposition == resolve.UpdateAlreadyUpToDate {
 		return updateCommandResult{OK: true, Operation: "update", Receipt: active, HostRestarted: false, AlreadyUpToDate: true}, nil
 	}
 	request, changed, err := requestWithGeneratedSecrets(plan.Request, plan.Artifacts)
 	if err != nil {
-		return updateCommandResult{}, inputFailure(contracts.NewDiag(contracts.CodeInputRequired, "the install request could not include generated secrets.", "rerun `kb-create install` with the selected platform manifest", err))
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the install request could not include generated secrets.", "rerun `kb-create install` with the selected platform manifest", err)
 	}
 	if changed {
 		encoded, marshalErr := json.Marshal(request)
 		if marshalErr != nil {
-			return updateCommandResult{}, inputFailure(contracts.NewDiag(contracts.CodeInputRequired, "the update request could not be encoded", "rerun `kb-create update` with the same request", marshalErr))
+			return updateCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "the update request could not be encoded", "rerun `kb-create update` with the same request", marshalErr)
 		}
 		response := transport.PlanWith(encoded, resolved.Catalog, resolve.Options{LauncherVersion: buildVersion})
 		if !response.OK {
-			return updateCommandResult{}, inputFailure(updateCompatibilityDiag(response.Error))
+			return updateCommandResult{}, updateCompatibilityDiag(response.Error)
 		}
 		plan = *response.Plan
 	}
@@ -112,7 +110,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	updateSummary, err := resolve.SummarizeUpdate(active, plan, resolved.Catalog)
 	if err != nil {
 		failure := contracts.NewDiag(contracts.CodeOperationFailed, "the installed platform could not be compared with the resolved update", "verify the active receipt and sealed release index, then rerun `kb-create update`", err)
-		return updateCommandResult{}, inputFailure(failure)
+		return updateCommandResult{}, failure
 	}
 	if running := refuseForeignHost(plan.Request.PlatformRoot); running != nil {
 		return updateCommandResult{}, running
@@ -192,7 +190,6 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	root := layout.PlatformRoot()
 	if _, err := receipt.Read(root); err != nil {
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
-		failure.ProcessExitCode = diag.ExitInput
 		return updateCommandResult{}, failure
 	}
 	runner, err := host.NewRunner(installRoot)

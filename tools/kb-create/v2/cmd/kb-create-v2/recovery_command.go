@@ -55,7 +55,7 @@ type recoveryRuntimeInput struct {
 func executeUninstall(ctx context.Context, input uninstallCommandInput) (recoveryCommandResult, *diag.Diag) {
 	root := input.PlatformRoot
 	if root == "" {
-		return recoveryCommandResult{}, inputFailure(contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil))
+		return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
 	}
 	commandArgs := []string{"kb-create", "uninstall", "--platform-root", root}
 	if input.Registry != "" {
@@ -101,7 +101,6 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
-		failure.ProcessExitCode = diag.ExitInput
 		return recoveryCommandResult{}, failure
 	}
 	if active.InstallationID == "" {
@@ -158,7 +157,7 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryCommandResult, *diag.Diag) {
 	root := input.PlatformRoot
 	if root == "" {
-		return recoveryCommandResult{}, inputFailure(contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil))
+		return recoveryCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
 	}
 	launcherState, err := host.StateHome()
 	if err != nil {
@@ -194,7 +193,6 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err)
-		failure.ProcessExitCode = diag.ExitInput
 		return recoveryCommandResult{}, failure
 	}
 	target := input.Snapshot

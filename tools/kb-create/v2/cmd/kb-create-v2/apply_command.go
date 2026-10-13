@@ -55,20 +55,13 @@ func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps 
 	deps.Runtime.Progress = streamProgress{writer: writer}
 	result, failure := executeApply(ctx, applyInput, deps)
 	if failure != nil {
-		if failure.ProcessExitCode == diag.ExitOK {
-			failure.ProcessExitCode = diag.ExitError
-		}
 		if err := writer.Fail(failure); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 		}
 	} else if written, emitFailure := emitFirstAdminResult(result, "apply", func() error { return writer.Result(result) }); emitFailure != nil {
 		return finishFirstAdminResultFailure(writer, deps.Command, written, emitFailure)
 	}
-	exitCode := diag.ExitOK
-	if failure != nil {
-		exitCode = failure.ProcessExitCode
-	}
-	if err := writer.Finish(exitCode); err != nil {
+	if err := writer.Finish(); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
 	return streamCompletion{ExitCode: writer.ExitCode()}, nil
@@ -79,7 +72,6 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		failure := contracts.NewDiag(contracts.CodeNodeVersion,
 			"Node.js 24.x is required before installation.",
 			"Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`).", err)
-		failure.ProcessExitCode = diag.ExitInput
 		return applyCommandResult{}, failure
 	}
 	started := time.Now()
@@ -93,7 +85,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if resolved == nil {
 		result, failure := resolvePlan(input.Plan)
 		if failure != nil {
-			return applyCommandResult{}, inputFailure(failure)
+			return applyCommandResult{}, failure
 		}
 		resolved = &result
 	}
@@ -392,7 +384,6 @@ func unsupportedPlatformLayout(root string, cause error) *diag.Diag {
 			"Another first install is publishing ownership for this platform root.",
 			"Wait for the other install to finish, then retry with `"+next+"`.", cause)
 		failure.Meta = map[string]any{"platformRoot": root, "nextCommand": next}
-		failure.ProcessExitCode = diag.ExitInput
 		return failure
 	}
 	var staging *versionroot.OwnershipStagingArtifactError
@@ -408,14 +399,12 @@ func unsupportedPlatformLayout(root string, cause error) *diag.Diag {
 		failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 			"The platform root contains an ownership staging file that cannot be validated.", hint, cause)
 		failure.Meta = map[string]any{"platformRoot": root, "stagingPaths": paths, "nextCommand": remove}
-		failure.ProcessExitCode = diag.ExitInput
 		return failure
 	}
 	failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
 		"This platform root does not use the supported versioned installation layout.",
 		"Choose a fresh writable path, then run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"`.", cause)
 	failure.Meta = map[string]any{"platformRoot": root, "nextCommand": contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")}
-	failure.ProcessExitCode = diag.ExitInput
 	return failure
 }
 

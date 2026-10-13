@@ -13,7 +13,6 @@ import (
 func (e *RequestValidationError) Diagnostic() *diag.Diag {
 	failure := NewDiag(e.Code, e.Message, e.Hint, e.Cause)
 	failure.Meta = map[string]any{"field": e.Field}
-	failure.ProcessExitCode = diag.ExitInput
 	return failure
 }
 

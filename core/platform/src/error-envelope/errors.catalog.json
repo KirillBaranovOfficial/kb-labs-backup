@@ -8,6 +8,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Adapter {service} is bound but is missing required credential {credential}.",
       "hint": "Set {credential} or configure it at platform scope at {path} with `{command}`. No request was sent."
     },
@@ -17,18 +18,20 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The adapter package manifest could not be loaded.",
       "hint": "Correct the adapter manifest, rebuild the adapter package, then run `kb marketplace plugins doctor --scope platform` to verify it."
     },
     {
       "code": "KB_ADAPTER_NOT_CONFIGURED",
+      "httpStatus": 404,
       "area": "plugin",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Service {service} is not configured.",
-      "hint": "Run `{command}` to bind an installed adapter for this capability.",
-      "httpStatus": 404
+      "hint": "Run `{command}` to bind an installed adapter for this capability."
     },
     {
       "code": "KB_ADAPTER_NOT_INSTALLED",
@@ -36,6 +39,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Adapter package {package} is not installed on this platform.",
       "hint": "kb marketplace install {package} --scope platform"
     },
@@ -45,6 +49,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The {slot} adapter failed during {operation}.",
       "hint": "Run `kb logs query` to inspect the adapter failure, correct the underlying issue, then retry the operation."
     },
@@ -54,6 +59,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Project adapter configuration at {path} is unsupported.",
       "hint": "Move `platform.adapters` and `platform.adapterOptions` to the platform config and retry."
     },
@@ -63,6 +69,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Adapter package {package} does not declare platform slot {slot}.",
       "hint": "Install a provider that declares {slot} with `kb marketplace install <pkg> --scope platform`, then retry."
     },
@@ -72,18 +79,20 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The token time does not match the system clock.",
       "hint": "Check the system time and time zone."
     },
     {
       "code": "KB_AUTH_FORBIDDEN",
+      "httpStatus": 403,
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Permission denied: {permission}",
-      "hint": "Ask your administrator for the permission needed to perform this operation.",
-      "httpStatus": 403
+      "hint": "Ask your administrator for the permission needed to perform this operation."
     },
     {
       "code": "KB_AUTH_GATEWAY_UNREACHABLE",
@@ -91,58 +100,64 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The gateway is unreachable.",
       "hint": "Check that the host is running, see KB_HOST_UNREACHABLE."
     },
     {
       "code": "KB_AUTH_INVALID_CREDENTIALS",
+      "httpStatus": 401,
       "area": "auth",
       "stage": "login",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The credentials are invalid.",
-      "hint": "Retry, or reset your credentials.",
-      "httpStatus": 401
+      "hint": "Retry, or reset your credentials."
     },
     {
       "code": "KB_AUTH_INVALID_CURRENT_PASSWORD",
+      "httpStatus": 400,
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Current password is incorrect",
-      "hint": "Check the current password and retry the password change.",
-      "httpStatus": 400
+      "hint": "Check the current password and retry the password change."
     },
     {
       "code": "KB_AUTH_INVALID_INVITE",
+      "httpStatus": 422,
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The invitation is invalid, expired, or already used.",
-      "hint": "Ask the administrator who invited you to send a new invitation.",
-      "httpStatus": 422
+      "hint": "Ask the administrator who invited you to send a new invitation."
     },
     {
       "code": "KB_AUTH_INVALID_PASSWORD_RESET",
+      "httpStatus": 400,
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "This reset link is invalid, expired, or already used.",
-      "hint": "Ask an administrator to issue a new password reset link.",
-      "httpStatus": 400
+      "hint": "Ask an administrator to issue a new password reset link."
     },
     {
       "code": "KB_AUTH_LAST_ADMIN",
+      "httpStatus": 409,
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The last active administrator cannot be demoted or disabled.",
-      "hint": "Add another active tenant administrator before changing this account.",
-      "httpStatus": 409
+      "hint": "Add another active tenant administrator before changing this account."
     },
     {
       "code": "KB_AUTH_LOCKED_OUT",
@@ -150,6 +165,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "No administrator access is available.",
       "hint": "Run \"kb-create doctor --recover\"."
     },
@@ -159,48 +175,53 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The client expects authentication mode {expected} but the host runs in {actual}.",
       "hint": "Align the client with the installed access mode."
     },
     {
       "code": "KB_AUTH_REQUIRED",
+      "httpStatus": 401,
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Authentication is required.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
-      "httpStatus": 401
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_AUTH_SESSION_REVOKED",
+      "httpStatus": 401,
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The saved Gateway session was revoked.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
-      "httpStatus": 401
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_AUTH_TOKEN_EXPIRED",
+      "httpStatus": 401,
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Your session token has expired and could not be refreshed.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
-      "httpStatus": 401
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_AUTH_USER_INACTIVE",
+      "httpStatus": 401,
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The user account for this Gateway session is inactive.",
-      "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
-      "httpStatus": 401
+      "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_CONFIG_APPLY_FAILED",
@@ -208,28 +229,31 @@
       "stage": "apply",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The configuration overlay could not be applied.",
       "hint": "Check the overlay path and the `kb-env` operation log, then retry the profile operation."
     },
     {
       "code": "KB_CONFIG_CONFLICT",
+      "httpStatus": 409,
       "area": "config",
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The configuration file {path} was changed by another writer.",
-      "hint": "Reload the file and repeat the change.",
-      "httpStatus": 409
+      "hint": "Reload the file and repeat the change."
     },
     {
       "code": "KB_CONFIG_INVALID",
+      "httpStatus": 400,
       "area": "config",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Configuration value {path} is invalid.",
-      "hint": "Provide a valid value for {path} (see the cause) and retry; \"kb config get {path}\" shows the current one.",
-      "httpStatus": 400
+      "hint": "Provide a valid value for {path} (see the cause) and retry; \"kb config get {path}\" shows the current one."
     },
     {
       "code": "KB_CONFIG_LLM_KEY_INVALID",
@@ -237,6 +261,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The LLM provider {provider} rejected the API key.",
       "hint": "Replace the key under the LLM settings in kb.config.json."
     },
@@ -246,6 +271,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The LLM provider did not respond before the request timed out.",
       "hint": "Check provider availability and platform.adapterOptions.llm.baseURL with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`, then retry."
     },
@@ -255,6 +281,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The LLM provider could not be reached or returned an invalid response.",
       "hint": "Check platform.adapterOptions.llm.baseURL with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`, then retry."
     },
@@ -264,6 +291,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The quota or budget for LLM provider {provider} is exhausted.",
       "hint": "Top up the quota or switch to another model."
     },
@@ -273,6 +301,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The deployment configuration could not be loaded.",
       "hint": "Check the path passed to `kb-deploy --config` and verify the file is readable."
     },
@@ -282,38 +311,42 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The configuration overlay does not exist.",
       "hint": "Check the profile's `config:` path, then rerun `kb-env up <profile> --fresh`."
     },
     {
       "code": "KB_CONFIG_SECRET_MISSING",
+      "httpStatus": 400,
       "area": "config",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The configuration references {variable}, which has no value.",
-      "hint": "Set the environment variable or store the secret, then retry.",
-      "httpStatus": 400
+      "hint": "Set the environment variable or store the secret, then retry."
     },
     {
       "code": "KB_CONFIG_SECRET_PLAINTEXT",
+      "httpStatus": 400,
       "area": "config",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Refusing to store a plain secret at {path}.",
-      "hint": "Put the secret in an environment variable and store a reference: {example}. Use --allow-plain-secret only for throwaway local values.",
-      "httpStatus": 400
+      "hint": "Put the secret in an environment variable and store a reference: {example}. Use --allow-plain-secret only for throwaway local values."
     },
     {
       "code": "KB_CONFIG_UNKNOWN_KEY",
+      "httpStatus": 400,
       "area": "config",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Unknown configuration key {path}.",
-      "hint": "{suggestion} Run \"kb config show\" to list the keys that are set.",
-      "httpStatus": 400
+      "hint": "{suggestion} Run \"kb config show\" to list the keys that are set."
     },
     {
       "code": "KB_DEPLOY_CONFIG_DELIVERY",
@@ -321,6 +354,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Configuration could not be delivered to every deployment host.",
       "hint": "Check SSH connectivity and host disk space, then retry `kb-deploy apply`."
     },
@@ -330,6 +364,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The deployment plan references an undefined host.",
       "hint": "Add the referenced host to `hosts:` in the deployment configuration, then rerun `kb-deploy plan`."
     },
@@ -339,6 +374,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The deployment completed, but its state lock could not be written.",
       "hint": "Check write permission beside the deployment manifest, then verify the result with `kb-deploy status`."
     },
@@ -348,6 +384,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "A deployment wave did not complete.",
       "hint": "Inspect the reported service failures, fix their cause, then rerun `kb-deploy apply`."
     },
@@ -357,6 +394,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Workspace check {check} could not complete.",
       "hint": "Rerun this check alone with `kb-devkit check --only {check}`, then correct the check's execution problem."
     },
@@ -366,6 +404,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Workspace standards violations were found.",
       "hint": "Review the findings, correct them, then rerun `kb-devkit check`."
     },
@@ -375,6 +414,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The live environment cannot switch to a profile with a different plugin set.",
       "hint": "Run `kb-env up <profile> --fresh` to install the requested plugin set."
     },
@@ -384,6 +424,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Adapter {slot} is unavailable: {reason}.",
       "hint": "Start or configure the adapter under adapters.{slot} in kb.config.json."
     },
@@ -393,6 +434,7 @@
       "stage": "start",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The KB Labs host is already running.",
       "hint": "Use \"kb-create status\" or \"kb-create restart\"."
     },
@@ -402,6 +444,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The launcher control channel rejected the request token.",
       "hint": "Read the current token from control.json in the launcher state directory."
     },
@@ -411,6 +454,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The launcher control channel is unavailable.",
       "hint": "Start the launcher or the desktop shell."
     },
@@ -420,6 +464,7 @@
       "stage": "start",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Refusing to expose the host without authentication on a non-loopback address.",
       "hint": "Enable authentication or bind to a loopback address."
     },
@@ -429,6 +474,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The Gateway identifies as installation {actualInstallationId}, not the active platform root {expectedPlatformRoot} ({expectedInstallationId}).",
       "hint": "Run \"kb-create start --platform-root {expectedPlatformRoot}\" and retry the command."
     },
@@ -438,6 +484,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The recorded host process identity is stale and the process cannot be safely signalled.",
       "hint": "Check the recorded Gateway health URL to identify the live listener. Do not signal an unverified process. After confirming it is unrelated or stopping it through its owner, remove only the named stale record and retry; a still-held Gateway port is reported as KB_INSTALL_PORT_IN_USE."
     },
@@ -447,18 +494,20 @@
       "stage": "start",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The host {service} address passed to this runtime is not a valid HTTP URL.",
       "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime."
     },
     {
       "code": "KB_HOST_SERVICE_ADDRESS_MISSING",
+      "httpStatus": 503,
       "area": "host",
       "stage": "start",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The host {service} address was not passed to this runtime.",
-      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime.",
-      "httpStatus": 503
+      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime."
     },
     {
       "code": "KB_HOST_SPEC_INVALID",
@@ -466,6 +515,7 @@
       "stage": "start",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The host specification in the installation receipt is invalid: {reason}.",
       "hint": "Run \"kb-create doctor --fix\" or reinstall with \"kb-create apply\"."
     },
@@ -475,6 +525,7 @@
       "stage": "start",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The host process failed while starting.",
       "hint": "Read the reason in the log and report the correlationId if it is unclear."
     },
@@ -484,6 +535,7 @@
       "stage": "start",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Cannot write to the state directory {path}.",
       "hint": "Fix the directory permissions or free disk space."
     },
@@ -493,6 +545,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The host process {pid} did not stop.",
       "hint": "Run \"kb-create stop\" again, or end the process manually and remove the stale pid file."
     },
@@ -502,6 +555,7 @@
       "stage": "start",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Studio is enabled but its built files were not found: {dir}.",
       "hint": "Reinstall or update KB Labs so the Studio bundle is present, or point gateway.studio.dir at a built Studio directory, or disable gateway.studio."
     },
@@ -511,6 +565,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The host responds but module {module} is unhealthy.",
       "hint": "Run \"kb-create restart\" or \"kb-create doctor\"."
     },
@@ -520,6 +575,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The KB Labs host is not running: cannot connect to {address}.",
       "hint": "Run \"kb-create start\", or \"kb-create doctor\" if the host should already be running."
     },
@@ -529,6 +585,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The launcher or CLI version {client} does not match the host version {host}.",
       "hint": "Run \"kb-create update\"."
     },
@@ -538,7 +595,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
-      "processExitCode": 1,
+      "processExitClass": "operation-failure",
       "message": "The Gateway address index at {path} cannot be used: {reason}.",
       "hint": "Remove the derived index with `{removeCommand}`, then run `{repairCommand}` to rebuild it from the installation receipt."
     },
@@ -548,6 +605,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The operation did not reach a verified installation.",
       "hint": "Inspect the local log and the diagnostic dossier, fix the reported prerequisite, or run \"kb-create doctor --fix\"."
     },
@@ -557,6 +615,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The artifact manifest does not match the installed artifact {artifact}.",
       "hint": "Retry the installation; if it persists report the correlationId."
     },
@@ -566,6 +625,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "Required configuration is missing or conflicting: {field}.",
       "hint": "Provide the configuration value or run the wizard to complete it."
     },
@@ -575,6 +635,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "This operation requires explicit confirmation.",
       "hint": "Run the command in an interactive terminal and confirm the operation when prompted."
     },
@@ -584,6 +645,7 @@
       "stage": "recover",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The operation failed and the diagnostic dossier could not be written.",
       "hint": "Inspect the local operation log."
     },
@@ -593,6 +655,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Installed manifest diagnostics could not be prepared.",
       "hint": "Install exact artifacts that ship matching manifests."
     },
@@ -602,6 +665,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "Selected components are incompatible: {reason}.",
       "hint": "Choose compatible versions or pass an explicit supported provider."
     },
@@ -611,6 +675,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The release index uses schema {schema}, which this launcher does not support.",
       "hint": "Update the launcher (kb-create update, or download the current launcher) and retry."
     },
@@ -620,6 +685,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "Required input is missing: {field}.",
       "hint": "Supply the missing input as a flag, in the request JSON, or through the wizard."
     },
@@ -629,6 +695,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The installation was interrupted.",
       "hint": "Run \"kb-create apply\" again; it resumes from where it stopped."
     },
@@ -638,6 +705,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Platform {platform} requires launcher {minLauncherVersion} or newer, but this is {launcher}.",
       "hint": "Run kb-create update, or download the current launcher, then retry."
     },
@@ -647,6 +715,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The platform root is not in the supported versioned layout.",
       "hint": "Reinstall the platform into a fresh writable path with `kb-create install --platform-root NEW_ROOT`."
     },
@@ -656,6 +725,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The local operation log could not be created.",
       "hint": "Check that the platform root is writable."
     },
@@ -665,6 +735,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The installation manifest contains fields that cannot be projected.",
       "hint": "Correct the reported manifest fields, then rerun `kb-create doctor`."
     },
@@ -674,6 +745,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The platform install needs at least {minimum} of available memory; {available} is available.",
       "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again."
     },
@@ -683,6 +755,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Cannot reach the release index or registry at {url}.",
       "hint": "Check your network or proxy settings and retry."
     },
@@ -692,6 +765,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Required Node.js or package manager version is missing: {requirement}.",
       "hint": "Install the required version or use the bundled runtime."
     },
@@ -701,6 +775,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Node.js {version} is unsupported; KB Labs requires Node.js 24.x.",
       "hint": "Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`)."
     },
@@ -710,6 +785,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Not enough disk space in {path}: {needed} needed, {available} available.",
       "hint": "Free up disk space or choose another directory with --platform-root."
     },
@@ -719,6 +795,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Cannot write to the platform directory {path}.",
       "hint": "Choose another directory with --platform-root or fix its permissions."
     },
@@ -728,6 +805,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Artifact {artifact} is unavailable from the local cache.",
       "hint": "Run without --offline to download the artifact, or restore its checksum-verified entry in the V2 cache."
     },
@@ -737,6 +815,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The operation was cancelled.",
       "hint": "Rerun the command and confirm when prompted to continue."
     },
@@ -746,6 +825,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The operation failed.",
       "hint": "Inspect the local log and include the correlationId in a report."
     },
@@ -755,6 +835,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Another launcher operation is already running (process {pid}).",
       "hint": "Wait for it to finish; if no launcher is running, remove the stale lock file {path}."
     },
@@ -764,6 +845,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The package manager was killed, likely out of memory. The tuned install peaked at 992.3 MiB RSS (the unbounded run reached 1.14 GiB); this install requires 1.20 GiB available memory.",
       "hint": "Free memory, then rerun `kb-create install`."
     },
@@ -773,6 +855,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The resolved plan contains more than one record for artifact {artifact}.",
       "hint": "Use a current sealed release index and kb-create launcher; if the error persists, report the correlationId."
     },
@@ -782,6 +865,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Port {port} is used by another application.",
       "hint": "Stop process {pid} ({command}) using port {port}, then rerun `kb-create {operation}`."
     },
@@ -791,6 +875,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The platform is installed, but the selected project is not registered.",
       "hint": "Complete the project registration commands for this installation."
     },
@@ -800,6 +885,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The selected project differs from the project recorded by this installation.",
       "hint": "Complete the project registration commands for this installation."
     },
@@ -809,6 +895,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "Capability {capability} has more than one compatible provider.",
       "hint": "Specify which provider to use with --provider."
     },
@@ -818,6 +905,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "No adapter provides the required capability {capability}.",
       "hint": "Select a provider explicitly with --provider."
     },
@@ -827,6 +915,7 @@
       "stage": "recover",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The active install receipt could not be read.",
       "hint": "Run `kb-create install` to create the platform, or restore a named snapshot."
     },
@@ -836,6 +925,7 @@
       "stage": "recover",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The recovery operation did not reach a verified state.",
       "hint": "Inspect the local log and the diagnostic dossier, then retry with the named receipt or snapshot."
     },
@@ -845,6 +935,7 @@
       "stage": "recover",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Recovery needs the host to be stopped, but it is running.",
       "hint": "Run \"kb-create stop\", recover, then \"kb-create start\"."
     },
@@ -854,6 +945,7 @@
       "stage": "recover",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The installed platform does not ship a recovery tool.",
       "hint": "Update the platform with \"kb-create update\", then retry."
     },
@@ -863,6 +955,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The install result did not include a release identifier.",
       "hint": "Inspect the remote install log and correct the install failure before retrying."
     },
@@ -872,6 +965,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The release index is corrupted or its signature does not match.",
       "hint": "Retry the command; if it persists report the correlationId (this is a KB Labs problem)."
     },
@@ -881,6 +975,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The release index at {path} cannot be read.",
       "hint": "Check the --index path and file permissions."
     },
@@ -890,6 +985,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The launcher could not check available memory and disk space.",
       "hint": "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again."
     },
@@ -899,6 +995,7 @@
       "stage": "recover",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The rollback did not succeed; the snapshot is at {snapshot}.",
       "hint": "Restore the snapshot manually and report the correlationId."
     },
@@ -908,6 +1005,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The scenario could not be compiled.",
       "hint": "Inspect the scenario answers and the manifest requirements."
     },
@@ -917,6 +1015,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "A secret input could not be stored.",
       "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable."
     },
@@ -926,6 +1025,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The rendered service graph does not match the resolved plan or the running services.",
       "hint": "Run \"kb-create doctor --fix\" to rebuild generated files from the install receipt."
     },
@@ -935,6 +1035,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The `kb` command points to a target that cannot be mapped to a validated installation.",
       "hint": "Inspect the target, then remove the unverified launcher with `rm -- <shim-path>` before recreating it."
     },
@@ -944,6 +1045,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Runtime preflight failed: the installed toolchain is not supported.",
       "hint": "Use Node.js 24.x and pnpm 11.x, or update the runtime and retry."
     },
@@ -953,6 +1055,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "{os}/{arch} is not a supported platform.",
       "hint": "Use a supported platform (macOS, Linux or Windows on x64/arm64) or install from source."
     },
@@ -962,6 +1065,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "A wizard answer is invalid.",
       "hint": "Choose one of the displayed compatible options."
     },
@@ -972,6 +1076,7 @@
       "stage": "extend",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Marketplace could not install the requested package.",
       "hint": "Inspect the correlated Marketplace log, correct the package-manager cause, then run `kb marketplace install {package} --scope {scope}`."
     },
@@ -982,6 +1087,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The requested package version does not match its immutable Marketplace integrity pin.",
       "hint": "Do not use this version. Verify the registry publication, publish a higher version, then run `kb marketplace update` to install it."
     },
@@ -992,6 +1098,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Marketplace could not use the requested package.",
       "hint": "Check the package metadata and classification, then retry the Marketplace operation."
     },
@@ -1002,6 +1109,7 @@
       "stage": "extend",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The requested package or one of its dependencies is inside the registry release-age window.",
       "hint": "Wait until the package and its dependencies satisfy the configured minimum release age, then run `kb marketplace install {package} --scope {scope}`."
     },
@@ -1012,6 +1120,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The installed platform is missing kb-create's sealed artifact overrides. No package was installed.",
       "hint": "Restore the sealed artifact overrides with kb-create update, then retry the exact install command shown by the Marketplace refusal."
     },
@@ -1021,6 +1130,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The package integrity could not be verified from the registry.",
       "hint": "Publish the package to the configured registry and verify its integrity metadata before retrying deployment."
     },
@@ -1031,6 +1141,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Marketplace could not resolve the requested package.",
       "hint": "Check the configured registry and inspect the correlated Marketplace log before retrying."
     },
@@ -1041,6 +1152,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Published version {installedVersion} is immutable and its registry integrity differs from the installed pin.",
       "hint": "Publish a higher version, then run `kb marketplace install {package}@latest --scope {scope}`."
     },
@@ -1051,6 +1163,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Marketplace can only install a version higher than the installed version {installedVersion}.",
       "hint": "Publish a version higher than {installedVersion}, then run `kb marketplace update {package} --scope {scope}`."
     },
@@ -1060,6 +1173,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The plugin operation was cancelled before it completed.",
       "hint": "Retry the command. If cancellation was unexpected, inspect the plugin logs and retry."
     },
@@ -1069,6 +1183,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Command {command} is hidden: plugin {plugin} is shadowed by a built-in command.",
       "hint": "Run \"kb plugin doctor\" for details."
     },
@@ -1078,6 +1193,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Plugin command violated the command result contract.",
       "hint": "Return command data from the handler, or return a typed failure with a catalogued code, message, and hint."
     },
@@ -1087,6 +1203,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Plugin {plugin} crashed while running.",
       "hint": "Retry; if it repeats, include the correlationId in a report."
     },
@@ -1096,6 +1213,7 @@
       "stage": "extend",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Installing plugin {plugin} failed.",
       "hint": "Check the network and registry, then retry."
     },
@@ -1105,6 +1223,7 @@
       "stage": "extend",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Store entry for plugin {plugin} has integrity {actual}, expected {expected}.",
       "hint": "Remove the store entry and reinstall the pinned version."
     },
@@ -1114,6 +1233,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Plugin {plugin} could not be loaded.",
       "hint": "Run \"kb plugin doctor\" to see the manifest or dependency problem."
     },
@@ -1123,6 +1243,7 @@
       "stage": "extend",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The namespace {namespace} is reserved.",
       "hint": "Choose another namespace, for example acme-{namespace}."
     },
@@ -1132,28 +1253,31 @@
       "stage": "extend",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The namespace {namespace} is taken by package {owner}.",
       "hint": "Choose another namespace or use the owning package."
     },
     {
       "code": "KB_PLUGIN_NOT_FOUND",
+      "httpStatus": 404,
       "area": "plugin",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Plugin {plugin} was not found in the registry.",
-      "hint": "kb marketplace search",
-      "httpStatus": 404
+      "hint": "kb marketplace search"
     },
     {
       "code": "KB_PLUGIN_NOT_INSTALLED",
+      "httpStatus": 404,
       "area": "plugin",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Plugin is not installed in this project.",
-      "hint": "Run `kb marketplace install {package}` in this project.",
-      "httpStatus": 404
+      "hint": "Run `kb marketplace install {package}` in this project."
     },
     {
       "code": "KB_PLUGIN_PERMISSION_DENIED",
@@ -1161,6 +1285,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Plugin {plugin} was denied the {permission} permission.",
       "hint": "Grant the permission in the plugin settings if you trust it."
     },
@@ -1170,6 +1295,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Plugin {plugin} loads its own copy of the platform package {package}.",
       "hint": "Make the platform package a peer dependency of the plugin and reinstall it; run \"kb plugin doctor\" for details."
     },
@@ -1179,6 +1305,7 @@
       "stage": "extend",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Plugin {plugin} needs SDK {required} but {installed} is installed.",
       "hint": "Update the plugin or the platform to compatible versions."
     },
@@ -1188,6 +1315,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Plugin setting {path} is invalid.",
       "hint": "Correct {path} to match the plugin's declared settings schema, then retry."
     },
@@ -1197,6 +1325,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The settings schema for plugin {plugin} could not be loaded.",
       "hint": "Correct the plugin manifest's settings schema, then rerun the config command."
     },
@@ -1206,148 +1335,163 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Plugin {plugin} did not finish in time.",
       "hint": "Retry or increase the timeout."
     },
     {
       "code": "KB_PROJECT_ALREADY_REGISTERED",
+      "httpStatus": 409,
       "area": "project",
       "stage": "add-project",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The project {path} is already registered.",
-      "hint": "Use \"kb project show\" to inspect it.",
-      "httpStatus": 409
+      "hint": "Use \"kb project show\" to inspect it."
     },
     {
       "code": "KB_PROJECT_DECLARATION_INVALID",
+      "httpStatus": 422,
       "area": "project",
       "stage": "add-project",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The .kb configuration of the project is invalid at {field}: {expected}.",
-      "hint": "Fix {field} in the project .kb configuration.",
-      "httpStatus": 422
+      "hint": "Fix {field} in the project .kb configuration."
     },
     {
       "code": "KB_PROJECT_NAME_TAKEN",
+      "httpStatus": 409,
       "area": "project",
       "stage": "add-project",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The project name {name} is already used by another registered project.",
-      "hint": "Pick another name with --name, or run \"kb project list\" to see the registered names.",
-      "httpStatus": 409
+      "hint": "Pick another name with --name, or run \"kb project list\" to see the registered names."
     },
     {
       "code": "KB_PROJECT_NOT_A_DIRECTORY",
+      "httpStatus": 400,
       "area": "project",
       "stage": "add-project",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The project path {path} is not a directory.",
-      "hint": "Pass the project folder, not a file.",
-      "httpStatus": 400
+      "hint": "Pass the project folder, not a file."
     },
     {
       "code": "KB_PROJECT_NO_ACCESS",
+      "httpStatus": 403,
       "area": "project",
       "stage": "add-project",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "No permission to read the project path {path}.",
-      "hint": "Fix the folder permissions or pick another folder.",
-      "httpStatus": 403
+      "hint": "Fix the folder permissions or pick another folder."
     },
     {
       "code": "KB_PROJECT_PATH_NOT_FOUND",
+      "httpStatus": 404,
       "area": "project",
       "stage": "add-project",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The project path {path} does not exist.",
-      "hint": "Check the path and run \"kb project add <path>\" again.",
-      "httpStatus": 404
+      "hint": "Check the path and run \"kb project add <path>\" again."
     },
     {
       "code": "KB_PROJECT_REGISTRY_CORRUPT",
+      "httpStatus": 500,
       "area": "project",
       "stage": "add-project",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The project registry {file} is unreadable: {reason}.",
-      "hint": "Inspect or move {file} aside, then register your projects again with \"kb project add <path>\"; the file is never overwritten automatically.",
-      "httpStatus": 500
+      "hint": "Inspect or move {file} aside, then register your projects again with \"kb project add <path>\"; the file is never overwritten automatically."
     },
     {
       "code": "KB_PROJECT_REGISTRY_LOCKED",
+      "httpStatus": 503,
       "area": "project",
       "stage": "add-project",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The project registry is locked by another KB Labs process (waited {timeoutMs} ms).",
-      "hint": "Retry in a moment; if no other kb command is running, remove the stale projects.json.lock file next to the registry.",
-      "httpStatus": 503
+      "hint": "Retry in a moment; if no other kb command is running, remove the stale projects.json.lock file next to the registry."
     },
     {
       "code": "KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED",
+      "httpStatus": 500,
       "area": "project",
       "stage": "add-project",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The project registry {file} uses schema version {found}, but this KB Labs build supports version {supported}.",
-      "hint": "Update KB Labs to a build that supports the registry schema; the file is left untouched.",
-      "httpStatus": 500
+      "hint": "Update KB Labs to a build that supports the registry schema; the file is left untouched."
     },
     {
       "code": "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH",
+      "httpStatus": 502,
       "area": "project",
       "stage": "start",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The project runtime identity {projectId} does not match the registered project path.",
-      "hint": "Run `kb project list` to verify the registered path, then restart the host.",
-      "httpStatus": 502
+      "hint": "Run `kb project list` to verify the registered path, then restart the host."
     },
     {
       "code": "KB_PROJECT_RUNTIME_LIMIT",
+      "httpStatus": 503,
       "area": "project",
       "stage": "start",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The limit of {limit} active project runtimes is reached.",
-      "hint": "Close an inactive project and try again.",
-      "httpStatus": 503
+      "hint": "Close an inactive project and try again."
     },
     {
       "code": "KB_PROJECT_RUNTIME_RELOAD_FAILED",
+      "httpStatus": 502,
       "area": "project",
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The runtime of project {projectId} could not reload after its plugin set changed.",
-      "hint": "Inspect project runtime logs with `kb logs query` or under the project's `.kb/logs`, then run `kb marketplace plugins doctor --scope project`.",
-      "httpStatus": 502
+      "hint": "Inspect project runtime logs with `kb logs query` or under the project's `.kb/logs`, then run `kb marketplace plugins doctor --scope project`."
     },
     {
       "code": "KB_PROJECT_RUNTIME_START_FAILED",
+      "httpStatus": 502,
       "area": "project",
       "stage": "start",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The runtime of project {project} did not start.",
-      "hint": "Read the reason in the log and include the correlationId if you report it.",
-      "httpStatus": 502
+      "hint": "Read the reason in the log and include the correlationId if you report it."
     },
     {
       "code": "KB_PROJECT_UNKNOWN",
+      "httpStatus": 404,
       "area": "project",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The project {path} is not in the registry (the folder may have moved).",
-      "hint": "Register it with \"kb project add {path}\".",
-      "httpStatus": 404
+      "hint": "Register it with \"kb project add {path}\"."
     },
     {
       "code": "KB_RELEASE_BASELINE_DRIFT",
@@ -1355,6 +1499,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Stable tag and npm baseline have diverged.",
       "hint": "Resolve the stable tag and npm version mismatch, then rerun release preflight."
     },
@@ -1364,6 +1509,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Release must be started from the master branch.",
       "hint": "Run the release command from the master branch, then retry."
     },
@@ -1373,6 +1519,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Building the release candidate failed.",
       "hint": "Fix the candidate build error shown in the report, then rerun release checks."
     },
@@ -1382,6 +1529,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "A release check failed.",
       "hint": "Resolve the failed release check shown in the report, then rerun `kb release checks`."
     },
@@ -1391,6 +1539,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "A release check timed out.",
       "hint": "Inspect the check output and runner resources, then rerun `kb release checks`."
     },
@@ -1400,6 +1549,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Docker is not available.",
       "hint": "Start Docker Desktop and confirm `docker info` succeeds, then retry."
     },
@@ -1409,6 +1559,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Git push was rejected.",
       "hint": "Resolve the remote branch rejection, then retry the release command."
     },
@@ -1418,6 +1569,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The release index could not be sealed.",
       "hint": "Fix the release inputs named in the cause, then rerun release-index preparation."
     },
@@ -1427,6 +1579,7 @@
       "stage": "resolve",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The release plan is invalid.",
       "hint": "Correct the release plan input identified in the cause, then rerun the release command."
     },
@@ -1436,6 +1589,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Promoting the candidate to a channel failed.",
       "hint": "Check the registry and release credentials, then retry promotion."
     },
@@ -1445,6 +1599,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Binding delivered bytes to the registry failed.",
       "hint": "Check registry availability and release credentials, then retry delivery."
     },
@@ -1454,6 +1609,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The release registry is unreachable.",
       "hint": "Run `./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset <N>`, then retry."
     },
@@ -1463,6 +1619,7 @@
       "stage": "verify",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Smoke install of the public candidate failed.",
       "hint": "Inspect the smoke install report, fix the candidate or registry issue, then retry."
     },
@@ -1472,6 +1629,7 @@
       "stage": "apply",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Staging the planned versions failed.",
       "hint": "Inspect the staging command output, correct the reported issue, then retry staging."
     },
@@ -1481,6 +1639,7 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "A required registry or GitHub token is missing.",
       "hint": "Configure the required registry token or authenticate with `gh auth login`, then retry."
     },
@@ -1490,48 +1649,53 @@
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Working tree has uncommitted changes.",
       "hint": "Commit or discard the unrelated changes, then retry the release command."
     },
     {
       "code": "KB_RUNTIME_APPROVAL_INPUT_INVALID",
+      "httpStatus": 400,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The approval request is invalid.",
-      "hint": "Provide jobId, stepId, and an action of approve or reject, then retry.",
-      "httpStatus": 400
+      "hint": "Provide jobId, stepId, and an action of approve or reject, then retry."
     },
     {
       "code": "KB_RUNTIME_APPROVAL_LIST_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Pending approvals could not be listed.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_APPROVAL_NOT_PENDING",
+      "httpStatus": 409,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow step is not waiting for approval.",
-      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the step state.",
-      "httpStatus": 409
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the step state."
     },
     {
       "code": "KB_RUNTIME_APPROVAL_RESOLVE_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow approval could not be resolved.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_COMMAND_FAILED",
@@ -1539,6 +1703,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The command could not complete.",
       "hint": "Run `kb <command> --help` to review required inputs, then rerun the command."
     },
@@ -1548,58 +1713,64 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "This destructive action requires explicit confirmation.",
       "hint": "Verify the target and effect, then rerun the command with --yes."
     },
     {
       "code": "KB_RUNTIME_CRON_LIST_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Cron schedules could not be listed.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_CRON_MUTATION_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The cron schedule could not be changed.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_CRON_NOT_FOUND",
+      "httpStatus": 404,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The requested cron was not found.",
-      "hint": "Run \"kb workflow crons list\" to inspect available crons.",
-      "httpStatus": 404
+      "hint": "Run \"kb workflow crons list\" to inspect available crons."
     },
     {
       "code": "KB_RUNTIME_CRON_PLUGIN_READ_ONLY",
+      "httpStatus": 409,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Plugin crons cannot be changed through the project API.",
-      "hint": "Edit the owning plugin manifest to change this cron, then run \"kb workflow crons list\".",
-      "httpStatus": 409
+      "hint": "Edit the owning plugin manifest to change this cron, then run \"kb workflow crons list\"."
     },
     {
       "code": "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE",
+      "httpStatus": 503,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The cron scheduler is unavailable.",
-      "hint": "Run \"kb status\" to inspect service health, then retry after the workflow service is ready.",
-      "httpStatus": 503
+      "hint": "Run \"kb status\" to inspect service health, then retry after the workflow service is ready."
     },
     {
       "code": "KB_RUNTIME_DISK_FULL",
@@ -1607,6 +1778,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "There is no free disk space in {path}.",
       "hint": "Free some space or clear the cache and logs there."
     },
@@ -1616,98 +1788,108 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Gateway protocol failure during {operation}: expected a canonical UX result from {gatewayUrl} (HTTP {status}).",
       "hint": "Run \"kb-create doctor\" to check the Gateway, then retry the command."
     },
     {
       "code": "KB_RUNTIME_INPUT_INVALID",
+      "httpStatus": 400,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The provided input is invalid.",
-      "hint": "Correct the reported fields and retry; run the command with --help for the expected input.",
-      "httpStatus": 400
+      "hint": "Correct the reported fields and retry; run the command with --help for the expected input."
     },
     {
       "code": "KB_RUNTIME_JOB_CANCEL_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The job could not be cancelled.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_JOB_GET_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The job could not be loaded.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_JOB_INPUT_INVALID",
+      "httpStatus": 400,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The job submission request is invalid.",
-      "hint": "Correct the job submission fields, then retry.",
-      "httpStatus": 400
+      "hint": "Correct the job submission fields, then retry."
     },
     {
       "code": "KB_RUNTIME_JOB_LIST_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Jobs could not be listed.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_JOB_LOGS_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The job logs could not be loaded.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_JOB_NOT_FOUND",
+      "httpStatus": 404,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The requested job was not found.",
-      "hint": "Run \"kb workflow jobs list\" to inspect available jobs.",
-      "httpStatus": 404
+      "hint": "Run \"kb workflow jobs list\" to inspect available jobs."
     },
     {
       "code": "KB_RUNTIME_JOB_STEPS_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The job steps could not be loaded.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_JOB_SUBMIT_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The job could not be submitted.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_LOGS_UNAVAILABLE",
@@ -1715,6 +1897,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The log storage is unavailable.",
       "hint": "Try \"kb logs query\" first, then the raw log files under .kb/logs."
     },
@@ -1724,6 +1907,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "Argument {argument} must match expected {expected}.",
       "hint": "Call tools/list to inspect the tool inputSchema, correct {argument}, and retry."
     },
@@ -1733,6 +1917,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "MCP tool {tool} failed during execution.",
       "hint": "Run \"kb logs query\" to inspect project runtime logs, fix the reported issue, then retry the tool."
     },
@@ -1742,6 +1927,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The API token cannot call MCP tool {tool}.",
       "hint": "Use an API token with a role allowed to run this tool, then call it again."
     },
@@ -1751,6 +1937,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "MCP tool {tool} is not available in this project.",
       "hint": "Call tools/list to discover the available project tools."
     },
@@ -1760,258 +1947,284 @@
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The request limit was reached; retry after {retryAfter}.",
       "hint": "Wait and retry, or reduce the request rate."
     },
     {
       "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
+      "httpStatus": 404,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The requested resource was not found.",
-      "hint": "Check the resource ID or name, then rerun the command.",
-      "httpStatus": 404
+      "hint": "Check the resource ID or name, then rerun the command."
     },
     {
       "code": "KB_RUNTIME_TIMEOUT",
+      "httpStatus": 504,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The operation did not finish in time.",
-      "hint": "Retry or increase the timeout.",
-      "httpStatus": 504
+      "hint": "Retry or increase the timeout."
     },
     {
       "code": "KB_RUNTIME_UNEXPECTED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "An unexpected error occurred.",
-      "hint": "Re-run with --debug and include the correlationId in a report.",
-      "httpStatus": 500
+      "hint": "Re-run with --debug and include the correlationId in a report."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_API_FAILURE",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow API could not complete the request.",
-      "hint": "Run \"kb status\" to inspect service health, then retry after correcting the reported issue.",
-      "httpStatus": 500
+      "hint": "Run \"kb status\" to inspect service health, then retry after correcting the reported issue."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_CONFLICT",
+      "httpStatus": 409,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow operation conflicts with the current run state.",
-      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the current state before retrying.",
-      "httpStatus": 409
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the current state before retrying."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_GET_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow definition could not be loaded.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_INPUT_INVALID",
+      "httpStatus": 400,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The workflow run inputs are invalid.",
-      "hint": "Provide every required workflow input, then retry the run.",
-      "httpStatus": 400
+      "hint": "Provide every required workflow input, then retry the run."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_LIST_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Workflow definitions could not be listed.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_NOT_FOUND",
+      "httpStatus": 404,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The requested workflow was not found.",
-      "hint": "Run \"kb workflow workflows list\" to inspect available workflow IDs.",
-      "httpStatus": 404
+      "hint": "Run \"kb workflow workflows list\" to inspect available workflow IDs."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_PROJECT_ID_REQUIRED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "start",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow daemon did not receive its registered project identity.",
-      "hint": "Run \"kb-dev start --help\", then start the workflow daemon through the project runtime launcher.",
-      "httpStatus": 500
+      "hint": "Run \"kb-dev start --help\", then start the workflow daemon through the project runtime launcher."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_REFRESH_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Workflow definitions could not be refreshed.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RERUN_NOT_APPLICABLE",
+      "httpStatus": 400,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow run has no failed jobs to rerun.",
-      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the run before retrying.",
-      "httpStatus": 400
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the run before retrying."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUNS_LIST_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Runs for the workflow could not be listed.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT",
+      "httpStatus": 409,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow run cannot be cancelled in its current state.",
-      "hint": "Run \"kb workflow runs view <run-id>\" to inspect its current state.",
-      "httpStatus": 409
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect its current state."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow run could not be cancelled.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_GET_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow run could not be loaded.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_LIST_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Workflow runs could not be listed.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Logs for the workflow run could not be loaded.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND",
+      "httpStatus": 404,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Workflow run {runId} was not found.",
-      "hint": "Run \"kb workflow runs list\" to inspect available runs.",
-      "httpStatus": 404
+      "hint": "Run \"kb workflow runs list\" to inspect available runs."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_RERUN_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow run could not be rerun.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_RESTART_CONFLICT",
+      "httpStatus": 409,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The active workflow run cannot be restarted.",
-      "hint": "Wait for the workflow run to finish, then retry the restart.",
-      "httpStatus": 409
+      "hint": "Wait for the workflow run to finish, then retry the restart."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_RESTART_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow run could not be restarted.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_RUN_START_FAILED",
+      "httpStatus": 500,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow run could not be started.",
-      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
-      "httpStatus": 500
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_SNAPSHOT_NOT_FOUND",
+      "httpStatus": 404,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The workflow run snapshot was not found.",
-      "hint": "Run \"kb workflow runs list\" to select a run with an available snapshot.",
-      "httpStatus": 404
+      "hint": "Run \"kb workflow runs list\" to select a run with an available snapshot."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND",
+      "httpStatus": 404,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Workflow step {stepId} was not found.",
-      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the workflow steps.",
-      "httpStatus": 404
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the workflow steps."
     },
     {
       "code": "KB_SERVICE_HEALTH_TIMEOUT",
@@ -2019,18 +2232,20 @@
       "stage": "verify",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Services did not become healthy before the readiness timeout.",
       "hint": "Run `kb-env status` and inspect service logs, then retry after correcting the failure."
     },
     {
       "code": "KB_SERVICE_UNAVAILABLE",
+      "httpStatus": 503,
       "area": "runtime",
       "stage": "run",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "A monitored service reported a failure.",
-      "hint": "Run `kb-dev status` to inspect the service and its health checks.",
-      "httpStatus": 503
+      "hint": "Run `kb-dev status` to inspect the service and its health checks."
     },
     {
       "code": "KB_UPDATE_APPLY_FAILED",
@@ -2038,6 +2253,7 @@
       "stage": "update",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "The update could not be applied; the previous version {version} was restored.",
       "hint": "Inspect the local log and the diagnostic dossier, fix the reported cause and run \"kb-create update\" again."
     },
@@ -2047,6 +2263,7 @@
       "stage": "update",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The requested platform version {target} is older than the installed version {installed}.",
       "hint": "use `kb-create rollback`"
     },
@@ -2056,6 +2273,7 @@
       "stage": "update",
       "severity": "error",
       "retryable": true,
+      "processExitClass": "operation-failure",
       "message": "Downloading the update failed.",
       "hint": "Check the network and run the update again."
     },
@@ -2065,6 +2283,7 @@
       "stage": "update",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "The host did not become healthy after the update; recovery restored the last healthy version {version} or needs attention.",
       "hint": "Run `kb-create doctor --platform-root ROOT` using the platform root from the failed command. Read the host log and report the correlationId."
     },
@@ -2074,6 +2293,7 @@
       "stage": "update",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "input-refusal",
       "message": "The update is incompatible with installed {kind} {component} at {version}; its declared compatibility range is {range}.",
       "hint": "Update or remove {kind} {component} first, then rerun `kb-create update`."
     },
@@ -2083,6 +2303,7 @@
       "stage": "rollback",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "There is no snapshot to roll back to.",
       "hint": "Reinstall the previous version with \"kb-create apply\"."
     },
@@ -2092,6 +2313,7 @@
       "stage": "update",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Update cannot change or create installation secret {secret}.",
       "hint": "Stop the host and run `kb-create apply` with the required `--secret-env` mapping."
     },
@@ -2101,6 +2323,7 @@
       "stage": "update",
       "severity": "error",
       "retryable": false,
+      "processExitClass": "operation-failure",
       "message": "Verification after the update failed; rolled back to {version}.",
       "hint": "Inspect the diagnostic dossier and report the correlationId."
     }

@@ -29,7 +29,6 @@ func executeRecover(inv doctorCommandInput) (doctorRecoveryResult, *diag.Diag) {
 	command := hostCommand{PlatformRoot: inv.PlatformRoot, Foreground: inv.Foreground, Executable: inv.Executable, Version: buildVersion}
 	runner, state, failure := command.setup("recover")
 	if failure != nil {
-		failure.ProcessExitCode = diag.ExitInput
 		return doctorRecoveryResult{}, failure
 	}
 	interaction := clikitcommand.FromCommand(inv.Command)
@@ -60,7 +59,6 @@ func executeRecover(inv doctorCommandInput) (doctorRecoveryResult, *diag.Diag) {
 	}
 	if code != 0 {
 		failure := contracts.NewDiag(contracts.CodeRecoveryFailed, "The platform recovery tool reported failure.", "Inspect the platform installation with `kb-create doctor`.", nil)
-		failure.ProcessExitCode = code
 		return doctorRecoveryResult{}, failure
 	}
 	return doctorRecoveryResult{OK: true, Operation: "recover", Recovered: true, Output: strings.TrimSpace(toolOutput.String())}, nil

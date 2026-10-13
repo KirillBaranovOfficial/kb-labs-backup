@@ -2,17 +2,25 @@ package diag
 
 //go:generate go run ./gen
 
+// ProcessExitClass is the catalogued Go CLI status category.
+type ProcessExitClass string
+
+const (
+	ExitClassInputRefusal     ProcessExitClass = "input-refusal"
+	ExitClassOperationFailure ProcessExitClass = "operation-failure"
+)
+
 // CatalogEntry is the platform-owned metadata used to render a typed error.
 type CatalogEntry struct {
-	Code            string `json:"code"`
-	HTTPStatus      int    `json:"httpStatus,omitempty"`
-	Area            string `json:"area"`
-	Stage           string `json:"stage"`
-	Severity        string `json:"severity"`
-	Retryable       bool   `json:"retryable"`
-	ProcessExitCode int    `json:"processExitCode,omitempty"`
-	Message         string `json:"message"`
-	Hint            string `json:"hint"`
+	Code             string           `json:"code"`
+	HTTPStatus       int              `json:"httpStatus,omitempty"`
+	Area             string           `json:"area"`
+	Stage            string           `json:"stage"`
+	Severity         string           `json:"severity"`
+	Retryable        bool             `json:"retryable"`
+	ProcessExitClass ProcessExitClass `json:"processExitClass"`
+	Message          string           `json:"message"`
+	Hint             string           `json:"hint"`
 }
 
 // LookupCatalog returns platform metadata for a typed error code.

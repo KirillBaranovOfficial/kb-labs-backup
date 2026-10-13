@@ -85,7 +85,6 @@ func (c hostCommand) setup(runnerOperation string) (*host.ProcessRunner, host.St
 func (c hostCommand) run(ctx context.Context, runnerOperation string, action func(context.Context, *host.ProcessRunner, host.State) (hostCommandResult, *diag.Diag)) (hostCommandResult, *diag.Diag) {
 	runner, state, failure := c.setup(runnerOperation)
 	if failure != nil {
-		failure.ProcessExitCode = diag.ExitInput
 		return nil, failure
 	}
 	runner.Operation = runnerOperation

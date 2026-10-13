@@ -29,7 +29,7 @@ In --json mode, emits JSONL events (one JSON object per line) for agent consumpt
 		failStream := func(err error) error {
 			d := diag.FromError(err)
 			_ = events.Fail(d)
-			_ = events.Finish(diag.ExitCode(d))
+			_ = events.Finish()
 			return clikitresult.StreamComplete(events.ExitCode())
 		}
 		ws, cfg, err := loadWorkspace()
@@ -108,7 +108,7 @@ In --json mode, emits JSONL events (one JSON object per line) for agent consumpt
 
 			case <-sig:
 				if events != nil {
-					_ = events.Finish(diag.ExitOK)
+					_ = events.Finish()
 					return clikitresult.StreamComplete(events.ExitCode())
 				}
 				if !jsonMode {

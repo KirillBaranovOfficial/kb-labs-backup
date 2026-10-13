@@ -96,7 +96,6 @@ func existingProjectSelection(platformRoot, selected string) (bool, *diag.Diag) 
 		failure := contracts.NewDiag(contracts.CodeProjectSelectionChanged,
 			"The selected project path spelling differs from the project selection recorded by this installation.",
 			projectRegistrationHint(active, selected), nil)
-		failure.ProcessExitCode = diag.ExitInput
 		return true, failure
 	}
 	return true, nil

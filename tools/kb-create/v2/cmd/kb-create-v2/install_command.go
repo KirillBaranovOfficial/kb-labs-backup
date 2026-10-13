@@ -47,7 +47,6 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	if err := deps.NodeCheck(); err != nil {
 		failure := contracts.NewDiag(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.",
 			"Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`).", err)
-		failure.ProcessExitCode = diag.ExitInput
 		return applyCommandResult{}, failure
 	}
 	home, err := os.UserHomeDir()
@@ -232,28 +231,25 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 	writer := stream.New(clikitcommand.StreamWriter(deps.Command))
 	if input.Index == "" || (input.RequestFile == "" && input.Direct.PlatformRoot == "") {
 		failure := contracts.NewDiag(contracts.CodeInputRequired, "install needs a release index and an install request", "Supply `--index` and either a readable request file with `--input` or a target directory with `--platform-root`, then rerun `kb-create install --json`.", nil)
-		failure.ProcessExitCode = diag.ExitInput
 		return finishInstallStreamFailure(writer, failure)
 	}
 	resolved, failure := resolvePlan(planInput{Operation: "install", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
 		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable,
 		KnownGateways: knownGatewayRoots(input.Executable)})
 	if failure != nil {
-		return finishInstallStreamFailure(writer, inputFailure(failure))
+		return finishInstallStreamFailure(writer, failure)
 	}
 	existingSelection, selectionFailure := existingProjectSelection(resolved.Plan.Request.PlatformRoot, resolved.Plan.Request.ProjectRoot)
 	if selectionFailure != nil {
-		selectionFailure.ProcessExitCode = diag.ExitInput
 		return finishInstallStreamFailure(writer, selectionFailure)
 	}
 	deps.Runtime.Progress = streamProgress{writer: writer}
 	result, failure := executeApplyPlanJSON(ctx, input, resolved, deps)
 	if failure != nil {
-		failure.ProcessExitCode = diag.ExitError
 		if err := writer.Fail(failure); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 		}
-		if err := writer.Finish(failure.ProcessExitCode); err != nil {
+		if err := writer.Finish(); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 		}
 		return streamCompletion{ExitCode: writer.ExitCode()}, nil
@@ -263,11 +259,10 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 		registered, err := deps.ProjectRegistrar(request.PlatformRoot, request.ProjectRoot)
 		if err != nil {
 			failure := projectRegistrationFailure(request.PlatformRoot, request.ProjectRoot, err)
-			failure.ProcessExitCode = diag.ExitError
 			if writeErr := writer.Fail(failure); writeErr != nil {
 				return streamCompletion{}, diag.Wrap(writeErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 			}
-			if finishErr := writer.Finish(failure.ProcessExitCode); finishErr != nil {
+			if finishErr := writer.Finish(); finishErr != nil {
 				return streamCompletion{}, diag.Wrap(finishErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 			}
 			return streamCompletion{ExitCode: writer.ExitCode()}, nil
@@ -275,11 +270,10 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 		result.Receipt, err = recordProjectIdentity(request.PlatformRoot, request.ProjectRoot, registered)
 		if err != nil {
 			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "The project is registered, but its identity could not be recorded in the active receipt.", "Run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", request.PlatformRoot)+"` and inspect the installation before retrying.", err)
-			failure.ProcessExitCode = diag.ExitError
 			if writeErr := writer.Fail(failure); writeErr != nil {
 				return streamCompletion{}, diag.Wrap(writeErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 			}
-			if finishErr := writer.Finish(failure.ProcessExitCode); finishErr != nil {
+			if finishErr := writer.Finish(); finishErr != nil {
 				return streamCompletion{}, diag.Wrap(finishErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 			}
 			return streamCompletion{ExitCode: writer.ExitCode()}, nil
@@ -288,7 +282,7 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 	if written, emitFailure := emitFirstAdminResult(result, "install", func() error { return writer.Result(result) }); emitFailure != nil {
 		return finishFirstAdminResultFailure(writer, deps.Command, written, emitFailure)
 	}
-	if err := writer.Finish(diag.ExitOK); err != nil {
+	if err := writer.Finish(); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
 	return streamCompletion{ExitCode: writer.ExitCode()}, nil
@@ -301,7 +295,7 @@ func finishFirstAdminResultFailure(writer *stream.Writer, command *cobra.Command
 	} else if err := writer.Fail(failure); err != nil {
 		return streamCompletion{}, failure
 	}
-	if err := writer.Finish(diag.ExitCode(failure)); err != nil {
+	if err := writer.Finish(); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
 	return streamCompletion{ExitCode: writer.ExitCode()}, nil
@@ -311,7 +305,7 @@ func finishInstallStreamFailure(writer *stream.Writer, failure *diag.Diag) (stre
 	if err := writer.Fail(failure); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 	}
-	if err := writer.Finish(diag.ExitCode(failure)); err != nil {
+	if err := writer.Finish(); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
 	return streamCompletion{ExitCode: writer.ExitCode()}, nil

@@ -66,24 +66,18 @@ func (w *Writer) Fail(d *diag.Diag) error {
 	}
 	d = diag.FromError(d)
 	w.failure = d
-	if code := diag.ExitCode(d); code > w.exitCode {
-		w.exitCode = code
-	}
+	w.exitCode = diag.ExitCode(d)
 	return json.NewEncoder(w.output).Encode(result.FailureEnvelope(d))
 }
 
 // Finish writes the terminal success envelope and closes the stream.
-func (w *Writer) Finish(exitCode int) error {
+func (w *Writer) Finish() error {
 	if w.finished {
 		return fmt.Errorf("stream already has a terminal record")
 	}
-	if exitCode != diag.ExitOK && exitCode != diag.ExitInput && exitCode != diag.ExitError {
-		return fmt.Errorf("invalid stream exit code %d", exitCode)
-	}
+	exitCode := diag.ExitOK
 	if w.failure != nil {
 		exitCode = diag.ExitCode(w.failure)
-	} else if w.exitCode > exitCode {
-		exitCode = w.exitCode
 	}
 	record := map[string]any{
 		"ok":   true,

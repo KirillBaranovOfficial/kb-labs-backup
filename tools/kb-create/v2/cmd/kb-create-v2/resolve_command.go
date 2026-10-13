@@ -72,47 +72,47 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 			if cause == nil {
 				cause = fmt.Errorf("registry URL must use HTTP or HTTPS and include a host")
 			}
-			return planResult{}, inputFailure(failure(contracts.CodeInputRequired,
+			return planResult{}, failure(contracts.CodeInputRequired,
 				"--registry must be an absolute HTTP or HTTPS URL",
-				"pass a registry such as `https://registry.npmjs.org`, then rerun `kb-create plan`", cause))
+				"pass a registry such as `https://registry.npmjs.org`, then rerun `kb-create plan`", cause)
 		}
 	}
 	resolved, failure := resolvePlan(planInput{Index: request.Index, RequestFile: request.RequestFile, Direct: request.Direct,
 		Operation: "plan", ScenarioID: request.ScenarioID, Answers: request.Answers, Resume: request.Resume,
 		Executable: request.Executable, KnownGateways: request.KnownGateways})
 	if failure != nil {
-		return planResult{}, inputFailure(failure)
+		return planResult{}, failure
 	}
 	plan = resolved.Plan
 	if plan.Host != nil {
 		if err := host.CheckPorts(plan, "plan"); err != nil {
-			return planResult{}, inputFailure(asDiag(err))
+			return planResult{}, asDiag(err)
 		}
 	}
 	var updateSummary *contracts.UpdateSummary
 	activeRoot, layoutErr := activePlatformRoot(plan.Request.PlatformRoot)
 	installed := layoutErr == nil
 	if layoutErr != nil && !errors.Is(layoutErr, versionroot.ErrPlatformNotInstalled) {
-		return planResult{}, inputFailure(unsupportedPlatformLayout(plan.Request.PlatformRoot, layoutErr))
+		return planResult{}, unsupportedPlatformLayout(plan.Request.PlatformRoot, layoutErr)
 	}
 	if installed {
 		receiptPath := receipt.Path(activeRoot)
 		if _, err := os.Stat(receiptPath); err != nil {
 			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be checked for update comparison", "check platform-root permissions, then rerun `kb-create plan`", err)
-			return planResult{}, inputFailure(failure)
+			return planResult{}, failure
 		}
 		active, readErr := receipt.Read(activeRoot)
 		if readErr != nil {
 			if failure := receiptArtifactIdentityFailure(readErr, request.Index, plan.Request.PlatformRoot); failure != nil {
-				return planResult{}, inputFailure(failure)
+				return planResult{}, failure
 			}
 			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be read for update comparison", "restore a named V2 snapshot, then rerun `kb-create plan`", readErr)
-			return planResult{}, inputFailure(failure)
+			return planResult{}, failure
 		}
 		summary, summaryErr := resolve.SummarizeUpdate(active, plan, resolved.Catalog)
 		if summaryErr != nil {
 			failure := contracts.NewDiag(contracts.CodeOperationFailed, "the installed platform could not be compared with the resolved plan", "verify the active receipt and sealed release index, then rerun `kb-create plan`", summaryErr)
-			return planResult{}, inputFailure(failure)
+			return planResult{}, failure
 		}
 		updateSummary = &summary
 	}
@@ -126,13 +126,6 @@ func receiptArtifactIdentityFailure(err error, index, platformRoot string) *diag
 		return nil
 	}
 	failure.Hint = "Reinstall this platform with `" + contracts.ShellCommand("kb-create", "apply", "--index", index, "--platform-root", platformRoot) + "`."
-	return failure
-}
-
-func inputFailure(failure *diag.Diag) *diag.Diag {
-	if failure != nil && failure.ProcessExitCode == diag.ExitOK {
-		failure.ProcessExitCode = diag.ExitInput
-	}
 	return failure
 }
 
@@ -409,7 +402,7 @@ func readRequest(path string) ([]byte, error) {
 func indexFailure(err error, hint string) *diag.Diag {
 	var typed *diag.Diag
 	if errors.As(err, &typed) {
-		return inputFailure(typed)
+		return typed
 	}
-	return inputFailure(contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index could not be loaded.", hint, err))
+	return contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index could not be loaded.", hint, err)
 }
