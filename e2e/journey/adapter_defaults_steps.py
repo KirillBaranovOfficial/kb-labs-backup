@@ -17,7 +17,8 @@ from journey_resources import active_platform_root
 from service_steps import Journey
 from marketplace_steps import _platform_snapshot
 from platform_update_steps import _changed_paths
-from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
+from invocations import (decode_ux_error_result, decode_ux_success_result,
+                         export_project_identity_to_child_environment, open_http,
                          read_ux_cli_result, read_ux_http_result, run_command, run_with_runner)
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -208,7 +209,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             stderr = stderr.encode()
         return subprocess.CompletedProcess(command, result.returncode,
                                             stdout=stdout, stderr=stderr)
-    base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project_a)
+    export_project_identity_to_child_environment(base_env, project_root=str(project_a))
     project_state = _project_state_dir(project_a, base_env)
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
     platform_content_root = active_platform_root(platform_root)

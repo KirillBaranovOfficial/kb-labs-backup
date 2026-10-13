@@ -70,14 +70,15 @@ def _emission_succeeded(result: subprocess.CompletedProcess[str] | None, marker:
             and data.get("marker") == marker)
 
 
-def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
+def run_analytics_steps(journey: Journey, *, token: str, project_id: str, project_root: str,
+                        project_b_id: str, project_b_root: str, runner=run_command,
                         opener=urllib.request.urlopen) -> None:
     """Claim event persistence and project API isolation with explicit step IDs."""
     event_type = "case.analytics.persist"
     source = "case-fixture"
     before = datetime.now(timezone.utc) - timedelta(seconds=2)
-    project_a = journey_value("KB_JOURNEY_PROJECT_ROOT", "")
-    project_b = journey_value("KB_JOURNEY_PROJECT_B_ROOT", "")
+    project_a = project_root
+    project_b = project_b_root
     fixture_install = _run_fixture_command(
         ["kb", "marketplace", "install", "@kb-labs/e2e-analytics-emitter", "--scope", "platform", "--json"],
         step_id="S-191.1", runner=runner, cwd=project_a,
@@ -94,7 +95,6 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
         else "fixture analytics plugin install and both project invocations must succeed; provide registered project roots"
     ), cases=["S-191.1"])
 
-    project_id = journey_value("KB_JOURNEY_PROJECT_ID", "")
     query_path = project_service_path(project_id, "rest", "analytics/events?type=" + event_type + "&source=" + source
                   + "&from=" + before.isoformat() + "&to="
                   + (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat())
@@ -135,8 +135,7 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
             "projectBEvent": marker_b,
         }), encoding="utf-8")
 
-    projects = [journey_value("KB_JOURNEY_PROJECT_ID", ""),
-                journey_value("KB_JOURNEY_PROJECT_B_ID", "")]
+    projects = [project_id, project_b_id]
     project_events: list[list[dict]] = []
     project_runs: list[object] = []
     for project_id in projects:
@@ -158,8 +157,13 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
     ), cases=["S-201.3"])
 
 
-def run_analytics_and_gateway_steps(journey: Journey, *, token: str, runner=run_command,
+def run_analytics_and_gateway_steps(journey: Journey, *, token: str, project_id: str, project_root: str,
+                                    project_b_id: str, project_b_root: str, runner=run_command,
                                     opener=urllib.request.urlopen) -> None:
     """Single service-runner hook for this stream's API and gateway checks."""
-    run_analytics_steps(journey, token=token, runner=runner, opener=opener)
-    run_gateway_steps(journey, token=token, runner=runner, opener=opener)
+    run_analytics_steps(journey, token=token, project_id=project_id, project_root=project_root,
+                        project_b_id=project_b_id, project_b_root=project_b_root,
+                        runner=runner, opener=opener)
+    run_gateway_steps(journey, token=token, project_id=project_id, project_root=project_root,
+                      project_b_id=project_b_id, project_b_root=project_b_root,
+                      runner=runner, opener=opener)
