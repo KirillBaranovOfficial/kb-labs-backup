@@ -29,6 +29,7 @@ import (
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
@@ -172,13 +173,13 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		t.Fatalf("first secured registration Gateway calls = login %d, register %d; want one each", requestCounts["login"], requestCounts["register"])
 	}
 	secretStore := secrets.Store{PlatformRoot: root}
-	for name, value := range map[string]string{
-		secrets.BootstrapGenerated: "true",
-		secrets.BootstrapDisclosed: "true",
-	} {
+	for name, value := range map[string]string{secrets.BootstrapGenerated: "true"} {
 		if err := secretStore.Put(name, value); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := secretStore.Put(secrets.BootstrapCompleted, "true"); err != nil {
+		t.Fatal(err)
 	}
 	if err := readBootstrapOutcome(context.Background(), realGateway+"/health", secretStore); err != nil {
 		t.Fatalf("record first-admin completion from the secured Gateway auth-readiness route: %v", err)
@@ -193,6 +194,11 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	}
 	identityBefore, err := receipt.Read(activeRoot)
 	if err != nil {
+		t.Fatal(err)
+	}
+	unregisteredBeforeRepeat := identityBefore
+	unregisteredBeforeRepeat.ProjectSelectedPath, unregisteredBeforeRepeat.ProjectID, unregisteredBeforeRepeat.ProjectCanonicalPath = "", "", ""
+	if err := receipt.Write(activeRoot, unregisteredBeforeRepeat); err != nil {
 		t.Fatal(err)
 	}
 	registryPath := filepath.Join(kbHome, "projects.json")
@@ -239,6 +245,10 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	testHost := &projectRegistrationTestHost{gatewayProxy: countingProxy}
 	t.Cleanup(testHost.stop)
 	for _, projectPath := range []string{selected, canonical, ""} {
+		_, storedPasswordPresent, err := secretStore.Get(secrets.BootstrapPassword)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if testHost.running() {
 			testHost.stop()
 		}
@@ -284,18 +294,28 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		if code != 0 {
 			t.Fatalf("secured repeat install for %q exit=%d output:\n%s", projectPath, code, output)
 		}
-		if strings.Contains(output, `"password":`) || strings.Contains(output, `"Password":`) {
-			t.Fatalf("secured repeat install disclosed a password: %s", output)
+		if storedPasswordPresent {
+			if strings.Count(output, password) != 1 || strings.Count(output, `"password":`) != 1 {
+				t.Fatalf("completed but undisclosed repeat install must disclose the stored credential exactly once: %s", output)
+			}
+		} else if strings.Contains(output, `"password":`) || strings.Contains(output, `"Password":`) || strings.Contains(output, password) {
+			t.Fatalf("previously disclosed repeat install returned a password: %s", output)
 		}
-		assertSecretAbsent(t, "JSON repeat-install result", []byte(output), password)
 		repeatResult := applyResultFromStream(t, output)
 		humanOutput := renderInstall(repeatResult)
-		if strings.Contains(humanOutput, "Password:") || strings.Contains(humanOutput, `"password"`) {
-			t.Fatalf("secured repeat install human result contains a password field: %s", humanOutput)
+		if storedPasswordPresent {
+			if !strings.Contains(humanOutput, "Password:") || strings.Count(humanOutput, password) != 1 {
+				t.Fatalf("completed but undisclosed repeat install human result must disclose the stored credential once: %s", humanOutput)
+			}
+		} else if strings.Contains(humanOutput, "Password:") || strings.Contains(humanOutput, password) {
+			t.Fatalf("previously disclosed repeat install human result returned a password: %s", humanOutput)
 		}
-		assertSecretAbsent(t, "human repeat-install result", []byte(humanOutput), password)
-		if repeatResult.FirstAdmin == nil || repeatResult.FirstAdmin.State != firstAdminPreviouslyDisclosed {
-			t.Fatalf("repeat install first-admin state = %#v; want explicit previously-disclosed notice", repeatResult.FirstAdmin)
+		wantAdminState := firstAdminPreviouslyDisclosed
+		if storedPasswordPresent {
+			wantAdminState = firstAdminDisclosed
+		}
+		if repeatResult.FirstAdmin == nil || repeatResult.FirstAdmin.State != wantAdminState {
+			t.Fatalf("completed repeat install first-admin state = %#v; want %s", repeatResult.FirstAdmin, wantAdminState)
 		}
 		logBytes, err := os.ReadFile(repeatResult.LogPath)
 		if err != nil {
@@ -312,8 +332,25 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 			t.Fatal(err)
 		}
 		assertSecretAbsent(t, "repeat-install plan", planBytes, password)
-		if !strings.Contains(output, `"operation":"apply"`) || !strings.Contains(output, `"projectId":"`+registered.ID+`"`) {
-			t.Fatalf("repeat install did not apply and return the recorded project identity: %s", output)
+		if !strings.Contains(output, `"operation":"apply"`) {
+			t.Fatalf("repeat install did not apply: %s", output)
+		}
+		if repeatResult.ProjectRegistrationNotice != "" {
+			noticeGateway, err := gateway.OriginFromHealthURL(repeatResult.Receipt.Verification.HostHealthURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, command := range []string{
+				contracts.ShellCommand("kb", "auth", "login", "--gateway-url", noticeGateway, "--email", "admin@example.test"),
+				contracts.ShellCommand("kb", "project", "add", projectPath),
+				contracts.ShellCommand("kb", "project", "show", projectPath),
+			} {
+				if !strings.Contains(repeatResult.ProjectRegistrationNotice, command) {
+					t.Fatalf("completed undisclosed project notice %q omitted command %q", repeatResult.ProjectRegistrationNotice, command)
+				}
+			}
+		} else if !strings.Contains(output, `"projectId":"`+registered.ID+`"`) {
+			t.Fatalf("repeat install did not return recorded project identity: %s", output)
 		}
 		if !strings.Contains(output, `"phase":"Start host"`) {
 			t.Fatalf("repeat install output did not report apply progress: %s", output)
@@ -333,9 +370,93 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		if updated.ProjectSelectedPath != identityBefore.ProjectSelectedPath || updated.ProjectID != identityBefore.ProjectID || updated.ProjectCanonicalPath != identityBefore.ProjectCanonicalPath {
+		if repeatResult.ProjectRegistrationNotice != "" {
+			if updated.ProjectSelectedPath != "" || updated.ProjectID != "" || updated.ProjectCanonicalPath != "" {
+				t.Fatalf("unregistered completed repeat changed project identity: selected=%q id=%q canonical=%q", updated.ProjectSelectedPath, updated.ProjectID, updated.ProjectCanonicalPath)
+			}
+		} else if updated.ProjectSelectedPath != identityBefore.ProjectSelectedPath || updated.ProjectID != identityBefore.ProjectID || updated.ProjectCanonicalPath != identityBefore.ProjectCanonicalPath {
 			t.Fatalf("repeat install changed recorded project identity: selected=%q id=%q canonical=%q", updated.ProjectSelectedPath, updated.ProjectID, updated.ProjectCanonicalPath)
 		}
+		for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+			if present, err := (secrets.Store{PlatformRoot: root}).Exists(name); err != nil || present {
+				t.Fatalf("repeat install for %q restored bootstrap secret %q: present=%v err=%v", projectPath, name, present, err)
+			}
+		}
+		if projectPath == selected && storedPasswordPresent {
+			if _, err := recordProjectIdentity(root, selected, registered); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if testHost.running() {
+		testHost.stop()
+	}
+	unregistered, err := receipt.Read(activeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unregistered.ProjectSelectedPath, unregistered.ProjectID, unregistered.ProjectCanonicalPath = "", "", ""
+	if err := receipt.Write(activeRoot, unregistered); err != nil {
+		t.Fatal(err)
+	}
+	requestPath := filepath.Join(t.TempDir(), "unregistered-request.json")
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root, ProjectRoot: selected,
+		Values: map[string]string{
+			"gateway.access.mode":          `"secured"`,
+			"gateway.bootstrap.adminEmail": `"admin@example.test"`,
+			"gateway.bootstrap.tenantId":   `"workspace"`,
+		}}
+	requestBytes, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, requestBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var noticeStdout, noticeStderr bytes.Buffer
+	registrarCallsBefore := registrarCalls
+	noticeCommand := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
+		deps := productionCommandDependencies(cmd)
+		deps.NodeCheck = func() error { return nil }
+		deps.Executable = launcher
+		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: testHost, Clock: clock}
+		deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
+			registrarCalls++
+			return registerInstalledProject(platformRoot, selectedProject, nil)
+		}
+		return deps
+	})
+	noticeCode := clikitcommand.Execute(noticeCommand,
+		[]string{"install", "--json", "--index", indexPath, "--input", requestPath}, &noticeStdout, &noticeStderr)
+	noticeOutput := noticeStdout.String() + noticeStderr.String()
+	if noticeCode != 0 {
+		t.Fatalf("completed secured install for an unregistered project exit=%d output=%s", noticeCode, noticeOutput)
+	}
+	noticeResult := applyResultFromStream(t, noticeOutput)
+	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+		if present, err := (secrets.Store{PlatformRoot: root}).Exists(name); err != nil || present {
+			t.Fatalf("completed install notice for an unregistered project restored bootstrap secret %q: present=%v err=%v", name, present, err)
+		}
+	}
+	noticeGateway, err := gateway.OriginFromHealthURL(noticeResult.Receipt.Verification.HostHealthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{
+		contracts.ShellCommand("kb", "auth", "login", "--gateway-url", noticeGateway, "--email", "admin@example.test"),
+		contracts.ShellCommand("kb", "project", "add", selected),
+		contracts.ShellCommand("kb", "project", "show", selected),
+	} {
+		if !strings.Contains(noticeResult.ProjectRegistrationNotice, command) {
+			t.Fatalf("unregistered-project notice %q omitted command %q", noticeResult.ProjectRegistrationNotice, command)
+		}
+	}
+	requestsMu.Lock()
+	loginCalls, registrationCalls := requestCounts["login"], requestCounts["register"]
+	requestsMu.Unlock()
+	if registrarCalls != registrarCallsBefore || loginCalls != 0 || registrationCalls != 0 {
+		t.Fatalf("unregistered completed install calls = registrar %d, Gateway login %d, registration %d; want zero",
+			registrarCalls-registrarCallsBefore, loginCalls, registrationCalls)
 	}
 
 	activeLayout, err := versionroot.New(root)
@@ -408,7 +529,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		deps := productionCommandDependencies(cmd)
 		deps.NodeCheck = func() error { return nil }
 		deps.Executable = launcher
-		answers := []string{"", "", "secured", "admin@example.test", "workspace", password, password, humanJWTSecret, humanJWTSecret, ""}
+		answers := []string{"", "", "secured", "admin@example.test", "workspace", humanJWTSecret, humanJWTSecret, ""}
 		deps.InstallInput = strings.NewReader(strings.Join(answers, "\n"))
 		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: testHost, Clock: clock}
 		deps.ProjectRegistrar = func(platformRoot, selectedProject string) (projectRegistrationResult, error) {
@@ -431,6 +552,9 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	if registrarCalls != humanRegistrarCallsBefore || requestCounts["login"] != 0 || requestCounts["register"] != 0 {
 		t.Fatalf("human repeat install made registration calls: registrar %d, Gateway login %d, registration %d",
 			registrarCalls-humanRegistrarCallsBefore, requestCounts["login"], requestCounts["register"])
+	}
+	if strings.Contains(humanStdout.String(), "Admin password:") {
+		t.Fatal("completed secured install prompted again for the first-administrator password")
 	}
 	for label, output := range map[string][]byte{"human stdout": humanStdout.Bytes(), "human stderr": humanStderr.Bytes()} {
 		if strings.Contains(string(output), "Password:") || strings.Contains(string(output), `"password"`) || strings.Contains(string(output), `"Password"`) {
@@ -458,7 +582,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		t.Fatal("human repeat install did not create an inspectable operation transcript")
 	}
 	requestsMu.Lock()
-	loginCalls, registrationCalls := requestCounts["login"], requestCounts["register"]
+	loginCalls, registrationCalls = requestCounts["login"], requestCounts["register"]
 	requestsDuringRepeats := append([]string(nil), gatewayRequests...)
 	requestsMu.Unlock()
 	if registrarCalls != 0 || loginCalls != 0 || registrationCalls != 0 || len(requestsDuringRepeats) != 0 {
@@ -468,8 +592,12 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	if err != nil || !bytes.Equal(registryBytesBefore, registryBytesAfter) {
 		t.Fatalf("matching install changed $KB_HOME/projects.json bytes: read err=%v", err)
 	}
-	if stored, present, err := (secrets.Store{PlatformRoot: root}).Get("gateway.bootstrap.password"); err != nil || !present || stored != password {
-		t.Fatalf("repeat install should leave the known sentinel in the store for secrecy assertions: present %v, err %v", present, err)
+	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+		if present, err := (secrets.Store{PlatformRoot: root}).Exists(name); err != nil || present {
+			completed, completedErr := (secrets.Store{PlatformRoot: root}).Exists(secrets.BootstrapCompleted)
+			disclosed, disclosedErr := (secrets.Store{PlatformRoot: root}).Exists(secrets.BootstrapDisclosed)
+			t.Fatalf("repeat install restored disclosed bootstrap secret %q: present %v, err %v; completed=%v/%v disclosed=%v/%v", name, present, err, completed, completedErr, disclosed, disclosedErr)
+		}
 	}
 }
 

@@ -6,7 +6,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -53,6 +55,42 @@ func TestFirstAdminDisclosureMarkerFollowsSuccessfulResultWrite(t *testing.T) {
 	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || !disclosed {
 		t.Fatalf("successful result write disclosure marker = %v, err %v; want recorded", disclosed, err)
 	}
+	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+		if present, err := store.Exists(name); err != nil || present {
+			t.Fatalf("disclosed bootstrap password entry %q present=%v, err=%v; want erased", name, present, err)
+		}
+	}
+	assertSecretAbsentFromTree(t, root, password)
+}
+
+func assertSecretAbsentFromTree(t *testing.T, root, secret string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(data, []byte(secret)) {
+			t.Errorf("disclosed password remains in install-root file %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestBootstrapDisclosureMarkerHasOnePostWriteOwner(t *testing.T) {
@@ -80,7 +118,7 @@ func TestBootstrapDisclosureMarkerHasOnePostWriteOwner(t *testing.T) {
 				if !ok {
 					return true
 				}
-				if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "Put" && hasBootstrapDisclosureIdentifier(call.Args) {
+				if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "MarkBootstrapDisclosed" {
 					writers = append(writers, function.Name.Name)
 				}
 				if identifier, ok := call.Fun.(*ast.Ident); ok && identifier.Name == "setBootstrapDisclosed" {
@@ -91,26 +129,9 @@ func TestBootstrapDisclosureMarkerHasOnePostWriteOwner(t *testing.T) {
 		}
 	}
 	if !reflect.DeepEqual(writers, []string{"setBootstrapDisclosed"}) {
-		t.Fatalf("BootstrapDisclosed write owners = %v; want only setBootstrapDisclosed", writers)
+		t.Fatalf("atomic bootstrap disclosure owners = %v; want only setBootstrapDisclosed", writers)
 	}
 	if !reflect.DeepEqual(setterCallers, []string{"emitFirstAdminResult"}) {
 		t.Fatalf("disclosure setter callers = %v; want only emitFirstAdminResult", setterCallers)
 	}
-}
-
-func hasBootstrapDisclosureIdentifier(nodes []ast.Expr) bool {
-	for _, node := range nodes {
-		found := false
-		ast.Inspect(node, func(child ast.Node) bool {
-			if identifier, ok := child.(*ast.Ident); ok && identifier.Name == "BootstrapDisclosed" {
-				found = true
-				return false
-			}
-			return !found
-		})
-		if found {
-			return true
-		}
-	}
-	return false
 }

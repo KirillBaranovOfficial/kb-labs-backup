@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -283,6 +284,68 @@ func TestEnvironmentOmitsBootstrapPasswordAfterCompletion(t *testing.T) {
 	}
 	if password, present, err := store.Get("gateway.bootstrap.password"); err != nil || !present || password != "one-time-bootstrap-password" {
 		t.Fatalf("completion deleted stored bootstrap secret: present=%v err=%v", present, err)
+	}
+}
+
+// case: S-222.11
+func TestBootstrapDisclosureAtomicallyErasesPasswordAndRejectsReinsertion(t *testing.T) {
+	root := t.TempDir()
+	store := Store{PlatformRoot: root}
+	const password = "bootstrap-disclosure-test-sentinel"
+	for name, value := range map[string]string{
+		"gateway.bootstrap.password": password,
+		BootstrapPasswordEnvironment: password,
+		"gateway.jwtSecret":          "unrelated-secret",
+	} {
+		if err := store.Put(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.MarkBootstrapDisclosed(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(secretsPath(t, root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), password) || !strings.Contains(string(data), BootstrapDisclosed+"=true") || !strings.Contains(string(data), "unrelated-secret") {
+		t.Fatal("disclosure update did not atomically preserve unrelated values, record the marker, and erase the password")
+	}
+	for _, name := range []string{"gateway.bootstrap.password", BootstrapPasswordEnvironment} {
+		if present, err := store.Exists(name); err != nil || present {
+			t.Fatalf("disclosed password key %q present=%v, err=%v", name, present, err)
+		}
+	}
+	for _, name := range []string{BootstrapPassword, BootstrapPasswordEnvironment} {
+		if err := store.Put(name, password); err != ErrBootstrapPasswordDisclosed {
+			t.Fatalf("password reinsertion error for %q = %v; want ErrBootstrapPasswordDisclosed", name, err)
+		}
+	}
+	if err := store.Put(BootstrapDisclosed, "true"); err == nil {
+		t.Fatal("the disclosure marker must not be written separately from password erasure")
+	}
+}
+
+func TestOpeningStoreConvergesInterruptedBootstrapDisclosure(t *testing.T) {
+	root := t.TempDir()
+	store := Store{PlatformRoot: root}
+	const password = "interrupted-disclosure-test-sentinel"
+	data := []byte(BootstrapDisclosed + "=true\n" + BootstrapPassword + "=" + password + "\n" + BootstrapPasswordEnvironment + "=" + password + "\n")
+	if err := os.MkdirAll(filepath.Dir(secretsPath(t, root)), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secretsPath(t, root), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exists("gateway.jwtSecret"); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(secretsPath(t, root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), password) || !strings.Contains(string(stored), BootstrapDisclosed+"=true") {
+		t.Fatal("opening the secret store did not converge disclosure marker and password erasure")
 	}
 }
 

@@ -593,6 +593,44 @@ func TestDoctorRecoverRunsThePlatformRecoveryToolWithTheHostStopped(t *testing.T
 	}
 }
 
+// case: S-100.2, S-222.11
+func TestGeneratedRecoveryCredentialIsShownWithoutStorage(t *testing.T) {
+	inst, _ := recoverInstallation(t, true)
+	root := platformRootForTest(t, inst.root)
+	store := secrets.Store{PlatformRoot: root}
+	if err := store.Put(secrets.BootstrapCompleted, "provisioned"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkBootstrapDisclosed(); err != nil {
+		t.Fatal(err)
+	}
+	const recoveredPassword = "recovery-output-only-test-sentinel"
+	t.Setenv("RECOVER_GENERATED_PASSWORD", recoveredPassword)
+	recoverScript := filepath.Join(root, "recover.sh")
+	if err := os.WriteFile(recoverScript, []byte("#!/bin/sh\nprintf '%s\\n' \"$RECOVER_GENERATED_PASSWORD\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	active, err := receipt.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Plan.Host.Recover = &contracts.ToolSpec{Command: "./recover.sh"}
+	if err := receipt.Write(root, active); err != nil {
+		t.Fatal(err)
+	}
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root,
+		Recover: recoverRequest{Enabled: true, Email: "admin@example.com", Generate: true, Yes: true, JSON: true}})
+	if code != 0 || !strings.Contains(raw, recoveredPassword) || payload["operation"] != "recover" {
+		t.Fatalf("generated recovery credential was not returned to the user: status=%d operation=%v", code, payload["operation"])
+	}
+	for _, name := range []string{secrets.BootstrapPassword, secrets.BootstrapPasswordEnvironment} {
+		if present, err := store.Exists(name); err != nil || present {
+			t.Fatalf("recovery stored replacement bootstrap value under %q: present=%v err=%v", name, present, err)
+		}
+	}
+	assertSecretAbsentFromTree(t, inst.root, recoveredPassword)
+}
+
 // case: S-100.2
 func TestDoctorRecoverUsesExplicitPlatformRootWithoutARegisteredProject(t *testing.T) {
 	inst, record := recoverInstallation(t, true)

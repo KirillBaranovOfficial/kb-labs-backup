@@ -23,6 +23,7 @@ import (
 	clikitresult "github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
@@ -109,12 +110,14 @@ func TestPreviouslyDisclosedFirstAdminProducesRecoveryNotice(t *testing.T) {
 	for key, value := range map[string]string{
 		secrets.BootstrapCompleted:   "provisioned",
 		secrets.BootstrapGenerated:   "true",
-		secrets.BootstrapDisclosed:   "true",
 		"gateway.bootstrap.password": "prior-run-secret-marker",
 	} {
 		if err := store.Put(key, value); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := store.MarkBootstrapDisclosed(); err != nil {
+		t.Fatal(err)
 	}
 
 	admin, failure := firstAdminResult(store, "admin@example.test", root)
@@ -605,12 +608,28 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 		}
 	})
 	firstOutput := runApplyStreamForTest(t, resolved, deps)
-	password, present, err := store.Get("gateway.bootstrap.password")
-	if err != nil || !present || strings.Count(firstOutput, password) != 1 {
-		t.Fatalf("stored password = %q, present=%v, error=%v", password, present, err)
+	firstResult := applyResultFromStream(t, firstOutput)
+	password := firstResult.FirstAdmin.Password
+	if password == "" || strings.Count(firstOutput, password) != 1 {
+		t.Fatalf("first result did not disclose exactly one generated password")
+	}
+	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+		present, err := store.Exists(name)
+		if err != nil || present {
+			t.Fatalf("disclosed bootstrap secret %q present=%v, error=%v", name, present, err)
+		}
+	}
+	assertSecretAbsentFromTree(t, root, password)
+	for label, platformRoot := range map[string]string{"root": root, "current": filepath.Join(root, "current")} {
+		storeAtRoot := secrets.Store{PlatformRoot: platformRoot}
+		completed, completedErr := storeAtRoot.Exists(secrets.BootstrapCompleted)
+		disclosed, disclosedErr := storeAtRoot.Exists(secrets.BootstrapDisclosed)
+		present, presentErr := storeAtRoot.Exists("gateway.bootstrap.password")
+		if !completed || completedErr != nil || !disclosed || disclosedErr != nil || present || presentErr != nil {
+			t.Fatalf("first disclosure lifecycle at %s: completed=%v/%v disclosed=%v/%v passwordPresent=%v/%v", label, completed, completedErr, disclosed, disclosedErr, present, presentErr)
+		}
 	}
 	assertSingleAdminResultRecord(t, firstOutput, "admin@example.test", password)
-	firstResult := applyResultFromStream(t, firstOutput)
 	logBytes, err := os.ReadFile(firstResult.LogPath)
 	if err != nil {
 		t.Fatalf("read operation log %q from apply result: %v", firstResult.LogPath, err)
@@ -632,9 +651,11 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondOutput := runApplyStreamForTest(t, resolved, deps)
-	unchanged, present, err := store.Get("gateway.bootstrap.password")
-	if err != nil || !present || unchanged != password {
-		t.Fatalf("repeat apply changed stored password: %q, present=%v, error=%v", unchanged, present, err)
+	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+		present, err := store.Exists(name)
+		if err != nil || present {
+			t.Fatalf("repeat apply restored bootstrap secret %q: present=%v, error=%v", name, present, err)
+		}
 	}
 	assertSingleAdminResultRecord(t, secondOutput, "admin@example.test", "")
 	if strings.Contains(secondOutput, password) || !strings.Contains(secondOutput, "issued by an earlier run") || !strings.Contains(secondOutput, firstAdminRecoveryCommand(platformRoot, "admin@example.test")) {
@@ -753,9 +774,15 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 		starter.stop = nil
 	}
 	output := runApplyStreamForTest(t, resolved, deps)
-	password, present, err := store.Get("gateway.bootstrap.password")
-	if err != nil || !present || !strings.Contains(output, password) {
-		t.Fatalf("retry after failed result write did not disclose stored password: present=%v err=%v", present, err)
+	result := applyResultFromStream(t, output)
+	password := result.FirstAdmin.Password
+	if password == "" || !strings.Contains(output, password) {
+		t.Fatalf("retry after failed result write did not disclose the first-admin password")
+	}
+	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
+		if present, err := store.Exists(name); err != nil || present {
+			t.Fatalf("successful retry retained bootstrap secret %q: present=%v err=%v", name, present, err)
+		}
 	}
 	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || !disclosed {
 		t.Fatalf("successful retry did not record disclosure after result write: %v, err %v", disclosed, err)
@@ -853,6 +880,23 @@ func TestJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 	secondCode, secondOutput := run()
 	if secondCode != 0 || !strings.Contains(secondOutput, password) || !strings.Contains(secondOutput, `"state":"disclosed"`) {
 		t.Fatalf("retry after registration failure did not disclose the stored credential: exit=%d output=%s", secondCode, secondOutput)
+	}
+	secondResult := applyResultFromStream(t, secondOutput)
+	registrationGateway, err := gateway.OriginFromHealthURL(secondResult.Receipt.Verification.HostHealthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{
+		contracts.ShellCommand("kb", "auth", "login", "--gateway-url", registrationGateway, "--email", "admin@example.test"),
+		contracts.ShellCommand("kb", "project", "add", project),
+		contracts.ShellCommand("kb", "project", "show", project),
+	} {
+		if !strings.Contains(secondResult.ProjectRegistrationNotice, command) {
+			t.Fatalf("completed retry notice %q omitted command %q", secondResult.ProjectRegistrationNotice, command)
+		}
+	}
+	if registrations != 1 {
+		t.Fatalf("completed repeat install attempted project registration %d times; want only the initial install attempt", registrations)
 	}
 	if disclosed, err := store.Exists(secrets.BootstrapDisclosed); err != nil || !disclosed {
 		t.Fatalf("successful result did not record disclosure: disclosed=%v err=%v", disclosed, err)
