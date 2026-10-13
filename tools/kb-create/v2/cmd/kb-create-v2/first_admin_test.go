@@ -28,6 +28,7 @@ import (
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 )
 
@@ -765,6 +766,14 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 
 // case: S-222.11
 func TestJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *testing.T) {
+	for _, spelling := range []string{"install-root", "current", "version-root"} {
+		t.Run(spelling, func(t *testing.T) {
+			testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t, spelling)
+		})
+	}
+}
+
+func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *testing.T, retrySpelling string) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
@@ -829,7 +838,7 @@ func TestJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 		}
 	})
 	registrations := 0
-	run := func() (int, string) {
+	run := func(rootSpelling string) (int, string) {
 		var stdout, stderr bytes.Buffer
 		command := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
 			deps := productionCommandDependencies(cmd)
@@ -845,10 +854,14 @@ func TestJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 			}
 			return deps
 		})
-		code := clikitcommand.Execute(command, []string{"install", "--json", "--index", indexPath, "--input", requestPath}, &stdout, &stderr)
+		args := []string{"install", "--json", "--index", indexPath, "--input", requestPath}
+		if rootSpelling != "" {
+			args = append(args, "--platform-root", rootSpelling)
+		}
+		code := clikitcommand.Execute(command, args, &stdout, &stderr)
 		return code, stdout.String() + stderr.String()
 	}
-	firstCode, firstOutput := run()
+	firstCode, firstOutput := run("")
 	activeRoot := platformRootForTest(t, root)
 	store := secrets.Store{PlatformRoot: activeRoot}
 	password, present, err := store.Get("gateway.bootstrap.password")
@@ -864,7 +877,20 @@ func TestJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 		}
 		starter.stop = nil
 	}
-	secondCode, secondOutput := run()
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err = layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootBySpelling := map[string]string{
+		"install-root": root,
+		"current":      layout.PlatformRoot(),
+		"version-root": activeRoot,
+	}
+	secondCode, secondOutput := run(rootBySpelling[retrySpelling])
 	if secondCode != 0 || !strings.Contains(secondOutput, password) || !strings.Contains(secondOutput, `"state":"disclosed"`) {
 		t.Fatalf("retry after registration failure did not disclose the stored credential: exit=%d output=%s", secondCode, secondOutput)
 	}
@@ -877,7 +903,7 @@ func TestJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 		}
 		starter.stop = nil
 	}
-	thirdCode, thirdOutput := run()
+	thirdCode, thirdOutput := run(rootBySpelling[retrySpelling])
 	if thirdCode != 0 || strings.Contains(thirdOutput, password) || !strings.Contains(thirdOutput, "previously-disclosed") || !strings.Contains(thirdOutput, "issued by an earlier run") {
 		t.Fatalf("third run did not return the non-secret prior-disclosure notice: exit=%d output=%s", thirdCode, thirdOutput)
 	}

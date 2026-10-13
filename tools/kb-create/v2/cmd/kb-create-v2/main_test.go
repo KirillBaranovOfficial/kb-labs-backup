@@ -245,6 +245,9 @@ func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	rootA, rootB := filepath.Join(t.TempDir(), "platform-a"), filepath.Join(t.TempDir(), "platform-b")
+	writeVersionedReceipt(t, rootA, contracts.InstallReceipt{ID: "registered-gateway-root",
+		Plan: contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{HealthURL: "http://127.0.0.1:4000/health"},
+			ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"}}})
 	registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
 	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
@@ -1003,6 +1006,18 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 		}
 	}
 
+	ownerTarget := expectedTarget
+	foreignTarget := filepath.Join(home, "unmanaged-kb-target")
+	if err := os.WriteFile(foreignTarget, []byte("foreign shim target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(foreignTarget, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	expectedTarget = foreignTarget
 	for _, root := range []string{rootC, rootB} {
 		layout, layoutErr := versionroot.New(root)
 		if layoutErr != nil {
@@ -1013,7 +1028,19 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 			spelling = root
 		}
 		args := []string{"uninstall", "--platform-root", spelling, "--yes", "--json", "--registry", "http://127.0.0.1:4873"}
-		run(root, args...)
+		result := run(root, args...)
+		if root == rootC {
+			if !strings.Contains(result, `"shimAction": "left-foreign"`) || strings.Contains(result, "shimOwner") {
+				t.Fatalf("uninstall did not report the unverified foreign shim without an owner claim: %s", result)
+			}
+			if err := os.Remove(linkPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(ownerTarget, linkPath); err != nil {
+				t.Fatal(err)
+			}
+			expectedTarget = ownerTarget
+		}
 	}
 	if target, err := os.Readlink(linkPath); err != nil || target != expectedTarget {
 		t.Fatalf("owner link after secondary uninstalls = %q, %v; want %q", target, err, expectedTarget)

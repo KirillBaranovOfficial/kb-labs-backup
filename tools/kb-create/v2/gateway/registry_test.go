@@ -41,64 +41,143 @@ func installedRootSpellings(t *testing.T, root string) (string, string, string) 
 }
 
 func TestAllocateUsesNextHundredPortOffsetAndKeepsRootAddress(t *testing.T) {
+	root := t.TempDir()
+	rootA, _, _ := installedRootSpellings(t, filepath.Join(root, "a"))
+	rootB, _, _ := installedRootSpellings(t, filepath.Join(root, "b"))
 	registry := Registry{Path: filepath.Join(t.TempDir(), "launcher", "gateways.json")}
-	if err := registry.Register("/platform/a", "http://127.0.0.1:4000"); err != nil {
+	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
-	allocated, err := registry.Allocate("/platform/b", "http://127.0.0.1:4000", "")
+	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
 	if err != nil || allocated != "http://127.0.0.1:4100" {
 		t.Fatalf("allocated = %q, error = %v", allocated, err)
 	}
-	if err := registry.Register("/platform/b", allocated); err != nil {
+	if err := registry.Register(rootB, allocated); err != nil {
 		t.Fatal(err)
 	}
-	stable, err := registry.Allocate("/platform/b", "http://127.0.0.1:4000", "")
+	stable, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
 	if err != nil || stable != allocated {
 		t.Fatalf("existing root allocation = %q, error = %v", stable, err)
 	}
 }
 
 func TestAllocateHonorsExplicitAddress(t *testing.T) {
+	root := t.TempDir()
+	rootA, _, _ := installedRootSpellings(t, filepath.Join(root, "a"))
+	rootB, _, _ := installedRootSpellings(t, filepath.Join(root, "b"))
 	registry := Registry{Path: filepath.Join(t.TempDir(), "launcher", "gateways.json")}
-	if err := registry.Register("/platform/a", "http://127.0.0.1:4000"); err != nil {
+	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
-	allocated, err := registry.Allocate("/platform/b", "http://127.0.0.1:4000", "http://127.0.0.1:4200")
+	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "http://127.0.0.1:4200")
 	if err != nil || allocated != "http://127.0.0.1:4200" {
 		t.Fatalf("explicit Gateway = %q, error = %v", allocated, err)
 	}
 }
 
 func TestRemoveReleasesAddressForNextRoot(t *testing.T) {
+	root := t.TempDir()
+	rootA, _, _ := installedRootSpellings(t, filepath.Join(root, "a"))
+	rootB, _, _ := installedRootSpellings(t, filepath.Join(root, "b"))
 	registry := Registry{Path: filepath.Join(t.TempDir(), "launcher", "gateways.json")}
-	if err := registry.Register("/platform/a", "http://127.0.0.1:4000"); err != nil {
+	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.Remove("/platform/a"); err != nil {
+	if err := registry.Remove(rootA); err != nil {
 		t.Fatal(err)
 	}
-	allocated, err := registry.Allocate("/platform/b", "http://127.0.0.1:4000", "")
+	allocated, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
 	if err != nil || allocated != "http://127.0.0.1:4000" {
 		t.Fatalf("allocated after remove = %q, error = %v", allocated, err)
 	}
 }
 
 func TestStoppedRootKeepsItsGatewayAllocationUntilUninstall(t *testing.T) {
+	base := t.TempDir()
+	rootA, _, _ := installedRootSpellings(t, filepath.Join(base, "a"))
+	rootB, _, _ := installedRootSpellings(t, filepath.Join(base, "b"))
+	rootC, _, _ := installedRootSpellings(t, filepath.Join(base, "c"))
 	registry := Registry{Path: filepath.Join(t.TempDir(), "launcher", "gateways.json")}
 	if err := registry.RegisterMany([]Root{
-		{PlatformRoot: "/platform/a", URL: "http://127.0.0.1:4000"},
-		{PlatformRoot: "/platform/b", URL: "http://127.0.0.1:4100"},
+		{PlatformRoot: rootA, URL: "http://127.0.0.1:4000"},
+		{PlatformRoot: rootB, URL: "http://127.0.0.1:4100"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	stoppedRoot, err := registry.Allocate("/platform/b", "http://127.0.0.1:4000", "")
+	stoppedRoot, err := registry.Allocate(rootB, "http://127.0.0.1:4000", "")
 	if err != nil || stoppedRoot != "http://127.0.0.1:4100" {
 		t.Fatalf("stopped root allocation = %q, error = %v; want its recorded address", stoppedRoot, err)
 	}
-	nextRoot, err := registry.Allocate("/platform/c", "http://127.0.0.1:4000", "")
+	nextRoot, err := registry.Allocate(rootC, "http://127.0.0.1:4000", "")
 	if err != nil || nextRoot != "http://127.0.0.1:4200" {
 		t.Fatalf("next root allocation = %q, error = %v; want the next offset after the stopped root", nextRoot, err)
+	}
+}
+
+func TestSameInstallationRejectsUnvalidatablePathsIncludingEqualSpellings(t *testing.T) {
+	if SameInstallation("/missing/one", "/missing/one") {
+		t.Fatal("equal unvalidatable paths compared as an installation identity")
+	}
+	if SameInstallation("/missing/one", "/missing/two") {
+		t.Fatal("different unvalidatable paths compared as one installation")
+	}
+}
+
+func TestUnvalidatablePathCannotClaimItsFormerGatewayRow(t *testing.T) {
+	registry := Registry{Path: filepath.Join(t.TempDir(), "gateway-roots.json")}
+	platformRoot := filepath.Join(t.TempDir(), "platform")
+	installRoot, _, _ := installedRootSpellings(t, platformRoot)
+	if err := registry.Register(installRoot, "http://127.0.0.1:4100"); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := versionroot.ForPlatformPath(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.RemoveOwned(); err != nil {
+		t.Fatal(err)
+	}
+	if SameInstallation(installRoot, installRoot) {
+		t.Fatal("unvalidatable path matched its stale Gateway row by path spelling")
+	}
+	allocated, err := registry.Allocate(installRoot, "http://127.0.0.1:4000", "")
+	if err != nil || allocated != "http://127.0.0.1:4000" {
+		t.Fatalf("allocation for unvalidatable former root = %q, %v; want an independent allocation", allocated, err)
+	}
+	claimant, claimed, err := registry.Claimant(installRoot, "http://127.0.0.1:4100")
+	if err != nil || !claimed || claimant.URL != "http://127.0.0.1:4100" {
+		t.Fatalf("stale row claimant = %#v, %v, %v; want the recorded row to retain its address claim", claimant, claimed, err)
+	}
+}
+
+func TestUninstallRemovesGatewayRowByCapturedInstallationIdentity(t *testing.T) {
+	base := t.TempDir()
+	installRoot, _, _ := installedRootSpellings(t, filepath.Join(base, "platform"))
+	layout, err := versionroot.ForPlatformPath(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := Registry{Path: filepath.Join(base, "launcher", "gateways.json")}
+	if err := registry.Register(installRoot, "http://127.0.0.1:4000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.RemoveOwned(); err != nil {
+		t.Fatal(err)
+	}
+	if SameInstallation(installRoot, installRoot) || SameInstallation(installRoot, filepath.Join(base, "other")) {
+		t.Fatal("removed installation still compared as a validated identity")
+	}
+	if err := registry.RemoveInstallation(installationID); err != nil {
+		t.Fatal(err)
+	}
+	roots, err := registry.Read()
+	if err != nil || len(roots) != 0 {
+		t.Fatalf("registry after uninstall = %#v, %v; want own row removed by captured identity", roots, err)
 	}
 }
 

@@ -133,6 +133,12 @@ func TestEnsureReplacesOnlyAnInstallerManagedShim(t *testing.T) {
 		t.Fatalf("Ensure did not create the second root's local kb command: %v", err)
 	}
 	before := mustReadlink(t, Path(launcher))
+	if err := Remove(launcher, secondRoot); err != nil {
+		t.Fatalf("Remove rejected a shim owned by another validated installation: %v", err)
+	}
+	if after := mustReadlink(t, Path(launcher)); after != before {
+		t.Fatalf("Remove changed another validated installation's shim: before=%q after=%q", before, after)
+	}
 	if err := receipt.Delete(firstRoot); err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +192,93 @@ func TestEnsureAndRemoveLeaveUnverifiedShimUntouched(t *testing.T) {
 	}
 	if after := mustReadlink(t, path); after != before {
 		t.Fatalf("unverified shim target changed: before=%q after=%q", before, after)
+	}
+}
+
+func TestClassifyOwnOtherForeignAndAbsentShimTargets(t *testing.T) {
+	base := t.TempDir()
+	launcherDir := filepath.Join(base, "bin")
+	if err := os.MkdirAll(launcherDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(launcherDir, "kb-create")
+	requested := installFixture(t, filepath.Join(base, "requested"))
+	other := installFixture(t, filepath.Join(base, "other"))
+	classify := func(target string, exists bool, want ClassificationKind) {
+		t.Helper()
+		path := Path(launcher)
+		_ = os.Remove(path)
+		if exists {
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("arbitrary file"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if target != "" {
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := Classify(launcher, requested)
+		if err != nil || got.Kind != want {
+			t.Fatalf("Classify(%q) = %+v, %v; want %s", target, got, err, want)
+		}
+	}
+	classify("", false, ClassificationAbsent)
+	classify(Target(requested), false, ClassificationOwned)
+	classify(Target(other), false, ClassificationOtherInstallation)
+	classify(filepath.Join(base, "arbitrary-existing"), true, ClassificationForeign)
+	classify(filepath.Join(base, "arbitrary-missing"), false, ClassificationForeign)
+
+	removed := installFixture(t, filepath.Join(base, "removed"))
+	removedTarget := Target(removed)
+	layout, err := versionroot.ForPlatformPath(removed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.RemoveOwned(); err != nil {
+		t.Fatal(err)
+	}
+	classify(removedTarget, false, ClassificationForeign)
+}
+
+func TestEnsureAndRemoveLeaveArbitraryExistingAndMissingForeignTargetsUntouched(t *testing.T) {
+	base := t.TempDir()
+	launcherDir := filepath.Join(base, "bin")
+	if err := os.MkdirAll(launcherDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(launcherDir, "kb-create")
+	requested := installFixture(t, filepath.Join(base, "requested"))
+	existingTarget := filepath.Join(base, "arbitrary-file")
+	if err := os.WriteFile(existingTarget, []byte("foreign target bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{existingTarget, filepath.Join(base, "missing-target")} {
+		path := Path(launcher)
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		before := mustReadlink(t, path)
+		if _, err := Ensure(launcher, requested); err == nil {
+			t.Fatalf("Ensure replaced foreign target %q", target)
+		}
+		if err := Remove(launcher, requested); err != nil {
+			t.Fatalf("Remove foreign target %q: %v", target, err)
+		}
+		if after := mustReadlink(t, path); after != before {
+			t.Fatalf("foreign link changed: before=%q after=%q", before, after)
+		}
+		if target == existingTarget {
+			if data, err := os.ReadFile(existingTarget); err != nil || string(data) != "foreign target bytes" {
+				t.Fatalf("foreign target bytes changed: %q, %v", data, err)
+			}
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

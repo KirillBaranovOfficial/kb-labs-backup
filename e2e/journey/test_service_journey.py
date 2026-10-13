@@ -70,6 +70,7 @@ class UninstallShimResultTest(unittest.TestCase):
             self.assertTrue(uninstall_shim_result_matches({"shimAction": "removed"}, root))
             self.assertTrue(uninstall_shim_result_matches(
                 {"shimAction": "left", "shimOwner": canonical}, root))
+            self.assertTrue(uninstall_shim_result_matches({"shimAction": "left-foreign"}, root))
             self.assertFalse(uninstall_shim_result_matches({"operation": "uninstall"}, root))
             self.assertFalse(uninstall_shim_result_matches(
                 {"shimAction": "left", "shimOwner": str(root)}, root))
@@ -82,6 +83,8 @@ class UninstallShimResultTest(unittest.TestCase):
                 "Platform uninstalled. The kb command was removed.", root))
             self.assertTrue(uninstall_human_summary_has_shim_result(
                 f"Platform uninstalled. The kb command remains with its owner at {root.resolve()}.", root))
+            self.assertTrue(uninstall_human_summary_has_shim_result(
+                "Platform uninstalled. The existing kb command was left untouched because its owner could not be verified.", root))
             self.assertFalse(uninstall_human_summary_has_shim_result("Platform uninstalled.", root))
 
 

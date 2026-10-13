@@ -997,9 +997,19 @@ func TestExistingInstallRetriesRegistrationForTheRecordedSelection(t *testing.T)
 		PlatformRoot: root, ProjectRoot: selectedProject,
 	}}}
 	writeVersionedReceipt(t, root, active)
-	existing, failure := existingProjectSelection(platformRootForTest(t, root), selectedProject)
-	if existing || failure != nil {
-		t.Fatalf("retry selection = existing %v, failure %#v; want apply and retry registration", existing, failure)
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physicalRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spelling := range []string{root, layout.PlatformRoot(), physicalRoot} {
+		existing, failure := existingProjectSelection(spelling, selectedProject)
+		if existing || failure != nil {
+			t.Fatalf("retry selection through %q = existing %v, failure %#v; want apply and retry registration", spelling, existing, failure)
+		}
 	}
 }
 

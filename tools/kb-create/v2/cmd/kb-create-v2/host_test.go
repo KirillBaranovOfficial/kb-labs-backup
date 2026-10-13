@@ -180,6 +180,9 @@ func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
 	rootB := filepath.Join(rootDir, "root-b")
 	rootC := filepath.Join(rootDir, "root-c")
 	rootD := filepath.Join(rootDir, "root-d")
+	writeVersionedReceipt(t, rootA, contracts.InstallReceipt{ID: "registered-gateway-root",
+		Plan: contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{HealthURL: "http://127.0.0.1:4000/health"},
+			ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"}}})
 	registry := gateway.Registry{Path: filepath.Join(home, ".kb", "launcher", "gateway-roots.json")}
 	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
@@ -228,6 +231,7 @@ func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
 		return envelope.Data.Plan
 	}
 	registerAppliedRoot := func(root string, plan contracts.ResolvedInstallPlan) {
+		writeVersionedReceipt(t, root, contracts.InstallReceipt{ID: "registered-" + filepath.Base(root), Plan: plan})
 		origin, err := gateway.OriginFromHealthURL(plan.Host.HealthURL)
 		if err != nil {
 			t.Fatal(err)

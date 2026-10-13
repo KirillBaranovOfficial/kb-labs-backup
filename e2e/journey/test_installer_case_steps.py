@@ -24,7 +24,8 @@ from installer_case_steps import (_data, _seed_doctor_fixture,
                                   installer_primary_host_guard, run_fixture_group,
                                   run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
                                   _snapshot_installation_owned_tree, shim_owner_matches,
-                                  assert_foreign_shim_diagnosis)
+                                  assert_foreign_shim_diagnosis, assert_other_shim_diagnosis,
+                                  verify_installation_spellings)
 from invocations import PtyCommandTimeout
 from journey_resources import (active_platform_root, case_catalog_root,
                                create_fixture_install_container)
@@ -34,6 +35,52 @@ from service_port_assertions import assert_service_ports_preserved
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_installation_spelling_matrix_checks_one_gateway_row_and_receipt(self):
+        with tempfile.TemporaryDirectory(prefix="journey-install-spellings-") as temp:
+            home = Path(temp)
+            install_root = home / "platform"
+            active_root = install_root / "versions" / "v1"
+            active_root.mkdir(parents=True)
+            (install_root / "current").symlink_to("versions/v1", target_is_directory=True)
+            launcher = home / ".local" / "bin" / "kb-create"
+            launcher.parent.mkdir(parents=True)
+            (launcher.parent / "kb").symlink_to("platform/current/.kb/v2/bin/kb")
+            registry = home / ".kb" / "launcher" / "gateway-roots.json"
+            registry.parent.mkdir(parents=True)
+            registry.write_text(json.dumps({"schema": 2, "roots": [{"platformRoot": str(install_root),
+                                                                      "installationId": "00112233445566778899aabbccddeeff",
+                                                                      "url": "http://127.0.0.1:4100"}]}))
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                operation = args[1]
+                if operation == "plan":
+                    payload = {"plan": {"request": {"gatewayUrl": "http://127.0.0.1:4100"},
+                                         "serviceGraph": {"platformVersion": "1.2.3"}}}
+                elif operation == "apply":
+                    payload = {"operation": "apply", "receipt": {"id": "receipt-one",
+                                                                       "installationId": "00112233445566778899aabbccddeeff",
+                                                                       "plan": {"request": {"gatewayUrl": "http://127.0.0.1:4100"}}},
+                               "shim": {"linked": False, "owner": str(install_root.resolve())}}
+                elif operation == "status":
+                    payload = {"installation": {"receiptId": "receipt-one", "platformVersion": "1.2.3",
+                                                 "platformChannel": "stable"}}
+                else:
+                    payload = {"operation": "update", "alreadyUpToDate": True}
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": payload}), "")
+
+            verify_installation_spellings(
+                launcher=str(launcher), index=home / "stable-index.json", install_root=install_root,
+                channel="stable", version="1.2.3", gateway_url="http://127.0.0.1:4100",
+                installation_id="00112233445566778899aabbccddeeff",
+                shim_owner=install_root, run_command=run_command)
+
+            expected_spellings = [str(install_root), str(install_root / "current"), str(active_root.resolve())]
+            self.assertEqual(len(calls), 12)
+            for operation_index in range(4):
+                self.assertEqual([calls[index][-1] for index in range(operation_index, 12, 4)], expected_spellings)
+
     def test_shim_owner_expectation_uses_the_canonical_install_root(self):
         with tempfile.TemporaryDirectory(prefix="journey-shim-owner-") as temp:
             root = Path(temp) / "platform"
@@ -56,6 +103,21 @@ class InstallerCaseStepsTest(unittest.TestCase):
             assert_foreign_shim_diagnosis(data, hint, link, target, root)
             with self.assertRaisesRegex(RuntimeError, "ordered cleanup/repair"):
                 assert_foreign_shim_diagnosis(data, hint.replace(str(target), "wrong target"), link, target, root)
+
+    def test_other_shim_expectation_requires_owner_and_explicit_switch(self):
+        with tempfile.TemporaryDirectory(prefix="journey-shim-other-") as temp:
+            root = Path(temp) / "platform"
+            owner = Path(temp) / "other"
+            link = Path(temp) / "bin" / "kb"
+            hint = (f"The `kb` link '{link}' points to validated installation '{owner.resolve()}'. "
+                    "KB Labs leaves it with that installation. To switch deliberately, inspect the target, "
+                    f"run 'rm' '--' '{link}' to remove this link, then run 'kb-create' 'doctor' '--fix' "
+                    f"'--platform-root' '{root}' to recreate it for the requested installation.")
+            data = {"installation": {"checks": [{"id": "kb-command-shim", "hint": hint}]}}
+            assert_other_shim_diagnosis(data, hint, link, owner, root)
+            with self.assertRaisesRegex(RuntimeError, "deliberate switch"):
+                assert_other_shim_diagnosis(data, hint.replace(str(owner.resolve()), "wrong owner"),
+                                            link, owner, root)
 
     def test_install_refusal_is_a_case_fail_with_the_product_envelope(self):
         journey = Journey("local")
