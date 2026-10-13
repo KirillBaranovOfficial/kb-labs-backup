@@ -281,7 +281,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		if registrarCalls != registrarCallsBefore || loginCalls != 0 || registrationCalls != 0 {
 			t.Fatalf("repeat install for %q made forbidden registration calls: registrar %d, Gateway login %d, registration %d", projectPath, registrarCalls-registrarCallsBefore, loginCalls, registrationCalls)
 		}
-		if code != 0 {
+		if code.Code() != 0 {
 			t.Fatalf("secured repeat install for %q exit=%d output:\n%s", projectPath, code, output)
 		}
 		if strings.Contains(output, `"password":`) || strings.Contains(output, `"Password":`) {
@@ -421,7 +421,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		[]string{"install", "--index", humanIndexPath, "--platform-root", root, "--project-root", selected,
 			"--gateway-url", fmt.Sprintf("http://127.0.0.1:%d", gatewayPort)},
 		&humanStdout, &humanStderr)
-	if humanCode != 0 {
+	if humanCode.Code() != 0 {
 		redact := func(value string) string {
 			value = strings.ReplaceAll(value, password, "[redacted]")
 			return strings.ReplaceAll(value, humanJWTSecret, "[redacted]")

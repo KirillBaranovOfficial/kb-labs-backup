@@ -97,8 +97,8 @@ func TestRender_JSONIncludesNullData(t *testing.T) {
 func TestRenderDiag_NilIsSafe(t *testing.T) {
 	for _, mode := range []Mode{ModeHuman, ModeJSON, ModeAgent} {
 		var out, herr bytes.Buffer
-		if code := RenderDiag(&out, &herr, nil, mode); code != diag.ExitOK {
-			t.Errorf("mode %d: nil diag exit = %d, want %d", mode, code, diag.ExitOK)
+		if code := RenderDiag(&out, &herr, nil, mode); code != diag.SuccessStatus() {
+			t.Errorf("mode %d: nil diag exit = %d, want %d", mode, code, diag.SuccessStatus())
 		}
 	}
 }
@@ -106,8 +106,8 @@ func TestRenderDiag_NilIsSafe(t *testing.T) {
 func TestRenderDiag_InvalidInputUsesExitTwo(t *testing.T) {
 	d := diag.New("KB_RUNTIME_INPUT_INVALID", "The provided input is invalid.")
 	var out, herr bytes.Buffer
-	if code := RenderDiag(&out, &herr, d, ModeAgent); code != diag.ExitInput {
-		t.Errorf("agent RenderDiag exit = %d, want %d", code, diag.ExitInput)
+	if code := RenderDiag(&out, &herr, d, ModeAgent); code != diag.ExitCode(d) {
+		t.Errorf("agent RenderDiag exit = %d, want %d", code.Code(), diag.ExitCode(d).Code())
 	}
 }
 

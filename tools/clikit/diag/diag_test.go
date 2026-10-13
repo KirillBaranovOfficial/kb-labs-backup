@@ -128,30 +128,30 @@ func TestExitCodeUsesSharedTable(t *testing.T) {
 	cases := []struct {
 		name string
 		d    *Diag
-		want int
+		want ExitStatus
 	}{
-		{"nil", nil, ExitOK},
-		{"invalid input", New("KB_RUNTIME_INPUT_INVALID", "invalid"), ExitInput},
-		{"operation failure", New("KB_RUNTIME_UNEXPECTED", "failed"), ExitError},
+		{"nil", nil, SuccessStatus()},
+		{"invalid input", New("KB_RUNTIME_INPUT_INVALID", "invalid"), inputRefusalStatus()},
+		{"operation failure", New("KB_RUNTIME_UNEXPECTED", "failed"), operationFailureStatus()},
 	}
 	for _, c := range cases {
 		if got := ExitCode(c.d); got != c.want {
-			t.Errorf("%s: ExitCode = %d, want %d", c.name, got, c.want)
+			t.Errorf("%s: ExitCode = %d, want %d", c.name, got.Code(), c.want.Code())
 		}
 	}
 }
 
 func TestEveryCatalogEntryDeclaresCanonicalExitClass(t *testing.T) {
 	for code, entry := range catalogEntries {
-		want := ExitError
+		want := operationFailureStatus()
 		if entry.ProcessExitClass == ExitClassInputRefusal {
-			want = ExitInput
+			want = inputRefusalStatus()
 		} else if entry.ProcessExitClass != ExitClassOperationFailure {
 			t.Errorf("%s has invalid exit class %q", code, entry.ProcessExitClass)
 			continue
 		}
 		if got := ExitCode(New(code, "failure")); got != want {
-			t.Errorf("ExitCode(%s) = %d, want %d from %s", code, got, want, entry.ProcessExitClass)
+			t.Errorf("ExitCode(%s) = %d, want %d from %s", code, got.Code(), want.Code(), entry.ProcessExitClass)
 		}
 	}
 }

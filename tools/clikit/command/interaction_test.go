@@ -21,7 +21,7 @@ func TestConfirmWritesPromptBeforeReadingAnswer(t *testing.T) {
 	interaction := newInteraction(command, &terminal, true, false)
 
 	confirmed, failure := interaction.Confirm("Remove installation? [y/N] ", "rerun `kb-create uninstall --yes`")
-	if confirmed || failure == nil || failure.Code != "KB_INSTALL_OPERATION_CANCELLED" || diag.ExitCode(failure) != diag.ExitError {
+	if confirmed || failure == nil || failure.Code != "KB_INSTALL_OPERATION_CANCELLED" || diag.ExitCode(failure) != diag.ExitCode(diag.New("KB_INSTALL_OPERATION_CANCELLED", "declined")) {
 		t.Fatalf("Confirm() = (%v, %v), want catalogued cancellation", confirmed, failure)
 	}
 	if got := terminal.String(); got != "Remove installation? [y/N] " {
@@ -57,7 +57,7 @@ func TestConfirmRefusesMachineAndNonTerminalInput(t *testing.T) {
 			command.SetIn(strings.NewReader("y\n"))
 			interaction := &Interaction{in: command.InOrStdin(), out: &terminal, terminal: test.terminal, machine: test.machine}
 			confirmed, failure := interaction.Confirm("Remove? ", "rerun `kb-create uninstall --yes`")
-			if confirmed || failure == nil || failure.Code != "KB_INSTALL_CONFIRMATION_REQUIRED" || diag.ExitCode(failure) != diag.ExitInput {
+			if confirmed || failure == nil || failure.Code != "KB_INSTALL_CONFIRMATION_REQUIRED" || diag.ExitCode(failure) != diag.ExitCode(diag.New("KB_INSTALL_CONFIRMATION_REQUIRED", "required")) {
 				t.Fatalf("Confirm() = (%v, %v), want catalogued input refusal", confirmed, failure)
 			}
 			if terminal.Len() != 0 {
@@ -80,7 +80,7 @@ func TestAskRefusesMachineAndNonTerminalInput(t *testing.T) {
 			var terminal bytes.Buffer
 			interaction := &Interaction{in: strings.NewReader("answer\n"), out: &terminal, terminal: test.terminal, machine: test.machine}
 			answer, failure := interaction.Ask("Enter value: ", "rerun `kb-create install --project-root PATH`")
-			if answer != "" || failure == nil || failure.Code != "KB_RUNTIME_INPUT_INVALID" || diag.ExitCode(failure) != diag.ExitInput {
+			if answer != "" || failure == nil || failure.Code != "KB_RUNTIME_INPUT_INVALID" || diag.ExitCode(failure) != diag.ExitCode(diag.New("KB_INSTALL_CONFIRMATION_REQUIRED", "required")) {
 				t.Fatalf("Ask() = (%q, %v), want catalogued input refusal", answer, failure)
 			}
 			if terminal.Len() != 0 {
@@ -140,7 +140,7 @@ func TestExecuteDoesNotRenderResultAgainAfterLiveHumanProgress(t *testing.T) {
 		}
 		return result.Return(map[string]string{"ok": "data"})
 	}})
-	if code := Execute(root, []string{"run"}, &terminal, &stderr); code != 0 {
+	if code := Execute(root, []string{"run"}, &terminal, &stderr); code != diag.SuccessStatus() {
 		t.Fatalf("Execute() = %d; stderr=%s", code, stderr.String())
 	}
 	if got := terminal.String(); got != "prompt visible\n" {

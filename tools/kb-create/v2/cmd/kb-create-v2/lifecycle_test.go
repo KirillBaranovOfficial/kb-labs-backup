@@ -456,8 +456,8 @@ func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 	var fixStdout, fixStderr bytes.Buffer
 	fixCode := clikitcommand.Execute(newRootCommand(), []string{"doctor", "--fix", "--platform-root", inst.root, "--json"}, &fixStdout, &fixStderr)
 	fixOutput := fixStdout.String()
-	if fixCode != 0 {
-		t.Fatalf("doctor --fix should return the successful clikit repair result: %d %s", fixCode, fixOutput)
+	if fixCode.Code() != 0 {
+		t.Fatalf("doctor --fix should return the successful clikit repair result: %d %s", fixCode.Code(), fixOutput)
 	}
 	var response struct {
 		OK   bool `json:"ok"`

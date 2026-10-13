@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,6 +137,212 @@ func TestGoToolsDoNotAssignProcessExitStatusOutsideDiag(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPrimaryCLIsExitOnlyAtTheirTypedMainBoundary(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolRoots := []string{"kb-create", "kb-dev", "kb-devkit", "kb-deploy", "kb-monitor"}
+	testedMainPaths := map[string]struct{}{}
+	for _, tool := range toolRoots {
+		toolRoot := filepath.Join(root, "tools", tool)
+		mainPath := filepath.Join(toolRoot, "main.go")
+		testedMainPaths[filepath.Clean(mainPath)] = struct{}{}
+		mainSource, err := os.ReadFile(mainPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mainFile, err := parser.ParseFile(token.NewFileSet(), mainPath, mainSource, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mainExits := 0
+		ast.Inspect(mainFile, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || !isExitCall(call) {
+				return true
+			}
+			mainExits++
+			if len(call.Args) != 1 || !isCodeMethod(call.Args[0]) {
+				t.Errorf("%s process boundary must exit with the typed Execute status Code()", mainPath)
+			}
+			return true
+		})
+		if mainExits != 1 {
+			t.Errorf("%s has %d process exits, want exactly one typed boundary", mainPath, mainExits)
+		}
+
+		commandDir := filepath.Join(toolRoot, "cmd")
+		if tool == "kb-create" {
+			commandDir = filepath.Join(toolRoot, "v2", "cmd", "kb-create-v2")
+		}
+		err = filepath.WalkDir(commandDir, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() && (entry.Name() == "vendor" || entry.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			source, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+			if err != nil {
+				return err
+			}
+			ast.Inspect(file, func(node ast.Node) bool {
+				if call, ok := node.(*ast.CallExpr); ok && isExitCall(call) {
+					t.Errorf("%s bypasses the typed process boundary", path)
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Discover additional user-facing command binaries inside those modules by
+	// their use of the shared diagnostic package. Their main boundary must obey
+	// the same typed exit contract as the primary commands.
+	for _, tool := range toolRoots {
+		toolRoot := filepath.Join(root, "tools", tool)
+		err := filepath.WalkDir(toolRoot, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() && (entry.Name() == "vendor" || entry.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			if entry.IsDir() || filepath.Base(path) != "main.go" {
+				return nil
+			}
+			if _, tested := testedMainPaths[filepath.Clean(path)]; tested {
+				return nil
+			}
+			mainSource, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			mainFile, err := parser.ParseFile(token.NewFileSet(), path, mainSource, 0)
+			if err != nil {
+				return err
+			}
+			if mainFile.Name.Name != "main" {
+				return nil
+			}
+			usesDiag := false
+			for _, imported := range mainFile.Imports {
+				if strings.Trim(imported.Path.Value, "\"") == "github.com/kb-labs/clikit/diag" {
+					usesDiag = true
+				}
+			}
+			if !usesDiag {
+				return nil
+			}
+			exits := 0
+			ast.Inspect(mainFile, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || !isExitCall(call) {
+					return true
+				}
+				exits++
+				if len(call.Args) != 1 || !isCodeMethod(call.Args[0]) {
+					t.Errorf("%s process boundary must exit with the typed Execute status Code()", path)
+				}
+				return true
+			})
+			if exits != 1 {
+				t.Errorf("%s has %d process exits, want exactly one typed boundary", path, exits)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if !hasExitBypass("package command\nfunc run() { os.Exit(1) }\n") {
+		t.Fatal("os.Exit in a command handler mutation was not detected")
+	}
+}
+
+func isExitCall(call *ast.CallExpr) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || (selector.Sel.Name != "Exit") {
+		return false
+	}
+	packageName, ok := selector.X.(*ast.Ident)
+	return ok && (packageName.Name == "os" || packageName.Name == "syscall")
+}
+
+func isCodeMethod(node ast.Expr) bool {
+	call, ok := node.(*ast.CallExpr)
+	if !ok || len(call.Args) != 0 {
+		return false
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && selector.Sel.Name == "Code"
+}
+
+func hasExitBypass(source string) bool {
+	file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", source, 0)
+	if err != nil {
+		return false
+	}
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok && isExitCall(call) {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+func TestExitStatusTypeRejectsIntegerAndWrappedLiteralMutations(t *testing.T) {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures := []string{
+		`package mutation
+import ("github.com/kb-labs/clikit/diag"; "github.com/kb-labs/clikit/result")
+func chosen(d *diag.Diag) int { if d.Code != "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE" { return 0 }; return 2 }
+func bad() { _ = result.StreamComplete(chosen(diag.New("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE", "bad"))) }`,
+		`package mutation
+import "github.com/kb-labs/clikit/result"
+func bad() { _ = result.StreamComplete(2) }`,
+		`package mutation
+import "github.com/kb-labs/clikit/result"
+func leaf() int { return 2 }
+func middle() int { return leaf() }
+func bad() { _ = result.StreamComplete(middle()) }`,
+	}
+	for index, source := range fixtures {
+		dir, err := os.MkdirTemp(root, "exit-status-mutation-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		if err := os.WriteFile(filepath.Join(dir, "mutation.go"), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command("go", "test", "./"+filepath.Base(dir))
+		command.Dir = root
+		if output, err := command.CombinedOutput(); err == nil {
+			t.Errorf("mutation fixture %d compiled; typed exit status accepted a literal: %s", index+1, output)
+		} else if !strings.Contains(string(output), "diag.ExitStatus") {
+			t.Errorf("mutation fixture %d failed for a reason unrelated to the typed status boundary: %s", index+1, output)
+		}
 	}
 }
 

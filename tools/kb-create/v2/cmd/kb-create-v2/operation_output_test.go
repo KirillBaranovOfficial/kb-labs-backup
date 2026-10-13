@@ -55,10 +55,10 @@ func TestCataloguedFailureUsesSharedExitStatusForEveryRegisteredCommand(t *testi
 						if err := writer.Fail(failure); err != nil {
 							return nil, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "failure output failed")
 						}
-						if err := writer.Finish(); err != nil {
+						if err := writer.Finish(writer.ExitStatus()); err != nil {
 							return nil, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "failure output failed")
 						}
-						return streamCompletion{ExitCode: writer.ExitCode()}, nil
+						return streamCompletion{ExitStatus: writer.ExitStatus()}, nil
 					}
 					return nil, failure
 				}
@@ -102,7 +102,7 @@ func TestCataloguedFailureUsesSharedExitStatusForEveryRegisteredCommand(t *testi
 						}
 						records = append(records, record)
 					}
-					if records[0].Error.Code != failure.Code || !records[1].Meta.Stream.Terminal || records[1].Meta.Stream.ExitCode != want {
+					if records[0].Error.Code != failure.Code || !records[1].Meta.Stream.Terminal || records[1].Meta.Stream.ExitCode != want.Code() {
 						t.Fatalf("stream records do not preserve %s/status %d: %s", failure.Code, want, stdout.String())
 					}
 					return
@@ -135,7 +135,7 @@ func TestEveryOperationUsesJSONAndHumanOutputBoundary(t *testing.T) {
 			t.Run("json", func(t *testing.T) {
 				var stdout, stderr bytes.Buffer
 				code := clikitcommand.Execute(newRootCommand(), []string{descriptor.Name, "--json"}, &stdout, &stderr)
-				if code < 0 || code > 2 {
+				if code.Code() < 0 || code.Code() > 2 {
 					t.Fatalf("exit code = %d", code)
 				}
 				var envelope map[string]any
@@ -159,7 +159,7 @@ func TestEveryOperationUsesJSONAndHumanOutputBoundary(t *testing.T) {
 			t.Run("human", func(t *testing.T) {
 				var stdout, stderr bytes.Buffer
 				code := clikitcommand.Execute(newRootCommand(), []string{descriptor.Name}, &stdout, &stderr)
-				if code < 0 || code > 2 {
+				if code.Code() < 0 || code.Code() > 2 {
 					t.Fatalf("exit code = %d", code)
 				}
 				output := stdout.String() + stderr.String()

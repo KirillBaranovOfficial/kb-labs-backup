@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 )
@@ -141,12 +142,15 @@ func TestRunRejectsInvalidHistoryIndexesWithCataloguedSealFailure(t *testing.T) 
 			if err == nil {
 				t.Fatal("expected history seal validation failure")
 			}
-			envelope, err := sealingFailureEnvelope(err)
+			envelope, status, err := sealingFailureResult(err)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if envelope.Code != "KB_RELEASE_INDEX_SEAL_FAILED" {
 				t.Fatalf("diagnostic code = %q", envelope.Code)
+			}
+			if want := diag.ExitCode(diag.New(envelope.Code, envelope.Message)); status != want {
+				t.Fatalf("process status = %d, want catalogued status %d", status.Code(), want.Code())
 			}
 			if _, err := os.Stat(output); !os.IsNotExist(err) {
 				t.Fatalf("output index exists or could not be checked: %v", err)

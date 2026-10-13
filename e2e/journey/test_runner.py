@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from service_steps import FlowGraph, Journey
+from test_catalog_exit_status import catalogued_exit
 
 
 def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:
@@ -588,12 +589,14 @@ class RunnerInstallFailureTests(unittest.TestCase):
             "cause": "read installation identity: open /tmp/kb-platform/installer/layout.json: no such file or directory",
             "hint": "Choose a fresh writable path, then run `kb-create install --platform-root NEW_ROOT`.",
         }
+        process_status = 1
+        self.assertEqual(process_status, catalogued_exit(envelope["code"]))
         result = runner.subprocess.CompletedProcess(
-            ["kb-create", "install", "--json"], 2,
+            ["kb-create", "install", "--json"], process_status,
             stdout="\n".join((
                 json.dumps({"ok": False, "error": envelope}),
                 json.dumps({"ok": True, "data": None,
-                            "meta": {"stream": {"terminal": True, "exitCode": 2}}}),
+                            "meta": {"stream": {"terminal": True, "exitCode": process_status}}}),
             )) + "\n", stderr="",
         )
         with patch.object(runner, "CASE_JOURNEY", journey), patch.object(runner, "FIRST_FAILURE", ""):

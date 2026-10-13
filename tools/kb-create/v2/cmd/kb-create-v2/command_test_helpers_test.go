@@ -110,10 +110,10 @@ func executeForTest(t *testing.T, setup operationTestSetup) (any, *diag.Diag, in
 	}
 	data, failure := descriptor.Handler(context.Background(), cmd, reader, deps)
 	if failure != nil {
-		return nil, failure, diag.ExitCode(failure), stdout.String()
+		return nil, failure, diag.ExitCode(failure).Code(), stdout.String()
 	}
 	if completion, ok := data.(streamCompletion); ok {
-		return nil, nil, completion.ExitCode, stdout.String()
+		return nil, nil, completion.ExitStatus.Code(), stdout.String()
 	}
 	encoded, err := json.Marshal(data)
 	if err != nil {
