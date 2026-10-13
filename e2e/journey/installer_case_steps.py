@@ -51,12 +51,15 @@ def _hint_has_argv(text: str, expected: list[str]) -> bool:
     return False
 
 
-def shim_owner_matches(data: dict, install_root: Path) -> bool:
+def shim_owner_matches(data: dict, install_root: Path, expected_owner: Path) -> bool:
     owner = data.get("shim", {}).get("owner")
     if not owner:
         return False
-    owns_shim = Path(owner).resolve() == Path(install_root).resolve()
-    return data.get("shim") == {"linked": owns_shim, "owner": str(Path(owner).resolve())}
+    canonical_owner = Path(owner).resolve()
+    expected_owner = Path(expected_owner).resolve()
+    owns_shim = canonical_owner == Path(install_root).resolve()
+    return canonical_owner == expected_owner and data.get("shim") == {
+        "linked": owns_shim, "owner": str(canonical_owner)}
 
 
 def verify_installation_spellings(*, launcher: str, index: Path, install_root: Path,
@@ -95,7 +98,7 @@ def verify_installation_spellings(*, launcher: str, index: Path, install_root: P
         if (applied.get("operation") != "apply"
                 or applied_receipt.get("installationId") != installation_id
                 or applied_receipt.get("plan", {}).get("request", {}).get("gatewayUrl") != gateway_url
-                or not shim_owner_matches(applied, install_root=install_root)):
+                or not shim_owner_matches(applied, install_root=install_root, expected_owner=install_root)):
             raise RuntimeError(f"apply through {spelling} changed the installation, Gateway, or shim owner: {applied}")
         receipt_id = applied_receipt.get("id", "")
 
@@ -800,7 +803,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
                                   "--gateway-url", "http://127.0.0.1:4200"])
             explicit_installed = (active_platform_root(explicit_root) / ".kb/v2/receipt.json").is_file()
             data = _data(result, "explicit Gateway apply")
-            if not shim_owner_matches(data, install_root=explicit_root):
+            if not shim_owner_matches(data, install_root=explicit_root, expected_owner=primary_root):
                 raise RuntimeError(f"explicit secondary apply reported the wrong shim owner: {data.get('shim')}")
             explicit_receipt = data.get("receipt", {})
             explicit_url = explicit_receipt.get("verification", {}).get("hostHealthUrl", "")
@@ -1573,7 +1576,8 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                      "--platform-channel", channel, "--policy", "compatible",
                                      "--platform-root", str(platform_root.parent / root_name)]),
                         f"{channel} apply")
-        if not shim_owner_matches(applied, install_root=platform_root.parent / root_name):
+        if not shim_owner_matches(applied, install_root=platform_root.parent / root_name,
+                                  expected_owner=platform_root):
             raise RuntimeError(f"{channel} apply changed the live command owner: {applied.get('shim')}")
         status = _json_command(run_command, [launcher, "status", "--json", "--platform-root",
                                              str(platform_root.parent / root_name)], f"{channel} status")
@@ -1613,7 +1617,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                                 "admin.tenant": "journey"}),
                                     "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
         payload = _data(apply_result, "secret apply")
-        if not shim_owner_matches(payload, install_root=secret_root):
+        if not shim_owner_matches(payload, install_root=secret_root, expected_owner=platform_root):
             raise RuntimeError(f"secret apply changed the live command owner: {payload.get('shim')}")
         secondary_receipt = json.loads((active_platform_root(secret_root) / ".kb/v2/receipt.json").read_text())
         if secondary_receipt.get("verification", {}).get("hostHealthUrl") != "http://127.0.0.1:4100/health":
