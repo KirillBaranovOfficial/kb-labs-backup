@@ -194,7 +194,9 @@ class ProjectMcpJourneyTests(unittest.TestCase):
     def test_platform_readiness_claims_both_gateway_and_project_workflow_checks(self):
         journey = Journey("local", "readiness-registered-project-state")
         graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in service_runner.SERVICE_GROUPS.items()},
-                          groups=service_runner.SERVICE_GROUPS)
+                          groups=service_runner.SERVICE_GROUPS, states={
+                              "host-running": {"passed": True, "evidence": "test host is running"},
+                          })
         graph.probe_state("project-registered", "project", "test registration probe", lambda: None,
                           value=lambda: {"id": "prj_registered", "root": "/tmp/project"})
         service_runner.prepare_service_api_session(graph, "local")
@@ -253,7 +255,9 @@ class ProjectMcpJourneyTests(unittest.TestCase):
     def test_missing_project_id_blocks_readiness_before_building_a_request(self):
         journey = Journey("local", "missing-project-id")
         graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in service_runner.SERVICE_GROUPS.items()},
-                          groups=service_runner.SERVICE_GROUPS)
+                          groups=service_runner.SERVICE_GROUPS, states={
+                              "host-running": {"passed": True, "evidence": "test host is running"},
+                          })
         graph.probe_state("host-running", "host", "test host probe", lambda: None)
         service_runner.prepare_service_api_session(graph, "local")
         with patch("service_runner.expect_json", return_value=None), \
@@ -282,7 +286,9 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         ]
         journey = Journey("local", "runtime-identity-registered-project-state")
         graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in service_runner.SERVICE_GROUPS.items()},
-                          groups=service_runner.SERVICE_GROUPS)
+                          groups=service_runner.SERVICE_GROUPS, states={
+                              "host-running": {"passed": True, "evidence": "test host is running"},
+                          })
         graph.probe_state("project-registered", "project", "test registration probe", lambda: None,
                           value=lambda: {"id": "prj_a", "root": project_root})
         service_runner.prepare_service_api_session(graph, "local")

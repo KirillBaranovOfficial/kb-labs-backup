@@ -63,6 +63,18 @@ def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:
     return violations
 
 
+def throwing_runner_state_read_violations(sources: dict[str, str]) -> list[str]:
+    violations = []
+    for filename in ("runner.py", "service_runner.py"):
+        source_text = sources.get(filename, "")
+        tree = ast.parse(source_text, filename=filename)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "state_value"):
+                violations.append(f"{filename}:{node.lineno}: runner state reads must use the non-throwing FlowGraph boundary")
+    return violations
+
+
 class RunnerInstallFailureTests(unittest.TestCase):
     def test_main_rejects_missing_or_malformed_ownership_before_running_steps(self):
         from journey_selection import JourneySelectionError
@@ -243,11 +255,55 @@ class RunnerInstallFailureTests(unittest.TestCase):
         self.assertTrue(any(item.startswith("service_runner.py:") and "KB_JOURNEY_PROJECT_ID" in item
                             for item in state_environment_reader_violations(sources)))
 
+    def test_runner_state_reads_use_non_throwing_flow_graph_boundary(self):
+        sources = {path.name: path.read_text(encoding="utf-8")
+                   for path in Path(__file__).parent.glob("*.py") if not path.name.startswith("test_")}
+        self.assertEqual(throwing_runner_state_read_violations(sources), [])
+
+    def test_runner_state_read_rail_rejects_a_throwing_accessor_mutation(self):
+        sources = {path.name: path.read_text(encoding="utf-8")
+                   for path in Path(__file__).parent.glob("*.py") if not path.name.startswith("test_")}
+        sources["runner.py"] += (
+            '\ndef mutated_runner_entrypoint(graph):\n'
+            '    return graph.state_value("project-registered")\n'
+        )
+        self.assertEqual(len(throwing_runner_state_read_violations(sources)), 1)
+
+    def test_failed_state_probe_blocks_its_producer_without_stopping_independent_flows(self):
+        with tempfile.TemporaryDirectory(prefix="journey-state-producer-blocked-") as temporary:
+            journey = Journey("local", "state-producer-blocked")
+            graph = FlowGraph(
+                journey,
+                {"fixture-producer": ("project-registered",), "independent": ()},
+                states={"project-registered": {
+                    "passed": False,
+                    "evidence": "kb project show exited 7: secondary shim missing",
+                    "group": "project", "step": "kb project show/list", "claim": "no case claim",
+                }},
+            )
+            check_calls = []
+            blocked = graph.probe_state(
+                "fixtures-installed", "fixture-producer", "project fixture setup",
+                lambda: check_calls.append("ran"),
+            )
+            independent = graph.flow("independent setup", "independent", "journey.setup", lambda: None)
+            result = journey.write_json(Path(temporary) / "journey.json")
+
+            self.assertEqual(blocked.status, "BLOCKED")
+            self.assertIn("project-registered", blocked.message)
+            self.assertIn("secondary shim missing", blocked.message)
+            self.assertEqual(check_calls, [])
+            self.assertEqual(independent, "PASS")
+            self.assertEqual(result.status, "BLOCKED")
+            self.assertEqual(importlib.import_module("service_runner").journey_result_exit_code(result), 1)
+            self.assertEqual(json.loads((Path(temporary) / "journey.json").read_text())["status"], "BLOCKED")
+
     def _run_selected_main(self, root: Path, mode: str, *, selection: str | None = None,
                            update_variant_runner=None, selector: str | None = None,
                            scenario: str = "explore", selected_owners: dict | None = None,
                            extra_update_group: dict | None = None,
-                           update_runner=None, service_profile: str = "nightly") -> tuple[int, str, dict, dict, dict]:
+                           update_runner=None, service_profile: str = "nightly",
+                           failed_project_probe: bool = False) -> tuple[int, str, dict, dict, dict]:
         runner = importlib.import_module("runner")
         summary = root / "reports" / "journey-summary.md"
         summary.parent.mkdir(parents=True)
@@ -319,6 +375,8 @@ class RunnerInstallFailureTests(unittest.TestCase):
                                     "bootstrapCompleted": True,
                                     "installation": {"receiptId": "receipt-main"}}})
             elif "project show" in " ".join(argv):
+                if failed_project_probe:
+                    return runner.subprocess.CompletedProcess(command, 7, "project show: secondary shim missing", ""), 0.0
                 output = json.dumps({"ok": True, "data": {"project": {"id": "prj_main", "name": "fresh-project"}}})
             elif "project list" in " ".join(argv):
                 output = json.dumps({"ok": True, "data": {"projects": [{"id": "prj_main"}]}})
@@ -331,17 +389,28 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 ]}})
             elif any(item.endswith("service_runner.py") for item in argv):
                 output_path = Path(argv[argv.index("--output") + 1])
-                service_steps = ([{"name": "platform readiness (gateway + project workflow)", "status": "PASS",
-                                   "cases": ["PC-002.3"]},
-                                  {"name": "registered project runtime identity", "status": "PASS",
-                                   "cases": ["PC-002.8"]}]
-                                 if "PC-002.3" in selection else [])
+                if failed_project_probe:
+                    service_steps = [
+                        {"name": "platform readiness (gateway + project workflow)", "status": "BLOCKED",
+                         "message": "blocked by state project-registered: kb project show exited 7: secondary shim missing",
+                         "cases": ["PC-002.3"]},
+                        {"name": "independent auth check", "status": "PASS", "cases": ["PC-002.8"]},
+                    ]
+                else:
+                    service_steps = ([{"name": "platform readiness (gateway + project workflow)", "status": "PASS",
+                                       "cases": ["PC-002.3"]},
+                                      {"name": "registered project runtime identity", "status": "PASS",
+                                       "cases": ["PC-002.8"]}]
+                                     if "PC-002.3" in selection else [])
                 if "S-140.5" in selection:
                     service_steps.append({"name": "project MCP cross-project isolation", "status": "PASS",
                                           "cases": ["S-140.5"]})
                 states = {"service-api-session": {"passed": True, "value": None},
-                          "project-registered": {"passed": True,
-                              "value": {"id": "prj_main", "root": str(project), "name": "fresh-project"}}}
+                          "project-registered": ({"passed": False,
+                              "evidence": "kb project show exited 7: secondary shim missing",
+                              "group": "project", "step": "kb project show/list", "claim": "no case claim"}
+                              if failed_project_probe else {"passed": True,
+                              "value": {"id": "prj_main", "root": str(project), "name": "fresh-project"}})}
                 project_b = root / "project-b"
                 project_b.mkdir(exist_ok=True)
                 states["fixtures-installed"] = {"passed": True, "evidence": "fixture project registered",
@@ -686,6 +755,29 @@ class RunnerInstallFailureTests(unittest.TestCase):
                                   cases=["S-100.1"], requires=("state:project-registered",))
         self.assertEqual(result.status, "BLOCKED")
         self.assertIn("state:project-registered ended FAIL", result.message)
+
+    def test_failed_project_probe_does_not_crash_runner_and_still_writes_summary(self):
+        with tempfile.TemporaryDirectory(prefix="journey-failed-project-state-") as temporary:
+            code, output, service, _outer, _observed = self._run_selected_main(
+                Path(temporary), "local", selection="PC-002.3,PC-002.8",
+                selected_owners={
+                    "platform readiness (gateway + project workflow)": ["PC-002.3"],
+                    "registered project runtime identity": ["PC-002.8"],
+                },
+                failed_project_probe=True,
+            )
+            self.assertEqual(code, 1)
+            self.assertNotIn("runner crash", output)
+            self.assertTrue((Path(temporary) / "reports" / "journey-summary.md").is_file())
+            self.assertIs(service["states"]["project-registered"]["passed"], False)
+            dependent = next(step for step in service["steps"]
+                             if step["name"] == "platform readiness (gateway + project workflow)")
+            independent = next(step for step in service["steps"]
+                               if step["name"] == "independent auth check")
+            self.assertEqual(dependent["status"], "BLOCKED")
+            self.assertIn("project-registered", dependent["message"])
+            self.assertIn("secondary shim missing", dependent["message"])
+            self.assertEqual(independent["status"], "PASS")
 
     def test_main_selected_installer_claim_runs_only_its_fixture_group_and_host_cycle(self):
         runner = importlib.import_module("runner")
