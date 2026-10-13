@@ -873,7 +873,7 @@ def main() -> int:
         return 0
     results = []
     for mode in ("local", "secured"):
-        command = ["pnpm", "-s", "kb", "qa", "cases", "coverage", "--level", "all", "--mode", mode, "--json"]
+        command = ["pnpm", "-s", "kb", "qa", "coverage", "show", "--level", "all", "--mode", mode, "--json"]
         with invocation_context(step_id="journey.case-selection"):
             result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120)
         if result.returncode != 0:
