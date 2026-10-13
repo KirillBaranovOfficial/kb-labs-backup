@@ -197,6 +197,45 @@ class PtyInvocationTest(unittest.TestCase):
 
 
 class ReportRedactionTest(unittest.TestCase):
+    def test_kb_create_failure_row_names_copied_log_and_diagnostic_paths(self):
+        with tempfile.TemporaryDirectory(prefix="journey-kb-create-dossier-") as temp:
+            root = Path(temp)
+            log = root / "apply.log"
+            diagnostic = root / "apply-diagnostic.json"
+            secret = "diagnostic-bearer-secret-value"
+            log.write_text("first diagnostic line\n"
+                           + "\n".join(f"apply detail {line}" for line in range(250))
+                           + f"\npnpm failed with token {secret}\n")
+            diagnostic.write_text(json.dumps({"error": "apply failed", "token": secret}))
+            payload = {"ok": False, "error": {"code": "KB_INSTALL_APPLY_FAILED",
+                                                "message": "apply failed",
+                                                "details": {"logPath": str(log),
+                                                            "diagnosticPath": str(diagnostic)}}}
+            output = json.dumps(payload) + "\n" + json.dumps({
+                "ok": True, "data": None,
+                "meta": {"stream": {"terminal": True, "exitCode": 1}},
+            }) + "\n"
+            runner = lambda *_args, **_kwargs: subprocess.CompletedProcess(
+                args=["kb-create", "install"], returncode=1,
+                stdout=output, stderr="")
+            env = {"KB_JOURNEY_API_TOKEN": secret}
+
+            with invocations.invocation_context(step_id="S-001.9", report_root=root):
+                invocations.run_command(["kb-create", "install", "--json"], env=env, runner=runner)
+                row_reference = invocations.invocation_link("S-001.9")
+
+            call = json.loads((root / "invocations/calls.jsonl").read_text())
+            self.assertEqual(len(call["invocation_evidence"]), 2)
+            self.assertIn(call["invocation_evidence"][0], row_reference)
+            self.assertIn(call["invocation_evidence"][1], row_reference)
+            for relative in call["invocation_evidence"]:
+                copied = root / relative
+                text = copied.read_text()
+                self.assertNotIn(secret, text)
+                self.assertTrue(text)
+                if copied.name.endswith("apply.log"):
+                    self.assertIn("first diagnostic line", text)
+
     def test_typed_command_failure_attaches_redacted_product_named_log_files(self):
         with tempfile.TemporaryDirectory(prefix="journey-failure-log-evidence-") as temp:
             root = Path(temp)
@@ -206,6 +245,7 @@ class ReportRedactionTest(unittest.TestCase):
             log.write_text(f"startup failed\nKB_JOURNEY_STATES={state_bundle}\n")
             env = {"KB_JOURNEY_SERVICE_TOKEN": secret, "KB_JOURNEY_STATES": state_bundle}
             payload = {"ok": False, "error": {"code": "KB_HOST_START_FAILED",
+                                                "message": "host could not start",
                                                 "details": {"log": str(log)}}}
             runner = lambda *_args, **_kwargs: subprocess.CompletedProcess(
                 args=["kb-create", "start"], returncode=1,
