@@ -23,8 +23,33 @@ A secured installation has a usable first administrator, and an administrator ca
 
 | # | Action | Expected |
 |---|---|---|
-| S-100.1 | Capture the email and generated password from a successful fresh secured install result, sign in to the gateway with them, then run `kb auth status --json` | The successful result contains the first-administrator email and password. The password is absent from the plan, receipt and install log. Login succeeds, and JSON is an ADR-0049 success envelope whose `data.session.authenticated` is `true` and whose session reports the expected gateway URL and admin email. A subsequent install or apply result omits the password only after a result containing it was successfully written and the disclosure marker recorded. |
+| S-100.1 | Capture the email and generated password from a successful fresh secured install result, sign in to the gateway with them, then run `kb auth status --json` | The successful result contains the first-administrator email and password. The password is absent from every file under the install root, including the secret store, plans, receipts, logs, version roots, snapshots, and temporary or backup files. Login succeeds, and JSON is an ADR-0049 success envelope whose `data.session.authenticated` is `true` and whose session reports the expected gateway URL and admin email. After that result is written, one atomic secret-store update records disclosure and removes both stored password entries. Later install or apply results omit the password. If output succeeds but the process stops before the atomic write, a retry may show the password again. |
 | S-100.2 | Stop the host, then run `kb-create doctor --platform-root <platform-root> --recover --email admin@example.test --tenant <tenant-id> --password-stdin --yes` and pipe a new password to stdin, with no registered project for the platform root | Recovery exits with status 0 and does not echo the password; it uses the explicit platform root without resolving a project. |
 | S-100.3 | Start the host and sign in with the recovered password | Login succeeds and `GET /auth/me` returns the bootstrap admin's email and tenant ID. |
 | S-100.4 | Run the same recovery command while the host is running | Command exits unsuccessfully with a typed `KB_*` error and actionable hint that recovery requires a stopped host and instructs `kb-create stop`, recovery, then `kb-create start`. |
 | S-100.5 | After a fresh secured install, inspect `kb-create status --platform-root <platform-root> --json`, sign in with the disclosed first-administrator credential, and inspect `/health/auth` | Status reports `bootstrapCompleted: true`; login succeeds; `/health/auth` reports `ok: true` and `activeAdmins >= 1`. |
+
+## Bootstrap credential lifecycle
+
+The bootstrap password is kept only until its first successful disclosure. The
+completion and disclosure markers and both stored password names live in the
+single shared secret file, so disclosure writes the marker and erases the
+password atomically. `gateway.bootstrap.password` is also bound to
+`GATEWAY_BOOTSTRAP_ADMIN_PASSWORD`; both entries are erased together. Version
+updates and rollback share this file and cannot restore an older password copy.
+
+| Bootstrap completed | Credential disclosed | Password present in store | First `install` / `apply` | Repeat `install` / `apply` | `update` | `rollback` | `start` | `doctor` | `doctor --recover --generate` |
+|---|---|---|---|---|---|---|---|---|---|
+| No | No | Yes | Creates the first admin and may use the credential for project registration; a successful result discloses it, then atomically records disclosure and erases it. | Not applicable before an installation exists. | Not available before an installation exists. | Not available before a snapshot exists. | May pass it only during unfinished bootstrap. | Reads lifecycle state for diagnosis; does not show the password. | Generates and shows a replacement once; it does not store it. |
+| Yes | No | Yes | A successful result discloses the stored credential and atomically records disclosure plus erasure. A completed install never logs in; if receipt identity is absent, it returns the project-owner registration commands. | Never logs in. It discloses the stored credential in its successful result, then atomically records disclosure and erases it. | Keeps the shared secret state; does not log in or disclose the password. | Keeps the shared secret state; does not log in or disclose the password. | Must not pass it after completion. | Reads lifecycle state for diagnosis; does not show the password. | Generates and shows a replacement once; it does not store it. |
+| Yes | Yes | No | Repeats never log in with the bootstrap password. A receipt-backed registered project remains registered; when registration identity is absent, the successful result gives `kb auth login --gateway-url <url> --email <email>`, `kb project add <path>`, and `kb project show <path>`. | Never logs in. A recorded project stays registered; absent receipt identity returns the successful registration notice and commands for the user. | Keeps the shared secret state and never restores or reads a versioned password copy. | Keeps the shared secret state and never restores or reads a snapshot password copy. | Must not pass it. | May read marker state, never the password value. | Generates and shows a replacement once; it does not store it. |
+
+The only interrupted handoff states are: (1) completion is recorded before
+disclosure, so the stored password remains the only copy and a retry shows it;
+(2) the disclosure result was written but the atomic marker-and-erasure write
+did not commit, so retry may show it again; or (3) that atomic write committed,
+so the marker exists and both password entries are absent. There is no persisted
+state with a disclosure marker and an unerased password from the current write:
+marker and erasure are one atomic secret-file replacement. If a marker and
+password entries are found together, opening the shared secret store runs the
+same atomic marker-and-erasure operation before returning any values.
