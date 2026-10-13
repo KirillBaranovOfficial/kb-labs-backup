@@ -147,7 +147,11 @@ const startGateway = async (choices: Choices): Promise<Instance> => {
   // Secrets: env references in the service, values in the private store keyed by
   // the variable name — the state the installer's apply step leaves behind.
   const wired = requirements.filter((r) => r.secret && choices.secrets?.[r.id] !== undefined);
-  writeFileSync(join(dir, '.kb/v2/secrets.env'), wired.map((r) => `${r.env}=${choices.secrets![r.id]}`).join('\n') + (wired.length ? '\n' : ''), { mode: 0o600 });
+  writeFileSync(join(dir, '.kb/v2/secret-state.json'), JSON.stringify({
+    schema: 1,
+    requirements: Object.fromEntries(wired.map((r) => [r.env, choices.secrets![r.id]])),
+    bootstrap: {},
+  }), { mode: 0o600 });
   const envLines = [
     ...wired.map((r) => `      ${r.env}: "\${${r.env}}"`),
     ...Object.entries(choices.env ?? {}).map(([k, v]) => `      ${k}: "${v}"`),

@@ -65,10 +65,10 @@ func TestFirstAdminCredentialIsShownOnceAndNeverPersisted(t *testing.T) {
 func TestCompletedUndisclosedBootstrapReturnsStoredPasswordWithoutRecordingDisclosure(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
-	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+	if err := store.PutBootstrapPassword("stored-bootstrap-password", secrets.BootstrapOriginGenerated); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutBootstrapPassword("stored-bootstrap-password", secrets.BootstrapOriginGenerated); err != nil {
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -85,10 +85,10 @@ func TestCompletedUndisclosedBootstrapReturnsStoredPasswordWithoutRecordingDiscl
 func TestSuppliedFirstAdminPasswordIsNamedWithoutReturningValue(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
-	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+	if err := store.Put(secrets.BootstrapPassword, "operator-supplied-bootstrap-secret"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put(secrets.BootstrapPassword, "operator-supplied-bootstrap-secret"); err != nil {
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -432,10 +432,10 @@ func TestExecuteInteractiveInstallDoesNotPersistPromptSecretsBeforeMappingValida
 func TestPreviouslyDisclosedFirstAdminProducesRecoveryNotice(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
-	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+	if err := store.PutBootstrapPassword("prior-run-secret-marker", secrets.BootstrapOriginGenerated); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutBootstrapPassword("prior-run-secret-marker", secrets.BootstrapOriginGenerated); err != nil {
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkBootstrapDisclosed(); err != nil {

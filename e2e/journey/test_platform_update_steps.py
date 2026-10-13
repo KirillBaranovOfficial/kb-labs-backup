@@ -18,16 +18,18 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.root = Path(self.temp.name) / "install"
         self.version_root = self.root / "versions" / "3.0.0"
         (self.version_root / ".kb/v2").mkdir(parents=True)
-        (self.version_root / ".kb/v2/secrets.env").write_text(
-            "gateway.jwtSecret=install-secret\nGATEWAY_JWT_SECRET=install-secret\n"
-        )
+        (self.version_root / ".kb/v2/secret-state.json").write_text(json.dumps({
+            "schema": 1,
+            "requirements": {"gateway.jwtSecret": "install-secret", "GATEWAY_JWT_SECRET": "install-secret"},
+            "bootstrap": {},
+        }))
         (self.version_root / ".kb/kb.config.jsonc").write_text('{"stable":true}\n')
         (self.root / "versions").mkdir(parents=True, exist_ok=True)
         (self.root / "state").mkdir(parents=True, exist_ok=True)
         (self.version_root / ".kb/marketplace.lock").write_text('{"plugins":[]}\n')
         self.root.joinpath("current").symlink_to(Path("versions") / "3.0.0")
         self.config = self.root / "current/.kb/kb.config.jsonc"
-        self.secrets = self.root / "current/.kb/v2/secrets.env"
+        self.secrets = self.root / "current/.kb/v2/secret-state.json"
         self.receipt = self.root / "current/.kb/v2/receipt.json"
         self.update_index = self.root / "update-index.json"
         self.update_index.write_text(json.dumps({"platforms": [{"version": "3.0.1", "releaseNotes": "Patch notes."}]}))
@@ -53,7 +55,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         from unittest.mock import patch
 
         with patch.dict(os.environ, {
-                "KB_JOURNEY_SELECTED_STEPS": "S-100.1",
+                "KB_JOURNEY_SELECTED_STEPS": "S-100.1,S-023.1,S-023.2,S-023.3,S-023.4,S-023.5,S-023.6,S-023.8,S-024.2,S-024.3,S-024.4",
                 "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/platform_update_steps.py",
                 "KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore",
         }, clear=False):
@@ -61,7 +63,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                 mode="secured", launcher="kb-create", kb_binary="kb",
                 platform_root=self.root, update_index=self.update_index,
                 request_file=self.root / "request.json", base_version="3.0.0",
-                updated_version="3.0.1", bootstrap_password=None,
+                updated_version="3.0.1", bootstrap_password=None, run_command=self.fake_kb,
                 parent_journey=self.parent_journey,
             )
 
@@ -108,7 +110,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             if "--secret-env" in args:
                 mapping = args[args.index("--secret-env") + 1]
                 secret, _, env_name = mapping.partition("=")
-                stored = dict(line.split("=", 1) for line in self.secrets.read_text().splitlines() if "=" in line)
+                stored = json.loads(self.secrets.read_text())["requirements"]
                 if os.environ.get(env_name, "") != stored.get(secret):
                     stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_SECRET_REFUSED",
                                                                       "message": "update secret refused",
@@ -147,9 +149,10 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         elif args[1] == "apply":
             secret_mapping = args[args.index("--secret-env") + 1]
             secret, _, env_name = secret_mapping.partition("=")
-            values = dict(line.split("=", 1) for line in self.secrets.read_text().splitlines() if "=" in line)
+            state = json.loads(self.secrets.read_text())
+            values = state["requirements"]
             values[secret] = os.environ[env_name]
-            self.secrets.write_text("".join(f"{key}={value}\n" for key, value in sorted(values.items())))
+            self.secrets.write_text(json.dumps({**state, "requirements": values}) + "\n")
             self._write_receipt("3.0.1")
             self.running_version = "3.0.1"
             self.pending_restart = None

@@ -347,6 +347,8 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertEqual(resolved["runners"], ["service-secured:explore"])
         self.assertIn("e2e/journey/bootstrap_secret_steps.py", resolved["stepSources"])
         self.assertIn("e2e/journey/platform_update_steps.py", resolved["stepSources"])
+        self.assertIn("roll back to version N with explicit non-TTY confirmation", resolved["prerequisiteSteps"])
+        self.assertIn("reject a missing snapshot without changing the active install", resolved["prerequisiteSteps"])
         root = Path(__file__).resolve().parents[2]
         declarations = [declaration
                        for source in ("e2e/journey/bootstrap_secret_steps.py",
@@ -361,6 +363,10 @@ class DispatchRegistryTests(unittest.TestCase):
         })
         self.assertTrue(all("service-secured:explore" in declaration["runners"]
                             for declaration in scans.values()))
+        rollback_scan = scans["verify disclosed bootstrap credential absent after update and rollback"]
+        self.assertEqual(rollback_scan["requires"], [
+            "step:verify restored receipt, config, host, and project command",
+        ])
 
     def test_s181_3_selects_the_supplied_password_install_file_scan(self):
         resolved = selection_from_coverage(self._coverage(), "S-181.3")
@@ -373,6 +379,18 @@ class DispatchRegistryTests(unittest.TestCase):
                     if declaration["name"] == "verify supplied bootstrap credential absent from install files")
         self.assertEqual(scan["cases"], ["S-181.3"])
         self.assertEqual(scan["runners"], ["agent-secured:commit", "agent:commit"])
+
+    def test_s181_6_selects_the_installed_secret_input_refusal_step(self):
+        resolved = selection_from_coverage(self._coverage(), "S-181.6")
+        self.assertEqual(resolved["runners"], ["agent-secured:commit", "agent:commit"])
+        self.assertIn("e2e/journey/installer_case_steps.py", resolved["stepSources"])
+        root = Path(__file__).resolve().parents[2]
+        declarations = _case_declarations("e2e/journey/installer_case_steps.py", root).values()
+        refusal = next(declaration for declaration in declarations
+                       if declaration["name"] == "refuse undeclared secret environment inputs before writing state")
+        self.assertEqual(refusal["cases"], ["S-181.6"])
+        self.assertEqual(refusal["runners"], ["agent-secured:commit", "agent:commit"])
+        self.assertIn("step:apply a secret through an environment reference", refusal["requires"])
 
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         results = []

@@ -756,7 +756,7 @@ func TestSecuredProjectRegistrationUsesTransientGatewayLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secretStorePath, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
+	secretStorePath, err := layout.SharedRuntimePath(".kb/v2/secret-state.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1106,7 +1106,7 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			secretStorePath, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
+			secretStorePath, err := layout.SharedRuntimePath(".kb/v2/secret-state.json")
 			if err != nil {
 				t.Fatal(err)
 			}

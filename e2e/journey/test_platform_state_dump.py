@@ -159,9 +159,11 @@ class PlatformStateDumpTests(unittest.TestCase):
             binaries = root / "bin"
             binaries.mkdir()
             (platform / ".kb/v2").mkdir(parents=True)
-            (platform / ".kb/v2/secrets.env").write_text(
-                "gateway.jwtSecret=signing-value\nGATEWAY_JWT_SECRET=signing-value\n"
-            )
+            (platform / ".kb/v2/secret-state.json").write_text(json.dumps({
+                "schema": 1,
+                "requirements": {"gateway.jwtSecret": "signing-value", "GATEWAY_JWT_SECRET": "signing-value"},
+                "bootstrap": {},
+            }))
             (platform / ".kb/logs").mkdir(parents=True)
             (platform / ".kb/diagnostics").mkdir(parents=True)
             (platform / "node_modules/@kb-labs/sample").mkdir(parents=True)

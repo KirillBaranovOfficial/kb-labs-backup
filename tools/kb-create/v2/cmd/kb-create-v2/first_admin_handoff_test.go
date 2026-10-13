@@ -13,8 +13,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // case: S-222.11
@@ -22,10 +24,10 @@ func TestFirstAdminDisclosureMarkerFollowsSuccessfulResultWrite(t *testing.T) {
 	root := t.TempDir()
 	store := secrets.Store{PlatformRoot: root}
 	const password = "handoff-test-password-sentinel"
-	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
+	if err := store.Put("gateway.bootstrap.password", password); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Put("gateway.bootstrap.password", password); err != nil {
+	if err := store.MarkBootstrapCompleted("provisioned"); err != nil {
 		t.Fatal(err)
 	}
 	value := applyCommandResult{
@@ -64,6 +66,39 @@ func TestFirstAdminDisclosureMarkerFollowsSuccessfulResultWrite(t *testing.T) {
 }
 
 // case: S-222.13
+func TestUnsupportedSecretStoreFormatUsesItsOwnCataloguedDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath, err := layout.SharedRuntimePath(".kb/v2/secret-state.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(filepath.Dir(statePath), "secrets.env")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("legacy-state=preserved\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, storeErr := (secrets.Store{PlatformRoot: root}).Get("anything")
+	failure := asDiag(storeErr)
+	if failure.Code != "KB_INSTALL_SECRET_STORE_UNSUPPORTED" {
+		t.Fatalf("diagnostic code = %s", failure.Code)
+	}
+	catalog, ok := diag.LookupCatalog(failure.Code)
+	if !ok || failure.Message != catalog.Message || failure.Hint != catalog.Hint || diag.ExitCode(failure) != diag.ExitError {
+		t.Fatalf("unsupported store diagnostic does not match its catalogue entry: code=%s exit=%d", failure.Code, diag.ExitCode(failure))
+	}
+	if failure.Hint == "" || !strings.Contains(failure.Hint, "kb-create install --platform-root NEW_ROOT") {
+		t.Fatal("diagnostic omitted the exact clean-root recovery command")
+	}
+	if data, err := os.ReadFile(legacyPath); err != nil || string(data) != "legacy-state=preserved\n" {
+		t.Fatal("unsupported old store was changed while diagnosing its format")
+	}
+}
 func TestBootstrapLifecycleFactsHaveOnlyTypedStoreWriters(t *testing.T) {
 	dir := filepath.Join("..", "..", "secrets")
 	packages, err := parser.ParseDir(token.NewFileSet(), dir, func(info os.FileInfo) bool {
@@ -76,6 +111,7 @@ func TestBootstrapLifecycleFactsHaveOnlyTypedStoreWriters(t *testing.T) {
 		t.Fatalf("parsed secrets packages = %d; want 1", len(packages))
 	}
 	allowed := map[string]bool{
+		"put":                    true,
 		"PutBootstrapPassword":   true,
 		"MarkBootstrapCompleted": true,
 		"MarkBootstrapDisclosed": true,
@@ -93,7 +129,7 @@ func TestBootstrapLifecycleFactsHaveOnlyTypedStoreWriters(t *testing.T) {
 					switch value := node.(type) {
 					case *ast.CallExpr:
 						selector, ok := value.Fun.(*ast.SelectorExpr)
-						if ok && selector.Sel.Name == "writeLifecycle" {
+						if ok && selector.Sel.Name == "writeRecord" {
 							lifecycleWriters = append(lifecycleWriters, function.Name.Name)
 						}
 					case *ast.AssignStmt:

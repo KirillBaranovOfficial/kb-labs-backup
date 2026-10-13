@@ -54,7 +54,7 @@ func wizardSecretsPath(t *testing.T, root string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
+	path, err := layout.SharedRuntimePath(".kb/v2/secret-state.json")
 	if err != nil {
 		t.Fatal(err)
 	}

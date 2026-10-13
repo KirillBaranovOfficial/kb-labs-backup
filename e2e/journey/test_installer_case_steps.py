@@ -1237,12 +1237,12 @@ class InstallerCaseStepsTest(unittest.TestCase):
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
             expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-181.1", "S-181.2",
-                        "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
+                        "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
                         "S-187.4", "S-187.5", "S-187.6", "S-187.9", "S-187.11", "S-187.12", "S-124.14"}
             self.assertEqual(set(claims), expected)
-            blocked = {"PC-001.5", "S-023.16", "S-223.3"}
+            blocked = {"PC-001.5", "S-023.16", "S-223.3", "S-181.6"}
             self.assertTrue(all(claims[claim] == "BLOCKED" for claim in blocked))
             self.assertTrue(all(claims[claim] == "FAIL" for claim in expected - blocked))
 
