@@ -57,9 +57,12 @@ disclosure, so the stored password remains the only copy and a retry shows it;
 (2) the disclosure result was written but the atomic state replacement did not
 commit, so retry may show it again; or (3) that replacement committed, so the
 disclosure marker exists and both password entries are absent. A value and its
-origin can never be committed separately. Existing flat or sidecar stores from
-earlier builds are preserved and diagnosed as unsupported; this build does not
-read or migrate them.
+origin can never be committed separately. Concurrent launcher mutations of one
+installation serialize against the same operation lock: a writer that read
+before disclosure must either apply its unrelated change to the current record
+or return a catalogued refusal; it can never restore the disclosed password.
+Existing flat or sidecar stores from earlier builds are preserved and diagnosed
+as unsupported; this build does not read or migrate them.
 
 Bootstrap password replacement follows the readiness boundary in S-222.8:
 
