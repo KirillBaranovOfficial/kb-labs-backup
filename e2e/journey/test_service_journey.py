@@ -563,6 +563,8 @@ raise SystemExit(1)
                                                "value": {"id": "prj_fixture", "root": str(Path(directory))}},
                     })
                     env = {
+                        "HOME": directory,
+                        "PATH": os.environ.get("PATH", ""),
                         "KB_JOURNEY_PLATFORM_ROOT": str(Path(directory) / "platform"),
                         "KB_JOURNEY_STATES": inherited,
                     }
@@ -623,8 +625,10 @@ raise SystemExit(1)
                         service_main()
 
                     result = json.loads(output.read_text())
-                    expected = {"selected analytics check"} if selected else {
-                        "selected analytics check", "unselected mcp check"}
+                    expected = (
+                        {"selected analytics check"} if selected else
+                        {"selected analytics check", "unselected mcp check"}
+                    )
                     self.assertEqual(set(executed), expected)
                     self.assertEqual(len(executed), len(expected))
                     self.assertEqual(fixture_project_ids, ["prj_fixture"])
@@ -645,6 +649,12 @@ raise SystemExit(1)
                             status[0] == ("PASS" if name in allowed_passes else "SKIPPED")
                             for name, status in status_by_name.items()
                         ), status_by_name)
+
+    def test_project_fixture_flows_do_not_depend_on_claim_selection_for_registration(self):
+        source = Path(__file__).with_name("service_runner.py").read_text(encoding="utf-8")
+        self.assertNotIn("if project_b_root or graph.selection_active", source)
+        self.assertNotIn("if project_root or journey.selected_claims", source)
+        self.assertNotIn("if project_id or journey.selected_claims", source)
 
     def test_checks_returns_a_reusable_list_for_both_modes(self):
         for mode in ("local", "secured"):

@@ -619,6 +619,12 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertNotIn("KB_JOURNEY_SELECTED_SOURCES", shell + values)
         self.assertIn("journey_source_group_declaration", source)
 
+    def test_selected_owning_steps_are_forwarded_to_the_runner_container(self):
+        root = Path(__file__).resolve().parents[2]
+        shell = (root / "e2e/journey/run.sh").read_text(encoding="utf-8")
+        self.assertIn("export KB_JOURNEY_SELECTED_OWNING_STEPS=", shell)
+        self.assertIn("-e KB_JOURNEY_SELECTED_OWNING_STEPS", shell)
+
     def test_selected_update_and_marketplace_claims_select_the_declared_units(self):
         coverage = self._coverage()
         base_update = selection_from_coverage(coverage, "S-023.2")
