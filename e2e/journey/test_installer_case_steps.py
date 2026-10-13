@@ -51,9 +51,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
             (launcher.parent / "kb").symlink_to("platform/current/.kb/v2/bin/kb")
             registry = home / ".kb" / "launcher" / "gateway-roots.json"
             registry.parent.mkdir(parents=True)
-            registry.write_text(json.dumps({"schema": 2, "roots": [{"platformRoot": str(install_root),
-                                                                      "installationId": "00112233445566778899aabbccddeeff",
-                                                                      "url": "http://127.0.0.1:4100"}]}))
+            writer_fixture = Path(__file__).parent / "testdata" / "gateway-roots-schema2.json"
+            writer_registry = json.loads(writer_fixture.read_text())
+            self.assertEqual(writer_registry["schema"], 2)
+            self.assertTrue(writer_registry["roots"][0]["platformRoot"].endswith("/current"))
+            installation_id = writer_registry["roots"][0]["installationId"]
+            gateway_url = writer_registry["roots"][0]["url"]
+            registry.write_bytes(writer_fixture.read_bytes())
             calls = []
             shim_owner = None
             root_spellings = {
@@ -70,7 +74,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 calls.append(args)
                 operation = args[1]
                 if operation == "plan":
-                    payload = {"plan": {"request": {"gatewayUrl": "http://127.0.0.1:4100"},
+                    payload = {"plan": {"request": {"gatewayUrl": gateway_url},
                                          "serviceGraph": {"platformVersion": "1.2.3"}}}
                 elif operation == "apply":
                     requested_root = Path(args[args.index("--platform-root") + 1])
@@ -78,8 +82,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     if shim_owner is None:
                         shim_owner = requested_installation
                     payload = {"operation": "apply", "receipt": {"id": "receipt-one",
-                                                                       "installationId": "00112233445566778899aabbccddeeff",
-                                                                       "plan": {"request": {"gatewayUrl": "http://127.0.0.1:4100"}}},
+                                                                       "installationId": installation_id,
+                                                                       "plan": {"request": {"gatewayUrl": gateway_url}}},
                                "shim": {"linked": requested_installation == shim_owner,
                                         "owner": str(shim_owner)}}
                 elif operation == "uninstall":
@@ -99,8 +103,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
             verify_installation_spellings(
                 launcher=str(launcher), index=home / "stable-index.json", install_root=install_root,
-                channel="stable", version="1.2.3", gateway_url="http://127.0.0.1:4100",
-                installation_id="00112233445566778899aabbccddeeff", run_command=run_command)
+                channel="stable", version="1.2.3", gateway_url=gateway_url,
+                installation_id=installation_id, run_command=run_command)
 
             expected_spellings = [str(install_root), str(install_root / "current"), str(active_root.resolve())]
             self.assertEqual(len(calls), 12)
