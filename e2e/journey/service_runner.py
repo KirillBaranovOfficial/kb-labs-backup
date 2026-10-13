@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import FlowGraph, Journey, JourneyResult
+from select_from_cases import journey_source_group_declaration
 from journey_dependencies import Dependency
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
                          print_report_text, read_ux_cli_result, read_ux_http_result, run_command,
@@ -572,6 +573,16 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         yield service_check("project MCP cross-project isolation", "mcp",
                             lambda: "BLOCKED: fixtures-installed state did not provide a registered project B",
                             cases=["S-140.5"])
+        yield service_check("project plugin catalog isolation", "mcp",
+                            lambda: "BLOCKED: fixtures-installed state did not provide a registered project B",
+                            cases=["S-199.3"])
+        yield service_check("project MCP read-only tool isolation", "mcp",
+                            lambda: "BLOCKED: fixtures-installed state did not provide a registered project B",
+                            cases=["S-199.4"])
+        if mode == "secured":
+            yield service_check("secured project MCP catalog selection", "mcp",
+                                lambda: "BLOCKED: fixtures-installed state did not provide a registered project B",
+                                cases=["S-199.5"], runners=("service-secured:explore",))
     yield service_check("Studio shell", "studio", lambda: expect_html("/", "Studio shell"))
     yield service_check("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
     yield service_check("marketplace registry", "marketplace", lambda: expect(project_service_path(pid(), "rest", "plugins/registry"), {200}, "marketplace registry", token=auth_token()))
@@ -761,8 +772,7 @@ SERVICE_GROUPS = {
     "marketplace": {"capabilities": {"marketplace"},
                      "depends_on": ("host-running", "project-registered", "service-api-session")},
     "marketplace-lifecycle": {"capabilities": set(),
-                              "depends_on": ("host-running", "project-registered", "marketplace-available", "service-api-session"),
-                              "claim_sources": ("e2e/journey/marketplace_steps.py",)},
+                              "depends_on": ("host-running", "project-registered", "marketplace-available", "service-api-session")},
     "marketplace-fixtures": {"capabilities": set(),
                              "depends_on": ("host-running", "project-registered", "marketplace-available"),
                              "produces": ("fixtures-installed",)},
@@ -784,6 +794,18 @@ SERVICE_GROUPS = {
                        "depends_on": ("host-running", "project-registered", "fixtures-installed", "session")},
     "worktree": {"capabilities": {"worktree"}, "depends_on": ("host-running", "project-registered")},
 }
+
+
+def service_selection_groups(root: Path | None = None) -> dict[str, dict]:
+    """Attach resolver-owned marketplace registrations to the service graph."""
+    groups = {name: dict(spec) for name, spec in SERVICE_GROUPS.items()}
+    source_root = root or Path(__file__).resolve().parents[2]
+    declaration = journey_source_group_declaration("e2e/journey/marketplace_steps.py", source_root)
+    lifecycle = dict(groups["marketplace-lifecycle"])
+    lifecycle["cases"] = tuple(sorted(set(lifecycle.get("cases", ())) | set(declaration["cases"])))
+    lifecycle["steps"] = tuple(sorted(set(lifecycle.get("steps", ())) | set(declaration["steps"])))
+    groups["marketplace-lifecycle"] = lifecycle
+    return groups
 STATE_PRODUCERS = {
     state: group for group, spec in SERVICE_GROUPS.items()
     for state in spec.get("produces", ())
@@ -888,10 +910,15 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                       "S-142.5", "S-203.1", "S-203.19", "S-204.7"], record_empty_success=False)
     project_b_root = (service_project_b(graph).get("projectBRoot", "")
                       if graph.states.get("fixtures-installed", {}).get("passed") is True else "")
-    if project_b_root:
+    if project_b_root or graph.selection_active:
+        def run_project_plugin_availability() -> str | None:
+            if not project_b_root:
+                return "project B fixture handoff did not provide a registered project root"
+            return run_project_plugin_availability_steps(
+                journey, str(cli_path), Path(project_root), Path(project_b_root), env)
+
         graph.flow("project plugin availability", "plugin-availability", "plugins",
-                   lambda: run_project_plugin_availability_steps(
-                       journey, str(cli_path), Path(project_root), Path(project_b_root), env),
+                   run_project_plugin_availability,
                    cases=["S-197.3", "S-197.5"], record_empty_success=False)
     adapter_fixture_snapshot: dict[str, object] = {}
     graph.flow("adapter defaults flow", "adapters", "adapter",
@@ -1105,10 +1132,11 @@ def main() -> int:
     os.environ.setdefault("KB_JOURNEY_INVOCATIONS", str(Path(args.output).resolve().parent))
     journey = Journey(args.mode, args.run_id or str(uuid.uuid4()))
     inherited_states = json.loads(journey_value("KB_JOURNEY_STATES", "{}"))
+    service_groups = service_selection_groups()
     graph = FlowGraph(
-        journey, {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+        journey, {name: spec["depends_on"] for name, spec in service_groups.items()},
         diagnostics_path=Path(args.output).resolve().with_name("journey-diagnostics.log"),
-        states=inherited_states, state_producers=STATE_PRODUCERS, groups=SERVICE_GROUPS,
+        states=inherited_states, state_producers=STATE_PRODUCERS, groups=service_groups,
     )
     export_project_state_to_child_environment(graph)
     try:
@@ -1127,10 +1155,12 @@ def main() -> int:
             project_id = registered_project["id"]
             project_root = registered_project["root"]
         registry = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
-        if project_root:
+        if project_root or journey.selected_claims:
             env = os.environ.copy()
             fixture_entry: dict | None = None
-            def produce_commit_fixture() -> None:
+            def produce_commit_fixture() -> str | None:
+                if not project_root:
+                    return "project-registered state did not provide a project root"
                 nonlocal fixture_entry
                 fixture_entry = prepare_commit_project_fixture(journey, project_root, registry, env)
 
@@ -1176,7 +1206,7 @@ def main() -> int:
                        marketplace_lifecycle,
                        record_empty_success=False)
         run_service_steps(journey, declared_steps, args.mode, graph=graph)
-        if project_id:
+        if project_id or journey.selected_claims:
             if project_root:
                 graph.probe_state(
                     "agent-plugin-installed", "agent-session", "project Agents plugin",
@@ -1187,10 +1217,16 @@ def main() -> int:
                     "agent-plugin-installed", "agent-session", "project Agents plugin",
                     lambda: "BLOCKED: project-registered state did not provide a project root",
                 )
+
+            def run_project_agent_session() -> str | None:
+                if not project_id:
+                    return "project-registered state did not provide a project ID"
+                return run_agent_session_steps(
+                    journey, project_id, service_api_token(graph),
+                    journey_value("KB_JOURNEY_AGENT_ID", "orchestrator"))
+
             graph.flow("project agent session flows", "agent-session", "agent-session",
-                       lambda: run_agent_session_steps(
-                           journey, project_id, service_api_token(graph),
-                           journey_value("KB_JOURNEY_AGENT_ID", "orchestrator")),
+                       run_project_agent_session,
                        cases=["S-141.1", "S-141.2"], record_empty_success=False)
         graph.flow("analytics extras", "analytics", "analytics",
                    lambda: run_analytics_steps(

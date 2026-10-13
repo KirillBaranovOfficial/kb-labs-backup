@@ -5,6 +5,46 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export KB_JOURNEY_WORKSPACE_SOURCE="$ROOT"
 export KB_JOURNEY_GIT_REVISION="$(git rev-parse HEAD)"
+
+no_build=0
+resolve_only=0
+prepare_only=0
+compose_action=""
+for option in "$@"; do
+  case "$option" in
+    --no-build) no_build=1 ;;
+    --resolve-only) resolve_only=1 ;;
+    --prepare-only) prepare_only=1 ;;
+    --down|--render-compose-config)
+      if [[ -n "$compose_action" ]]; then
+        echo "Journey compose actions --down and --render-compose-config cannot be combined." >&2
+        exit 2
+      fi
+      compose_action="$option"
+      ;;
+    *) echo "Unknown journey option: $option" >&2; exit 2 ;;
+  esac
+done
+if (( resolve_only && prepare_only )); then
+  echo "Journey options --resolve-only and --prepare-only cannot be combined." >&2
+  exit 2
+fi
+if [[ -n "$compose_action" ]] && (( resolve_only || prepare_only )); then
+  echo "Journey compose actions cannot be combined with --resolve-only or --prepare-only." >&2
+  exit 2
+fi
+
+if (( resolve_only )); then
+  if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
+    python3 e2e/journey/select_from_cases.py
+  elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
+    python3 e2e/journey/dispatch_registry.py --dispatch "$KB_JOURNEY_ONLY"
+  else
+    python3 e2e/journey/select_from_cases.py
+  fi
+  exit
+fi
+
 COMPOSE=()
 COMPOSE_AVAILABLE=0
 if command docker compose version >/dev/null 2>&1; then
@@ -23,12 +63,12 @@ if (( COMPOSE_AVAILABLE )); then
   COMPOSE+=("${COMPOSE_FILES[@]}")
 fi
 
-if [[ "${1:-}" == "--down" || "${1:-}" == "--render-compose-config" ]]; then
+if [[ -n "$compose_action" ]]; then
   if (( ! COMPOSE_AVAILABLE )); then
     echo "Docker Compose is required for journey stack operations; install Docker Compose v2 (the 'docker compose' plugin) or the standalone 'docker-compose' command." >&2
     exit 127
   fi
-  if [[ "$1" == "--down" ]]; then
+  if [[ "$compose_action" == "--down" ]]; then
     "${COMPOSE[@]}" down --volumes --remove-orphans
   else
     "${COMPOSE[@]}" config --format json
@@ -46,21 +86,10 @@ cleanup() {
   exit "$status"
 }
 
-if [[ "${1:-}" == "--resolve-only" ]]; then
-  if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
-    python3 e2e/journey/select_from_cases.py
-  elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
-    python3 e2e/journey/dispatch_registry.py --dispatch "$KB_JOURNEY_ONLY"
-  else
-    python3 e2e/journey/select_from_cases.py
-  fi
-  exit
-fi
-
 mkdir -p .journey/reports
 export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
 
-if [[ "${1:-}" == "--prepare-only" ]]; then
+if (( prepare_only )); then
   e2e/journey/prepare-candidate.sh
   exit
 fi
@@ -79,14 +108,14 @@ if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
   export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
   export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
   export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
-  export KB_JOURNEY_SELECTED_SOURCES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["stepSources"]))' <<< "$selection_json")"
+  export KB_JOURNEY_SELECTED_OWNING_STEPS="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["selectedOwningSteps"], separators=(",",":")))' <<< "$selection_json")"
   export KB_JOURNEY_SELECTED_CAPABILITIES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<< "$selection_json")"
   selected_selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["runners"]))' <<< "$selection_json")"
 else
   unset KB_JOURNEY_SELECTED_STEPS
   unset KB_JOURNEY_PREREQUISITE_STEPS
   unset KB_JOURNEY_PREREQUISITE_FLOWS
-  unset KB_JOURNEY_SELECTED_SOURCES
+  unset KB_JOURNEY_SELECTED_OWNING_STEPS
   unset KB_JOURNEY_SELECTED_CAPABILITIES
   unset KB_JOURNEY_NEEDED_STATES
 fi
@@ -113,7 +142,7 @@ run_selector() {
 
 trap cleanup EXIT INT TERM
 
-if [[ "${1:-}" != "--no-build" ]]; then
+if (( ! no_build )); then
   pnpm install --frozen-lockfile
   kb-devkit run build --affected
   e2e/journey/prepare-candidate.sh
@@ -136,7 +165,7 @@ run_journey() {
     "${COMPOSE[@]}" run --rm -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
     -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_SELECTED_STEPS \
     -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS \
-    -e KB_JOURNEY_SELECTED_SOURCES -e KB_JOURNEY_SELECTED_CAPABILITIES runner < /dev/null; then
+    -e KB_JOURNEY_SELECTED_CAPABILITIES runner < /dev/null; then
     status=1
   fi
 }

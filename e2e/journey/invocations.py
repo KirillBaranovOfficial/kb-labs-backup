@@ -593,6 +593,17 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
                           duration_seconds=time.monotonic() - started,
                           error=f"{error.__class__.__name__}: {error}")
         raise
+    except BaseException:
+        if process is not None and process.poll() is None:
+            try:
+                if start_new_session:
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+            except ProcessLookupError:
+                pass
+            process.wait()
+        raise
     finally:
         try:
             os.close(slave)

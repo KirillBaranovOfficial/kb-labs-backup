@@ -32,9 +32,9 @@ from journey_resources import case_catalog_root, journey_module, workspace_resou
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, record_candidate_provenance, record_runner_failure,
-                           record_runner_exception, replay_steps, source_selected)
+                           record_runner_exception, replay_steps)
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
-from select_from_cases import fixture_group_declarations
+from select_from_cases import fixture_group_declarations, journey_source_group_declaration
 from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status,
                         run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
 from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps, run_invite_lifecycle_steps,
@@ -69,11 +69,38 @@ ACTIVE_LAUNCHER: str | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
+RUNNER_SCENARIOS = {
+    "commit": {
+        "installer": "commit",
+        "secured_installer": "custom",
+        "secured_marketplace_packages": ("@kb-labs/commit-entry",),
+        "command_groups": ("commit",),
+    },
+    "explore": {
+        "installer": "explore",
+        "secured_installer": "custom",
+        "secured_marketplace_packages": (),
+        "command_groups": (),
+    },
+}
+
+
+def runner_scenario(name: str, *, secured: bool) -> dict:
+    """Describe what an installed runner scenario provisions and later exercises."""
+    description = RUNNER_SCENARIOS.get(name)
+    if description is None:
+        raise ValueError(f"unknown journey scenario {name!r}")
+    return {
+        "installer": description["secured_installer"] if secured else description["installer"],
+        "marketplace_packages": description["secured_marketplace_packages"] if secured else (),
+        "command_groups": description["command_groups"],
+    }
 OUTER_GROUP_DEPENDENCIES = {
     "install": (),
     "host": ("platform-installed",),
     "auth": ("host-running",),
     "update": ("host-running", "platform-version-known"),
+    "update-variants": ("host-running", "platform-version-known", "project-registered", "fixtures-installed"),
     "project": ("host-running", "platform-version-known"),
     "marketplace": ("host-running", "project-registered"),
     "marketplace-fixtures": ("host-running", "project-registered", "marketplace-available"),
@@ -115,6 +142,15 @@ def outer_selection_groups() -> dict[str, dict]:
     for group, produced_states in OUTER_GROUP_PRODUCES.items():
         spec = dict(groups.get(group, {}))
         spec["produces"] = produced_states
+        groups[group] = spec
+    for group, source in (
+            ("marketplace-lifecycle", "e2e/journey/marketplace_steps.py"),
+            ("update", "e2e/journey/platform_update_steps.py"),
+            ("update-variants", "e2e/journey/platform_update_variant_steps.py")):
+        resolved = journey_source_group_declaration(source, Path(__file__).resolve().parents[2])
+        spec = dict(groups.get(group, {}))
+        spec["cases"] = tuple(sorted(set(spec.get("cases", ())) | set(resolved["cases"])))
+        spec["steps"] = tuple(sorted(set(spec.get("steps", ())) | set(resolved["steps"])))
         groups[group] = spec
     fixture_specs = fixture_group_declarations(
         ISOLATED_FIXTURE_GROUPS,
@@ -445,6 +481,72 @@ def check_selected_claim_completion(journey_results: list[dict], selection: str 
     return missing
 
 
+def check_selected_step_completion(journey_results: list[dict], selected_steps: dict[str, list[str]]) -> list[str]:
+    """Fail if a resolver-selected owning or prerequisite step produced no journey row."""
+    recorded = {
+        step.get("name")
+        for result in journey_results
+        for step in result.get("steps", [])
+        if isinstance(step.get("name"), str)
+    }
+    missing = sorted(set(selected_steps) - recorded)
+    for name in missing:
+        claims = ", ".join(sorted(selected_steps[name])) or "selected claim"
+        message = f"selected step never ran: {name} (claim {claims})"
+        if CASE_JOURNEY is not None:
+            CASE_JOURNEY.step(message, "journey.selection", lambda message=message: message,
+                              cases=selected_steps[name], role="lifecycle")
+        fail(message)
+    return missing
+
+
+class OrderedPromptResponder:
+    """Answer terminal prompts once, in declared order, from newly received PTY output."""
+
+    PROMPT = re.compile(
+        r"(?:\?|\[[^\]]*(?:default|stable|y/n|yes/no)[^\]]*\]|"
+        r"(?:directory|channel|email|tenant|password|secret)[^:]*:)\s*$|"
+        r"\[[^\]]*(?:default|stable|y/n|yes/no)[^\]]*\]:\s*$", re.I)
+
+    def __init__(self, expectations: list[tuple[str, str]]):
+        self.expectations = [(re.compile(pattern, re.I), answer) for pattern, answer in expectations]
+        self.position = 0
+        self.cursor = 0
+        self.line = ""
+        self.last_prompt = ""
+
+    def __call__(self, transcript: str) -> str | None:
+        output = transcript[self.cursor:]
+        self.cursor = len(transcript)
+        if not output:
+            return None
+        for char in output:
+            if char == "\r":
+                self.line = ""
+            elif char == "\n":
+                self.line = ""
+            else:
+                self.line += char
+        visible = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", self.line).strip()
+        if not self.PROMPT.search(visible):
+            return None
+        if visible == self.last_prompt:
+            return None
+        if self.position >= len(self.expectations):
+            raise RuntimeError(f"unexpected wizard prompt: {visible}")
+        pattern, answer = self.expectations[self.position]
+        if not pattern.search(visible):
+            raise RuntimeError(f"unexpected wizard prompt {visible!r}; expected {pattern.pattern!r}")
+        self.position += 1
+        self.last_prompt = visible
+        return answer + "\n"
+
+    def finish(self) -> None:
+        missing = [pattern.pattern for pattern, _ in self.expectations[self.position:]]
+        if missing:
+            raise RuntimeError(f"wizard ended before expected prompt: {missing[0]}")
+
+
 def require(result, expected=0, step="command"):
     if result.returncode != expected:
         excerpt = " ".join(result.stdout.split())[-700:]
@@ -521,49 +623,31 @@ def verify_project_mcp(env: dict[str, str], local: bool):
 
 def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
     global MAX_PNPM_RSS_MIB
-    sent_choice = not choice
-    sent_access_mode = False
-    last_prompt = ""
+    expectations = [(r"Project directory", str(PROJECT)), (r"Platform channel", "stable")]
+    if choice:
+        expectations.append((r"(?:scenario|journey|setup)", choice))
+    if access_mode == "secured":
+        expectations.extend([
+            (r"Studio access", "secured"),
+            (r"Admin email", "journey-admin@example.test"),
+            (r"Admin tenant", "journey"),
+            (r"Admin password", "JourneyPassw0rd!"),
+            (r"Confirm admin password", "JourneyPassw0rd!"),
+        ])
+    prompt_responder = OrderedPromptResponder(expectations)
     apply_started = None
     started = time.monotonic()
-    seen_length = 0
     def respond(transcript: str):
-        nonlocal sent_choice, sent_access_mode, last_prompt, apply_started, seen_length
+        nonlocal apply_started
         global MAX_PNPM_RSS_MIB
-        if apply_started is None and re.search(r"Applying installation", transcript[seen_length:], re.I):
+        new_text = transcript[prompt_responder.cursor:]
+        if apply_started is None and re.search(r"Applying installation", new_text, re.I):
             apply_started = time.monotonic()
-        seen_length = len(transcript)
-        visible = transcript[-2000:]
-        if access_mode == "secured" and not sent_access_mode and "Studio access" in visible:
-            sent_access_mode = True
-            last_prompt = "Studio access (secured)"
-            return "secured\n"
-        prompts = re.findall(r"(?im)^.*(?:\?|\[.*(?:default|y/n|yes/no).*\]|default[^\n]*:|press enter[^\n]*|select[^\n]*:|project directory[^\n]*:|admin email[^\n]*:|admin tenant[^\n]*:|admin password[^\n]*:|confirm admin password[^\n]*:|session signing secret[^\n]*:).*?$", visible)
-        prompt = prompts[-1] if prompts else ""
-        if not prompt or prompt == last_prompt:
-            return None
-        answer = ""
-        if re.search(r"Project directory", prompt, re.I):
-            answer = str(PROJECT)
-        elif access_mode == "secured" and re.search(r"Studio access", prompt, re.I):
-            answer = "secured"
-        elif access_mode == "secured" and re.search(r"Admin email", prompt, re.I):
-            answer = "journey-admin@example.test"
-        elif access_mode == "secured" and re.search(r"Admin tenant", prompt, re.I):
-            answer = "journey"
-        elif access_mode == "secured" and re.search(r"Admin password", prompt, re.I) and not re.search(r"Confirm", prompt, re.I):
-            answer = "JourneyPassw0rd!"
-        elif access_mode == "secured" and re.search(r"Confirm admin password", prompt, re.I):
-            answer = "JourneyPassw0rd!"
-        elif choice and not sent_choice and re.search(r"scenario|journey|setup", prompt, re.I):
-            answer = choice
-        if answer:
-            sent_choice = True
-        last_prompt = prompt
-        return answer + "\n"
+        return prompt_responder(transcript)
     result, duration = run_pty_command(command, env=env, timeout=900, on_output=respond,
                                        monitor_process=_sample_pnpm_rss_for_run,
                                        start_new_session=True, raise_on_timeout=False)
+    prompt_responder.finish()
     return result.returncode, result.stdout, duration, apply_started - started if apply_started else None
 
 
@@ -587,8 +671,10 @@ def finalize_run(passed: bool) -> int:
                 journey_results.append(json.loads(service_report.read_text(encoding="utf-8")))
             except (OSError, UnicodeError, json.JSONDecodeError) as error:
                 fail(f"service runner result could not be read for selected claim completion: {error}")
+        selected_owning_steps = json.loads(journey_value("KB_JOURNEY_SELECTED_OWNING_STEPS", "{}"))
+        missing_selected_steps = check_selected_step_completion(journey_results, selected_owning_steps)
         missing_selected = check_selected_claim_completion(journey_results)
-        passed = passed and not missing_selected and not FIRST_FAILURE
+        passed = passed and not missing_selected and not missing_selected_steps and not FIRST_FAILURE
     root_size = PLATFORM_SIZE_MIB
     if root_size is None:
         root_size = 0.0
@@ -869,6 +955,7 @@ def main(*, update_variant_runner=None):
     global ACTIVE_OUTER_GRAPH, ACTIVE_MAIN_ENV, ACTIVE_LAUNCHER
     STATE_DUMP_GUARD.reset()
     Journey.reset_run_registry()
+    FIRST_FAILURE = ""
     SELECTED_CLAIM_COMPLETION_CHECKED = False
     env = dict(BASE_ENV)
     env["HOME"] = str(HOME)
@@ -885,6 +972,7 @@ def main(*, update_variant_runner=None):
     (HOME / ".npmrc").write_text(f"registry={REGISTRY}\n")
     env["KB_CREATE_DOWNLOAD_BASE_URL"] = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"]
     mode = "secured" if VARIANT.endswith("secured") else "local"
+    scenario_setup = runner_scenario(SCENARIO, secured=mode == "secured")
     CASE_JOURNEY = Journey(mode, f"installer-{mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}")
     diagnostics = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
         "journey-diagnostics.log")
@@ -1015,7 +1103,7 @@ def main(*, update_variant_runner=None):
     else:
         operation = "plan" if VARIANT in {"input", "relative-path"} else "install"
         PROJECT.mkdir(parents=True, exist_ok=True)
-        install_scenario = "custom" if VARIANT.endswith("secured") else SCENARIO
+        install_scenario = scenario_setup["installer"]
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                 "--platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
                 "--registry", REGISTRY, "--project-root", str(PROJECT)]
@@ -1221,26 +1309,38 @@ def main(*, update_variant_runner=None):
 
     # New shell with the installed profile proves user-facing PATH and runtime isolation.
     PROJECT.mkdir(exist_ok=True)
+    for package in scenario_setup["marketplace_packages"]:
+        login, _ = run(["bash", "-c",
+                        '. "$HOME/.profile"; kb auth login --gateway-url http://127.0.0.1:4000 '
+                        '--email "$1" --password-stdin',
+                        "journey", env["KB_JOURNEY_ADMIN_EMAIL"]],
+                       env=env, cwd=PROJECT, timeout=90,
+                       input_text=env["KB_JOURNEY_ADMIN_PASSWORD"] + "\n")
+        if not require(login, step="secured runner administrator login"):
+            return finalize_run(False)
+        install, _ = run(["bash", "-c",
+                          '. "$HOME/.profile"; kb marketplace install "$1" --scope platform --json',
+                          "journey", package], env=env, cwd=PROJECT, timeout=300)
+        if not require(install, step=f"marketplace install {package} for secured runner scenario"):
+            return finalize_run(False)
     run(["git", "init", "-q"], env=env, cwd=PROJECT)
     (PROJECT / "note.txt").write_text("journey first value\n")
     run(["git", "add", "note.txt"], env=env, cwd=PROJECT)
     help_command = 'kb --help'
-    if FRONT == "agent" and SCENARIO == "commit":
-        help_command += ' && kb commit --help'
+    if FRONT == "agent" and scenario_setup["command_groups"]:
+        help_command += " && " + " && ".join(
+            f"kb {group} {group} --help" for group in scenario_setup["command_groups"])
     result, elapsed = run(["bash", "-c", f'. "$HOME/.profile"; {help_command}'], env=env, cwd=PROJECT, timeout=180)
     TIMES["first command"] = elapsed
     if not require(result, step="new login shell kb --help"):
         write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-command-output ==\n{result.stdout[-5000:]}\n", env=env)
     else:
-        if FRONT == "agent" and SCENARIO == "commit":
-            result, elapsed = run(["bash", "-c", '. "$HOME/.profile"; kb commit --dry-run --scope root'],
+        if FRONT == "agent" and scenario_setup["command_groups"]:
+            result, elapsed = run(["bash", "-c", '. "$HOME/.profile"; kb commit commit --dry-run --json'],
                                   env=env, cwd=PROJECT, timeout=300)
             TIMES["first command"] += elapsed
             if not require(result, step="kb commit first value"):
                 write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n", env=env)
-            elif 'scope "root"' not in result.stdout:
-                write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n", env=env)
-                fail("kb commit first value: output did not include the supplied scope")
         status, _ = run(["git", "status", "--porcelain"], env=env, cwd=PROJECT)
         clean_repo = not (PROJECT / ".kb").exists() and status.stdout.strip() in {"?? note.txt", "A  note.txt"}
         record_case("first CLI commands leave fresh repository untouched", clean_repo,
@@ -1255,9 +1355,14 @@ def main(*, update_variant_runner=None):
         CASE_JOURNEY.step("verify installed project registration", "platform.project",
                           lambda: registration_failure)
 
-    update_journey = (((SCENARIO == "commit" and VARIANT in {"default", "input"})
-                       or VARIANT.endswith("secured"))
-                      and source_selected(run_platform_update_steps.__code__.co_filename))
+    update_group_selected = outer_graph.group_selected("update")
+    update_journey = update_group_selected and (
+        outer_graph.selection_active
+        or (SCENARIO == "commit" and VARIANT in {"default", "input"})
+        or VARIANT.endswith("secured")
+    )
+    if not update_journey and outer_graph.selection_active and not update_group_selected:
+        outer_graph.skip_unselected("platform update journey", "platform.update")
     if update_journey:
         try:
             receipt_path = PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json"
@@ -1832,7 +1937,7 @@ def main(*, update_variant_runner=None):
         project_b_consumers_selected = (
             not outer_graph.selection_active
             or bool(outer_graph.selected_groups & {"workflow", "studio"})
-            or source_selected(run_platform_update_variant_steps.__code__.co_filename)
+            or outer_graph.group_selected("update-variants")
         )
         if fixture_state_needed:
             fixture_state = outer_graph.states.get("fixtures-installed", {})
@@ -2092,7 +2197,8 @@ def main(*, update_variant_runner=None):
                          runners=("service-local:explore", "service-secured:explore"))
         capture_case_failure()
 
-    if source_selected(run_platform_update_variant_steps.__code__.co_filename):
+    update_variants_selected = outer_graph.group_selected("update-variants")
+    if update_variants_selected:
         try:
             candidate_base = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/"
             variant_indexes = {}
@@ -2157,6 +2263,8 @@ def main(*, update_variant_runner=None):
         except Exception as error:
             log_group_exception("platform update variants")
             fail(f"platform update variants: {error}")
+    elif outer_graph.selection_active:
+        outer_graph.skip_unselected("platform update variant journey", "platform.update")
     passed = _run_final_uninstall(outer_graph, env, launcher)
     return finalize_run(passed)
 

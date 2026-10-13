@@ -194,6 +194,23 @@ def _imported_journey_sources(sources: set[str], root: Path) -> set[str]:
     return set(_imported_journey_sources_cached(tuple(sorted(sources)), root))
 
 
+def journey_source_group_declaration(source: str, root: Path) -> dict[str, tuple[str, ...]]:
+    """Resolve every step and claim registered by a journey module and its local imports."""
+    sources = _imported_journey_sources({source}, root)
+    registrations = _source_step_declarations(sources, root)
+    cases: set[str] = set()
+    steps: set[str] = set()
+    for declaration in registrations.values():
+        name = declaration.get("name")
+        if name is None:
+            continue
+        steps.add(str(name))
+    for registered_source in sources:
+        for declaration in _case_declarations(registered_source, root).values():
+            cases.update(str(case) for case in declaration.get("cases") or ())
+    return {"cases": tuple(sorted(cases)), "steps": tuple(sorted(steps))}
+
+
 def _validate_recorder_attribute_references(source: str, tree: ast.Module) -> None:
     """Require recorder attributes to be called directly so dependencies stay visible."""
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
@@ -808,10 +825,18 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
                                 if Dependency.parse(item).kind == "step")
     flow_prerequisites = sorted(Dependency.parse(item).name for item in prerequisites
                                 if Dependency.parse(item).kind == "flow")
+    selected_owners: dict[str, set[str]] = {}
+    for step_id in selected:
+        for declaration in declarations_by_step.get(step_id, []):
+            if declaration.get("kind", "step") == "step":
+                selected_owners.setdefault(str(declaration.get("name") or step_id), set()).add(step_id)
+    for name in step_prerequisites:
+        selected_owners.setdefault(name, set()).update(selected)
     return {"runners": sorted(runners), "owners": {key: sorted(value) for key, value in sorted(owners.items())},
             "steps": sorted(selected),
             "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
-            "stepSources": sorted(sources), "capabilities": sorted(capabilities)}
+            "stepSources": sorted(sources), "capabilities": sorted(capabilities),
+            "selectedOwningSteps": {key: sorted(value) for key, value in sorted(selected_owners.items())}}
 
 
 def read_coverage_result(stdout: str, returncode: int) -> dict:
