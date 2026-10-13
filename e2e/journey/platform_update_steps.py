@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
+from bootstrap_secret_steps import register_rollback_password_absence_step
 from journey_resources import (active_platform_root, current_link_path,
                                parse_shell_commands, snapshot_state_tree)
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
@@ -107,6 +108,8 @@ def run_platform_update_steps(
     run_command: CommandRunner = invoke_command,
     verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
     expire_user_session: Callable[[], None] | None = None,
+    bootstrap_password: str | None = None,
+    bootstrap_outside_roots: tuple[tuple[str, Path], ...] = (),
     parent_journey: Journey | None = None,
     allowed_outside_roots: tuple[Path, ...] = (),
 ) -> Journey:
@@ -567,6 +570,10 @@ def run_platform_update_steps(
                  cases=["S-024.3", "S-041.4", "PC-001.14"] if verify_user is not None else ["S-024.3", "PC-001.14"],
                  details=checkpoint_details,
                  requires=("step:save installed receipt, config, and host status",))
+
+    if mode == "secured" and bootstrap_password is not None:
+        register_rollback_password_absence_step(
+            journey, platform_root, bootstrap_outside_roots, bootstrap_password)
 
     if verify_user is not None:
         def login_after_rollback() -> None:

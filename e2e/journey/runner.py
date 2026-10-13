@@ -21,6 +21,7 @@ from studio_steps import (create_studio_access_tokens, create_studio_environment
                           create_studio_member, run_studio_browser_step)
 from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
+from bootstrap_secret_steps import register_install_password_absence_step
 from platform_update_variant_steps import run_platform_update_variant_steps
 from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import (run_doctor_root_isolation_step,
@@ -989,6 +990,11 @@ def main():
                         env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
                 if not first_admin_shown_once:
                     fail("secured install did not return exactly one firstAdmin credential with state=disclosed")
+                else:
+                    register_install_password_absence_step(
+                        CASE_JOURNEY, PLATFORM,
+                        (("kb-home", Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb")))),
+                         ("bin", BIN)), password)
             payload = {}
         else:
             try:
@@ -1220,6 +1226,9 @@ def main():
                     run_command=update_command,
                     verify_user=verify_admin,
                     expire_user_session=expire_admin_session,
+                    bootstrap_password=env.get("KB_JOURNEY_ADMIN_PASSWORD") if access_mode == "secured" else None,
+                    bootstrap_outside_roots=(("kb-home", Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb")))),
+                                             ("bin", BIN)),
                     parent_journey=CASE_JOURNEY,
                     allowed_outside_roots=(Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb"))),
                                            Path(BIN / "kb").absolute()),

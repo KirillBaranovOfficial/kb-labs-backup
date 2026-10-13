@@ -3391,6 +3391,8 @@
     "query tracked analytics event",
     "analytics event survives restart",
     "project analytics API isolation",
+    "verify disclosed bootstrap credential absent after install",
+    "verify disclosed bootstrap credential absent after update and rollback",
     "configure platform OpenAI adapter",
     "store platform config without exposing the key or changing project config",
     "restart the host after changing platform LLM settings",
