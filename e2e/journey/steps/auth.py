@@ -119,7 +119,7 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
             raise AssertionError("TTY kb auth login echoed the password")
     status = invoke(["auth", "status", "--json"])
     try:
-        status_payload = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))
+        status_payload = decode_ux_success_result(read_ux_cli_result(status))
     except (json.JSONDecodeError, ValueError) as error:
         raise AssertionError(f"kb auth status --json did not return JSON: {status.stdout[-400:]}") from error
     session = status_payload.get("session", {})
@@ -133,7 +133,7 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
             raise AssertionError(f"kb auth status did not report its saved session file: {session!r}")
         tokens = invoke(["auth", "tokens", "--json"])
         try:
-            tokens_payload = decode_ux_success_result(read_ux_cli_result(tokens.stdout, tokens.returncode))
+            tokens_payload = decode_ux_success_result(read_ux_cli_result(tokens))
         except (json.JSONDecodeError, ValueError) as error:
             raise AssertionError(f"kb auth tokens --json did not return JSON: {tokens.stdout[-400:]}") from error
         if tokens.returncode != 0:
@@ -145,7 +145,7 @@ def run_cli_auth_forbidden(cli_path: str, env: dict[str, str], *, user_id: str =
     args = [cli_path, "auth", "reset-link", "--user-id", user_id, "--json"]
     result = run_command(args, env=env)
     try:
-        payload = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
+        payload = decode_ux_error_result(read_ux_cli_result(result))
     except (json.JSONDecodeError, ValueError) as error:
         raise AssertionError("member auth reset-link did not return JSON") from error
     error = payload
@@ -164,7 +164,7 @@ def assert_platform_auth_required(result: subprocess.CompletedProcess[str], comm
                                   gateway: str = "<url>") -> None:
     """Require the exact anonymous CLI auth envelope promised by S-041.7."""
     try:
-        payload = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
+        payload = decode_ux_error_result(read_ux_cli_result(result))
     except (json.JSONDecodeError, ValueError) as error:
         raise AssertionError(f"unauthenticated {' '.join(command)} did not return JSON") from error
     failure = payload
@@ -178,7 +178,7 @@ def assert_platform_auth_required(result: subprocess.CompletedProcess[str], comm
 def assert_cli_session_absent(result: subprocess.CompletedProcess[str]) -> None:
     """Confirm the CLI product reports no authenticated human session."""
     try:
-        payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+        payload = decode_ux_success_result(read_ux_cli_result(result))
     except (json.JSONDecodeError, ValueError) as error:
         raise AssertionError("kb auth status --json did not return JSON") from error
     session = payload.get("session") if isinstance(payload, dict) else None
@@ -196,7 +196,7 @@ def run_cli_corrupt_session_file(cli_path: str, env: dict[str, str]) -> None:
         isolated_env["KB_JOURNEY_HOME_LABEL"] = "corrupt-auth-session"
         status = run_command([cli_path, "auth", "status", "--json"], env=isolated_env)
         try:
-            status_data = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))
+            status_data = decode_ux_success_result(read_ux_cli_result(status))
         except (json.JSONDecodeError, ValueError) as error:
             raise AssertionError("kb auth status did not expose the session path") from error
         session_path = Path(status_data["session"]["path"])
@@ -205,7 +205,7 @@ def run_cli_corrupt_session_file(cli_path: str, env: dict[str, str]) -> None:
         command = [cli_path, "config", "show", "--json"]
         result = run_command(command, env=isolated_env)
         try:
-            envelope = read_ux_cli_result(result.stdout, result.returncode)
+            envelope = read_ux_cli_result(result)
         except (json.JSONDecodeError, ValueError) as error:
             raise AssertionError("corrupt saved session did not return one ADR-0049 JSON envelope") from error
         failure = decode_ux_error_result(envelope)

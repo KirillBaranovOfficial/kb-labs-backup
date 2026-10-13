@@ -31,7 +31,7 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                     timeout=120,
                 )
                 try:
-                    return result.returncode, read_ux_cli_result(result.stdout, result.returncode)
+                    return result.returncode, read_ux_cli_result(result)
                 except ValueError as error:
                     raise AssertionError(f"{args!r} returned an invalid UX result: {error}") from error
 
@@ -122,7 +122,7 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                 if result.returncode != 0:
                     return f"platform command {args!r} failed outside a registered project: {result.stderr or result.stdout}"
                 try:
-                    envelope = read_ux_cli_result(result.stdout, result.returncode)
+                    envelope = read_ux_cli_result(result)
                     payload = decode_ux_success_result(envelope)
                 except ValueError as error:
                     return f"platform command {args!r} returned an invalid UX result: {error}"
@@ -159,7 +159,7 @@ def run_config_failure_steps(journey: Journey, repo_root: Path) -> None:
                     capture_output=True, text=True, check=False, timeout=120,
                 )
                 try:
-                    return result.returncode, read_ux_cli_result(result.stdout, result.returncode)
+                    return result.returncode, read_ux_cli_result(result)
                 except ValueError as error:
                     raise AssertionError(f"{args!r} returned an invalid UX result: {error}") from error
 

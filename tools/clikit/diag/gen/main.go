@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+
+	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 )
 
 type entry struct {
@@ -25,27 +28,31 @@ type entry struct {
 }
 
 func main() {
+	command.Exit(run())
+}
+
+func run() diag.ExitStatus {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
-		fail(fmt.Errorf("locate diagnostic generator source"))
+		return fail(fmt.Errorf("locate diagnostic generator source"))
 	}
 	root, err := filepath.Abs(filepath.Join(filepath.Dir(sourceFile), "../../../.."))
 	if err != nil {
-		fail(err)
+		return fail(err)
 	}
 	catalogPath := filepath.Join(root, "core", "platform", "src", "error-envelope", "errors.catalog.json")
 	content, err := os.ReadFile(catalogPath)
 	if err != nil {
-		fail(err)
+		return fail(err)
 	}
 	var catalog struct {
 		Codes []entry `json:"codes"`
 	}
 	if err := json.Unmarshal(content, &catalog); err != nil {
-		fail(err)
+		return fail(err)
 	}
 	if err := validate(catalog.Codes); err != nil {
-		fail(err)
+		return fail(err)
 	}
 	sort.Slice(catalog.Codes, func(i, j int) bool { return catalog.Codes[i].Code < catalog.Codes[j].Code })
 	var source bytes.Buffer
@@ -60,11 +67,12 @@ func main() {
 	_, _ = source.WriteString("}\n")
 	formatted, err := format.Source(source.Bytes())
 	if err != nil {
-		fail(err)
+		return fail(err)
 	}
 	if err := os.WriteFile(filepath.Join(filepath.Dir(sourceFile), "..", "catalog_gen.go"), formatted, 0o644); err != nil {
-		fail(err)
+		return fail(err)
 	}
+	return diag.SuccessStatus()
 }
 
 func validate(entries []entry) error {
@@ -76,7 +84,7 @@ func validate(entries []entry) error {
 	return nil
 }
 
-func fail(err error) {
+func fail(err error) diag.ExitStatus {
 	fmt.Fprintln(os.Stderr, err)
-	os.Exit(1)
+	return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The Go diagnostic catalog could not be generated.", diag.WithCauseAndReason(err.Error()), diag.WithHint("Fix the catalog generator input, then rerun `go generate ./diag`.")))
 }

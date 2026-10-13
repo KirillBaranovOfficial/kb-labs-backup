@@ -1,9 +1,10 @@
 // kb-dev is a local service manager for the KB Labs platform.
 package main
 
-import "github.com/kb-labs/dev/cmd"
-
-import "os"
+import (
+	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/dev/cmd"
+)
 
 var (
 	version = "dev"
@@ -13,5 +14,5 @@ var (
 
 func main() {
 	cmd.SetVersionInfo(version, commit, date)
-	os.Exit(cmd.Execute().Code())
+	command.Exit(cmd.Execute())
 }

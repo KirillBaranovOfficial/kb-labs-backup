@@ -36,9 +36,9 @@ def _run(runner: CommandRunner, command: list[str], cwd: Path, env: dict[str, st
 def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
     try:
         if command[0] == "kb-create":
-            value = read_kb_create_cli_result(command[1], result.stdout, result.returncode)
+            value = read_kb_create_cli_result(command[1], result)
         else:
-            value = read_ux_cli_result(result.stdout, result.returncode)
+            value = read_ux_cli_result(result)
     except ValueError as error:
         raise RuntimeError(f"`{' '.join(command)}` did not return JSON") from error
     if not isinstance(value, dict):
@@ -621,7 +621,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             result = runner(command, cwd=str(project_a), env=base_env,
                             capture_output=True, text=True, timeout=300)
             try:
-                payload = read_ux_cli_result(result.stdout, result.returncode)
+                payload = read_ux_cli_result(result)
             except (json.JSONDecodeError, ValueError) as error:
                 raise RuntimeError("marketplace did not return JSON for a platform missing sealed artifact pins") from error
             failure = decode_ux_error_result(payload)
@@ -982,7 +982,7 @@ def _assert_adapter_error(
     command = ["kb", *args]
     result = runner(command, cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
     try:
-        payload = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
+        payload = decode_ux_error_result(read_ux_cli_result(result))
     except (json.JSONDecodeError, ValueError) as error:
         raise RuntimeError(f"`{' '.join(command)}` did not return an error envelope") from error
     envelope = payload

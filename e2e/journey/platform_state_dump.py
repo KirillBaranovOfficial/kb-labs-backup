@@ -463,7 +463,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             from invocations import decode_ux_success_result, read_kb_create_cli_result
             result = doctor_results[-1]
             doctor_data = decode_ux_success_result(
-                read_kb_create_cli_result("doctor", result.stdout, result.returncode))
+                read_kb_create_cli_result("doctor", result))
             retention = doctor_data.get("retention", {})
             host_state_value = retention.get("hostState")
             if isinstance(host_state_value, str) and host_state_value:

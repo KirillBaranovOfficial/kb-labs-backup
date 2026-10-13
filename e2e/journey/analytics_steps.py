@@ -61,7 +61,7 @@ def _marker_event(events: list[dict], marker: str) -> dict | None:
 def _emission_succeeded(result: subprocess.CompletedProcess[str] | None, marker: str) -> bool:
     if result is None or result.returncode != 0:
         return False
-    payload = read_ux_cli_result(result.stdout, result.returncode)
+    payload = read_ux_cli_result(result)
     if result.returncode != 0:
         return False
     data = decode_ux_success_result(payload)

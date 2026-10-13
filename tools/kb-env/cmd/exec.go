@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/env/internal/env"
 	"github.com/spf13/cobra"
 )
@@ -31,7 +33,7 @@ var execCmd = &cobra.Command{
 		if runErr != nil {
 			var ee *exec.ExitError
 			if errors.As(runErr, &ee) {
-				os.Exit(ee.ExitCode())
+				return result.StreamComplete(diag.ChildProcessStatus(ee))
 			}
 			return runErr
 		}

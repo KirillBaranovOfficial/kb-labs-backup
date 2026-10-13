@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/supervisor"
 )
@@ -20,6 +22,10 @@ import (
 const hostPIDFileEnvironment = "TEST_HOST_PID_FILE"
 
 func main() {
+	command.Exit(run())
+}
+
+func run() diag.ExitStatus {
 	root := ""
 	for index, arg := range os.Args {
 		if arg == "--platform-root" && index+1 < len(os.Args) {
@@ -28,22 +34,18 @@ func main() {
 		}
 	}
 	if root == "" {
-		emitFailure(errors.New("test supervisor did not receive platform root"))
-		return
+		return emitFailure(errors.New("test supervisor did not receive platform root"))
 	}
 	deadline, handedDown, err := host.ConsumeStartupDeadlineEnvironment()
 	if err != nil {
-		emitFailure(err)
-		return
+		return emitFailure(err)
 	}
 	if !handedDown {
-		emitFailure(errors.New("test supervisor did not receive startup deadline"))
-		return
+		return emitFailure(errors.New("test supervisor did not receive startup deadline"))
 	}
 	runner, err := host.NewRunner(root)
 	if err != nil {
-		emitFailure(err)
-		return
+		return emitFailure(err)
 	}
 	runner.SetStartupDeadline(deadline)
 	pidFile := os.Getenv(hostPIDFileEnvironment)
@@ -74,12 +76,12 @@ func main() {
 	if err == nil {
 		err = errors.New("test injected unavailable host process identity unexpectedly matched")
 	}
-	emitFailure(err)
+	return emitFailure(err)
 }
 
-func emitFailure(err error) {
+func emitFailure(err error) diag.ExitStatus {
 	if encodeErr := json.NewEncoder(os.Stdout).Encode(map[string]any{"error": err}); encodeErr != nil {
 		fmt.Fprintln(os.Stderr, "encode test supervisor failure:", encodeErr)
-		os.Exit(1)
 	}
+	return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The test supervisor failed.", diag.WithCauseAndReason(err.Error()), diag.WithHint("Rerun the identity supervisor test.")))
 }

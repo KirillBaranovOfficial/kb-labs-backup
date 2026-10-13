@@ -12,6 +12,7 @@ from journey_values import journey_value
 import json
 import os
 import ast
+import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -814,8 +815,8 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
             "stepSources": sorted(sources), "capabilities": sorted(capabilities)}
 
 
-def read_coverage_result(stdout: str, returncode: int) -> dict:
-    payload = decode_ux_success_result(read_ux_cli_result(stdout, returncode))
+def read_coverage_result(result: subprocess.CompletedProcess[str]) -> dict:
+    payload = decode_ux_success_result(read_ux_cli_result(result))
     if not isinstance(payload, dict):
         raise ValueError("QA coverage result data is not an object")
     return payload
@@ -932,7 +933,7 @@ def main() -> int:
             result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120)
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
-        results.append(read_coverage_result(result.stdout, result.returncode))
+        results.append(read_coverage_result(result))
     requested = journey_value("KB_JOURNEY_CASES", "")
     if requested:
         print_report_text(json.dumps(selection_from_coverage(results, requested)), flush=True)

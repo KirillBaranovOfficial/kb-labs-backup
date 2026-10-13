@@ -9,6 +9,9 @@ import (
 	"go/format"
 	"os"
 	"strings"
+
+	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 )
 
 type schema struct {
@@ -31,28 +34,32 @@ type schema struct {
 }
 
 func main() {
+	command.Exit(run())
+}
+
+func run() diag.ExitStatus {
 	if len(os.Args) != 3 {
-		fail("usage: gen-gateway-bootstrap <gateway-schema.json> <output.go>")
+		return fail("usage: gen-gateway-bootstrap <gateway-schema.json> <output.go>")
 	}
 	data, err := os.ReadFile(os.Args[1])
 	if err != nil {
-		fail(err.Error())
+		return fail(err.Error())
 	}
 	var contract schema
 	if err := json.Unmarshal(data, &contract); err != nil {
-		fail(err.Error())
+		return fail(err.Error())
 	}
 	if len(contract.Properties.Bootstrap.Enum) == 0 {
-		fail("Gateway bootstrap enum is empty")
+		return fail("Gateway bootstrap enum is empty")
 	}
 	if len(contract.Properties.Issues.Items.Properties.Severity.Enum) == 0 {
-		fail("Gateway auth health issue severity enum is empty")
+		return fail("Gateway auth health issue severity enum is empty")
 	}
 	if len(contract.Required) == 0 {
-		fail("Gateway auth health required field list is empty")
+		return fail("Gateway auth health required field list is empty")
 	}
 	if len(contract.Properties.Issues.Items.Required) == 0 {
-		fail("Gateway auth health issue required field list is empty")
+		return fail("Gateway auth health issue required field list is empty")
 	}
 
 	var source bytes.Buffer
@@ -125,11 +132,12 @@ func (severity *GatewayAuthHealthIssueSeverity) UnmarshalJSON(data []byte) error
 `)
 	formatted, err := format.Source(source.Bytes())
 	if err != nil {
-		fail(err.Error())
+		return fail(err.Error())
 	}
 	if err := os.WriteFile(os.Args[2], formatted, 0o644); err != nil {
-		fail(err.Error())
+		return fail(err.Error())
 	}
+	return diag.SuccessStatus()
 }
 
 func writeGoStringArray(source *bytes.Buffer, name string, values []string) {
@@ -153,7 +161,7 @@ func identifier(value string) string {
 	return out.String()
 }
 
-func fail(message string) {
+func fail(message string) diag.ExitStatus {
 	fmt.Fprintln(os.Stderr, message)
-	os.Exit(1)
+	return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "Gateway bootstrap code generation failed.", diag.WithCauseAndReason(message), diag.WithHint("Fix the Gateway schema or output path, then rerun code generation.")))
 }

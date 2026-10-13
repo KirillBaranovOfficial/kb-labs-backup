@@ -15,11 +15,11 @@ from marketplace_steps import _output, _registry_version
 
 
 def _cli_success(result: subprocess.CompletedProcess[str]):
-    return decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+    return decode_ux_success_result(read_ux_cli_result(result))
 
 
 def _cli_error(result: subprocess.CompletedProcess[str]):
-    return decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
+    return decode_ux_error_result(read_ux_cli_result(result))
 
 
 def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], registry: str,

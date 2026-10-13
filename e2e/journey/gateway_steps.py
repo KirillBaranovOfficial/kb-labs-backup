@@ -45,7 +45,7 @@ def _cli(command: list[str], step_id: str, runner, *, cwd: str) -> subprocess.Co
 def _json_contains(result: subprocess.CompletedProcess[str], expected: str) -> bool:
     if result.returncode != 0:
         return False
-    payload = read_ux_cli_result(result.stdout, result.returncode)
+    payload = read_ux_cli_result(result)
     if result.returncode == 0:
         payload = decode_ux_success_result(payload)
     values: list[str] = []
@@ -67,7 +67,7 @@ def _json_contains(result: subprocess.CompletedProcess[str], expected: str) -> b
 def _json_string_field(result: subprocess.CompletedProcess[str] | None, field: str) -> str | None:
     if result is None:
         raise ValueError("CLI result is required")
-    payload = read_ux_cli_result(result.stdout, result.returncode)
+    payload = read_ux_cli_result(result)
     if result.returncode == 0:
         payload = decode_ux_success_result(payload)
 
@@ -93,7 +93,7 @@ def _json_string_field(result: subprocess.CompletedProcess[str] | None, field: s
 def _json_object(result: subprocess.CompletedProcess[str] | None) -> dict[str, object]:
     if result is None:
         raise ValueError("CLI result is required")
-    payload = read_ux_cli_result(result.stdout, result.returncode)
+    payload = read_ux_cli_result(result)
     return decode_ux_success_result(payload) if result.returncode == 0 else decode_ux_error_result(payload)
 
 

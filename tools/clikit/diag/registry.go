@@ -1,5 +1,7 @@
 package diag
 
+import "os/exec"
+
 // Numeric statuses are kept private so command packages cannot construct a
 // process result from an integer.
 const (
@@ -25,6 +27,15 @@ func inputRefusalStatus() ExitStatus     { return ExitStatus{code: exitInput} }
 func PlanChangesStatus() ExitStatus          { return ExitStatus{code: 2} }
 func PlanDriftStatus() ExitStatus            { return ExitStatus{code: 4} }
 func DeployChangesAppliedStatus() ExitStatus { return ExitStatus{code: 1} }
+
+// ChildProcessStatus preserves the explicit child-process pass-through
+// contract without allowing callers to construct a status from an integer.
+func ChildProcessStatus(child *exec.ExitError) ExitStatus {
+	if child == nil || child.ExitCode() < 0 {
+		return operationFailureStatus()
+	}
+	return ExitStatus{code: child.ExitCode()}
+}
 
 // ExitCode maps the shared CLI error categories to the shared process table.
 func ExitCode(d *Diag) ExitStatus {

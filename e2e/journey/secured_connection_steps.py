@@ -28,7 +28,7 @@ def _cli(cli: str, env: dict[str, str], *args: str):
 
 def _json(result, description: str) -> dict:
     try:
-        value = read_ux_cli_result(result.stdout, result.returncode)
+        value = read_ux_cli_result(result)
     except json.JSONDecodeError as error:
         raise AssertionError(f"{description} did not return JSON") from error
     _expect(isinstance(value, dict), f"{description} did not return a JSON object")

@@ -2,8 +2,7 @@
 package main
 
 import (
-	"os"
-
+	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/kb-monitor/cmd"
 )
 
@@ -15,5 +14,5 @@ var (
 
 func main() {
 	cmd.SetVersionInfo(version, commit, date)
-	os.Exit(cmd.Execute().Code())
+	command.Exit(cmd.Execute())
 }

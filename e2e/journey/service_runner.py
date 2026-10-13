@@ -119,7 +119,7 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
 
     def project_id(result: subprocess.CompletedProcess[str]) -> str:
         try:
-            payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+            payload = decode_ux_success_result(read_ux_cli_result(result))
         except (json.JSONDecodeError, ValueError):
             return ""
         queue = [payload]
@@ -167,7 +167,7 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
         manifest_default = run_cli(projects[0], "config", "get", "plugins.commit.llm.maxTokens", "--json")
         try:
             default_payload = decode_ux_success_result(
-                read_ux_cli_result(manifest_default.stdout, manifest_default.returncode))
+                read_ux_cli_result(manifest_default))
         except (json.JSONDecodeError, ValueError):
             return "config get did not return JSON for the manifest default"
         if (manifest_default.returncode != 0 or not isinstance(default_payload, dict)
@@ -180,7 +180,7 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
         platform_token_read = run_cli(projects[1], "config", "get", "plugins.commit.llm.maxTokens", "--json")
         try:
             platform_token_payload = decode_ux_success_result(
-                read_ux_cli_result(platform_token_read.stdout, platform_token_read.returncode))
+                read_ux_cli_result(platform_token_read))
         except (json.JSONDecodeError, ValueError):
             return "config get did not return JSON for the platform setting"
         if (platform_token_read.returncode != 0 or not isinstance(platform_token_payload, dict)
@@ -192,7 +192,7 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
         project_token_read = run_cli(projects[0], "config", "get", "plugins.commit.llm.maxTokens", "--json")
         try:
             project_token_payload = decode_ux_success_result(
-                read_ux_cli_result(project_token_read.stdout, project_token_read.returncode))
+                read_ux_cli_result(project_token_read))
         except (json.JSONDecodeError, ValueError):
             return "config get did not return JSON for the project setting"
         if (project_token_read.returncode != 0 or not isinstance(project_token_payload, dict)
@@ -212,7 +212,7 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
         def effective_scopes(project: Path) -> tuple[object, str | None, str | None, str | None]:
             result = run_cli(project, "config", "get", "plugins.commit.scope.scopes", "--json")
             try:
-                payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+                payload = decode_ux_success_result(read_ux_cli_result(result))
             except (json.JSONDecodeError, ValueError):
                 return None, None, None, f"config get returned invalid JSON in {project.name}"
             if result.returncode != 0 or not isinstance(payload, dict):
@@ -262,7 +262,7 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
 
         outside = run_cli(root, "config", "get", "plugins.commit.scope.scopes", "--json")
         try:
-            outside_payload = decode_ux_error_result(read_ux_cli_result(outside.stdout, outside.returncode))
+            outside_payload = decode_ux_error_result(read_ux_cli_result(outside))
         except (json.JSONDecodeError, ValueError):
             return "config get outside registered projects returned invalid JSON"
         outside_error = outside_payload
@@ -282,7 +282,7 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
         )
         try:
             outside_platform_payload = decode_ux_success_result(
-                read_ux_cli_result(outside_platform_read.stdout, outside_platform_read.returncode))
+                read_ux_cli_result(outside_platform_read))
         except (json.JSONDecodeError, ValueError):
             return "platform-scoped config get outside registered projects returned invalid JSON"
         if (outside_platform_read.returncode != 0 or not isinstance(outside_platform_payload, dict)
@@ -1039,7 +1039,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
                     text=True, timeout=120)
     raw = _output(result, register)
     try:
-        payload = decode_ux_success_result(read_ux_cli_result(raw, result.returncode))
+        payload = decode_ux_success_result(read_ux_cli_result(result))
     except (json.JSONDecodeError, ValueError) as error:
         raise RuntimeError("registering MCP isolation project B returned invalid JSON") from error
     project_b_id, project_b_root = _find_project_registration(payload)

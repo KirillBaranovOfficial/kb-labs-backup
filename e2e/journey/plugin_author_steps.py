@@ -40,10 +40,15 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str],
     return result.stdout or ""
 
 
+def _invoke(command: list[str], *, cwd: Path, env: dict[str, str],
+            command_runner: Callable[..., subprocess.CompletedProcess[str]]) -> subprocess.CompletedProcess[str]:
+    return run_with_runner(command_runner, command, cwd=cwd, env=env, timeout=300)
+
+
 def _plugins(kb: Path, *, cwd: Path, env: dict[str, str], command_runner) -> list[dict]:
-    output = _run([str(kb), "marketplace", "plugins", "list", "--json"],
-                  cwd=cwd, env=env, command_runner=command_runner)
-    data = decode_ux_success_result(read_ux_cli_result(output, 0))
+    result = _invoke([str(kb), "marketplace", "plugins", "list", "--json"],
+                     cwd=cwd, env=env, command_runner=command_runner)
+    data = decode_ux_success_result(read_ux_cli_result(result))
     entries = data.get("entries") if isinstance(data, dict) else None
     if not isinstance(entries, list):
         raise RuntimeError("kb marketplace plugins list --json returned no entries array")
@@ -66,8 +71,7 @@ def _lock_entry(project: Path) -> tuple[dict, dict]:
 
 
 def _json_payload(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
-    output = result.stdout or ""
-    payload = decode_ux_success_result(read_ux_cli_result(output, result.returncode))
+    payload = decode_ux_success_result(read_ux_cli_result(result))
     if not isinstance(payload, dict):
         raise ValueError(f"`{' '.join(command)}` success data is not a JSON object")
     return payload

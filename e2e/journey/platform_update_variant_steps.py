@@ -24,7 +24,7 @@ InteractiveRun = Callable[[list[str], Path], subprocess.CompletedProcess]
 
 
 def _payload(result: subprocess.CompletedProcess, label: str) -> dict:
-    value = read_kb_create_cli_result(result.args[1], result.stdout, result.returncode)
+    value = read_kb_create_cli_result(result.args[1], result)
     if result.returncode:
         error = decode_ux_error_result(value)
         raise RuntimeError(f"{label}: {error!r}")
@@ -90,7 +90,7 @@ def _retains_rows(before: dict[str, dict[str, int]], after: dict[str, dict[str, 
 
 
 def _error(result: subprocess.CompletedProcess, label: str) -> dict:
-    value = read_kb_create_cli_result(result.args[1], result.stdout, result.returncode)
+    value = read_kb_create_cli_result(result.args[1], result)
     if result.returncode == 0:
         raise RuntimeError(f"{label}: expected a typed failure but command succeeded")
     return decode_ux_error_result(value)

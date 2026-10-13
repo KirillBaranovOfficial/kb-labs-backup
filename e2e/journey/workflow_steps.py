@@ -34,7 +34,7 @@ def _json_cli(args: list[str], *, env: dict[str, str], cwd: Path) -> object:
     if result.returncode:
         raise AssertionError(f"`kb {' '.join(args)}` exited {result.returncode}: {' '.join(result.stdout.split())[-500:]}")
     try:
-        payload = read_ux_cli_result(result.stdout, result.returncode)
+        payload = read_ux_cli_result(result)
     except json.JSONDecodeError as error:
         raise AssertionError(f"`kb {' '.join(args)}` did not return JSON: {' '.join(result.stdout.split())[-500:]}") from error
     if payload.get("ok") is not True:
@@ -56,7 +56,7 @@ def _case_json_cli(step_id: str, args: list[str], *, env: dict[str, str], cwd: P
     if result.returncode:
         raise AssertionError(f"`kb {' '.join(args)}` exited {result.returncode}: {' '.join(result.stdout.split())[-500:]}")
     try:
-        payload = read_ux_cli_result(result.stdout, result.returncode)
+        payload = read_ux_cli_result(result)
     except json.JSONDecodeError as error:
         raise AssertionError(f"`kb {' '.join(args)}` did not return JSON: {' '.join(result.stdout.split())[-500:]}") from error
     command = f"kb {' '.join(args)}"
@@ -461,7 +461,7 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
             raise AssertionError(f"admin CLI login failed: {' '.join(login.stdout.split())[-400:]}")
         for command in commands:
             resumed = run_cli(command, env=env, cwd=project)
-            payload = read_ux_cli_result(resumed.stdout, resumed.returncode)
+            payload = read_ux_cli_result(resumed)
             error = payload.get("error") if isinstance(payload, dict) else None
             if isinstance(error, dict) and error.get("code") == "KB_AUTH_REQUIRED":
                 raise AssertionError(f"authenticated {' '.join(command)} still returned KB_AUTH_REQUIRED")
@@ -704,7 +704,7 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
         result = _case_cli("S-143.4", ["workflow", "runs", "rerun", "run-does-not-exist", "--json"],
                            env=env, cwd=project)
         try:
-            envelope = read_ux_cli_result(result.stdout, result.returncode)
+            envelope = read_ux_cli_result(result)
             payload = {"ok": False, "error": decode_ux_error_result(envelope)}
         except ValueError as error:
             raise AssertionError(f"unknown rerun did not return its typed error envelope: {result.stdout!r}") from error

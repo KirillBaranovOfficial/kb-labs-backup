@@ -33,7 +33,7 @@ def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str
     if result.returncode != 0:
         detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
         try:
-            envelope = read_ux_cli_result(result.stdout or "", result.returncode)
+            envelope = read_ux_cli_result(result)
         except (json.JSONDecodeError, ValueError):
             envelope = None
         if isinstance(envelope, dict) and envelope.get("ok") is False:
@@ -50,9 +50,9 @@ def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str
 
 
 def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
-    raw = _output(result, command)
+    _output(result, command)
     try:
-        value = read_ux_cli_result(raw, result.returncode)
+        value = read_ux_cli_result(result)
     except (json.JSONDecodeError, ValueError) as error:
         raise RuntimeError(f"`{' '.join(command)}` returned an invalid UX result: {error}") from error
     data = decode_ux_success_result(value)
@@ -113,7 +113,7 @@ def wait_for_marketplace_ready(project: Path, env: dict[str, str], runner: Comma
     while time.monotonic() < deadline:
         result = _run(command, cwd=project, env=env, runner=runner)
         try:
-            payload = read_ux_cli_result(result.stdout, result.returncode)
+            payload = read_ux_cli_result(result)
         except ValueError as error:
             last_problem = str(error)
             raise RuntimeError(f"marketplace doctor returned an invalid UX result: {last_problem}") from error
@@ -168,7 +168,7 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
             doctor = ["marketplace", "plugins", "doctor", "--scope", "project", "--json"]
             result = _run(["kb", *doctor], cwd=project, env=env, runner=runner)
             try:
-                envelope = read_ux_cli_result(result.stdout, result.returncode)
+                envelope = read_ux_cli_result(result)
                 error = decode_ux_error_result(envelope)
             except (json.JSONDecodeError, ValueError) as parse_error:
                 raise RuntimeError("marketplace doctor did not return its typed policy diagnostic") from parse_error
@@ -188,7 +188,7 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
             blocked_result = _run(["kb", *blocked], cwd=project, env=env, runner=runner)
             if blocked_result.returncode == 0:
                 raise RuntimeError("third-party analytics command remained registered with an invalid project policy")
-            blocked_error = decode_ux_error_result(read_ux_cli_result(blocked_result.stdout, blocked_result.returncode))
+            blocked_error = decode_ux_error_result(read_ux_cli_result(blocked_result))
             if fixture_package in str(blocked_error.get("message", "")):
                 raise RuntimeError("third-party analytics command ran instead of being excluded from discovery")
 
@@ -211,7 +211,7 @@ def validate_shared_failure(result: subprocess.CompletedProcess[str], *, json_mo
     if result.returncode == 0:
         raise AssertionError("failing command unexpectedly exited successfully")
     if json_mode:
-        payload = read_ux_cli_result(result.stdout, result.returncode)
+        payload = read_ux_cli_result(result)
         error = decode_ux_error_result(payload)
         if not isinstance(error, dict) or (error.get("code"), error.get("message"), error.get("hint")) != (code, message, hint):
             raise AssertionError(f"JSON failure does not match {code}")
@@ -252,7 +252,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         with invocation_context(step_id=step_id):
             result = _run(command, cwd=project, env=env, runner=runner)
         try:
-            payload = read_ux_cli_result(result.stdout, result.returncode)
+            payload = read_ux_cli_result(result)
         except (json.JSONDecodeError, ValueError) as error:
             raise RuntimeError(f"unauthenticated marketplace list returned an invalid UX result: {error}") from error
         failure = decode_ux_error_result(payload) if result.returncode else None
@@ -291,7 +291,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     command = ["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"]
     with invocation_context(step_id="marketplace.authenticated-session"):
         resumed = _run(command, cwd=project, env=env, runner=runner)
-    payload = read_ux_cli_result(resumed.stdout, resumed.returncode)
+    payload = read_ux_cli_result(resumed)
     failure = payload.get("error") if isinstance(payload, dict) else None
     if isinstance(failure, dict) and failure.get("code") == "KB_AUTH_REQUIRED":
         raise RuntimeError("authenticated marketplace list still returned KB_AUTH_REQUIRED")
@@ -565,7 +565,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             with invocation_context(step_id="S-203.14"):
                 result = _run(command, cwd=project, env=base_env, runner=runner)
             try:
-                payload = read_ux_cli_result(result.stdout, result.returncode)
+                payload = read_ux_cli_result(result)
             except ValueError as error:
                 raise RuntimeError("gateway-backed plugin command did not return a JSON error envelope") from error
             failure = decode_ux_error_result(payload)
@@ -601,7 +601,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         with invocation_context(step_id="S-203.16"):
             result = _run(command, cwd=project, env=invalid_env, runner=runner)
         try:
-            payload = read_ux_cli_result(result.stdout, result.returncode)
+            payload = read_ux_cli_result(result)
         except ValueError as error:
             raise RuntimeError("invalid gateway port did not return a JSON config error") from error
         failure = decode_ux_error_result(payload)
@@ -795,7 +795,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         command = ["commit", "open", "--json"]
         with invocation_context(step_id="S-047.3"):
             unavailable = cli(command)
-        failure = decode_ux_error_result(read_ux_cli_result(unavailable.stdout, unavailable.returncode))
+        failure = decode_ux_error_result(read_ux_cli_result(unavailable))
         if (unavailable.returncode != 2 or failure.get("code") != "KB_RUNTIME_INPUT_INVALID"
                 or "commit open" not in failure.get("message", "")):
             raise RuntimeError(f"removed command did not return its typed unknown-command error: {failure!r}")

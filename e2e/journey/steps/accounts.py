@@ -93,7 +93,7 @@ def run_cli_logout_steps(cli_path: str, env: dict[str, str]) -> None:
                          "--email", email, "--password-stdin", "--json"],
                         env=env, input=password + "\n")
     try:
-        login_payload = decode_ux_success_result(read_ux_cli_result(login.stdout, login.returncode))
+        login_payload = decode_ux_success_result(read_ux_cli_result(login))
     except ValueError as error:
         raise AssertionError(f"kb auth login --json did not return JSON: {login.stdout[-400:]}") from error
     if login.returncode != 0 or login_payload.get("email") != email or login_payload.get("gatewayUrl") != gateway_url:
@@ -101,14 +101,14 @@ def run_cli_logout_steps(cli_path: str, env: dict[str, str]) -> None:
 
     logout = invoke(["auth", "logout", "--json"])
     try:
-        logout_payload = decode_ux_success_result(read_ux_cli_result(logout.stdout, logout.returncode))
+        logout_payload = decode_ux_success_result(read_ux_cli_result(logout))
     except ValueError as error:
         raise AssertionError(f"kb auth logout --json did not return JSON: {logout.stdout[-400:]}") from error
     if logout.returncode != 0 or logout_payload != {"message": "Logged out. Credentials removed."}:
         raise AssertionError(f"kb auth logout returned unexpected JSON: {logout_payload!r}")
     status = invoke(["auth", "status", "--json"])
     try:
-        status_payload = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))
+        status_payload = decode_ux_success_result(read_ux_cli_result(status))
     except ValueError as error:
         raise AssertionError(f"kb auth status --json did not return JSON: {status.stdout[-400:]}") from error
     if status.returncode != 0 or status_payload.get("session", {}).get("authenticated") is not False:

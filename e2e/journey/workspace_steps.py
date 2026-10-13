@@ -105,7 +105,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
             if result.returncode != 0:
                 return f"workspace QA case validation failed (exit {result.returncode}): {result.stderr or result.stdout}"
             try:
-                envelope = read_ux_cli_result(result.stdout, result.returncode)
+                envelope = read_ux_cli_result(result)
                 payload = decode_ux_success_result(envelope)
             except ValueError as error:
                 return f"workspace QA case validation did not return JSON: {error}"
@@ -125,7 +125,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
             for command, expected_field in commands:
                 result = run(*command, "--json")
                 try:
-                    envelope = read_ux_cli_result(result.stdout, result.returncode)
+                    envelope = read_ux_cli_result(result)
                     if envelope["ok"]:
                         payload = decode_ux_success_result(envelope)
                         if not isinstance(payload, dict) or expected_field not in payload:
@@ -148,7 +148,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
             if result.returncode != 0:
                 return f"workspace adapter listing failed (exit {result.returncode}): {result.stderr or result.stdout}"
             try:
-                envelope = read_ux_cli_result(result.stdout, result.returncode)
+                envelope = read_ux_cli_result(result)
                 payload = decode_ux_success_result(envelope)
             except ValueError as error:
                 return f"workspace adapter listing did not return JSON: {error}"
@@ -238,7 +238,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 command_result = run_command(["node", str(cli), "release", "plan", "--json"],
                                              cwd=fixture_root, env=isolated_env, timeout=120)
             try:
-                envelope = read_ux_cli_result(command_result.stdout or "", command_result.returncode)
+                envelope = read_ux_cli_result(command_result)
                 error = decode_ux_error_result(envelope)
             except ValueError as error:
                 return f"unbuilt release command returned an invalid UX result: {error}"

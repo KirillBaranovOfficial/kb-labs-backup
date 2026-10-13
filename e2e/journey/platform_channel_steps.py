@@ -18,7 +18,7 @@ CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
 
 def decode_canary_apply_result(command: subprocess.CompletedProcess) -> dict:
     """Decode the result frame from apply's command-registered JSON stream."""
-    envelope = read_kb_create_cli_result("apply", command.stdout, command.returncode)
+    envelope = read_kb_create_cli_result("apply", command)
     return (decode_ux_success_result(envelope) if command.returncode == 0
             else decode_ux_error_result(envelope))
 
@@ -198,7 +198,7 @@ def run_platform_channel_steps(
         request_file.write_text(json.dumps(request) + "\n")
         result = run_command([launcher, "update", "--json", "--index", str(stable_index), "--input", str(request_file)])
         try:
-            envelope = read_kb_create_cli_result("update", result.stdout, result.returncode)
+            envelope = read_kb_create_cli_result("update", result)
             failure = decode_ux_error_result(envelope)
         except ValueError as error:
             raise RuntimeError(f"stable downgrade refusal returned an invalid ADR-0049 result: {error}") from error
