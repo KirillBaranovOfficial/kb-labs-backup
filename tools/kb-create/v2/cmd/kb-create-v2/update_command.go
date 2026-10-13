@@ -3,6 +3,7 @@ package v2cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -60,6 +61,13 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		return updateCommandResult{}, inputFailure(updateCompatibilityDiag(failure))
 	}
 	plan := resolved.Plan
+	secretIDs := make([]string, 0)
+	for _, mapping := range splitSecretMappings(input.SecretEnv) {
+		secretIDs = append(secretIDs, mapping[0])
+	}
+	if failure := resolve.ValidateSecretInputIDs(plan.Artifacts, secretIDs); failure != nil {
+		return updateCommandResult{}, inputFailure(asDiag(failure))
+	}
 	layout, layoutErr := versionroot.ForPlatformPath(plan.Request.PlatformRoot)
 	if layoutErr == nil {
 		layoutErr = layout.Validate()
@@ -166,6 +174,9 @@ func refuseUpdateSecretChanges(input updateCommandInput, root string, store secr
 		}
 		stored, exists, err := store.Get(name)
 		if err != nil {
+			if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
+				return asDiag(err)
+			}
 			return contracts.NewDiag(contracts.CodeUpdateSecretRefused, "the stored installation secret could not be compared", "run `kb-create doctor` before changing installation secrets", err)
 		}
 		if !exists || stored != value {

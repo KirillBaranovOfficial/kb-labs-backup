@@ -695,12 +695,35 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 			return nil, resolutionDiag(contracts.CodeConfigRequired, "configuration "+id+" is not declared by selected manifests", map[string]string{"requirement": id})
 		}
 	}
-	for _, id := range request.SecretInputs {
-		if !known[id] || !secrets[id] {
-			return nil, resolutionDiag(contracts.CodeInputRequired, "secret input "+id+" is not declared by selected manifests", map[string]string{"requirement": id})
-		}
+	if err := validateSecretInputIDs(request.SecretInputs, func(id string) bool { return known[id] && secrets[id] }); err != nil {
+		return nil, err
 	}
 	return result, nil
+}
+
+// ValidateSecretInputIDs checks operator-provided requirement IDs against the
+// selected artifact manifests. It is shared by request resolution and late
+// secret sources such as --secret-env, before those sources can write state.
+func ValidateSecretInputIDs(artifacts []contracts.Artifact, ids []string) error {
+	declared := make(map[string]bool)
+	for _, artifact := range artifacts {
+		for _, requirement := range artifact.Config {
+			if requirement.Secret {
+				declared[requirement.ID] = true
+			}
+		}
+	}
+	return validateSecretInputIDs(ids, func(id string) bool { return declared[id] })
+}
+
+func validateSecretInputIDs(ids []string, declared func(string) bool) error {
+	for _, id := range ids {
+		if !declared(id) {
+			return resolutionDiag(contracts.CodeSecretInputInvalid,
+				"secret input "+id+" is not declared by the selected manifests", map[string]string{"requirement": id})
+		}
+	}
+	return nil
 }
 
 func optionalRequirement(requirement catalog.ConfigRequirement) bool {

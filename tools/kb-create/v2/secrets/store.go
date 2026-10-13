@@ -6,6 +6,7 @@ package secrets
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,14 +18,17 @@ import (
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
-var ErrBootstrapPasswordDisclosed = errors.New("bootstrap password has already been disclosed")
+var (
+	ErrBootstrapPasswordDisclosed   = errors.New("bootstrap password has already been disclosed")
+	ErrUnsupportedSecretStoreFormat = errors.New("secret store format predates the typed bootstrap lifecycle record")
+)
 
 // EnsureGenerated fills every selected artifact's generated secret requirements
 // with a fresh per-install value unless one already exists. Generated secrets
 // are installer-owned and do not require a user secret input. Values stay in the
 // private store and are never added to the plan or receipt.
 func EnsureGenerated(plan *contracts.ResolvedInstallPlan, store Store) error {
-	bootstrapCompleted, err := store.Exists(BootstrapCompleted)
+	bootstrapCompleted, err := store.BootstrapCompleted()
 	if err != nil {
 		return fmt.Errorf("check first-administrator bootstrap completion: %w", err)
 	}
@@ -68,13 +72,25 @@ type Store struct {
 
 const (
 	BootstrapPassword            = "gateway.bootstrap.password"
-	BootstrapCompleted           = "gateway.bootstrap.completed"
-	BootstrapGenerated           = "gateway.bootstrap.generated"
-	BootstrapDisclosed           = "gateway.bootstrap.disclosed"
 	BootstrapPasswordEnvironment = "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"
 )
 
+// lifecycleRecord is installer-owned metadata. It is persisted separately from
+// the operator-addressable requirement map and has no generic Put entry point.
+type lifecycleRecord struct {
+	BootstrapCompleted         string                  `json:"bootstrapCompleted,omitempty"`
+	BootstrapPasswordOrigin    BootstrapPasswordOrigin `json:"bootstrapPasswordOrigin,omitempty"`
+	BootstrapPasswordDisclosed bool                    `json:"bootstrapPasswordDisclosed,omitempty"`
+}
+
 type BootstrapPasswordOrigin string
+
+// PendingSecret is a value gathered by a frontend but not yet persisted. The
+// apply owner stores it only after validating the complete resolved request.
+type PendingSecret struct {
+	Value  string
+	Origin BootstrapPasswordOrigin
+}
 
 const (
 	BootstrapOriginSupplied  BootstrapPasswordOrigin = "false"
@@ -93,9 +109,8 @@ func (store Store) Put(name, value string) error {
 	return store.put(name, value)
 }
 
-// PutBootstrapPassword stores the password and its origin in one atomic secret
-// store write. This is the only boundary that records whether a result may
-// disclose the value.
+// PutBootstrapPassword stores the value and its origin in the installer-owned
+// lifecycle record. A missing origin fails closed as supplied.
 func (store Store) PutBootstrapPassword(value string, origin BootstrapPasswordOrigin) error {
 	if store.ReadOnly {
 		return fmt.Errorf("secret store is read-only during staged update verification")
@@ -109,11 +124,11 @@ func (store Store) PutBootstrapPassword(value string, origin BootstrapPasswordOr
 	if origin != BootstrapOriginGenerated && origin != BootstrapOriginSupplied {
 		return errors.New("bootstrap password origin is invalid")
 	}
-	disclosed, err := store.Exists(BootstrapDisclosed)
+	state, err := store.readLifecycle()
 	if err != nil {
 		return err
 	}
-	if disclosed {
+	if state.BootstrapPasswordDisclosed {
 		return ErrBootstrapPasswordDisclosed
 	}
 	values, err := store.readRaw()
@@ -121,8 +136,14 @@ func (store Store) PutBootstrapPassword(value string, origin BootstrapPasswordOr
 		return err
 	}
 	values[BootstrapPassword] = value
-	values[BootstrapGenerated] = string(origin)
-	return store.write(values)
+	state.BootstrapPasswordOrigin = origin
+	if err := store.ensureLifecycleRecord(); err != nil {
+		return err
+	}
+	if err := store.write(values); err != nil {
+		return err
+	}
+	return store.writeLifecycle(state)
 }
 
 func (store Store) put(name, value string) error {
@@ -132,15 +153,12 @@ func (store Store) put(name, value string) error {
 	if err := validate(name); err != nil {
 		return err
 	}
-	if name == BootstrapDisclosed {
-		return errors.New("bootstrap disclosure must atomically erase the password")
-	}
 	if name == BootstrapPassword || name == BootstrapPasswordEnvironment {
-		disclosed, err := store.Exists(BootstrapDisclosed)
+		state, err := store.readLifecycle()
 		if err != nil {
 			return err
 		}
-		if disclosed {
+		if state.BootstrapPasswordDisclosed {
 			return ErrBootstrapPasswordDisclosed
 		}
 	}
@@ -159,13 +177,15 @@ func (store Store) put(name, value string) error {
 		return err
 	}
 	values[name] = value
+	if err := store.ensureLifecycleRecord(); err != nil {
+		return err
+	}
 	return store.write(values)
 }
 
-// MarkBootstrapDisclosed atomically records disclosure and removes every
-// stored representation of the one-time bootstrap password. Both values are
-// in the shared runtime secret file, so an interrupted write leaves either
-// the undisclosed password or the committed marker without the password.
+// MarkBootstrapDisclosed is the sole disclosure transition. It commits the
+// lifecycle marker, then erases both stored password names. Store reads finish
+// an interrupted erase before returning any secret values.
 func (store Store) MarkBootstrapDisclosed() error {
 	if store.ReadOnly {
 		return fmt.Errorf("secret store is read-only during staged update verification")
@@ -174,14 +194,50 @@ func (store Store) MarkBootstrapDisclosed() error {
 	if err != nil {
 		return err
 	}
-	return store.commitBootstrapDisclosure(values)
-}
-
-func (store Store) commitBootstrapDisclosure(values map[string]string) error {
-	values[BootstrapDisclosed] = "true"
+	state, err := store.readLifecycle()
+	if err != nil {
+		return err
+	}
+	state.BootstrapPasswordDisclosed = true
+	if err := store.writeLifecycle(state); err != nil {
+		return err
+	}
 	delete(values, BootstrapPassword)
 	delete(values, BootstrapPasswordEnvironment)
 	return store.write(values)
+}
+
+// MarkBootstrapCompleted records the Gateway's proven first-admin readiness.
+func (store Store) MarkBootstrapCompleted(value string) error {
+	if store.ReadOnly {
+		return fmt.Errorf("secret store is read-only during staged update verification")
+	}
+	state, err := store.readLifecycle()
+	if err != nil {
+		return err
+	}
+	state.BootstrapCompleted = value
+	return store.writeLifecycle(state)
+}
+
+func (store Store) BootstrapCompleted() (bool, error) {
+	state, err := store.readLifecycle()
+	return state.BootstrapCompleted != "", err
+}
+
+func (store Store) BootstrapCompletedValue() (string, bool, error) {
+	state, err := store.readLifecycle()
+	return state.BootstrapCompleted, state.BootstrapCompleted != "", err
+}
+
+func (store Store) BootstrapDisclosed() (bool, error) {
+	state, err := store.readLifecycle()
+	return state.BootstrapPasswordDisclosed, err
+}
+
+func (store Store) BootstrapOrigin() (BootstrapPasswordOrigin, bool, error) {
+	state, err := store.readLifecycle()
+	return state.BootstrapPasswordOrigin, state.BootstrapPasswordOrigin != "", err
 }
 
 func (store Store) write(values map[string]string) error {
@@ -198,6 +254,71 @@ func (store Store) write(values map[string]string) error {
 	}
 	sortStrings(data)
 	return versionroot.AtomicWriteFile(path, []byte(strings.Join(data, "\n")+"\n"), 0o600)
+}
+
+func (store Store) writeLifecycle(state lifecycleRecord) error {
+	path, err := store.lifecyclePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return versionroot.AtomicWriteFile(path, data, 0o600)
+}
+
+func (store Store) ensureLifecycleRecord() error {
+	path, err := store.lifecyclePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write([]byte("{}"))
+	return err
+}
+
+func (store Store) readLifecycle() (lifecycleRecord, error) {
+	values, err := store.readRaw()
+	if err != nil {
+		return lifecycleRecord{}, err
+	}
+	path, err := store.lifecyclePath()
+	if err != nil {
+		return lifecycleRecord{}, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return lifecycleRecord{}, nil
+	}
+	if err != nil {
+		return lifecycleRecord{}, err
+	}
+	var state lifecycleRecord
+	if err := json.Unmarshal(data, &state); err != nil {
+		return lifecycleRecord{}, fmt.Errorf("read typed bootstrap lifecycle record: %w", err)
+	}
+	if state.BootstrapPasswordDisclosed && (values[BootstrapPassword] != "" || values[BootstrapPasswordEnvironment] != "") {
+		delete(values, BootstrapPassword)
+		delete(values, BootstrapPasswordEnvironment)
+		if err := store.write(values); err != nil {
+			return lifecycleRecord{}, err
+		}
+	}
+	return state, nil
 }
 func (store Store) Exists(name string) (bool, error) {
 	if err := validate(name); err != nil {
@@ -278,7 +399,7 @@ func (store Store) Environment() (Environment, error) {
 	if err != nil {
 		return Environment{}, err
 	}
-	completed, err := store.Exists(BootstrapCompleted)
+	completed, err := store.BootstrapCompleted()
 	if err != nil {
 		return Environment{}, err
 	}
@@ -310,15 +431,12 @@ func (store Store) path() (string, error) {
 	return layout.SharedRuntimePath(".kb/v2/secrets.env")
 }
 func (store Store) read() (map[string]string, error) {
+	if _, err := store.readLifecycle(); err != nil {
+		return nil, err
+	}
 	values, err := store.readRaw()
 	if err != nil {
 		return nil, err
-	}
-	if values[BootstrapDisclosed] == "true" && (values[BootstrapPassword] != "" || values[BootstrapPasswordEnvironment] != "") {
-		if err := store.commitBootstrapDisclosure(values); err != nil {
-			return nil, err
-		}
-		return store.readRaw()
 	}
 	return values, nil
 }
@@ -342,7 +460,28 @@ func (store Store) readRaw() (map[string]string, error) {
 			values[key] = value
 		}
 	}
+	lifecyclePath, pathErr := store.lifecyclePath()
+	if pathErr != nil {
+		return nil, pathErr
+	}
+	if _, statErr := os.Stat(lifecyclePath); os.IsNotExist(statErr) {
+		return nil, ErrUnsupportedSecretStoreFormat
+	} else if statErr != nil {
+		return nil, statErr
+	}
 	return values, nil
+}
+
+func (store Store) lifecyclePath() (string, error) {
+	layout, err := versionroot.ForPlatformPath(store.PlatformRoot)
+	if err != nil {
+		return "", err
+	}
+	sharedSecretPath, err := layout.SharedRuntimePath(".kb/v2/secrets.env")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(sharedSecretPath), "bootstrap-lifecycle.json"), nil
 }
 func validate(name string) error {
 	if name == "" || strings.ContainsAny(name, "=\r\n") || strings.TrimSpace(name) != name {

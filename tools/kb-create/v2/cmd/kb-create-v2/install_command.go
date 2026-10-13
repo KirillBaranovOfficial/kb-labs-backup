@@ -85,9 +85,12 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	if inputReader == nil {
 		inputReader = clikitcommand.FromCommand(deps.Command).Input()
 	}
-	generatedSecrets := map[string]string{}
-	bootstrapCompleted, err := (secrets.Store{PlatformRoot: root}).Exists(secrets.BootstrapCompleted)
+	pendingSecrets := map[string]secrets.PendingSecret{}
+	bootstrapCompleted, err := (secrets.Store{PlatformRoot: root}).BootstrapCompleted()
 	if err != nil {
+		if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
+			return applyCommandResult{}, asDiag(err)
+		}
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first-administrator bootstrap state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "install", "--platform-root", root)+"`", err)
 	}
 	skipRequirements := []string(nil)
@@ -95,7 +98,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		skipRequirements = []string{secrets.BootstrapPassword}
 	}
 	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, wizard.IO{
-		In: inputReader, Out: out, Generated: generatedSecrets, SkipRequirements: skipRequirements,
+		In: inputReader, Out: out, PendingSecrets: pendingSecrets, SkipRequirements: skipRequirements,
 	})
 	if err != nil {
 		var validation *contracts.RequestValidationError
@@ -146,7 +149,8 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	}
 	deps.Runtime.Progress = &humanProgress{out: out, started: map[string]time.Time{}}
 	result, failure := executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
-		Executable: input.Executable, Progress: deps.Runtime.Progress, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent,
+		PendingSecrets: pendingSecrets,
+		Executable:     input.Executable, Progress: deps.Runtime.Progress, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent,
 		AllowBootstrapRegistration: !bootstrapCompleted}, deps)
 	if failure != nil {
 		return applyCommandResult{}, failure
@@ -261,8 +265,11 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 		selectionFailure.ProcessExitCode = diag.ExitInput
 		return finishInstallStreamFailure(writer, selectionFailure)
 	}
-	bootstrapCompleted, stateErr := (secrets.Store{PlatformRoot: resolved.Plan.Request.PlatformRoot}).Exists(secrets.BootstrapCompleted)
+	bootstrapCompleted, stateErr := (secrets.Store{PlatformRoot: resolved.Plan.Request.PlatformRoot}).BootstrapCompleted()
 	if stateErr != nil {
+		if errors.Is(stateErr, secrets.ErrUnsupportedSecretStoreFormat) {
+			return finishInstallStreamFailure(writer, asDiag(stateErr))
+		}
 		return finishInstallStreamFailure(writer, contracts.NewDiag(contracts.CodeApplyFailed, "the first-administrator bootstrap state could not be read", "check platform-root permissions, then rerun `"+contracts.ShellCommand("kb-create", "install", "--platform-root", resolved.Plan.Request.PlatformRoot)+"`", stateErr))
 	}
 	input.BootstrapRegistrationWindow = !bootstrapCompleted

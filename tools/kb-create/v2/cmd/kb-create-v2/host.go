@@ -17,6 +17,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -464,6 +465,11 @@ func (h lifecycleHost) Resume(ctx context.Context) error {
 }
 
 func asDiag(err error) *diag.Diag {
+	if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
+		return contracts.NewDiag(contracts.CodeSecretInputInvalid,
+			"This installation uses an older secret store format that cannot be safely read.",
+			"Preserve the existing platform root, then run `kb-create install --platform-root NEW_ROOT` with a new empty path.", nil)
+	}
 	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		return typed

@@ -26,9 +26,9 @@ import (
 type IO struct {
 	In  io.Reader
 	Out io.Writer
-	// Generated contains generated secrets for the current install invocation.
-	// Callers may disclose selected values only after the installation succeeds.
-	Generated map[string]string
+	// PendingSecrets holds values in memory until the resolved plan accepts the
+	// requirements. The apply owner persists them after validating all sources.
+	PendingSecrets map[string]secrets.PendingSecret
 	// ReadSecret reads one line of secret input without echoing it. When nil, a
 	// real terminal is read with echo disabled and any other input (a pipe, a
 	// test) is read as a plain line.
@@ -161,10 +161,8 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
-	// Secret values typed (or generated) during the journey. They stay in memory
-	// until the request compiled, then only those the request actually names are
-	// written to the private secret store; they never reach the answers, the
-	// request, the terminal output or the resume state.
+	// Secret values typed (or generated) during the journey stay in memory until
+	// the selected request is resolved by the shared installer boundary.
 	pending := map[string]string{}
 	generatedValues := map[string]bool{}
 	store := secrets.Store{PlatformRoot: platformRoot}
@@ -200,9 +198,6 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 					pending[field.Requirement] = value
 					if generated {
 						generatedValues[field.Requirement] = true
-					}
-					if generated && terminal.Generated != nil {
-						terminal.Generated[field.Requirement] = value
 					}
 				}
 				continue
@@ -252,19 +247,17 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		if !ok {
 			continue // named by the request but not entered here (supplied another way)
 		}
-		var storeErr error
+		origin := secrets.BootstrapPasswordOrigin("")
 		if id == secrets.BootstrapPassword {
-			origin := secrets.BootstrapOriginSupplied
+			origin = secrets.BootstrapOriginSupplied
 			if generatedValues[id] {
 				origin = secrets.BootstrapOriginGenerated
 			}
-			storeErr = store.PutBootstrapPassword(value, origin)
-		} else {
-			storeErr = store.Put(id, value)
 		}
-		if storeErr != nil {
-			return contracts.InstallRequest{}, fmt.Errorf("store secret %s: %w", id, storeErr)
+		if terminal.PendingSecrets == nil {
+			return contracts.InstallRequest{}, fmt.Errorf("pending secret destination is required")
 		}
+		terminal.PendingSecrets[id] = secrets.PendingSecret{Value: value, Origin: origin}
 	}
 	return request, nil
 }
@@ -315,7 +308,7 @@ func askSecret(reader *bufio.Reader, terminal IO, session *flow.Session, field s
 			}
 			value = secretValue
 			generated = true
-			fmt.Fprintf(terminal.Out, "%s: generated a random value (stored, not shown)\n", label)
+			fmt.Fprintf(terminal.Out, "%s: generated a random value (not shown)\n", label)
 		case value == "" && field.Required:
 			problem = "a value is required"
 		case value == "":

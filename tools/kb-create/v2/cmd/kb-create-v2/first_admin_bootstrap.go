@@ -118,7 +118,7 @@ func readBootstrapOutcome(ctx context.Context, healthURL string, store secrets.S
 	}
 	switch *readiness.Bootstrap {
 	case GatewayBootstrapStatusProvisioned, GatewayBootstrapStatusExistsActive, GatewayBootstrapStatusExistsNonActive:
-		return store.Put(secrets.BootstrapCompleted, string(*readiness.Bootstrap))
+		return store.MarkBootstrapCompleted(string(*readiness.Bootstrap))
 	case GatewayBootstrapStatusNotConfigured, GatewayBootstrapStatusFailed:
 		return bootstrapOutcomeFailure(store.PlatformRoot, "Gateway reports that first-administrator bootstrap did not complete")
 	default:
@@ -154,19 +154,22 @@ func bootstrapOutcomeFailure(platformRoot, cause string) *diag.Diag {
 }
 
 func firstAdminResult(store secrets.Store, adminEmail string, platformRoot string) (*firstAdminCredential, *diag.Diag) {
-	bootstrapState, present, readErr := store.Get(secrets.BootstrapCompleted)
-	disclosed, disclosedErr := store.Exists(secrets.BootstrapDisclosed)
+	bootstrapState, present, readErr := store.BootstrapCompletedValue()
+	disclosed, disclosedErr := store.BootstrapDisclosed()
 	if readErr != nil || disclosedErr != nil {
+		if errors.Is(readErr, secrets.ErrUnsupportedSecretStoreFormat) || errors.Is(disclosedErr, secrets.ErrUnsupportedSecretStoreFormat) {
+			return nil, asDiag(errors.Join(readErr, disclosedErr))
+		}
 		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator bootstrap state could not be read", "check that the platform root is writable, then rerun `kb-create install`", errors.Join(readErr, disclosedErr))
 	}
 	if !present || bootstrapState != "provisioned" {
 		return nil, nil
 	}
-	generated, provenancePresent, provenanceErr := store.Get(secrets.BootstrapGenerated)
+	origin, provenancePresent, provenanceErr := store.BootstrapOrigin()
 	if provenanceErr != nil {
 		return nil, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator credential origin could not be read", "check that the platform root is writable, then rerun `kb-create install`", provenanceErr)
 	}
-	if !provenancePresent || generated != "true" {
+	if !provenancePresent || origin != secrets.BootstrapOriginGenerated {
 		return &firstAdminCredential{State: firstAdminSupplied, Email: adminEmail}, nil
 	}
 	if disclosed {

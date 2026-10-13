@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +39,7 @@ type applyCommandInput struct {
 	Resolved                   *resolvedPlan
 	Registry                   string
 	SecretEnv                  string
+	PendingSecrets             map[string]secrets.PendingSecret
 	Executable                 string
 	Progress                   runtime.ProgressSink
 	JSON                       bool
@@ -134,6 +136,13 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		resolved = &result
 	}
 	planned = resolved.Plan
+	secretIDs := make([]string, 0)
+	for _, mapping := range splitSecretMappings(input.SecretEnv) {
+		secretIDs = append(secretIDs, mapping[0])
+	}
+	if failure := resolve.ValidateSecretInputIDs(planned.Artifacts, secretIDs); failure != nil {
+		return applyCommandResult{}, asDiag(failure)
+	}
 	launcherState := resolved.State
 	root := planned.Request.PlatformRoot
 	installRoot := root
@@ -240,7 +249,13 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	}
 	correlationID := fmt.Sprintf("apply-%d", time.Now().UTC().UnixNano())
 	store := secrets.Store{PlatformRoot: operationRoot}
+	if err := storePendingSecrets(store, input.PendingSecrets); err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeSecretInputInvalid, "secret input could not be stored", "verify the declared secret inputs, then rerun `kb-create install`", err)
+	}
 	if err := populateSecrets(store, input.SecretEnv); err != nil {
+		if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
+			return applyCommandResult{}, asDiag(err)
+		}
 		if errors.Is(err, secrets.ErrBootstrapPasswordDisclosed) {
 			adminEmail, _ := configuredFirstAdmin(planned.Request)
 			recovery := buildFirstAdminRecoveryCommands(root, adminEmail)
@@ -254,8 +269,11 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	bootstrapCompleted := false
 	if securedAdmin {
 		var existsErr error
-		bootstrapCompleted, existsErr = store.Exists(secrets.BootstrapCompleted)
+		bootstrapCompleted, existsErr = store.BootstrapCompleted()
 		if existsErr != nil {
+			if errors.Is(existsErr, secrets.ErrUnsupportedSecretStoreFormat) {
+				return applyCommandResult{}, asDiag(existsErr)
+			}
 			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read from the secret store", "check that the platform root is writable, then rerun `kb-create install`", existsErr)
 		}
 	}
@@ -419,6 +437,27 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 		Profile: applied.Plan.ServiceGraph.Profile, Services: applied.Plan.ServiceGraph.Services,
 		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin, ProjectRegistrationNotice: registrationNotice,
 		disclosureStoreRoot: store.PlatformRoot}, nil
+}
+
+func storePendingSecrets(store secrets.Store, pending map[string]secrets.PendingSecret) error {
+	ids := make([]string, 0, len(pending))
+	for id := range pending {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		input := pending[id]
+		if id == secrets.BootstrapPassword {
+			if err := store.PutBootstrapPassword(input.Value, input.Origin); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := store.Put(id, input.Value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func unsupportedPlatformLayout(root string, cause error) *diag.Diag {

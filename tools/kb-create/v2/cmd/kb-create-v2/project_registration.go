@@ -46,7 +46,7 @@ func registerProject(platformRoot, projectRoot string) (projectRegistrationResul
 	accessToken := ""
 	if adminEmail, secured := configuredFirstAdmin(active.Plan.Request); secured {
 		store := secrets.Store{PlatformRoot: platformRoot}
-		disclosed, readErr := store.Exists(secrets.BootstrapDisclosed)
+		disclosed, readErr := store.BootstrapDisclosed()
 		if readErr != nil {
 			return projectRegistrationResult{}, registrationBoundaryFailure("KB_INSTALL_SECRET_INPUT_INVALID", "The first administrator bootstrap state is unavailable.", "login", 0)
 		}
@@ -142,7 +142,7 @@ func completedBootstrapProjectNotice(active contracts.InstallReceipt, projectRoo
 	if projectRoot == "" || active.ProjectID != "" || allowBootstrapRegistration {
 		return "", nil
 	}
-	completed, err := (secrets.Store{PlatformRoot: active.Plan.Request.PlatformRoot}).Exists(secrets.BootstrapCompleted)
+	completed, err := (secrets.Store{PlatformRoot: active.Plan.Request.PlatformRoot}).BootstrapCompleted()
 	if err != nil {
 		return "", err
 	}
