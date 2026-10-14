@@ -945,8 +945,14 @@ func (l Layout) validateSealedVersionRoot(stage string) error {
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
 		return fmt.Errorf("staged version root is outside the declared version roots")
 	}
+	return ValidateNoSharedRuntimeProjectionEntries(absolute)
+}
+
+// ValidateNoSharedRuntimeProjectionEntries enforces the shared-state absence
+// contract for a version tree before it is sealed or inspected for activation.
+func ValidateNoSharedRuntimeProjectionEntries(root string) error {
 	for _, shared := range contracts.SharedRuntimeProjections() {
-		path := filepath.Join(absolute, filepath.FromSlash(shared.PlatformPath))
+		path := filepath.Join(root, filepath.FromSlash(shared.PlatformPath))
 		if _, err := os.Lstat(path); err == nil {
 			return fmt.Errorf("staged version root contains shared runtime state at %s", shared.PlatformPath)
 		} else if !os.IsNotExist(err) {
