@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { GatewayTransport } from '../transport/gateway-transport.js';
 import type { GatewayClient, AdapterCallResponse } from '../ws/gateway-client.js';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 function createMockClient(responseOrError?: AdapterCallResponse | Error): GatewayClient {
   return {
@@ -38,7 +39,11 @@ describe('GatewayTransport', () => {
   it('maps error response correctly', async () => {
     const client = createMockClient({
       requestId: 'r2',
-      error: { code: 'ADAPTER_ERROR', message: 'fail', retryable: false },
+      error: createErrorEnvelope('KB_ADAPTER_OPERATION_FAILED', {
+        correlationId: 'r2',
+        message: 'Adapter call failed.',
+        hint: 'Check the adapter configuration and try again.',
+      }),
     });
     const transport = new GatewayTransport(client, {
       namespaceId: 'default',
@@ -54,7 +59,11 @@ describe('GatewayTransport', () => {
     });
 
     expect(response.error).toBeDefined();
-    expect((response.error as any).code).toBe('ADAPTER_ERROR');
+    expect(response.error).toMatchObject({
+      code: 'KB_ADAPTER_OPERATION_FAILED',
+      correlationId: 'r2',
+      hint: 'Check the adapter configuration and try again.',
+    });
   });
 
   it('throws when closed', async () => {

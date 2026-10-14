@@ -7,3 +7,4 @@ export * from './types.js';
 export * from './validate.js';
 export * from './catalog.js';
 export * from './from-error.js';
+export * from './plugin-handler-failure.js';

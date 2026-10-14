@@ -6,6 +6,7 @@
  */
 
 import type { ExecutionEvent } from '@kb-labs/core-contracts';
+import { createErrorEnvelope, ErrorEnvelopeError, isErrorEnvelope } from '@kb-labs/core-platform';
 import { sideBorderBox } from '@kb-labs/shared-cli-ui';
 
 /**
@@ -50,11 +51,22 @@ export class TerminalEventRenderer implements IEventRenderer {
 
       case 'execution:error': {
         this.clearProgress();
+        if (!isErrorEnvelope(event.error)) {
+          throw new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
+            details: {
+              operation: 'execution event rendering',
+              gatewayUrl: 'configured Gateway',
+              status: 'malformed error envelope',
+            },
+          }));
+        }
         const errSections: Array<{ header?: string; items: string[] }> = [
-          { items: [event.message] },
+          { items: [event.error.message] },
         ];
-        if (event.code) {
-          errSections.push({ header: 'Code', items: [event.code] });
+        errSections.push({ header: 'Code', items: [event.error.code] });
+        errSections.push({ header: 'Hint', items: [event.error.hint] });
+        if (event.error.correlationId) {
+          errSections.push({ header: 'Correlation ID', items: [event.error.correlationId] });
         }
         process.stderr.write('\n' + sideBorderBox({
           title: 'Error', sections: errSections, status: 'error',

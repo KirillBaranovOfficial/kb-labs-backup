@@ -19,14 +19,21 @@ import { executeCommandV3 } from '@kb-labs/cli-runtime';
 import { noopUI } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
+import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { normalizePluginHandlerFailure } from '@kb-labs/core-platform';
 import { callOutput } from './output-capture.js';
 import type { McpTool } from './tool-builder.js';
 
-export interface ToolCallResult {
-  success: boolean;
+export type ToolCallResult = {
+  success: true;
+  output: string;
+  exitCode: 0;
+} | {
+  success: false;
   output: string;
   exitCode: number;
-}
+  error: ErrorEnvelope;
+};
 
 /** Tenant → platform container. Default returns the global container; platform overrides for isolation. */
 export type PlatformResolver = (tenantId: string) => PlatformContainer;
@@ -79,11 +86,14 @@ export async function callTool(
 ): Promise<ToolCallResult> {
   const lines: string[] = [];
   const container = resolvePlatform(tenantId);
+  let error: ErrorEnvelope | undefined;
 
   const exitCode = await callOutput.run(lines, () =>
     executeCommandV3({
       pluginId: tool.pluginId,
       pluginVersion: tool.version,
+      commandPath: tool.name,
+      onError: (envelope) => { error = envelope; },
       pluginRoot: tool.pluginRoot,
       handlerPath: resolveHandlerPath(tool.pluginRoot, tool.handlerPath),
       argv: [],
@@ -100,5 +110,27 @@ export async function callTool(
     }),
   );
 
-  return { success: exitCode === 0, output: lines.join('\n'), exitCode };
+  const output = lines.join('\n');
+  if (exitCode === 0) return { success: true, output, exitCode: 0 };
+  return {
+    success: false,
+    output,
+    exitCode,
+    error: error ?? normalizePluginHandlerFailure(
+      new Error(`MCP tool ${tool.name} failed without a command error envelope.`),
+      {
+        pluginId: tool.pluginId,
+        command: tool.name,
+        correlationId: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        logger: container.logger,
+        logContext: {
+          applicationId: 'mcp',
+          serviceId: 'mcp',
+          instanceId: String(process.pid),
+          layer: 'mcp',
+        },
+        sensitiveValues: [],
+      },
+    ),
+  };
 }

@@ -11,7 +11,8 @@ import type {
   PlatformServices,
 } from "@kb-labs/plugin-contracts";
 import { wrapCliResult } from "@kb-labs/plugin-runtime";
-import { toErrorEnvelope } from "@kb-labs/core-platform";
+import { normalizePluginHandlerFailure } from "@kb-labs/core-platform";
+import type { ErrorEnvelope } from "@kb-labs/core-platform";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import type { ExecutionRequest } from "@kb-labs/plugin-execution-factory";
 import * as path from "node:path";
@@ -30,6 +31,10 @@ export interface ExecuteCommandV3Options {
    * Plugin version
    */
   pluginVersion: string;
+
+  /** Registered CLI path used in actionable unexpected-failure messages. */
+  commandPath: string;
+  onError?: (error: ErrorEnvelope) => void;
 
   /**
    * Path to command handler file
@@ -158,6 +163,7 @@ export async function executeCommandV3(
     pluginVersion,
     handlerPath,
     argv,
+    commandPath,
     flags,
     config: _config,
     permissions = {},
@@ -172,6 +178,7 @@ export async function executeCommandV3(
     quotas,
     configSection,
   } = options;
+  const env = options.env ?? process.env;
 
   // Create plugin context descriptor
   const requestId = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -215,11 +222,12 @@ export async function executeCommandV3(
       pluginRoot,
       handlerRef: handlerPath,
       input,
-      env: options.env,
+      env,
       timeoutMs: quotas?.timeoutMs,
       // Pass cwd so worker-pool backend sets ctx.cwd to the invocation directory,
       // not the platform installation directory (worker-script.ts reads workspace.cwd)
       workspace: { cwd: _cwd },
+      context: { commandPath },
     };
 
     // Execute via unified platform.executionBackend
@@ -234,7 +242,7 @@ export async function executeCommandV3(
 
     // Handle execution result
     if (!result.ok) {
-      presentExecutionError(platform, ui, result.error, requestId, Boolean(flags.json));
+      presentExecutionError(platform, ui, result.error, requestId, pluginId, commandPath, Boolean(flags.json), options.onError, env);
       return 1;
     }
 
@@ -258,17 +266,16 @@ export async function executeCommandV3(
       if (cliResult.ok) {
         ui.json({ ok: true, data: cliResult.result ?? null, ...(cliResult.meta === undefined ? {} : { meta: cliResult.meta }) });
       } else {
-        ui.json({ ok: false, error: toErrorEnvelope(cliResult.error, { correlationId: requestId }) });
+        presentExecutionError(platform, ui, cliResult.error, requestId, pluginId, commandPath, true, options.onError, env);
       }
     } else if (!cliResult.ok) {
-      const error = toErrorEnvelope(cliResult.error, { correlationId: requestId });
-      ui.error(renderErrorEnvelope(error), { hint: error.hint });
+      presentExecutionError(platform, ui, cliResult.error, requestId, pluginId, commandPath, false, options.onError, env);
     }
 
     // Return exit code from wrapped result
     return cliResult.exitCode;
   } catch (error) {
-    presentExecutionError(platform, ui, error, requestId, Boolean(flags.json));
+    presentExecutionError(platform, ui, error, requestId, pluginId, commandPath, Boolean(flags.json), options.onError, env);
     return 1;
   }
 }
@@ -278,16 +285,36 @@ function presentExecutionError(
   ui: UIFacade,
   cause: unknown,
   requestId: string,
+  pluginId: string,
+  commandPath: string,
   jsonMode: boolean,
+  onError?: (error: ErrorEnvelope) => void,
+  env: Record<string, string | undefined> = {},
 ): void {
-  const error = toErrorEnvelope(cause, { correlationId: requestId });
-  if (error.code === 'KB_RUNTIME_UNEXPECTED') {
-    const loggedCause = cause instanceof Error ? cause : new Error(String(cause));
-    platform.logger.error('Plugin command failed unexpectedly', loggedCause, {
-      correlationId: error.correlationId,
-      requestId,
-    });
-  }
+  const envelopeInput = typeof cause === 'object' && cause !== null && 'stack' in cause &&
+    'code' in cause && typeof cause.code === 'string'
+    ? {
+        ...Object.fromEntries(Object.entries(cause).filter(([key]) => key !== 'stack')),
+        ...('message' in cause && typeof cause.message === 'string' ? { message: cause.message } : {}),
+      }
+    : cause;
+  const error = normalizePluginHandlerFailure(envelopeInput, {
+    pluginId,
+    command: commandPath,
+    correlationId: requestId,
+    logger: platform.logger,
+    logContext: {
+      applicationId: 'cli',
+      serviceId: 'cli',
+      instanceId: String(process.pid),
+      layer: 'cli',
+    },
+    sensitiveValues: Object.entries(env)
+      .filter(([key]) => /(?:secret|token|password|credential|api[_-]?key)/i.test(key))
+      .map(([, value]) => value)
+      .filter((value): value is string => value !== undefined),
+  });
+  onError?.(error);
   if (jsonMode) {
     ui.json({ ok: false, error });
   } else {

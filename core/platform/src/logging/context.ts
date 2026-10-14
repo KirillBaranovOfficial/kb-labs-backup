@@ -10,6 +10,7 @@ export interface PlatformLogContext {
 
 /** Correlation supplied by the active operation, such as an HTTP request. */
 export interface LogCorrelationContext {
+  correlationId?: string;
   requestId?: string;
   traceId?: string;
   spanId?: string;
@@ -77,6 +78,7 @@ const INHERITED_FIELDS = new Set<keyof LogContext>([
   "serviceId",
   "instanceId",
   "layer",
+  "correlationId",
   "requestId",
   "traceId",
   "spanId",

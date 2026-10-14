@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { HostCallDispatcher } from '../dispatcher.js';
 import type { IAgentSocket } from '../dispatcher.js';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
+import { serialize } from '@kb-labs/core-platform/serializable';
 
 function makeMockSocket(): { socket: IAgentSocket; sent: unknown[] } {
   const sent: unknown[] = [];
@@ -135,11 +137,7 @@ describe('HostCallDispatcher', () => {
       const callPromise = dispatcher.call('ns-1', 'host-a', 'filesystem', 'readFile', []);
       const requestId = (sent[0] as Record<string, unknown>)['requestId'] as string;
 
-      dispatcher.handleInbound({
-        type: 'error',
-        requestId,
-        error: { code: 'NOT_FOUND', message: 'File not found', retryable: false },
-      });
+      dispatcher.handleInbound({ type: 'error', requestId, error: serialize(new Error('File not found')) });
 
       await expect(callPromise).rejects.toThrow('File not found');
     });
@@ -154,6 +152,36 @@ describe('HostCallDispatcher', () => {
       dispatcher.handleInbound({ type: 'error', requestId, error: 'something broke' });
 
       await expect(callPromise).rejects.toThrow('something broke');
+    });
+
+    it('preserves a typed error envelope and its correlation ID', async () => {
+      const { socket, sent } = makeMockSocket();
+      dispatcher.registerConnection('host-1', 'ns-1', socket);
+      const callPromise = dispatcher.call('ns-1', 'host-1', 'filesystem', 'read', []);
+      const requestId = (sent[0] as { requestId: string }).requestId;
+      const envelope = createErrorEnvelope('KB_ADAPTER_CREDENTIALS_MISSING', {
+        correlationId: 'execution-correlation',
+        details: { adapter: 'llm', credential: 'OPENAI_API_KEY' },
+      });
+
+      dispatcher.handleInbound({ type: 'error', requestId, error: envelope });
+
+      await expect(callPromise).rejects.toMatchObject({
+        envelope,
+      } satisfies Pick<ErrorEnvelopeError, 'envelope'>);
+    });
+
+    it('restores a serialized handler error with its stack for the execution boundary', async () => {
+      const { socket, sent } = makeMockSocket();
+      dispatcher.registerConnection('host-1', 'ns-1', socket);
+      const callPromise = dispatcher.call('ns-1', 'host-1', 'filesystem', 'read', []);
+      const requestId = (sent[0] as { requestId: string }).requestId;
+      const failure = new Error('handler failure');
+      failure.stack = 'Error: handler failure\n    at handler';
+
+      dispatcher.handleInbound({ type: 'error', requestId, error: serialize(failure) });
+
+      await expect(callPromise).rejects.toMatchObject({ message: 'handler failure', stack: failure.stack });
     });
   });
 

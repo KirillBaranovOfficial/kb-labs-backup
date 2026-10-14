@@ -8,6 +8,9 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { ErrorEnvelopeError, isErrorEnvelope } from '@kb-labs/core-platform';
+import { serialize } from '@kb-labs/core-platform/serializable';
+import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import WebSocket from 'ws';
 import type { CapabilityCall } from '@kb-labs/host-agent-contracts';
 import type { AdapterCallContext } from '@kb-labs/gateway-contracts';
@@ -27,7 +30,7 @@ export interface AdapterCallInput {
 export interface AdapterCallResponse {
   requestId: string;
   result?: unknown;
-  error?: { code: string; message: string; retryable: boolean; details?: unknown };
+  error?: ErrorEnvelope;
 }
 
 export interface GatewayClientOptions {
@@ -376,7 +379,7 @@ export class GatewayClient {
       if (pending) {
         clearTimeout(pending.timer);
         this.pendingAdapterCalls.delete(requestId);
-        const error = msg['error'] as { code: string; message: string; retryable: boolean; details?: unknown };
+        const error = msg['error'] as ErrorEnvelope;
         pending.resolve({ requestId, error });
       }
       return;
@@ -401,11 +404,15 @@ export class GatewayClient {
       this.send({ type: 'chunk', requestId: call.requestId, data: result, index: 0 });
       this.send({ type: 'result', requestId: call.requestId, done: true });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const error = err instanceof ErrorEnvelopeError
+        ? err.envelope
+        : isErrorEnvelope(err)
+          ? err
+          : serialize(err);
       this.send({
         type: 'error',
         requestId: call.requestId,
-        error: { code: 'HANDLER_ERROR', message, retryable: false },
+        error,
       });
     }
   }

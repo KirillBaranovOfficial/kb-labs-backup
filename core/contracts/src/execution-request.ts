@@ -135,6 +135,7 @@ export interface ExecutionRequest<TDescriptor = unknown> {
 
   /** Additional execution context */
   context?: {
+    commandPath?: string;
     tenantId?: string;
     traceId?: string;
     sessionId?: string;

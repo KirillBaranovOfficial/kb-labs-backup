@@ -21,6 +21,7 @@ describe('executeCommandV3 environment', () => {
     await executeCommandV3({
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
+      commandPath: 'test run',
       pluginRoot: '/tmp/test-plugin',
       handlerPath: 'dist/commands/test.js',
       argv: [],
@@ -61,6 +62,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const exitCode = await executeCommandV3({
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
+      commandPath: 'test run',
       handlerPath: 'dist/commands/test.js',
       argv: [],
       flags: { json: true },
@@ -72,7 +74,24 @@ describe('executeCommandV3 plugin command result output', () => {
     expect(exitCode).toBe(1);
     expect(json).toHaveBeenCalledOnce();
     const envelope = (json.mock.calls[0]?.[0] as { error: { correlationId?: string } }).error;
-    expect(envelope).toEqual(toErrorEnvelope(thrown, { correlationId: envelope.correlationId }));
+    if (_name === 'plain Error' || _name === 'string') {
+      expect(envelope).toMatchObject({
+        code: 'KB_PLUGIN_COMMAND_FAILED',
+        message: 'Plugin command test run in @kb-labs/test-plugin failed unexpectedly.',
+        hint: expect.stringContaining(`--correlation-id ${envelope.correlationId}`),
+        correlationId: expect.any(String),
+      });
+      expect(JSON.stringify(envelope)).not.toContain('Unexpected');
+    } else if (_name === 'invalid details' || _name === 'non-string details') {
+      expect(envelope).toMatchObject({
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        message: 'Plugin @kb-labs/test-plugin returned malformed error field "hint".',
+        details: { plugin: '@kb-labs/test-plugin', command: 'test run', field: 'hint' },
+        correlationId: expect.any(String),
+      });
+    } else {
+      expect(envelope).toEqual(toErrorEnvelope(thrown, { correlationId: envelope.correlationId }));
+    }
   });
 
   // case: S-203.1, S-203.2
@@ -97,6 +116,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const exitCode = await executeCommandV3({
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
+      commandPath: 'test run',
       handlerPath: 'dist/commands/test.js',
       argv: [],
       flags: { json: true },
@@ -132,6 +152,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const exitCode = await executeCommandV3({
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
+      commandPath: 'test run',
       handlerPath: 'dist/commands/test.js',
       argv: [],
       flags: { json: true },
@@ -170,6 +191,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const exitCode = await executeCommandV3({
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
+      commandPath: 'test run',
       handlerPath: 'dist/commands/test.js',
       argv: [],
       flags: {},
@@ -198,7 +220,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     const exitCode = await executeCommandV3({
-      pluginId: '@kb-labs/test-plugin', pluginVersion: '1.0.0', handlerPath: 'dist/commands/test.js',
+      pluginId: '@kb-labs/test-plugin', pluginVersion: '1.0.0', commandPath: 'test run', handlerPath: 'dist/commands/test.js',
       argv: [], flags: { json: true }, ui: { ...noopUI, json }, platform, platformContainer,
     });
 
@@ -217,7 +239,7 @@ describe('executeCommandV3 plugin command result output', () => {
   });
 
   // case: S-203.3
-  it('renders thrown uncatalogued errors as unexpected and logs the cause with its correlation ID', async () => {
+  it('renders thrown plain errors as named plugin command failures and logs the stack with its correlation ID', async () => {
     const json = vi.fn();
     const logError = vi.fn();
     const execute = vi.fn(async () => { throw new Error('private worker cause'); });
@@ -225,17 +247,50 @@ describe('executeCommandV3 plugin command result output', () => {
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     const exitCode = await executeCommandV3({
-      pluginId: '@kb-labs/test-plugin', pluginVersion: '1.0.0', handlerPath: 'dist/commands/test.js',
+      pluginId: '@kb-labs/test-plugin', pluginVersion: '1.0.0', commandPath: 'test run', handlerPath: 'dist/commands/test.js',
       argv: [], flags: { json: true }, ui: { ...noopUI, json }, platform, platformContainer,
     });
 
     const envelope = json.mock.calls[0]?.[0] as { error: { code: string; correlationId: string; message: string } };
     expect(exitCode).toBe(1);
-    expect(envelope.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(envelope.error.code).toBe('KB_PLUGIN_COMMAND_FAILED');
+    expect(envelope.error.message).toContain('@kb-labs/test-plugin');
+    expect(envelope.error.message).toContain('test run');
     expect(envelope.error.message).not.toContain('private worker cause');
-    expect(logError).toHaveBeenCalledWith('Plugin command failed unexpectedly', expect.any(Error), {
-      correlationId: envelope.error.correlationId,
-      requestId: expect.any(String),
+    expect(logError).toHaveBeenCalledOnce();
+    expect(logError).toHaveBeenCalledWith(
+      'Plugin command test run in @kb-labs/test-plugin failed unexpectedly.',
+      expect.any(Error),
+      expect.objectContaining({
+        code: 'KB_PLUGIN_COMMAND_FAILED',
+        command: 'test run',
+        correlationId: envelope.error.correlationId,
+        pluginId: '@kb-labs/test-plugin',
+      }),
+    );
+  });
+
+  // case: S-203.2
+  it('passes a typed plugin product error through unchanged', async () => {
+    const json = vi.fn();
+    const productError = {
+      code: 'COMMIT_PLAN_INVALID',
+      message: 'The commit plan is invalid.',
+      hint: 'Run `kb commit generate` and inspect the proposed plan.',
+      details: { reason: 'empty' },
+    };
+    const execute = vi.fn(async () => ({ ok: false as const, error: productError, executionTimeMs: 1 }));
+    const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
+
+    await executeCommandV3({
+      pluginId: '@kb-labs/commit', pluginVersion: '1.0.0', commandPath: 'commit open',
+      handlerPath: 'dist/commands/open.js', argv: [], flags: { json: true },
+      ui: { ...noopUI, json }, platform: {} as unknown as PlatformServices, platformContainer,
     });
+
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining(productError),
+    }));
   });
 });

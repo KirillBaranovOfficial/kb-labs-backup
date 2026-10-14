@@ -22,7 +22,12 @@ function makeRequest(overrides: Partial<ExecutionRequest> = {}): ExecutionReques
     handlerRef: './dist/handler.js',
     pluginRoot: '/tmp/plugin',
     input: {},
-    descriptor: { hostType: 'workflow' } as unknown as ExecutionRequest['descriptor'],
+    descriptor: {
+      hostType: 'workflow',
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
+      requestId: 'request-001',
+    } as unknown as ExecutionRequest['descriptor'],
     ...overrides,
   };
 }

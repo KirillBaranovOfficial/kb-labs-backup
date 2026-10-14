@@ -5,8 +5,9 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import type { ExecutionError, ExecutionErrorCode } from './types.js';
-import { TimeoutError, AbortError, isExecutionLayerError, isKnownErrorCode } from './errors.js';
+import { createErrorEnvelope, ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
+import type { ExecutionError } from './types.js';
+import { TimeoutError, AbortError, isExecutionLayerError } from './errors.js';
 
 /**
  * Create unique execution ID.
@@ -77,42 +78,43 @@ export function createTimeoutPromise(
 /**
  * Normalize any error to ExecutionError interface.
  *
- * - For ExecutionLayerError: uses toJSON()
- * - For other errors: extracts message/stack, validates code
- * - For non-errors: converts to string
+ * - Execution-layer control errors become safe catalogued failures.
+ * - Typed platform and product errors retain their complete envelope.
+ * - Unhandled values become a safe platform unexpected error.
  *
  * Returns strictly typed ExecutionError (interface).
  */
 export function normalizeError(error: unknown): ExecutionError {
-  // ExecutionLayerError: use toJSON()
-  if (isExecutionLayerError(error)) {
-    return error.toJSON();
+  if (error instanceof ErrorEnvelopeError) {
+    const envelope = toErrorEnvelope(error);
+    return { ...envelope, stack: error.stack };
   }
-
-  // Standard Error: extract fields
+  if (isExecutionLayerError(error)) {
+    if (error instanceof AbortError) {
+      const envelope = createErrorEnvelope('KB_PLUGIN_ABORTED', { cause: error.message });
+      return { ...envelope, stack: error.stack };
+    }
+    const details = error instanceof TimeoutError
+      ? { failureReason: 'timed out' }
+      : error.code === 'WORKER_CRASHED'
+        ? { failureReason: 'execution process crashed' }
+        : undefined;
+    const envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', details ? { details } : {});
+    return { ...envelope, stack: error.stack };
+  }
   if (error instanceof Error) {
-    const anyError = error as Error & { code?: unknown; details?: unknown };
-
-    // Validate and clamp error code
-    const rawCode = anyError.code;
-    const code: ExecutionErrorCode = isKnownErrorCode(rawCode)
-      ? rawCode
-      : 'HANDLER_ERROR';
-
-    return {
-      message: error.message,
-      code,
-      stack: error.stack,
-      details: typeof anyError.details === 'object' && anyError.details !== null
-        ? anyError.details as Record<string, unknown>
-        : undefined,
-    };
+    const envelope = toErrorEnvelope(error);
+    return { ...envelope, stack: error.stack };
+  }
+  if (typeof error === 'object' && error !== null) {
+    const envelope = toErrorEnvelope(error);
+    return { ...envelope };
   }
 
   // Non-error: convert to string
   return {
-    message: String(error),
-    code: 'UNKNOWN_ERROR',
+    message: 'The operation did not complete because the handler threw a non-error value.',
+    code: 'KB_RUNTIME_UNEXPECTED',
   };
 }
 

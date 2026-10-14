@@ -10,6 +10,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createErrorEnvelope, type ICache, type IAnalytics, type ILogger } from '@kb-labs/core-platform';
+import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { createUxFailureResult, createUxSuccessResult } from '@kb-labs/core-platform/ux-result';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { filterTools, type McpTool } from './tool-builder.js';
@@ -26,7 +27,7 @@ export function mcpToolSuccess(data: string): CallToolResult {
   return { content: [{ type: 'text', text: data }], structuredContent: { ...createUxSuccessResult(data) }, isError: false };
 }
 
-function errorResult(envelope: ReturnType<typeof createErrorEnvelope>): CallToolResult {
+function errorResult(envelope: ErrorEnvelope): CallToolResult {
   const correlation = envelope.correlationId ? ` (correlationId: ${envelope.correlationId})` : '';
   return {
     content: [{ type: 'text', text: `${envelope.code}: ${envelope.message} — ${envelope.hint}${correlation}` }],
@@ -274,10 +275,7 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
   }).catch(() => {});
 
   if (!result.success) {
-    return mcpToolError(
-      'KB_RUNTIME_MCP_TOOL_FAILED',
-      { tool: name, exitCode: String(result.exitCode) },
-    );
+    return errorResult(result.error);
   }
   return mcpToolSuccess(result.output);
 }

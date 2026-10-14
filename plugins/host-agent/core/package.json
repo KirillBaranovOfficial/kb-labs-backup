@@ -25,6 +25,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/gateway-contracts": "workspace:*",
     "@kb-labs/host-agent-contracts": "workspace:*",
     "@kb-labs/host-agent-transport": "workspace:*",

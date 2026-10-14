@@ -25,6 +25,7 @@ type Flags = {
   "plugin-id": { type: "string"; description?: string };
   component: { type: "string"; description?: string };
   operation: { type: "string"; description?: string };
+  "correlation-id": { type: "string"; description?: string };
   "request-id": { type: "string"; description?: string };
   "trace-id": { type: "string"; description?: string };
   "execution-id": { type: "string"; description?: string };
@@ -67,6 +68,7 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
     "plugin-id": { type: "string", description: "Filter by plugin ID" },
     component: { type: "string", description: "Filter by component" },
     operation: { type: "string", description: "Filter by operation" },
+    "correlation-id": { type: "string", description: "Filter by error correlation ID" },
     "request-id": { type: "string", description: "Filter by request ID" },
     "trace-id": { type: "string", description: "Filter by trace ID" },
     "execution-id": { type: "string", description: "Filter by execution ID" },
@@ -106,6 +108,9 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
     }
     if (flags.operation) {
       query.operation = flags.operation;
+    }
+    if (flags["correlation-id"]) {
+      query.correlationId = flags["correlation-id"];
     }
     if (flags["request-id"]) {
       query.requestId = flags["request-id"];

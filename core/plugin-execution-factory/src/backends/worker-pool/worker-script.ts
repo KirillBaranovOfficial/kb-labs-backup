@@ -23,7 +23,7 @@ import type {
   UIPromptResultMessage,
   SerializedCataloguedError,
 } from './types.js';
-import { ErrorEnvelopeError, isErrorCode, toErrorEnvelope, type ErrorCode } from '@kb-labs/core-platform';
+import { ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
 import { serializeCataloguedError, rebuildCataloguedError } from './error-codec.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
@@ -31,7 +31,6 @@ import type { ITransport } from '@kb-labs/core-ipc';
 import type { LoadedMiddleware } from '@kb-labs/plugin-runtime';
 import { createBaseStdoutUI, setJsonMode, type UIPrompts } from '@kb-labs/shared-cli-ui';
 import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
-import { resolveHandlerErrorCode } from './resolve-handler-error-code.js';
 
 // Worker state
 const workerId = process.env.KB_WORKER_ID ?? 'unknown';
@@ -78,11 +77,6 @@ async function ipcPrompt(
       reject(unavailablePrompt(prompt.message, 'The worker could not send the prompt to its host.'));
     });
   });
-}
-
-function hasCataloguedCode(error: unknown): error is { code: ErrorCode } {
-  return typeof error === 'object' && error !== null && 'code' in error &&
-    typeof error.code === 'string' && isErrorCode(error.code);
 }
 
 const promptHint = 'Supply the requested value as command or request input and retry.';
@@ -323,25 +317,15 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     process.send!(resultMessage);
   } catch (error) {
-    const errorEnvelope = error instanceof ErrorEnvelopeError
-      ? error.envelope
-      : hasCataloguedCode(error)
-        ? toErrorEnvelope(error)
-        : undefined;
-    const cataloguedError = errorEnvelope
-      ? serializeCataloguedError(errorEnvelope)
-      : undefined;
+    const errorEnvelope = error instanceof ErrorEnvelopeError ? error.envelope : toErrorEnvelope(error);
+    const cataloguedError = serializeCataloguedError(errorEnvelope);
     sendError(requestId, {
-      message: error instanceof Error ? error.message : String(error),
-      ...(cataloguedError
-        ? {
-          code: cataloguedError.code,
-          hint: cataloguedError.hint,
-          cause: cataloguedError.cause,
-          details: cataloguedError.details,
-          cataloguedError,
-        }
-        : { code: resolveHandlerErrorCode(error) }),
+      message: cataloguedError.message,
+      code: cataloguedError.code,
+      hint: cataloguedError.hint,
+      cause: cataloguedError.cause,
+      details: cataloguedError.details,
+      cataloguedError,
       stack: error instanceof Error ? error.stack : undefined,
     });
   }
@@ -362,7 +346,7 @@ function handleMiddlewares(message: MiddlewaresInitMessage): void {
  */
 function sendError(
   requestId: string,
-  error: { message: string; code?: string; hint?: string; cause?: string; stack?: string }
+  error: { message: string; code?: string; hint?: string; cause?: string; details?: Record<string, string>; cataloguedError?: SerializedCataloguedError; stack?: string }
 ): void {
   process.send!({ type: 'error', requestId, error } as ErrorMessage);
 }

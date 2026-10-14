@@ -138,6 +138,7 @@ export async function executePlugin(
       const exitCode = await executeCommandV3({
           pluginId,
           pluginVersion,
+          commandPath,
           pluginRoot,
           handlerPath,
           argv,

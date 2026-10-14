@@ -9,6 +9,7 @@ import {
   HelloMessageSchema,
   CallMessageSchema,
   ErrorMessageSchema,
+  AdapterErrorMessageSchema,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from '../index.js';
 
@@ -47,6 +48,23 @@ describe('GatewayConfigSchema', () => {
     ).toThrow();
   });
 
+});
+
+describe('AdapterErrorMessageSchema', () => {
+  it('retains the shared envelope fields when forwarding an adapter failure', () => {
+    const message = AdapterErrorMessageSchema.parse({
+      type: 'adapter:error', requestId: 'adapter-request',
+      error: {
+        code: 'KB_ADAPTER_CREDENTIALS_MISSING', area: 'plugin', stage: 'run', severity: 'error',
+        retryable: false, message: 'Credentials are missing.', hint: 'Set the configured credential.',
+        correlationId: 'adapter-correlation', details: { service: 'llm' },
+      },
+    });
+    expect(message.error).toMatchObject({
+      code: 'KB_ADAPTER_CREDENTIALS_MISSING', hint: 'Set the configured credential.',
+      correlationId: 'adapter-correlation', details: { service: 'llm' },
+    });
+  });
 });
 
 describe('AuthConfigSchema.providers (ADR-0020 DD-4)', () => {
@@ -267,8 +285,7 @@ describe('ErrorMessageSchema', () => {
       requestId: 'req-1',
       error: { code: 'FS_NOT_FOUND', message: 'File not found', retryable: false },
     });
-    expect(result.error.code).toBe('FS_NOT_FOUND');
-    expect(result.error.retryable).toBe(false);
+    expect(result.error).toMatchObject({ code: 'FS_NOT_FOUND', retryable: false });
   });
 });
 
