@@ -78,6 +78,12 @@ func (r *commandFlagReader) Strings(name string) []string {
 	return append([]string(nil), (*r.values[name].(*repeatedValue))...)
 }
 
+func (r *commandFlagReader) Changed(name string) bool {
+	r.reads[name] = struct{}{}
+	flag := r.command.Flags().Lookup(name)
+	return flag != nil && flag.Changed
+}
+
 func registerLocalFlags(command *cobra.Command, names []string, values map[string]any) {
 	for _, name := range names {
 		definition, ok := flagCatalog[name]

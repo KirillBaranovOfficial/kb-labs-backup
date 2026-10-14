@@ -43,11 +43,12 @@ func (commandRunner) Run(ctx context.Context, output io.Writer, name string, arg
 }
 
 type Pnpm struct {
-	Root     string
-	Registry string
-	Offline  bool
-	Client   *http.Client
-	Runner   Runner
+	Root      string
+	CacheRoot string
+	Registry  string
+	Offline   bool
+	Client    *http.Client
+	Runner    Runner
 	// Log receives the complete package-manager transcript. It is deliberately
 	// file-oriented: raw package-manager output must never pollute human or JSON
 	// command output.
@@ -387,10 +388,13 @@ func (p Pnpm) mergeSealedArtifactOverrides(items []contracts.Artifact) error {
 		if item.Package == "" || item.SHA256 == "" {
 			return fmt.Errorf("sealed artifact %q must declare package and sha256 for pnpm override", item.ID)
 		}
-		sealed[item.Package] = filepath.ToSlash(filepath.Join("file:.kb", "v2", "cache", "packages", item.SHA256+".tgz"))
+		sealed[item.Package] = "file:" + filepath.ToSlash(filepath.Join(p.CacheRoot, "packages", item.SHA256+".tgz"))
 	}
 	if len(sealed) == 0 {
 		return nil
+	}
+	if p.CacheRoot == "" {
+		return fmt.Errorf("sealed package overrides require the install root shared cache")
 	}
 	root := document.Content[0]
 	var overrides *yaml.Node
@@ -407,11 +411,12 @@ func (p Pnpm) mergeSealedArtifactOverrides(items []contracts.Artifact) error {
 		return fmt.Errorf("pnpm workspace overrides must be a mapping")
 	}
 
+	packageCachePrefix := "file:" + filepath.ToSlash(filepath.Join(p.CacheRoot, "packages")) + "/"
 	for i := 0; i+1 < len(overrides.Content); {
 		name := overrides.Content[i].Value
 		value := overrides.Content[i+1]
 		_, replace := sealed[name]
-		managed := value.Kind == yaml.ScalarNode && strings.HasPrefix(value.Value, "file:.kb/v2/cache/packages/")
+		managed := value.Kind == yaml.ScalarNode && (strings.HasPrefix(value.Value, "file:.kb/v2/cache/packages/") || strings.HasPrefix(value.Value, packageCachePrefix))
 		if replace || managed {
 			overrides.Content = append(overrides.Content[:i], overrides.Content[i+2:]...)
 			continue
@@ -512,7 +517,10 @@ func (p Pnpm) tarball(item contracts.Artifact) (string, error) {
 	if item.SHA256 == "" {
 		return "", fmt.Errorf("artifact %q tarball requires sha256", item.ID)
 	}
-	path := filepath.Join(p.Root, ".kb", "v2", "cache", "packages", item.SHA256+".tgz")
+	if p.CacheRoot == "" {
+		return "", fmt.Errorf("artifact %q tarball requires the install root shared cache", item.ID)
+	}
+	path := filepath.Join(p.CacheRoot, "packages", item.SHA256+".tgz")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		if p.Offline {
