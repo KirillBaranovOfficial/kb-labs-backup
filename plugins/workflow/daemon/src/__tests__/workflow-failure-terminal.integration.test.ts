@@ -3,9 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRegistry } from '@kb-labs/core-registry';
-import { InMemoryCache, InMemoryEventBus, InMemoryStorage } from '@kb-labs/core-platform/inmemory';
+import { FaultInjectingCache, InMemoryCache, InMemoryEventBus, InMemoryStorage } from '@kb-labs/core-platform/inmemory';
 import { mockLogger } from '@kb-labs/shared-testing';
-import { EnvSecretProvider, WorkflowEngine } from '@kb-labs/workflow-engine';
+import { EnvSecretProvider, WorkflowEngine, workflowDeadLetterCacheKey, workflowProjectCacheKey } from '@kb-labs/workflow-engine';
 import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution';
 import { createWorkflowWorker } from '../worker.js';
 
@@ -27,18 +27,17 @@ describe('live workflow failure terminalization', () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'workflow-live-failure-'));
     roots.push(workspaceRoot);
     const logger = mockLogger();
-    const cache = new InMemoryCache();
-    const cacheSet = cache.set.bind(cache);
-    cache.set = async <T>(key: string, value: T, ttl?: number): Promise<void> => {
-      if (key.includes('workflow:dlq:')) {
-        throw new Error('dead-letter cache unavailable');
-      }
-      await cacheSet(key, value, ttl);
-    };
+    let deadLetterKey: string | undefined;
+    const projectId = 'prj_0000000000000001';
+    const cache = new FaultInjectingCache(new InMemoryCache(), (operation) =>
+      operation.name === 'set' && operation.key === deadLetterKey
+        ? new Error('dead-letter cache unavailable')
+        : undefined,
+    );
     const storage = new InMemoryStorage();
     const events = new InMemoryEventBus();
     const engine = new WorkflowEngine({
-      projectId: 'prj_0000000000000001', cache, storage, events, logger,
+      projectId, cache, storage, events, logger,
       secretProvider: new EnvSecretProvider(), workspaceRoot,
     });
     const run = await engine.createRun({
@@ -48,6 +47,8 @@ describe('live workflow failure terminalization', () => {
       },
       trigger: { type: 'manual' }, metadata: { workflowId: 'terminal-failure' },
     });
+    const failedJobId = run.jobs[0]!.id;
+    deadLetterKey = workflowProjectCacheKey(projectId, workflowDeadLetterCacheKey(run.id, failedJobId));
     const registry = await createRegistry({ root: workspaceRoot });
     let executionCount = 0;
     const backend = createNormalizedExecutionBackend({

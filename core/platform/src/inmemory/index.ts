@@ -53,6 +53,12 @@ export {
 } from './adapters/analytics-buffer.js';
 export { InMemoryConfig } from './adapters/config.js';
 export { InMemoryNotifier } from './adapters/notifier.js';
+export {
+  FaultInjectingCache,
+  FaultInjectingEventBus,
+  type CacheOperation,
+  type EventBusOperation,
+} from './adapters/fault-injection.js';
 
 /**
  * Typed factory map: for each slot with `defaultFallback === 'inmemory'`,

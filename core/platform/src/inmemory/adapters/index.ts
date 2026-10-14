@@ -25,3 +25,9 @@ export {
 } from './analytics-buffer.js';
 export { InMemoryConfig } from './config.js';
 export { InMemoryNotifier } from './notifier.js';
+export {
+  FaultInjectingCache,
+  FaultInjectingEventBus,
+  type CacheOperation,
+  type EventBusOperation,
+} from './fault-injection.js';

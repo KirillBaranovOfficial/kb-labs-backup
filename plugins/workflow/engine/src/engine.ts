@@ -35,6 +35,7 @@ import type { SecretProvider } from './secrets'
 import type { CreateRunInput, EngineLogger, RunContext } from './types'
 import { RunSnapshotStorage, type RunSnapshot } from './run-snapshot'
 import { ProjectScopedCache } from './project-scoped-cache'
+import { workflowDeadLetterCacheKey } from './dead-letter-key'
 
 export interface WorkflowEngineOptions {
   /** Registered project identity supplied by the project runtime. */
@@ -117,6 +118,23 @@ export class WorkflowEngine {
 
   async dispose(): Promise<void> {
     // Cleanup if needed
+  }
+
+  private async runAncillaryOperation(
+    runId: string,
+    jobId: string,
+    operation: string,
+    action: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await action()
+    } catch (error) {
+      this.logger.error(
+        'Workflow ancillary operation failed',
+        error instanceof Error ? error : new Error(String(error)),
+        { operation, runId, jobId },
+      )
+    }
   }
 
   /**
@@ -379,12 +397,6 @@ export class WorkflowEngine {
       draft.attempt = (draft.attempt || 0) + 1
     })
 
-    this.logger.error('Job failed', error, {
-      runId,
-      jobId,
-      attempt: (job.attempt || 0) + 1,
-    })
-
     const classified = failure ?? classifyFailure(error, { source: 'execution', phase: 'response' })
     const retryConfig: RetryPolicyConfig | undefined = policyOverride !== undefined && typeof policyOverride !== 'boolean'
       ? {
@@ -403,75 +415,75 @@ export class WorkflowEngine {
       ? decideRetry({ failure: classified, attempt: job.attempt || 0, policy: retryConfig })
       : decideRetry({ failure: classified, attempt: job.attempt || 0 })
 
-    // Track job failure
-    this.analytics?.track('workflow.job.failed', {
-      runId,
-      jobId,
-      jobName: job.jobName,
-      attempt: (job.attempt || 0) + 1,
-      errorMessage: error.message,
-      willRetry: retryDecision.retry,
-      failureKind: classified.kind,
-      failureCode: classified.code,
-    }).catch(() => {})
-
-    await this.events.publish({
-      type: EVENT_NAMES.job.failed,
-      runId,
-      jobId,
-      payload: { jobName: job.jobName, error: error.message, attempt: (job.attempt || 0) + 1 },
-    })
-
     // Check if should retry
     if (retryDecision.retry) {
       const backoffMs = retryDecision.delayMs
-
-      this.logger.info('Scheduling job retry', {
-        runId,
-        jobId,
-        attempt: (job.attempt || 0) + 1,
-        backoffMs,
-      })
-
       // Re-queue job after backoff
       setTimeout(async () => {
-        try {
-          await this.stateStore.transitionJob(runId, jobId, 'queued', (draft) => {
-            draft.error = undefined
-            draft.startedAt = undefined
-            draft.finishedAt = undefined
-          })
-        } catch (transitionError) {
-          // The job moved on from 'failed' during the backoff wait (e.g. its
-          // run was cancelled) — the retry is stale, drop it instead of
-          // crashing this detached timer callback with an unhandled rejection.
-          if (transitionError instanceof IllegalStateTransitionError) {
-            this.logger.info('Dropping stale job retry: job is no longer failed', { runId, jobId })
-            return
+        await this.runAncillaryOperation(runId, jobId, 'scheduler.retry', async () => {
+          try {
+            await this.stateStore.transitionJob(runId, jobId, 'queued', (draft) => {
+              draft.error = undefined
+              draft.startedAt = undefined
+              draft.finishedAt = undefined
+            })
+          } catch (transitionError) {
+            if (transitionError instanceof IllegalStateTransitionError) {
+              this.logger.info('Dropping stale job retry: job is no longer failed', { runId, jobId })
+              return
+            }
+            throw transitionError
           }
-          throw transitionError
-        }
 
-        // Re-enqueue in scheduler
-        const updatedRun = await this.stateStore.getRun(runId)
-        const updatedJob = updatedRun?.jobs.find((j) => j.id === jobId)
-        if (updatedJob) {
-          await this.scheduler.enqueueJob(runId, updatedJob, updatedJob.priority ?? 'normal')
-        }
-
-        this.logger.info('Job re-queued for retry', { runId, jobId })
+          const updatedRun = await this.stateStore.getRun(runId)
+          const updatedJob = updatedRun?.jobs.find((candidate) => candidate.id === jobId)
+          if (updatedJob) {
+            await this.scheduler.enqueueJob(runId, updatedJob, updatedJob.priority ?? 'normal')
+          }
+          this.logger.info('Job re-queued for retry', { runId, jobId })
+        })
       }, backoffMs)
+
+      this.logger.error('Job failed', error, { runId, jobId, attempt: (job.attempt || 0) + 1 })
+      await this.runAncillaryOperation(runId, jobId, 'analytics.job.failed', async () => {
+        await this.analytics?.track('workflow.job.failed', {
+          runId, jobId, jobName: job.jobName, attempt: (job.attempt || 0) + 1,
+          errorMessage: error.message, willRetry: true, failureKind: classified.kind, failureCode: classified.code,
+        })
+      })
+      await this.runAncillaryOperation(runId, jobId, 'event.publish.job.failed', () => this.events.publish({
+        type: EVENT_NAMES.job.failed,
+        runId,
+        jobId,
+        payload: { jobName: job.jobName, error: error.message, attempt: (job.attempt || 0) + 1 },
+      }))
+      this.logger.info('Scheduling job retry', { runId, jobId, attempt: (job.attempt || 0) + 1, backoffMs })
     } else {
-      // Terminal failure: no retries left.
-      // 1. Cancel downstream jobs that depend on this one so they don't hang in
-      //    'queued' forever (B-030).
-      // 2. Let checkRunCompletion finalize the run as 'failed' — 'dlq' is reserved
-      //    for infrastructure failures and must not leak as a user-step outcome (B-029).
-      await this.cancelDownstreamJobs(runId, job.jobName, `upstream job "${job.jobName}" failed`)
-      await this.checkRunCompletion(runId)
-      // Dead-letter storage is observability only. Its cache failure must not
-      // prevent the durable run transition or history entry above.
-      await this.deadLetterJob(runId, jobId, error)
+      const cancelledJobs = await this.cancelDownstreamJobs(runId, job.jobName, `upstream job "${job.jobName}" failed`)
+      await this.checkRunCompletion(runId, jobId)
+
+      this.logger.error('Job failed', error, { runId, jobId, attempt: (job.attempt || 0) + 1 })
+      await this.runAncillaryOperation(runId, jobId, 'analytics.job.failed', async () => {
+        await this.analytics?.track('workflow.job.failed', {
+          runId, jobId, jobName: job.jobName, attempt: (job.attempt || 0) + 1,
+          errorMessage: error.message, willRetry: false, failureKind: classified.kind, failureCode: classified.code,
+        })
+      })
+      await this.runAncillaryOperation(runId, jobId, 'event.publish.job.failed', () => this.events.publish({
+        type: EVENT_NAMES.job.failed,
+        runId,
+        jobId,
+        payload: { jobName: job.jobName, error: error.message, attempt: (job.attempt || 0) + 1 },
+      }))
+      for (const cancelledJob of cancelledJobs) {
+        await this.runAncillaryOperation(runId, cancelledJob.jobId, 'event.publish.job.cancelled', () => this.events.publish({
+          type: EVENT_NAMES.job.cancelled,
+          runId,
+          jobId: cancelledJob.jobId,
+          payload: { jobName: cancelledJob.jobName, reason: cancelledJob.reason },
+        }))
+      }
+      await this.runAncillaryOperation(runId, jobId, 'cache.dead-letter.set', () => this.deadLetterJob(runId, jobId, error))
     }
   }
 
@@ -484,8 +496,9 @@ export class WorkflowEngine {
     runId: string,
     failedJobName: string,
     reason: string,
-  ): Promise<void> {
+  ): Promise<Array<{ jobId: string; jobName: string; reason: string }>> {
     const released = await this.stateStore.releaseBlockedJobs(runId, failedJobName)
+    const cancelled: Array<{ jobId: string; jobName: string; reason: string }> = []
     for (const downstreamJob of released) {
       const now = new Date().toISOString()
       await this.stateStore.transitionJob(runId, downstreamJob.id, 'cancelled', (draft) => {
@@ -493,20 +506,10 @@ export class WorkflowEngine {
         draft.finishedAt = now
         draft.error = { message: reason, timestamp: now }
       })
-      await this.events.publish({
-        type: EVENT_NAMES.job.cancelled,
-        runId,
-        jobId: downstreamJob.id,
-        payload: { jobName: downstreamJob.jobName, reason },
-      })
-      this.logger.info('Cancelled dependent job after upstream failure', {
-        runId,
-        jobId: downstreamJob.id,
-        unlockedBy: failedJobName,
-      })
-      // Cascade: this job's own dependents must also be cancelled.
-      await this.cancelDownstreamJobs(runId, downstreamJob.jobName, reason)
+      cancelled.push({ jobId: downstreamJob.id, jobName: downstreamJob.jobName, reason })
+      cancelled.push(...await this.cancelDownstreamJobs(runId, downstreamJob.jobName, reason))
     }
+    return cancelled
   }
 
   /**
@@ -576,42 +579,56 @@ export class WorkflowEngine {
     await this.stateStore.transitionJob(runId, jobId, 'success', (draft) => {
       draft.finishedAt = new Date().toISOString()
     })
+    const dispatch = { jobs: [] as JobRun[], skipped: [] as JobRun[] }
+    if (job?.jobName) {
+      const run = await this.stateStore.getRun(runId)
+      const exprCtx = this.buildExpressionContext(run)
+      await this.persistSuccessfulDependents(runId, job, exprCtx, dispatch)
+    }
+
+    await this.checkRunCompletion(runId, jobId)
 
     this.logger.info('Job completed successfully', { runId, jobId })
-
-    // Track job completion
-    this.analytics?.track('workflow.job.completed', {
-      runId,
-      jobId,
-      jobName: job?.jobName,
-      durationMs: duration,
-      stepCount: job?.steps.length ?? 0,
-    }).catch(() => {})
-
-    await this.events.publish({
+    await this.runAncillaryOperation(runId, jobId, 'analytics.job.completed', async () => {
+      await this.analytics?.track('workflow.job.completed', {
+        runId, jobId, jobName: job?.jobName, durationMs: duration, stepCount: job?.steps.length ?? 0,
+      })
+    })
+    await this.runAncillaryOperation(runId, jobId, 'event.publish.job.succeeded', () => this.events.publish({
       type: EVENT_NAMES.job.succeeded,
       runId,
       jobId,
       payload: { jobName: job?.jobName, durationMs: duration },
-    })
+    }))
+    for (const skippedJob of dispatch.skipped) {
+      this.logger.info('Job skipped: if condition false', { runId, jobId: skippedJob.id, condition: skippedJob.if })
+    }
+    for (const releasedJob of dispatch.jobs) {
+      await this.runAncillaryOperation(runId, releasedJob.id, 'scheduler.enqueue', () =>
+        this.scheduler.enqueueJob(runId, releasedJob, releasedJob.priority ?? 'normal'))
+    }
+  }
 
-    // Release jobs that were blocked waiting for this job to complete.
-    if (job?.jobName) {
-      const run = await this.stateStore.getRun(runId)
-      const exprCtx = this.buildExpressionContext(run)
-      const released = await this.stateStore.releaseBlockedJobs(runId, job.jobName)
-      for (const releasedJob of released) {
-        if (releasedJob.if && !this.evaluateJobIf(releasedJob.if, exprCtx)) {
-          await this.skipJob(runId, releasedJob)
-        } else {
-          await this.scheduler.enqueueJob(runId, releasedJob, releasedJob.priority ?? 'normal')
-          this.logger.info('Unblocked dependent job', { runId, jobId: releasedJob.id, unlockedBy: job.jobName })
-        }
+  private async persistSuccessfulDependents(
+    runId: string,
+    completedJob: JobRun,
+    exprCtx: ExpressionContext,
+    dispatch: { jobs: JobRun[]; skipped: JobRun[] },
+  ): Promise<void> {
+    const released = await this.stateStore.releaseBlockedJobs(runId, completedJob.jobName)
+    for (const releasedJob of released) {
+      if (releasedJob.if && !this.evaluateJobIf(releasedJob.if, exprCtx)) {
+        await this.stateStore.transitionJob(runId, releasedJob.id, 'success', (draft) => {
+          const now = new Date().toISOString()
+          draft.startedAt = now
+          draft.finishedAt = now
+        })
+        dispatch.skipped.push(releasedJob)
+        await this.persistSuccessfulDependents(runId, releasedJob, exprCtx, dispatch)
+      } else {
+        dispatch.jobs.push(releasedJob)
       }
     }
-
-    // Check if all jobs in run are completed - update run status
-    await this.checkRunCompletion(runId)
   }
 
   /** Build a minimal ExpressionContext from run state (for job-level if evaluation). */
@@ -640,32 +657,10 @@ export class WorkflowEngine {
     return evaluateExpression(raw, ctx)
   }
 
-  /** Mark a job as skipped (success) and release any jobs blocked on it. */
-  private async skipJob(runId: string, job: JobRun): Promise<void> {
-    const now = new Date().toISOString()
-    await this.stateStore.transitionJob(runId, job.id, 'success', (draft) => {
-      draft.startedAt = now
-      draft.finishedAt = now
-    })
-    this.logger.info('Job skipped: if condition false', { runId, jobId: job.id, condition: job.if })
-    // Release dependents of the skipped job (treat skip as success for DAG purposes)
-    const downstream = await this.stateStore.releaseBlockedJobs(runId, job.jobName)
-    const run = await this.stateStore.getRun(runId)
-    const exprCtx = this.buildExpressionContext(run)
-    for (const downstreamJob of downstream) {
-      if (downstreamJob.if && !this.evaluateJobIf(downstreamJob.if, exprCtx)) {
-        await this.skipJob(runId, downstreamJob)
-      } else {
-        await this.scheduler.enqueueJob(runId, downstreamJob, downstreamJob.priority ?? 'normal')
-        this.logger.info('Unblocked dependent job', { runId, jobId: downstreamJob.id, unlockedBy: job.jobName })
-      }
-    }
-  }
-
   /**
    * Check if all jobs in a run are completed and update run status accordingly.
    */
-  private async checkRunCompletion(runId: string): Promise<void> {
+  private async checkRunCompletion(runId: string, jobId: string): Promise<void> {
     const run = await this.getRun(runId)
     if (!run) {
       return
@@ -700,24 +695,22 @@ export class WorkflowEngine {
       })
       this.logger.info('Workflow run completed successfully', { runId })
 
-      // Track workflow completion
-      this.analytics?.track('workflow.run.completed', {
-        runId,
-        name: run.name,
-        jobCount: run.jobs.length,
-        status: 'success',
-      }).catch(() => {})
-
-      await this.events.publish({
-        type: EVENT_NAMES.run.finished,
-        runId,
-        payload: { status: 'success', name: run.name },
-      })
-
       if (updated) {
-        await this.snapshotTerminalRun(updated)
+        await this.runAncillaryOperation(runId, jobId, 'analytics.run.completed', async () => {
+          await this.analytics?.track('workflow.run.completed', {
+            runId, name: run.name, jobCount: run.jobs.length, status: 'success',
+          })
+        })
+        await this.runAncillaryOperation(runId, jobId, 'event.publish.run.finished', () => this.events.publish({
+          type: EVENT_NAMES.run.finished,
+          runId,
+          payload: { status: 'success', name: run.name },
+        }))
+        await this.runAncillaryOperation(runId, jobId, 'snapshot.create', () => this.snapshotTerminalRun(updated))
+        await this.runAncillaryOperation(runId, jobId, 'workflow.child.reconcile', async () => {
+          await this.reconcileChildInvocation(runId)
+        })
       }
-      await this.reconcileChildInvocation(runId)
     } else if (anyFailed) {
       // Surface the failing job's error at the run level so consumers (REST
       // /runs/:id, Studio, e2e) can show *why* the run failed without digging
@@ -739,24 +732,22 @@ export class WorkflowEngine {
       })
       this.logger.info('Workflow run failed', { runId })
 
-      // Track workflow failure
-      this.analytics?.track('workflow.run.completed', {
-        runId,
-        name: run.name,
-        jobCount: run.jobs.length,
-        status: 'failed',
-      }).catch(() => {})
-
-      await this.events.publish({
-        type: EVENT_NAMES.run.failed,
-        runId,
-        payload: { status: 'failed', name: run.name },
-      })
-
       if (updated) {
-        await this.snapshotTerminalRun(updated)
+        await this.runAncillaryOperation(runId, jobId, 'analytics.run.completed', async () => {
+          await this.analytics?.track('workflow.run.completed', {
+            runId, name: run.name, jobCount: run.jobs.length, status: 'failed',
+          })
+        })
+        await this.runAncillaryOperation(runId, jobId, 'event.publish.run.failed', () => this.events.publish({
+          type: EVENT_NAMES.run.failed,
+          runId,
+          payload: { status: 'failed', name: run.name },
+        }))
+        await this.runAncillaryOperation(runId, jobId, 'snapshot.create', () => this.snapshotTerminalRun(updated))
+        await this.runAncillaryOperation(runId, jobId, 'workflow.child.reconcile', async () => {
+          await this.reconcileChildInvocation(runId)
+        })
       }
-      await this.reconcileChildInvocation(runId)
     }
   }
 
@@ -1131,13 +1122,13 @@ export class WorkflowEngine {
         if (hasParkedJob) {
           await this.failAbandonedJobs(runId, abandonedJobIds, now)
           count++
-          await this.checkRunCompletion(runId)
+          await this.checkRunCompletion(runId, abandonedJobIds[0]!)
           return
         }
 
         await this.failAbandonedJobs(runId, abandonedJobIds, now)
         count++
-        await this.checkRunCompletion(runId)
+        await this.checkRunCompletion(runId, abandonedJobIds[0]!)
       }),
     )
 
@@ -1223,7 +1214,7 @@ export class WorkflowEngine {
   private async deadLetterJob(runId: string, jobId: string, error: Error): Promise<void> {
     this.logger.warn('Job dead-lettered after max retries', { runId, jobId })
 
-    const dlqKey = `workflow:dlq:${runId}:${jobId}`
+    const dlqKey = workflowDeadLetterCacheKey(runId, jobId)
     const run = await this.stateStore.getRun(runId)
     const job = run?.jobs.find((j) => j.id === jobId)
 
@@ -1315,17 +1306,7 @@ export class WorkflowEngine {
       }
     }
 
-    // Logged at error (not warn) because this silently disables
-    // `workflow runs restart --from-step` and `rerun --failed-only` for
-    // this run — replayRun() will report a generic "no snapshot" with no
-    // other trace of why.
-    await this.snapshotStorage.createSnapshot(run, stepOutputs, run.env ?? {}).catch((err) => {
-      this.logger.error(
-        'Failed to create run snapshot — restart --from-step and rerun --failed-only will not work for this run',
-        err instanceof Error ? err : new Error(String(err)),
-        { runId: run.id, status: run.status },
-      )
-    })
+    await this.snapshotStorage.createSnapshot(run, stepOutputs, run.env ?? {})
   }
 
   async nextJob(): Promise<JobQueueEntry | null> {
