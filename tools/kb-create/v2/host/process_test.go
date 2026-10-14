@@ -278,18 +278,18 @@ func TestPortInUse(t *testing.T) {
 		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Meta["port"] != fmt.Sprint(f.port) || typed.Meta["pid"] == "" || typed.Meta["command"] == "" {
 			t.Fatalf("port diagnostic lacks owner details: %#v", err)
 		}
-		if !strings.Contains(typed.Hint, "kb-create apply") ||
+		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply")) ||
 			!strings.Contains(typed.Hint, typed.Meta["pid"].(string)) || !strings.Contains(typed.Hint, typed.Meta["command"].(string)) {
 			t.Fatalf("port hint omits the owning process or attempted command: %#v", err)
 		}
-		if !strings.Contains(typed.Hint, "--gateway-url") {
+		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply", "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
 			t.Fatalf("port hint omits explicit Gateway recovery: %#v", err)
 		}
 	}
 	planFailure := CheckPorts(plan, "plan")
 	var planDiagnostic *diag.Diag
 	if !errors.As(planFailure, &planDiagnostic) || planDiagnostic.Code != "KB_INSTALL_PORT_IN_USE" ||
-		!strings.Contains(planDiagnostic.Hint, "--gateway-url") || !strings.Contains(planDiagnostic.Hint, "kb-create plan") {
+		!strings.Contains(planDiagnostic.Hint, contracts.ShellCommand("kb-create", "plan", "--gateway-url", "http://127.0.0.1:"+strconv.Itoa(f.port+100))) {
 		t.Fatalf("plan port diagnostic does not suggest a Gateway address: %#v", planFailure)
 	}
 	_, err = startProcessForTest(t, f.runner, context.Background())

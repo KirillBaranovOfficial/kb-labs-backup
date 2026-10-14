@@ -752,9 +752,9 @@ func portInUseError(port, address, purpose string, owner portOwner, operation st
 	if purpose != "" {
 		message = "Port " + port + " required by " + purpose + " is already in use."
 	}
-	hint := "Stop the process using port " + port + ", then rerun `kb-create " + operation + "`."
+	hint := "Stop the process using port " + port + ", then rerun `" + contracts.ShellCommand("kb-create", operation) + "`."
 	if owner.PID != "" && owner.Command != "" {
-		hint = "Stop process " + owner.PID + " (" + owner.Command + ") using port " + port + ", then rerun `kb-create " + operation + "`."
+		hint = "Stop process " + owner.PID + " (" + owner.Command + ") using port " + port + ", then rerun `" + contracts.ShellCommand("kb-create", operation) + "`."
 	}
 	meta := map[string]string{"port": port, "pid": owner.PID, "command": owner.Command, "operation": operation}
 	if address != "" {
@@ -941,7 +941,7 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 		if operation == "plan" || operation == "apply" {
 			if plan.Host != nil {
 				if gatewayURL, suggestionErr := nextGatewayURL(plan.Host.HealthURL); suggestionErr == nil {
-					failure.Hint += " Use --gateway-url " + gatewayURL + " and rerun `kb-create " + operation + "`."
+					failure.Hint += " Use `" + contracts.ShellCommand("kb-create", operation, "--gateway-url", gatewayURL) + "`."
 				}
 			}
 		}

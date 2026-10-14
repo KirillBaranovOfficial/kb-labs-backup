@@ -2,12 +2,15 @@ package host
 
 import (
 	"errors"
-	"github.com/kb-labs/clikit/diag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/operationlock"
 	"github.com/kb-labs/create/v2/contracts"
 )
 
@@ -138,5 +141,33 @@ func TestOperationLockIgnoresUnownedFileContentsAndKeepsPath(t *testing.T) {
 	release()
 	if _, err := os.Stat(state.OperationLock()); err != nil {
 		t.Fatalf("the stable lock path must remain after release: %v", err)
+	}
+}
+
+func TestOperationLockFailuresKeepTheirCauseClass(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "unsupported platform", err: operationlock.ErrUnsupportedPlatform, code: contracts.CodeOperationLockUnsupported},
+		{name: "filesystem I/O", err: fmt.Errorf("%w: %w", operationlock.ErrIO, &os.PathError{Op: "open", Path: "operation.lock", Err: os.ErrPermission}), code: contracts.CodeHostStateDirUnwritable},
+		{name: "unknown cause", err: errors.New("unclassified lock failure"), code: "KB_RUNTIME_UNEXPECTED"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "launcher", "operation.lock")
+			failure := operationLockFailure(State{Dir: filepath.Dir(path)}, path, test.err)
+			if failure.Code != test.code {
+				t.Fatalf("diagnostic code = %s; want %s", failure.Code, test.code)
+			}
+			if !errors.Is(failure, test.err) {
+				t.Fatalf("diagnostic does not preserve cause %v", test.err)
+			}
+			if test.name == "unsupported platform" &&
+				(!strings.Contains(failure.Message, "Linux and macOS") || strings.Contains(failure.Hint, "permission") || strings.Contains(failure.Hint, "disk")) {
+				t.Fatalf("unsupported platform diagnosis is misleading: %#v", failure)
+			}
+		})
 	}
 }

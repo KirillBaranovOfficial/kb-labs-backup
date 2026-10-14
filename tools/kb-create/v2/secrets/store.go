@@ -283,7 +283,7 @@ func (store Store) writeRecord(lease *operationlock.Lease, record secretStoreRec
 	if !record.AdvanceFrom(current) {
 		return contracts.NewDiag(contracts.CodeSecretStateChanged,
 			"The installation secret state changed underneath this operation.",
-			"Rerun `kb-create apply --platform-root "+store.PlatformRoot+"` to apply changes to the current state.", nil)
+			"Rerun `"+staleWriteRerunCommand(store.PlatformRoot)+"` to apply changes to the current state.", nil)
 	}
 	data, err := secretstate.Encode(record)
 	if err != nil {
@@ -293,6 +293,10 @@ func (store Store) writeRecord(lease *operationlock.Lease, record secretStoreRec
 		return store.atomicWrite(path, data, 0o600)
 	}
 	return versionroot.AtomicWriteFile(path, data, 0o600)
+}
+
+func staleWriteRerunCommand(platformRoot string) string {
+	return contracts.ShellCommand("kb-create", "apply", "--platform-root", platformRoot)
 }
 
 func (store Store) readRecord() (secretStoreRecord, error) {
