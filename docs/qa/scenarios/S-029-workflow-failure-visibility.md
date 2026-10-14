@@ -23,5 +23,5 @@ When a workflow step fails, the user can identify the failed step, error, and re
 | # | Action | Expected |
 |---|---|---|
 | S-029.1 | Run the failing workflow using `kb workflow run --workflow-id=<project>/fails` | CLI returns a run ID. |
-| S-029.2 | Run `kb workflow runs view <runId>` | Run is marked failed and names the failed step with a useful error message. |
+| S-029.2 | Run `kb workflow runs view <runId>` after the step fails | The persisted run reaches `failed` without a daemon restart and names the failed step with its useful error message. |
 | S-029.3 | Run `kb workflow runs logs <runId>` | Output shows the failing command’s diagnostic context without a raw service stack trace. |

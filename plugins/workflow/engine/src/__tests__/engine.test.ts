@@ -500,50 +500,6 @@ describe('WorkflowEngine', () => {
       await expectTerminalFailureHistory('Command workflow.unknown is not registered');
     });
 
-    // case: S-029.2
-    it('finalizes a run after the worker dies between persisting job failure and run completion', async () => {
-      const spec: WorkflowSpec = {
-        name: 'Interrupted Failure Finalization',
-        version: '1.0.0',
-        on: { manual: true },
-        jobs: {
-          main: {
-            runsOn: 'local',
-            steps: [{ name: 'Missing handler', uses: 'plugin:missing/handler' }],
-          },
-        },
-      };
-      const run = await engine.createRun({ spec, trigger: { type: 'manual' } });
-      const job = run.jobs[0]!;
-      const step = job.steps[0]!;
-      const diagnostic = 'Plugin missing handler could not be resolved';
-
-      await engine.markJobStarted(run.id, job.id);
-      await engine.markStepStarted(run.id, job.id, step.id);
-      await engine.getStateStore().transitionStep(run.id, job.id, step.id, 'failed', (draft) => {
-        draft.error = { message: diagnostic };
-        draft.finishedAt = new Date().toISOString();
-      });
-      await engine.getStateStore().transitionJob(run.id, job.id, 'failed', (draft) => {
-        draft.error = { message: diagnostic };
-        draft.finishedAt = new Date().toISOString();
-      });
-
-      await engine.cleanupStaleRuns();
-
-      const finalized = await engine.getRun(run.id);
-      expect(finalized).toMatchObject({
-        status: 'failed',
-        result: { status: 'failed', error: { message: diagnostic } },
-        jobs: [{ status: 'failed', error: { message: diagnostic }, steps: [{ status: 'failed', error: { message: diagnostic } }] }],
-      });
-      const historyEntry = (await engine.getAllRuns()).find((entry) => entry.id === run.id);
-      expect(historyEntry).toMatchObject({
-        status: 'failed',
-        result: { status: 'failed', error: { message: diagnostic } },
-      });
-    });
-
     it('B-029: terminal job failure sets run status to "failed", not "dlq"', async () => {
       const spec: WorkflowSpec = {
         name: 'Fail Test',

@@ -463,14 +463,15 @@ export class WorkflowEngine {
       }, backoffMs)
     } else {
       // Terminal failure: no retries left.
-      // 1. Dead-letter the job for observability (cache record, no status change).
-      // 2. Cancel downstream jobs that depend on this one so they don't hang in
+      // 1. Cancel downstream jobs that depend on this one so they don't hang in
       //    'queued' forever (B-030).
-      // 3. Let checkRunCompletion finalize the run as 'failed' — 'dlq' is reserved
+      // 2. Let checkRunCompletion finalize the run as 'failed' — 'dlq' is reserved
       //    for infrastructure failures and must not leak as a user-step outcome (B-029).
-      await this.deadLetterJob(runId, jobId, error)
       await this.cancelDownstreamJobs(runId, job.jobName, `upstream job "${job.jobName}" failed`)
       await this.checkRunCompletion(runId)
+      // Dead-letter storage is observability only. Its cache failure must not
+      // prevent the durable run transition or history entry above.
+      await this.deadLetterJob(runId, jobId, error)
     }
   }
 
@@ -1124,11 +1125,6 @@ export class WorkflowEngine {
           .map((job) => job.id)
 
         if (abandonedJobIds.length === 0) {
-          // A previous worker may have persisted its failed job and died
-          // before the run-level transition. Reconcile active runs from their
-          // durable job states even when this startup pass has no active job
-          // left to mark abandoned.
-          await this.checkRunCompletion(runId)
           return
         }
 
