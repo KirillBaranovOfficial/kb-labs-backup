@@ -1059,7 +1059,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
-      "message": "Plugin command {command} in {plugin} failed unexpectedly.",
+      "message": "Plugin command {command} in {plugin} {failureReason}.",
       "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack, then fix the reported plugin issue."
     },
     {
@@ -1069,7 +1069,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Command {command} is hidden: plugin {plugin} is shadowed by a built-in command.",
-      "hint": "Run \"kb plugin doctor\" for details."
+      "hint": "Run \"kb marketplace plugins doctor\" for details."
     },
     {
       "code": "KB_PLUGIN_CONTRACT_VIOLATION",
@@ -1114,7 +1114,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Plugin {plugin} could not be loaded.",
-      "hint": "Run \"kb plugin doctor\" to see the manifest or dependency problem."
+      "hint": "Run \"kb marketplace plugins doctor\" to see the manifest or dependency problem."
     },
     {
       "code": "KB_PLUGIN_NAMESPACE_RESERVED",
@@ -1141,7 +1141,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Plugin {plugin} was not found in the registry.",
-      "hint": "kb marketplace search",
+      "hint": "Run \"kb marketplace plugins list\" to verify the package name and installed plugins, then retry.",
       "httpStatus": 404
     },
     {
@@ -1170,7 +1170,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Plugin {plugin} loads its own copy of the platform package {package}.",
-      "hint": "Make the platform package a peer dependency of the plugin and reinstall it; run \"kb plugin doctor\" for details."
+      "hint": "Make the platform package a peer dependency of the plugin and reinstall it; run \"kb marketplace plugins doctor\" for details."
     },
     {
       "code": "KB_PLUGIN_SDK_INCOMPATIBLE",
@@ -1285,7 +1285,7 @@
       "severity": "error",
       "retryable": true,
       "message": "The project registry is locked by another KB Labs process (waited {timeoutMs} ms).",
-      "hint": "Retry in a moment; if no other kb command is running, remove the stale projects.json.lock file next to the registry.",
+      "hint": "Retry in a moment; if no other KB Labs command is running, remove the stale projects.json.lock file next to the registry.",
       "httpStatus": 503
     },
     {
@@ -1539,7 +1539,7 @@
       "severity": "error",
       "retryable": false,
       "message": "The command could not complete.",
-      "hint": "Run `kb <command> --help` to review required inputs, then rerun the command."
+      "hint": "Run `kb --help` to review available commands, then rerun the command."
     },
     {
       "code": "KB_RUNTIME_CONFIRMATION_REQUIRED",
@@ -1597,7 +1597,7 @@
       "severity": "error",
       "retryable": false,
       "message": "The cron scheduler is unavailable.",
-      "hint": "Run \"kb status\" to inspect service health, then retry after the workflow service is ready.",
+      "hint": "Run \"kb workflow health\" to inspect service health, then retry after the workflow service is ready.",
       "httpStatus": 503
     },
     {
@@ -1685,7 +1685,7 @@
       "severity": "error",
       "retryable": false,
       "message": "The requested job was not found.",
-      "hint": "Run \"kb workflow jobs list\" to inspect available jobs.",
+      "hint": "Run \"kb workflow job list\" to inspect available jobs.",
       "httpStatus": 404
     },
     {
@@ -1725,15 +1725,6 @@
       "retryable": false,
       "message": "Argument {argument} must match expected {expected}.",
       "hint": "Call tools/list to inspect the tool inputSchema, correct {argument}, and retry."
-    },
-    {
-      "code": "KB_RUNTIME_MCP_TOOL_FAILED",
-      "area": "runtime",
-      "stage": "run",
-      "severity": "error",
-      "retryable": false,
-      "message": "MCP tool {tool} failed during execution.",
-      "hint": "Run \"kb logs query\" to inspect project runtime logs, fix the reported issue, then retry the tool."
     },
     {
       "code": "KB_RUNTIME_MCP_TOOL_FORBIDDEN",
@@ -1799,7 +1790,7 @@
       "severity": "error",
       "retryable": false,
       "message": "The workflow API could not complete the request.",
-      "hint": "Run \"kb status\" to inspect service health, then retry after correcting the reported issue.",
+      "hint": "Run \"kb workflow health\" to inspect service health, then retry after correcting the reported issue.",
       "httpStatus": 500
     },
     {
@@ -1849,7 +1840,7 @@
       "severity": "error",
       "retryable": false,
       "message": "The requested workflow was not found.",
-      "hint": "Run \"kb workflow workflows list\" to inspect available workflow IDs.",
+      "hint": "Run \"kb workflow defs list\" to inspect available workflow IDs.",
       "httpStatus": 404
     },
     {

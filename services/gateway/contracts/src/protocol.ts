@@ -84,11 +84,7 @@ export const ResultMessageSchema = z.object({
 export const ErrorMessageSchema = z.object({
   type: z.literal('error'),
   requestId: z.string(),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    retryable: z.boolean(),
-  }),
+  error: z.unknown(),
 });
 
 // Host → Gateway: heartbeat
@@ -140,9 +136,7 @@ export const ExecutionErrorEventSchema = z.object({
   type: z.literal('execution:error'),
   requestId: z.string(),
   executionId: z.string(),
-  code: z.string(),
-  message: z.string(),
-  retryable: z.boolean(),
+  error: z.unknown(),
   attempt: z.number().int().optional(),
   maxAttempts: z.number().int().optional(),
 });
@@ -204,7 +198,7 @@ export const SerializedErrorSchema = z.object({
   message: z.string(),
   retryable: z.boolean(),
   details: z.unknown().optional(),
-});
+}).passthrough();
 
 /** Adapter call context — propagated from host to platform */
 export const AdapterCallContextSchema = z.object({

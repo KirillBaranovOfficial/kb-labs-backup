@@ -679,7 +679,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                  lambda: _assert_no_network_defaults(rows_for(project_a), assert_doctor), cases=["S-054.4"])
 
     journey.step("implicit OpenAI reports missing credentials on use", "adapter",
-                 lambda: _assert_missing_llm(runner, base_env, project_a, cli), cases=["S-054.5"])
+                 lambda: _assert_missing_llm(runner, base_env, project_a, cli), cases=["S-054.5", "S-051.5"])
     journey.step("implicit OpenAI list and doctor report its missing key", "adapter",
                  lambda: _assert_missing_openai_key(runner, base_env, project_a, platform_root, cli), cases=["S-054.8"])
     def assert_missing_vector_store() -> None:
@@ -912,12 +912,14 @@ def _assert_missing_llm(runner: CommandRunner, env: dict[str, str], project: Pat
     original_file = target.read_bytes()
     try:
         target.write_bytes(original_file + b"\n<!-- adapter-default-case -->\n")
-        config_command = ["config", "set", "commit.llm.enabled", "true", "--json"]
-        _json(cli(config_command), config_command)
         command = ["commit", "generate", "--json"]
         result = runner(["kb", *command], cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
-        if result.returncode == 0 or _json(result, command).get("error", {}).get("code") != "KB_ADAPTER_CREDENTIALS_MISSING":
+        payload = _json(result, command)
+        error = payload.get("error")
+        if result.returncode == 0 or not isinstance(error, dict) or error.get("code") != "KB_ADAPTER_CREDENTIALS_MISSING":
             raise RuntimeError("implicit OpenAI LLM did not return KB_ADAPTER_CREDENTIALS_MISSING without a key")
+        if not error.get("correlationId") or not error.get("hint") or error.get("retryable") is not False:
+            raise RuntimeError("missing-credential platform error lost its envelope fields in the plugin handler")
     finally:
         target.write_bytes(original_file)
         if original_config is None:
@@ -932,8 +934,6 @@ def _assert_missing_openai_key(runner: CommandRunner, env: dict[str, str], proje
     llm = next((row for row in rows if isinstance(row, dict) and row.get("slot") == "llm"), None)
     if not isinstance(llm, dict) or llm.get("implementation") != "@kb-labs/adapters-openai" or llm.get("credentialsStatus") != "missing":
         raise RuntimeError("adapter list does not report the implicit OpenAI provider's missing credentials")
-    enable = ["config", "set", "commit.llm.enabled", "true", "--json"]
-    _json(cli(enable), enable)
     command = ["commit", "generate", "--json"]
     result = runner(["kb", *command], cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
     if result.returncode == 0:

@@ -14,6 +14,7 @@ import { SubprocessRunnerAdapter } from './adapters/index.js';
 import { BrokeredProcessExecutor, createDefaultProcessExecutor } from '@kb-labs/plugin-runtime';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
+import { normalizePluginHandlerFailure, type ILogger } from '@kb-labs/core-platform';
 
 export function ensureHostProcessExecutor(platform: BackendOptions['platform']): void {
   const host = platform as BackendOptions['platform'] & IPlatformAdapters & {
@@ -63,24 +64,27 @@ export function createExecutionBackend(options: BackendOptions): ExecutionBacken
     ? detectMode()
     : options.mode;
 
+  let backend: ExecutionBackend;
   switch (mode) {
     case 'in-process':
-      return new InProcessBackend({
+      backend = new InProcessBackend({
         platform: options.platform,
         uiProvider: options.uiProvider,
         pluginInvoker: options.pluginInvoker,
       });
+      break;
 
     case 'subprocess':
-      return new SubprocessBackend({
+      backend = new SubprocessBackend({
         platform: options.platform,
         runner: new SubprocessRunnerAdapter(),
         uiProvider: options.uiProvider,
       });
+      break;
 
     // eslint-disable-next-line sonarjs/no-duplicate-string
     case 'worker-pool':
-      return new WorkerPoolBackend({
+      backend = new WorkerPoolBackend({
         platform: options.platform,
         platformTransport: options.platformTransport,
         uiProvider: options.uiProvider,
@@ -91,6 +95,7 @@ export function createExecutionBackend(options: BackendOptions): ExecutionBacken
         maxConcurrentPerPlugin: options.workerPool?.maxConcurrentPerPlugin,
         warmup: options.workerPool?.warmup ?? { mode: 'none', topN: 5, maxHandlers: 20 },
       });
+      break;
 
     case 'remote': {
       if (!options.remote?.transport) {
@@ -100,12 +105,58 @@ export function createExecutionBackend(options: BackendOptions): ExecutionBacken
         transport: options.remote.transport,
         workspaceRootOnHost: options.remote.workspaceRootOnHost,
       });
-      return createRoutingBackend(options, remoteBackend);
+      backend = createRoutingBackend(options, remoteBackend);
+      break;
     }
 
     default:
       throw new Error(`Unknown execution mode: ${mode}`);
   }
+  return new NormalizingExecutionBackend(backend, options.platform.logger);
+}
+
+/** Every execution backend crosses this owner before a result reaches a surface. */
+class NormalizingExecutionBackend implements ExecutionBackend {
+  constructor(private readonly backend: ExecutionBackend, private readonly logger: ILogger) {}
+
+  async execute(request: ExecutionRequest, options?: Parameters<ExecutionBackend['execute']>[1]) {
+    let result;
+    try {
+      result = await this.backend.execute(request, options);
+    } catch (error) {
+      result = {
+        ok: false as const,
+        error,
+        executionTimeMs: 0,
+      };
+    }
+    if (result.ok) return result;
+
+    const descriptor = request.descriptor;
+    const correlationId = descriptor.requestId || request.executionId;
+    const hostType = descriptor.hostType;
+    const error = normalizePluginHandlerFailure(result.error, {
+      pluginId: descriptor.pluginId,
+      command: request.context?.commandPath ?? request.handlerRef,
+      correlationId,
+      logger: this.logger,
+      logContext: {
+        applicationId: 'kb-labs',
+        serviceId: `${hostType}-plugin-execution`,
+        instanceId: String(process.pid),
+        layer: hostType,
+      },
+      sensitiveValues: Object.entries(request.env ?? {})
+        .filter(([key]) => /(?:secret|token|password|credential|api[_-]?key)/i.test(key))
+        .map(([, value]) => value)
+        .filter((value): value is string => value !== undefined),
+    });
+    return { ...result, ok: false as const, error: { ...error } };
+  }
+
+  health() { return this.backend.health(); }
+  stats() { return this.backend.stats(); }
+  shutdown() { return this.backend.shutdown(); }
 }
 
 /**

@@ -62,9 +62,7 @@ export interface ExecutionErrorEvent {
   type: 'execution:error';
   requestId: string;
   executionId: string;
-  code: string;
-  message: string;
-  retryable: boolean;
+  error: unknown;
   attempt?: number;
   maxAttempts?: number;
 }

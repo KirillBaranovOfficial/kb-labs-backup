@@ -3456,6 +3456,9 @@ importers:
 
   plugins/host-agent/core:
     dependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../../core/platform
       '@kb-labs/gateway-contracts':
         specifier: workspace:*
         version: link:../../../services/gateway/contracts

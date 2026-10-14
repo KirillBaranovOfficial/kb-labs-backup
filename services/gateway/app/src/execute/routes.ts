@@ -16,7 +16,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { ExecuteRequestSchema, type ExecutionEventMessage } from '@kb-labs/gateway-contracts';
-import { logDiagnosticEvent, type ILogger } from '@kb-labs/core-platform';
+import { logDiagnosticEvent, normalizePluginHandlerFailure, type ILogger } from '@kb-labs/core-platform';
 import type { CancellationReason } from '@kb-labs/core-contracts';
 import { globalDispatcher } from '../hosts/dispatcher.js';
 import { executionRegistry } from './execution-registry.js';
@@ -156,33 +156,28 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
           durationMs: Date.now() - startTime,
         });
       } else {
-        const message = err instanceof Error ? err.message : String(err);
-        logDiagnosticEvent(logger, {
-          domain: 'service',
-          event: 'gateway.execution.dispatch',
-          level: 'error',
-          reasonCode: 'execution_dispatch_failed',
-          message: 'Gateway execution dispatch failed',
-          outcome: 'failed',
-          error: err instanceof Error ? err : new Error(String(err)),
-          serviceId: 'gateway',
-          evidence: {
-            namespaceId: auth.namespaceId,
-            executionId,
-            requestId,
-            pluginId,
-            handlerRef,
-            hostId,
+        const envelope = normalizePluginHandlerFailure(err, {
+          pluginId,
+          command: handlerRef,
+          correlationId: requestId,
+          logger,
+          logContext: {
+            applicationId: 'gateway',
+            serviceId: 'gateway',
+            instanceId: String(process.pid),
+            layer: 'gateway',
           },
+          sensitiveValues: Object.entries(process.env)
+            .filter(([key]) => /(?:secret|token|password|credential|api[_-]?key)/i.test(key))
+            .map(([, value]) => value)
+            .filter((value): value is string => value !== undefined),
         });
 
         writeEvent({
           type: 'execution:error',
           requestId,
           executionId,
-          code: 'EXECUTION_FAILED',
-          message,
-          retryable: false,
+          error: envelope,
         });
 
         writeEvent({

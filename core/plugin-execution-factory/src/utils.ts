@@ -94,7 +94,12 @@ export function normalizeError(error: unknown): ExecutionError {
       const envelope = createErrorEnvelope('KB_PLUGIN_ABORTED', { cause: error.message });
       return { ...envelope, stack: error.stack };
     }
-    const envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED');
+    const details = error instanceof TimeoutError
+      ? { failureReason: 'timed out' }
+      : error.code === 'WORKER_CRASHED'
+        ? { failureReason: 'execution process crashed' }
+        : undefined;
+    const envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', details ? { details } : {});
     return { ...envelope, stack: error.stack };
   }
   if (error instanceof Error) {

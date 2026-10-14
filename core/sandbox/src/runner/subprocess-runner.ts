@@ -735,7 +735,7 @@ export function createSubprocessRunner(config: SandboxConfig): SandboxRunner {
             const result: ExecutionResult<TOutput> = {
               ok: false,
               error: {
-                code: payload.code || 'HANDLER_ERROR',
+                code: payload.code || 'KB_RUNTIME_UNEXPECTED',
                 message: payload.message || 'Handler execution failed',
                 stack: payload.stack,
               },

@@ -22,6 +22,7 @@ export const LOG_CONTEXT_FIELDS = [
   "pluginId",
   "component",
   "operation",
+  "correlationId",
   "requestId",
   "traceId",
   "executionId",
