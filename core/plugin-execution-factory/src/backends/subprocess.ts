@@ -53,7 +53,7 @@ import { randomBytes } from 'node:crypto';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import { logDiagnosticEvent } from '@kb-labs/core-platform';
 import type {
-  ExecutionBackend,
+  RawExecutionBackend,
   ExecutionRequest,
   ExecutionResult,
   ExecuteOptions,
@@ -223,7 +223,7 @@ export interface SubprocessBackendOptions {
  * - No concurrency control
  * - No warmup support
  */
-export class SubprocessBackend implements ExecutionBackend {
+export class SubprocessBackend implements RawExecutionBackend {
   private _stats: ExecutionStats = {
     totalExecutions: 0,
     successCount: 0,

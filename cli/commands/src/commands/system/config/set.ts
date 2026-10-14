@@ -116,10 +116,18 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         throw new AdapterProjectScopeError();
       }
       if (scope === 'project' && (segments[0] !== 'plugins' || segments.length < 3)) {
+        const correctedPath = `plugins.${key}`;
+        const correctedCommand = typeof value === 'boolean' || typeof value === 'number'
+          ? `kb config set ${correctedPath} ${String(value)}`
+          : undefined;
         throw new ConfigWriteError(
           'KB_CONFIG_INVALID',
           'Project scope accepts plugin settings under plugins.<configSection>.<key>',
-          { path: key },
+          {
+            path: key,
+            reason: 'project-scope-path',
+            ...(correctedCommand ? { command: correctedCommand } : {}),
+          },
         );
       }
 

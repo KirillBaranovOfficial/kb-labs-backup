@@ -90,7 +90,8 @@ class MarketplaceStepTests(unittest.TestCase):
             with self.subTest(json_mode=json_mode), self.assertRaises(AssertionError):
                 validate_shared_failure(subprocess.CompletedProcess(
                     ["kb", "marketplace", "install"], 0, "{}", ""), json_mode=json_mode,
-                    code="KB_PLUGIN_NOT_FOUND", message="missing", hint="kb marketplace search")
+                    code="KB_PLUGIN_NOT_FOUND", message="missing",
+                    hint='Check the exact package name and package source. If available, run `kb marketplace install @kb-labs/not-published`; `kb marketplace plugins list` shows installed plugins.')
 
     def test_shared_error_validator_accepts_json_envelope_and_human_recovery_hint(self):
         message = "Adapter package x is not installed on this platform."
@@ -387,7 +388,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/not-published":
                     payload = {"ok": False, "error": {"code": "KB_PLUGIN_NOT_FOUND",
                         "message": "Plugin @kb-labs/not-published was not found in the registry.",
-                        "hint": "kb marketplace search"}}
+                        "hint": 'Check the exact package name and package source. If available, run `kb marketplace install @kb-labs/not-published`; `kb marketplace plugins list` shows installed plugins.'}}
                     if "--json" in args:
                         return subprocess.CompletedProcess(command, 1, json.dumps(payload), "")
                     error = payload["error"]

@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import type { ILogger } from "@kb-labs/core-platform";
+import { ErrorEnvelopeError } from "@kb-labs/core-platform";
 import {
   DEFAULT_PERMISSIONS,
   type EventStreamInput,
@@ -89,71 +90,31 @@ export async function mountEventStreams(
             timeoutMs: declaration.timeoutMs ?? options.defaultTimeoutMs,
           });
           if (!result.ok) {
-            throw new Error(
-              result.error?.message ?? "Event stream handler failed",
-            );
+            throw new ErrorEnvelopeError(result.error.envelope);
           }
         };
         stream.onError((error) => {
           void execute({ event: "error", error, sender: stream }).catch(
             (handlerError) => {
-              options.logger.error(
-                "Plugin SSE error handler failed",
-                handlerError instanceof Error
-                  ? handlerError
-                  : new Error(String(handlerError)),
-                {
-                  pluginId: manifest.id,
-                  path,
-                  event: "sse.plugin.error_handler_failed",
-                },
-              );
+              if (handlerError instanceof ErrorEnvelopeError) {
+                stream.send("error", handlerError.envelope);
+              } else {
+                options.logger.error("SSE error handler transport failed", handlerError instanceof Error ? handlerError : new Error(String(handlerError)), { pluginId: manifest.id, path });
+              }
             },
           );
         });
         try {
           await execute({ event: "connect", sender: stream });
         } catch (error) {
-          options.logger.error(
-            "Plugin SSE connect failed",
-            error instanceof Error ? error : new Error(String(error)),
-            {
-              pluginId: manifest.id,
-              path,
-              event: "sse.plugin.connect_failed",
-            },
-          );
-          void execute({
-            event: "error",
-            error: error instanceof Error ? error : new Error(String(error)),
-            sender: stream,
-          }).catch((handlerError) => {
-            options.logger.error(
-              "Plugin SSE error handler failed",
-              handlerError instanceof Error
-                ? handlerError
-                : new Error(String(handlerError)),
-              {
-                pluginId: manifest.id,
-                path,
-                event: "sse.plugin.error_handler_failed",
-              },
-            );
-          });
+          if (!(error instanceof ErrorEnvelopeError)) throw error;
+          stream.send("error", error.envelope);
           stream.close("handler_error");
           return;
         }
         stream.onCleanup(() => {
           void execute({ event: "disconnect" }).catch((error) => {
-            options.logger.error(
-              "Plugin SSE disconnect handler failed",
-              error instanceof Error ? error : new Error(String(error)),
-              {
-                pluginId: manifest.id,
-                path,
-                event: "sse.plugin.disconnect_failed",
-              },
-            );
+            if (!(error instanceof ErrorEnvelopeError)) options.logger.error("SSE disconnect transport failed", error instanceof Error ? error : new Error(String(error)), { pluginId: manifest.id, path });
           });
         });
         await stream.closed;

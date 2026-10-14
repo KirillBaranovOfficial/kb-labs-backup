@@ -20,7 +20,6 @@ import { noopUI } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
-import { normalizePluginHandlerFailure } from '@kb-labs/core-platform';
 import { callOutput } from './output-capture.js';
 import type { McpTool } from './tool-builder.js';
 
@@ -112,25 +111,11 @@ export async function callTool(
 
   const output = lines.join('\n');
   if (exitCode === 0) return { success: true, output, exitCode: 0 };
+  if (!error) throw new Error(`MCP tool ${tool.name} exited ${exitCode} without a normalized error envelope.`);
   return {
     success: false,
     output,
     exitCode,
-    error: error ?? normalizePluginHandlerFailure(
-      new Error(`MCP tool ${tool.name} failed without a command error envelope.`),
-      {
-        pluginId: tool.pluginId,
-        command: tool.name,
-        correlationId: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        logger: container.logger,
-        logContext: {
-          applicationId: 'mcp',
-          serviceId: 'mcp',
-          instanceId: String(process.pid),
-          layer: 'mcp',
-        },
-        sensitiveValues: [],
-      },
-    ),
+    error,
   };
 }

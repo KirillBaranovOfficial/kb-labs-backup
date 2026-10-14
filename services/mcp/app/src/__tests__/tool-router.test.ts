@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
+import { createErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import type { McpTool } from '../mcp/tool-builder.js';
 import { callOutput } from '../mcp/output-capture.js';
 
@@ -51,7 +52,11 @@ describe('callTool', () => {
   });
 
   it('reports failure when the command exits non-zero', async () => {
-    executeCommandV3.mockResolvedValue(1);
+    const error = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId: 'mcp-failure-correlation' });
+    executeCommandV3.mockImplementation(async (options: { onError?: (error: ErrorEnvelope) => void }) => {
+      options.onError?.(error);
+      return 1;
+    });
     const result = await callTool(tool, {}, 'tenant1', resolvePlatform);
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(1);

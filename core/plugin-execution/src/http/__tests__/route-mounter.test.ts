@@ -1,9 +1,10 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { mountRoutes } from '../route-mounter.js';
-import type { ExecutionBackend, ExecutionResult } from '../../types.js';
+import type { ExecutionBackend, NormalizedExecutionResult } from '../../types.js';
 
-function backendReturning(result: ExecutionResult): ExecutionBackend {
+function backendReturning(result: NormalizedExecutionResult): ExecutionBackend {
   return {
     async execute() {
       return result;
@@ -40,7 +41,16 @@ it('wraps plugin REST success payloads in the shared UX result envelope', async 
 // case: S-203.2
 it('returns a shared safe error envelope for plugin REST failures', async () => {
   const server = Fastify();
-  await mountRoutes(server, manifest, { ...options, backend: backendReturning({ ok: false, error: { message: 'secret stack detail', code: 'VALIDATION_ERROR' }, executionTimeMs: 1 }) });
+  const envelope = createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+    message: 'The request is invalid.',
+    hint: 'Correct the request and retry.',
+    correlationId: 'viewer-test-request',
+  });
+  await mountRoutes(server, manifest, { ...options, backend: backendReturning({
+    ok: false,
+    error: { normalized: true, envelope, code: envelope.code, message: envelope.message },
+    executionTimeMs: 1,
+  }) });
 
   const response = await server.inject({ method: 'GET', url: '/index', headers: { 'x-request-id': 'viewer-test-request' } });
   const body = response.json();

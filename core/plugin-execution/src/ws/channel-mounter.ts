@@ -14,6 +14,7 @@ import type {
   WSInput,
 } from '@kb-labs/plugin-contracts';
 import { DEFAULT_PERMISSIONS } from '@kb-labs/plugin-contracts';
+import { ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { ExecutionBackend } from '../types.js';
 import { connectionRegistry } from './connection-registry.js';
 import { createWSSender } from './sender.js';
@@ -200,7 +201,7 @@ export async function mountWebSocketChannels(
           });
           // Propagate backend errors so onConnect catch block can close the socket
           if (!result.ok) {
-            throw new Error(result.error?.message ?? 'Handler execution failed');
+            throw new ErrorEnvelopeError(result.error.envelope);
           }
         };
 
@@ -261,31 +262,22 @@ export async function mountWebSocketChannels(
             );
           } catch (error) {
             transportStats.handlerErrors += 1;
-            const errMessage = error instanceof Error ? error.message : String(error);
-            const errStack = error instanceof Error ? error.stack : undefined;
-            connectionLogger.error(
-              {
-                err: error,
-                errorMessage: errMessage,
-                errorStack: errStack,
-                plugin: manifest.id,
-                channel: channel.path,
-                connectionId,
-              },
-              `[ws] onMessage failed — plugin "${manifest.id}", channel "${channel.path}": ${errMessage}`
-            );
+            if (error instanceof ErrorEnvelopeError) {
+              await sender.send({ type: 'error', payload: error.envelope, timestamp: Date.now() });
+            }
             const errorInput: WSInput = {
               event: 'error',
-              error: error as Error,
+              error: error instanceof Error ? error : new Error('WebSocket handler failed.'),
               sender,
             };
             try {
               await executeChannelHandler(errorInput);
             } catch (err) {
-              connectionLogger.error(
-                { err, plugin: manifest.id, channel: channel.path, connectionId },
-                `[ws] onError handler also failed — plugin "${manifest.id}", channel "${channel.path}"`
-              );
+              if (err instanceof ErrorEnvelopeError) {
+                await sender.send({ type: 'error', payload: err.envelope, timestamp: Date.now() });
+              } else {
+                connectionLogger.error({ err, plugin: manifest.id, channel: channel.path, connectionId }, '[ws] onError transport failed');
+              }
             }
           }
         };
@@ -313,19 +305,11 @@ export async function mountWebSocketChannels(
             connectDurationMs: Date.now() - connectedHandlerAt,
           }, '[ws] connection opened');
         } catch (error) {
-          const errMessage = error instanceof Error ? error.message : String(error);
-          const errStack = error instanceof Error ? error.stack : undefined;
-          connectionLogger.error(
-            {
-              err: error,
-              errorMessage: errMessage,
-              errorStack: errStack,
-              plugin: manifest.id,
-              channel: channel.path,
-              connectionId,
-            },
-            `[ws] onConnect failed — plugin "${manifest.id}", channel "${channel.path}": ${errMessage}`
-          );
+          if (error instanceof ErrorEnvelopeError) {
+            await sender.send({ type: 'error', payload: error.envelope, timestamp: Date.now() });
+          } else {
+            connectionLogger.error({ err: error, plugin: manifest.id, channel: channel.path, connectionId }, '[ws] onConnect transport failed');
+          }
           ws.close(1011, 'Handler error');
           connectionRegistry.unregister(connectionId);
           return;
@@ -353,10 +337,7 @@ export async function mountWebSocketChannels(
             await executeChannelHandler(disconnectInput);
           } catch (error) {
             transportStats.handlerErrors += 1;
-            connectionLogger.error(
-              { err: error, plugin: manifest.id, channel: channel.path, connectionId, code },
-              `[ws] onDisconnect failed — plugin "${manifest.id}", channel "${channel.path}"`
-            );
+            if (!(error instanceof ErrorEnvelopeError)) connectionLogger.error({ err: error, plugin: manifest.id, channel: channel.path, connectionId, code }, '[ws] onDisconnect transport failed');
           } finally {
             connectionLogger.info({
               event: 'websocket.connection.closed',
@@ -379,10 +360,11 @@ export async function mountWebSocketChannels(
             await executeChannelHandler(errorInput);
           } catch (err) {
             transportStats.handlerErrors += 1;
-            connectionLogger.error(
-              { err, plugin: manifest.id, channel: channel.path, connectionId },
-              `[ws] onError handler failed — plugin "${manifest.id}", channel "${channel.path}"`
-            );
+            if (err instanceof ErrorEnvelopeError) {
+              await sender.send({ type: 'error', payload: err.envelope, timestamp: Date.now() });
+            } else {
+              connectionLogger.error({ err, plugin: manifest.id, channel: channel.path, connectionId }, '[ws] onError transport failed');
+            }
           }
         });
       };

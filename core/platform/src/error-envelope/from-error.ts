@@ -192,7 +192,12 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
       });
     } catch (error) {
       if (isContractViolation(error)) {
-        return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', { ...options, message: error.message, hint: error.hint });
+        return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+          ...options,
+          message: error.message,
+          hint: error.hint,
+          details: { field: error.field },
+        });
       }
       throw error;
     }
@@ -219,6 +224,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
       return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
         message: error.message,
         hint: error.hint,
+        ...('field' in error && typeof error.field === 'string' ? { details: { field: error.field } } : {}),
       });
     }
     throw error;
@@ -227,6 +233,16 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
 
 /** Revalidates any envelope-shaped value through the single namespace contract. */
 export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+  const issues = validateErrorEnvelope(envelope);
+  if (issues.length > 0) {
+    const issue = issues[0]!;
+    return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+      ...options,
+      message: `Plugin returned malformed error field "${issue.field}": ${issue.reason}.`,
+      hint: 'Return a product error with a valid error envelope.',
+      details: { field: issue.field },
+    });
+  }
   try {
     const fields = {
       message: envelope.message,
@@ -256,6 +272,7 @@ export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEn
         ...options,
         message: cause.message,
         hint: cause.hint,
+        details: { field: cause.field },
       });
     }
     throw cause;
@@ -265,7 +282,8 @@ export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEn
 function assertCanonicalEnvelope(envelope: ErrorEnvelope): ErrorEnvelope {
   const problems = validateErrorEnvelope(envelope);
   if (problems.length > 0) {
-    throw productContractViolation(`Failure envelope is invalid: ${problems.join('; ')}.`);
+    const issue = problems[0]!;
+    throw productContractViolation(`Failure envelope field "${issue.field}" ${issue.reason}.`, issue.field);
   }
   return envelope;
 }
@@ -297,9 +315,10 @@ function getDetails(value: unknown): Record<string, string> | null | undefined {
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
-function isContractViolation(error: unknown): error is Error & { code: string; hint: string } {
+function isContractViolation(error: unknown): error is Error & { code: string; hint: string; field: string } {
   return error instanceof Error && 'code' in error && error.code === 'KB_PLUGIN_CONTRACT_VIOLATION'
-    && 'hint' in error && typeof error.hint === 'string';
+    && 'hint' in error && typeof error.hint === 'string'
+    && 'field' in error && typeof error.field === 'string';
 }
 
 export interface ProductErrorInput extends ToEnvelopeOptions {
@@ -313,16 +332,16 @@ export interface ProductErrorInput extends ToEnvelopeOptions {
 /** Builds and validates a product error for both thrown and returned failures. */
 export function createProductErrorEnvelope(input: ProductErrorInput): ErrorEnvelope {
   if (typeof input.code !== 'string' || !/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(input.code) || input.code.startsWith('KB_')) {
-    throw productContractViolation(`Product error code "${input.code}" must match <PLUGIN>_<CONDITION> and must not use the KB_ prefix.`);
+    throw productContractViolation(`Product error code "${input.code}" must match <PLUGIN>_<CONDITION> and must not use the KB_ prefix.`, 'code');
   }
   if (typeof input.message !== 'string' || input.message.length === 0) {
-    throw productContractViolation(`Product error "${input.code}" must include a non-empty message.`);
+    throw productContractViolation(`Product error "${input.code}" must include a non-empty message.`, 'message');
   }
   if (typeof input.hint !== 'string' || input.hint.length === 0) {
-    throw productContractViolation(`Product error "${input.code}" must include a non-empty hint.`);
+    throw productContractViolation(`Product error "${input.code}" must include a non-empty hint.`, 'hint');
   }
   if (typeof input.retryable !== 'boolean') {
-    throw productContractViolation(`Product error "${input.code}" must declare whether it is retryable.`);
+    throw productContractViolation(`Product error "${input.code}" must declare whether it is retryable.`, 'retryable');
   }
   if (input.details !== undefined && (typeof input.details !== 'object' || input.details === null || Array.isArray(input.details))) {
     throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
@@ -349,10 +368,11 @@ export function createProductErrorEnvelope(input: ProductErrorInput): ErrorEnvel
   return envelope;
 }
 
-function productContractViolation(message: string): Error & { code: string; hint: string } {
+function productContractViolation(message: string, field: string): Error & { code: string; hint: string; field: string } {
   return Object.assign(new Error(message), {
     code: 'KB_PLUGIN_CONTRACT_VIOLATION',
     hint: 'Return a product error with a <PLUGIN>_<CONDITION> code, message, hint, and flat string details.',
+    field,
   });
 }
 

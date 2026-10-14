@@ -11,7 +11,6 @@ import type {
   PlatformServices,
 } from "@kb-labs/plugin-contracts";
 import { wrapCliResult } from "@kb-labs/plugin-runtime";
-import { normalizePluginHandlerFailure } from "@kb-labs/core-platform";
 import type { ErrorEnvelope } from "@kb-labs/core-platform";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import type { ExecutionRequest } from "@kb-labs/plugin-execution-factory";
@@ -207,8 +206,7 @@ export async function executeCommandV3(
   // Prepare input
   const input = { argv, flags };
 
-  try {
-    // Resolve plugin root (required by ExecutionBackend). Prefer the
+  // Resolve plugin root (required by ExecutionBackend). Prefer the
     // caller-supplied pkgRoot — the CLI discovery layer already knows
     // exactly where the plugin lives and this is the only path that
     // handles project-scope plugins whose deps live outside cwd.
@@ -242,7 +240,7 @@ export async function executeCommandV3(
 
     // Handle execution result
     if (!result.ok) {
-      presentExecutionError(platform, ui, result.error, requestId, pluginId, commandPath, Boolean(flags.json), options.onError, env);
+      presentExecutionError(ui, result.error.envelope, Boolean(flags.json), options.onError);
       return 1;
     }
 
@@ -262,58 +260,23 @@ export async function executeCommandV3(
     };
     const cliResult = wrapCliResult(runResult, descriptor);
 
+    if (!cliResult.ok) {
+      throw new Error('Execution factory returned a successful result containing a command failure.');
+    }
     if (flags.json) {
-      if (cliResult.ok) {
-        ui.json({ ok: true, data: cliResult.result ?? null, ...(cliResult.meta === undefined ? {} : { meta: cliResult.meta }) });
-      } else {
-        presentExecutionError(platform, ui, cliResult.error, requestId, pluginId, commandPath, true, options.onError, env);
-      }
-    } else if (!cliResult.ok) {
-      presentExecutionError(platform, ui, cliResult.error, requestId, pluginId, commandPath, false, options.onError, env);
+      ui.json({ ok: true, data: cliResult.result ?? null, ...(cliResult.meta === undefined ? {} : { meta: cliResult.meta }) });
     }
 
     // Return exit code from wrapped result
-    return cliResult.exitCode;
-  } catch (error) {
-    presentExecutionError(platform, ui, error, requestId, pluginId, commandPath, Boolean(flags.json), options.onError, env);
-    return 1;
-  }
+  return cliResult.exitCode;
 }
 
 function presentExecutionError(
-  platform: PlatformServices,
   ui: UIFacade,
-  cause: unknown,
-  requestId: string,
-  pluginId: string,
-  commandPath: string,
+  error: ErrorEnvelope,
   jsonMode: boolean,
   onError?: (error: ErrorEnvelope) => void,
-  env: Record<string, string | undefined> = {},
 ): void {
-  const envelopeInput = typeof cause === 'object' && cause !== null && 'stack' in cause &&
-    'code' in cause && typeof cause.code === 'string'
-    ? {
-        ...Object.fromEntries(Object.entries(cause).filter(([key]) => key !== 'stack')),
-        ...('message' in cause && typeof cause.message === 'string' ? { message: cause.message } : {}),
-      }
-    : cause;
-  const error = normalizePluginHandlerFailure(envelopeInput, {
-    pluginId,
-    command: commandPath,
-    correlationId: requestId,
-    logger: platform.logger,
-    logContext: {
-      applicationId: 'cli',
-      serviceId: 'cli',
-      instanceId: String(process.pid),
-      layer: 'cli',
-    },
-    sensitiveValues: Object.entries(env)
-      .filter(([key]) => /(?:secret|token|password|credential|api[_-]?key)/i.test(key))
-      .map(([, value]) => value)
-      .filter((value): value is string => value !== undefined),
-  });
   onError?.(error);
   if (jsonMode) {
     ui.json({ ok: false, error });

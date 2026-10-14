@@ -1297,7 +1297,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Plugin {plugin} was not found in the registry.",
-      "hint": "Run \"kb marketplace plugins list\" to verify the package name and installed plugins, then retry."
+      "hint": "Check the exact package name and package source. If available, run `kb marketplace install {plugin}`; `kb marketplace plugins list` shows installed plugins.",
+      "httpStatus": 404
     },
     {
       "code": "KB_PLUGIN_NOT_INSTALLED",

@@ -16,7 +16,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { ExecuteRequestSchema, type ExecutionEventMessage } from '@kb-labs/gateway-contracts';
-import { logDiagnosticEvent, normalizePluginHandlerFailure, type ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, logDiagnosticEvent, type ILogger } from '@kb-labs/core-platform';
 import type { CancellationReason } from '@kb-labs/core-contracts';
 import { globalDispatcher } from '../hosts/dispatcher.js';
 import { executionRegistry } from './execution-registry.js';
@@ -156,22 +156,9 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
           durationMs: Date.now() - startTime,
         });
       } else {
-        const envelope = normalizePluginHandlerFailure(err, {
-          pluginId,
-          command: handlerRef,
-          correlationId: requestId,
-          logger,
-          logContext: {
-            applicationId: 'gateway',
-            serviceId: 'gateway',
-            instanceId: String(process.pid),
-            layer: 'gateway',
-          },
-          sensitiveValues: Object.entries(process.env)
-            .filter(([key]) => /(?:secret|token|password|credential|api[_-]?key)/i.test(key))
-            .map(([, value]) => value)
-            .filter((value): value is string => value !== undefined),
-        });
+        const envelope = err instanceof ErrorEnvelopeError
+          ? err.envelope
+          : createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId: requestId });
 
         writeEvent({
           type: 'execution:error',

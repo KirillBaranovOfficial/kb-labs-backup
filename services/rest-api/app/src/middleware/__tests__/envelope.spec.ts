@@ -187,7 +187,9 @@ describe('registerEnvelopeMiddleware', () => {
 
       const body = (await app.inject({ method: 'GET', url: '/detailed-error' })).json();
       expect(body.error.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
-      expect(body.error.details).toBeUndefined();
+      expect(body.error.message).toContain('must include a non-empty message');
+      expect(body.error.details).toMatchObject({ field: 'message' });
+      expect(JSON.stringify(body)).not.toContain('email');
     });
 
     it('should not expose internal trace fields', async () => {

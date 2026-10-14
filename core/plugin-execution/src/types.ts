@@ -21,6 +21,7 @@ export type {
 export type {
   ExecutionRequest,
   ExecutionResult,
+  NormalizedExecutionResult,
   ExecutionError,
   ExecutionErrorCode,
   ExecutionMetadata,

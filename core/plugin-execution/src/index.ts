@@ -34,6 +34,7 @@ export type {
   // Execution request/result
   ExecutionRequest,
   ExecutionResult,
+  NormalizedExecutionResult,
   ExecutionError,
   ExecutionErrorCode,
   ExecutionMetadata,
@@ -69,17 +70,6 @@ export { PROTOCOL_VERSION } from "./types.js";
 
 // Factory - re-exported from @kb-labs/plugin-execution-factory
 export { createExecutionBackend } from "@kb-labs/plugin-execution-factory";
-
-// Adapters - re-exported from @kb-labs/plugin-execution-factory
-export { SubprocessRunnerAdapter } from "@kb-labs/plugin-execution-factory";
-
-// Backends - re-exported from @kb-labs/plugin-execution-factory
-export {
-  InProcessBackend,
-  type InProcessBackendOptions,
-  WorkerPoolBackend,
-  type WorkerPoolBackendOptions,
-} from "@kb-labs/plugin-execution-factory";
 
 // Workspace
 export {

@@ -115,8 +115,13 @@ describe('RoutingBackend — workspace-agent routing', () => {
     }));
 
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('NO_HOST_AVAILABLE');
-    expect(result.error?.message).toContain('pinned');
+    expect(result.error).toMatchObject({
+      envelope: {
+        code: 'KB_RUNTIME_UNEXPECTED',
+        hint: 'Start a workspace agent that matches this target, then retry the command.',
+        details: { target: 'workspace-agent' },
+      },
+    });
   });
 
   it('skips workspace-agent routing when no hostResolver configured', async () => {

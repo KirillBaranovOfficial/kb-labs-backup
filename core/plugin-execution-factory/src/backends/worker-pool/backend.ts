@@ -8,7 +8,7 @@
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
-  ExecutionBackend,
+  RawExecutionBackend,
   ExecutionRequest,
   ExecutionResult,
   ExecuteOptions,
@@ -67,7 +67,7 @@ export interface WorkerPoolBackendOptions extends WorkerPoolOptions {
  * - Worker recycling (max requests, max uptime)
  * - Health checks with automatic replacement
  */
-export class WorkerPoolBackend implements ExecutionBackend {
+export class WorkerPoolBackend implements RawExecutionBackend {
   private pool: WorkerPool | null = null;
   private startTime = Date.now();
   private readonly config: WorkerPoolConfig;

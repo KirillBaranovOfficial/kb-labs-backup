@@ -19,9 +19,10 @@
  */
 
 import type { IExecutionTransport, IHostResolver } from '@kb-labs/core-contracts';
-import type { BackendOptions, ExecutionBackend, ExecutionRequest, ExecuteOptions, ExecutionResult } from './types.js';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
+import type { BackendOptions, ExecutionBackend, ExecutionRequest, ExecuteOptions, ExecutionResult, RawExecutionBackend } from './types.js';
 import { RemoteBackend } from './backends/remote.js';
-import { createExecutionBackend } from './factory.js';
+import { createExecutionBackend, createNormalizedExecutionBackend } from './factory.js';
 
 /**
  * Per-job context for both container provisioning and transport creation.
@@ -128,6 +129,7 @@ export function createIsolatedExecutionBackend(options: IsolatedBackendOptions):
       transport: buildTransport(ctx),
       workspaceRootOnHost,
     }),
+    options.localBackend.platform.logger,
     provisionEnvironment,
     hostResolver,
     buildTransportForHost
@@ -147,13 +149,14 @@ export function createIsolatedExecutionBackend(options: IsolatedBackendOptions):
  */
 function buildRoutingBackend(
   localBackend: ExecutionBackend,
-  remoteFactory: (ctx: RemoteJobContext) => ExecutionBackend,
+  remoteFactory: (ctx: RemoteJobContext) => RawExecutionBackend,
+  logger: BackendOptions['platform']['logger'],
   provisionEnvironment?: StrictIsolationOptions['provisionEnvironment'],
   hostResolver?: IHostResolver,
-  hostBackendFactory?: (hostId: string, namespaceId: string) => ExecutionBackend,
+  hostBackendFactory?: (hostId: string, namespaceId: string) => RawExecutionBackend,
   fallbackPolicy?: 'local' | 'error',
 ): ExecutionBackend {
-  return {
+  const router = {
     async execute(request: ExecutionRequest, execOptions?: ExecuteOptions) {
       const target = request.target;
       const namespaceId = target?.namespace ?? 'default';
@@ -172,12 +175,14 @@ function buildRoutingBackend(
         }
         // No host found — apply fallback policy
         if (fallbackPolicy === 'error') {
+          const envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+            message: `No workspace agent is available for target (strategy: ${target.hostSelection ?? 'any-matching'}).`,
+            hint: 'Start a workspace agent that matches this target, then retry the command.',
+            details: { target: 'workspace-agent' },
+          });
           const result: ExecutionResult = {
             ok: false,
-            error: {
-              message: `No workspace agent available for target (strategy: ${target.hostSelection ?? 'any-matching'})`,
-              code: 'NO_HOST_AVAILABLE',
-            },
+            error: { code: envelope.code, message: envelope.message, envelope },
             executionTimeMs: 0,
           };
           return result;
@@ -205,4 +210,5 @@ function buildRoutingBackend(
     stats: () => localBackend.stats(),
     shutdown: async () => localBackend.shutdown(),
   };
+  return createNormalizedExecutionBackend(router, logger);
 }

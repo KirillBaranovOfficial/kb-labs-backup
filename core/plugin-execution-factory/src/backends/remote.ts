@@ -15,7 +15,7 @@
  */
 
 import type {
-  ExecutionBackend,
+  RawExecutionBackend,
   ExecutionRequest,
   ExecutionResult,
   ExecuteOptions,
@@ -37,7 +37,7 @@ export interface RemoteBackendOptions {
   workspaceRootOnHost?: string;
 }
 
-export class RemoteBackend implements ExecutionBackend {
+export class RemoteBackend implements RawExecutionBackend {
   private readonly transport: IExecutionTransport;
   private readonly workspaceRootOnHost?: string;
 

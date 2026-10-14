@@ -6,7 +6,7 @@
 
 import type { ExecutionRequest } from "./execution-request.js";
 import type {
-  ExecutionResult,
+  NormalizedExecutionResult,
   ExecuteOptions,
 } from "./execution-response.js";
 
@@ -53,17 +53,17 @@ export interface ExecutionStats {
  * Implemented by backends in @kb-labs/plugin-execution.
  * Used by @kb-labs/core-runtime and CLI/REST hosts.
  */
-export interface IExecutionBackend<TDescriptor = unknown> {
+export interface IExecutionBackend<TDescriptor = unknown, TEnvelope = unknown> {
   /**
    * Execute a plugin handler.
    *
-   * Returns ExecutionResult on success, ExecutionError on failure.
-   * Never throws - all errors are caught and returned as ExecutionError.
+   * Returns a success result or the envelope normalized at the factory boundary.
+   * Never throws - failures are returned as NormalizedExecutionResult.
    */
   execute(
     request: ExecutionRequest<TDescriptor>,
     options?: ExecuteOptions,
-  ): Promise<ExecutionResult>;
+  ): Promise<NormalizedExecutionResult<TEnvelope>>;
 
   /**
    * Get backend health status.

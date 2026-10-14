@@ -3,7 +3,7 @@ import { noopUI } from '@kb-labs/plugin-contracts';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
-import { toErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createProductErrorEnvelope } from '@kb-labs/core-platform';
 import { executeCommandV3 } from './execute-command.js';
 
 describe('executeCommandV3 environment', () => {
@@ -38,25 +38,18 @@ describe('executeCommandV3 environment', () => {
 });
 
 describe('executeCommandV3 plugin command result output', () => {
-  it.each([
-    ['catalogued', Object.assign(new Error('Catalogued failure.'), {
-      code: 'KB_RUNTIME_COMMAND_FAILED',
-      hint: 'Fix the failure and retry.',
-      details: { resource: 'widget-1' },
-    })],
-    ['plain Error', new Error('Unexpected failure.')],
-    ['string', 'Unexpected string failure'],
-    ['invalid details', Object.assign(new Error('Bad details.'), {
-      code: 'KB_RUNTIME_COMMAND_FAILED',
-      details: { report: '{"errors":[]}' },
-    })],
-    ['non-string details', Object.assign(new Error('Bad detail type.'), {
-      code: 'KB_RUNTIME_COMMAND_FAILED',
-      details: { report: 42 },
-    })],
-  ])('normalizes thrown %s through the platform error converter', async (_name, thrown) => {
+  it('frames the already-normalized backend envelope without logging or reclassifying it', async () => {
     const json = vi.fn();
-    const execute = vi.fn(async () => { throw thrown; });
+    const error = createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+      correlationId: 'cli-failure-123',
+      details: { plugin: '@kb-labs/test-plugin', command: 'test run', failureReason: 'timed out' },
+    });
+    const loggerError = vi.fn();
+    const execute = vi.fn(async () => ({
+      ok: false as const,
+      error: { normalized: true as const, envelope: error },
+      executionTimeMs: 1,
+    }));
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     const exitCode = await executeCommandV3({
@@ -67,48 +60,28 @@ describe('executeCommandV3 plugin command result output', () => {
       argv: [],
       flags: { json: true },
       ui: { ...noopUI, json },
-      platform: { logger: { error: vi.fn() } } as unknown as PlatformServices,
+      platform: { logger: { error: loggerError } } as unknown as PlatformServices,
       platformContainer,
     });
 
     expect(exitCode).toBe(1);
-    expect(json).toHaveBeenCalledOnce();
-    const envelope = (json.mock.calls[0]?.[0] as { error: { correlationId?: string } }).error;
-    if (_name === 'plain Error' || _name === 'string') {
-      expect(envelope).toMatchObject({
-        code: 'KB_PLUGIN_COMMAND_FAILED',
-        message: 'Plugin command test run in @kb-labs/test-plugin failed unexpectedly.',
-        hint: expect.stringContaining(`--correlation-id ${envelope.correlationId}`),
-        correlationId: expect.any(String),
-      });
-      expect(JSON.stringify(envelope)).not.toContain('Unexpected');
-    } else if (_name === 'invalid details' || _name === 'non-string details') {
-      expect(envelope).toMatchObject({
-        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
-        message: 'Plugin @kb-labs/test-plugin returned malformed error field "hint".',
-        details: { plugin: '@kb-labs/test-plugin', command: 'test run', field: 'hint' },
-        correlationId: expect.any(String),
-      });
-    } else {
-      expect(envelope).toEqual(toErrorEnvelope(thrown, { correlationId: envelope.correlationId }));
-    }
+    expect(json).toHaveBeenCalledWith({ ok: false, error });
+    expect(loggerError).not.toHaveBeenCalled();
   });
 
   // case: S-203.1, S-203.2
-  it('renders a returned typed failure once as the shared envelope in JSON mode', async () => {
+  it('frames a factory-normalized returned typed failure once in JSON mode', async () => {
     const json = vi.fn();
     const error = vi.fn();
+    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      correlationId: 'returned-failure-correlation',
+      message: 'The operation failed.',
+      hint: 'Resolve the reported command failure, then run the command again.',
+      details: { resource: 'record-17' },
+    });
     const execute = vi.fn(async () => ({
-      ok: true as const,
-      data: {
-        ok: false as const,
-        error: {
-          code: 'KB_RUNTIME_COMMAND_FAILED',
-          message: 'The operation failed.',
-          hint: 'Resolve the reported command failure, then run the command again.',
-          details: { resource: 'record-17' },
-        },
-      },
+      ok: false as const,
+      error: { normalized: true as const, envelope },
       executionTimeMs: 1,
     }));
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
@@ -126,16 +99,7 @@ describe('executeCommandV3 plugin command result output', () => {
     });
 
     expect(exitCode).toBe(1);
-    expect(json).toHaveBeenCalledOnce();
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({
-      ok: false,
-      error: expect.objectContaining({
-        code: 'KB_RUNTIME_COMMAND_FAILED',
-        message: 'The operation failed.',
-        hint: 'Resolve the reported command failure, then run the command again.',
-        details: { resource: 'record-17' },
-      }),
-    }));
+    expect(json).toHaveBeenCalledWith({ ok: false, error: envelope });
     expect(error).not.toHaveBeenCalled();
   });
 
@@ -171,19 +135,17 @@ describe('executeCommandV3 plugin command result output', () => {
   });
 
   // case: S-203.2, S-051.2
-  it('renders a returned typed failure as the shared human error with its hint', async () => {
+  it('frames a factory-normalized plugin-not-found failure as the shared human error', async () => {
     const json = vi.fn();
     const error = vi.fn();
+    const envelope = createErrorEnvelope('KB_PLUGIN_NOT_FOUND', {
+      correlationId: 'plugin-not-found-correlation',
+      message: 'Plugin @kb-labs/not-published was not found in the registry.',
+      hint: 'Check the exact package name and package source. If available, run `kb marketplace install @kb-labs/not-published`; `kb marketplace plugins list` shows installed plugins.',
+    });
     const execute = vi.fn(async () => ({
-      ok: true as const,
-      data: {
-        ok: false as const,
-        error: {
-          code: 'KB_PLUGIN_NOT_FOUND',
-          message: 'Plugin @kb-labs/not-published was not found in the registry.',
-          hint: 'kb marketplace search',
-        },
-      },
+      ok: false as const,
+      error: { normalized: true as const, envelope },
       executionTimeMs: 1,
     }));
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
@@ -203,8 +165,8 @@ describe('executeCommandV3 plugin command result output', () => {
     expect(exitCode).toBe(1);
     expect(json).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledOnce();
-    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^Plugin @kb-labs\/not-published was not found in the registry\. \[KB_PLUGIN_NOT_FOUND\]\n  Hint:  kb marketplace search\n  Correlation ID: cli-[0-9]+-[a-z0-9]+$/), {
-      hint: 'kb marketplace search',
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^Plugin @kb-labs\/not-published was not found in the registry\. \[KB_PLUGIN_NOT_FOUND\]\n  Hint:  Check the exact package name and package source\. If available, run `kb marketplace install @kb-labs\/not-published`; `kb marketplace plugins list` shows installed plugins\.\n  Correlation ID: plugin-not-found-correlation$/), {
+      hint: 'Check the exact package name and package source. If available, run `kb marketplace install @kb-labs/not-published`; `kb marketplace plugins list` shows installed plugins.',
     });
   });
 
@@ -213,7 +175,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const json = vi.fn();
     const execute = vi.fn(async () => ({
       ok: false as const,
-      error: { code: 'KB_PLUGIN_NOT_FOUND', message: 'Plugin @acme/missing was not found.', hint: 'Install the plugin and retry.', correlationId: 'worker-correlation-17', details: { plugin: '@acme/missing' } },
+      error: { normalized: true as const, envelope: createErrorEnvelope('KB_PLUGIN_NOT_FOUND', { message: 'Plugin @acme/missing was not found.', hint: 'Install the plugin and retry.', correlationId: 'worker-correlation-17', details: { plugin: '@acme/missing' } }) },
       executionTimeMs: 1,
     }));
     const platform = { logger: { error: vi.fn() } } as unknown as PlatformServices;
@@ -239,10 +201,18 @@ describe('executeCommandV3 plugin command result output', () => {
   });
 
   // case: S-203.3
-  it('renders thrown plain errors as named plugin command failures and logs the stack with its correlation ID', async () => {
+  it('presents the backend-normalized unexpected failure without logging or reclassifying it', async () => {
     const json = vi.fn();
     const logError = vi.fn();
-    const execute = vi.fn(async () => { throw new Error('private worker cause'); });
+    const envelope = createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+      correlationId: 'failure-correlation-31',
+      details: { plugin: '@kb-labs/test-plugin', command: 'test run', failureReason: 'failed unexpectedly' },
+    });
+    const execute = vi.fn(async () => ({
+      ok: false as const,
+      error: { normalized: true as const, envelope },
+      executionTimeMs: 1,
+    }));
     const platform = { logger: { error: logError } } as unknown as PlatformServices;
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
@@ -251,35 +221,22 @@ describe('executeCommandV3 plugin command result output', () => {
       argv: [], flags: { json: true }, ui: { ...noopUI, json }, platform, platformContainer,
     });
 
-    const envelope = json.mock.calls[0]?.[0] as { error: { code: string; correlationId: string; message: string } };
     expect(exitCode).toBe(1);
-    expect(envelope.error.code).toBe('KB_PLUGIN_COMMAND_FAILED');
-    expect(envelope.error.message).toContain('@kb-labs/test-plugin');
-    expect(envelope.error.message).toContain('test run');
-    expect(envelope.error.message).not.toContain('private worker cause');
-    expect(logError).toHaveBeenCalledOnce();
-    expect(logError).toHaveBeenCalledWith(
-      'Plugin command test run in @kb-labs/test-plugin failed unexpectedly.',
-      expect.any(Error),
-      expect.objectContaining({
-        code: 'KB_PLUGIN_COMMAND_FAILED',
-        command: 'test run',
-        correlationId: envelope.error.correlationId,
-        pluginId: '@kb-labs/test-plugin',
-      }),
-    );
+    expect(json).toHaveBeenCalledWith({ ok: false, error: envelope });
+    expect(logError).not.toHaveBeenCalled();
   });
 
   // case: S-203.2
   it('passes a typed plugin product error through unchanged', async () => {
     const json = vi.fn();
-    const productError = {
+    const productError = createProductErrorEnvelope({
       code: 'COMMIT_PLAN_INVALID',
       message: 'The commit plan is invalid.',
       hint: 'Run `kb commit generate` and inspect the proposed plan.',
       details: { reason: 'empty' },
-    };
-    const execute = vi.fn(async () => ({ ok: false as const, error: productError, executionTimeMs: 1 }));
+      retryable: false,
+    });
+    const execute = vi.fn(async () => ({ ok: false as const, error: { normalized: true as const, envelope: productError }, executionTimeMs: 1 }));
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     await executeCommandV3({

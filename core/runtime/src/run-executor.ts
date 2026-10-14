@@ -6,8 +6,9 @@
 import type {
   IExecutionBackend,
   ExecutionRequest,
-  ExecutionResult,
 } from '@kb-labs/core-contracts';
+import type { ErrorEnvelope } from '@kb-labs/core-platform';
+import type { NormalizedExecutionResult } from '@kb-labs/core-contracts';
 
 /**
  * Request for run step execution.
@@ -24,14 +25,14 @@ export interface RunStepExecutionRequest {
  */
 export class RunExecutor {
   constructor(
-    private readonly executionBackend: IExecutionBackend,
+    private readonly executionBackend: IExecutionBackend<unknown, ErrorEnvelope>,
     private readonly logger: { debug(message: string, meta?: Record<string, unknown>): void }
   ) {}
 
   /**
    * Execute one run step through the shared execution backend.
    */
-  async executeStep(request: RunStepExecutionRequest): Promise<ExecutionResult> {
+  async executeStep(request: RunStepExecutionRequest): Promise<NormalizedExecutionResult<ErrorEnvelope>> {
     const { runId, stepId, environmentId, execution } = request;
 
     this.logger.debug('RunExecutor: executing step', {

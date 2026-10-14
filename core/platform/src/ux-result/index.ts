@@ -55,7 +55,7 @@ export function validateUxResult(value: unknown): string[] {
   for (const key of Object.keys(value)) {
     if (key !== 'ok' && key !== 'error') problems.push(`unknown field "${key}"`);
   }
-  problems.push(...validateErrorEnvelope(value.error).map((problem) => `error.${problem}`));
+  problems.push(...validateErrorEnvelope(value.error).map((problem) => `error.${problem.field} ${problem.reason}`));
   return problems;
 }
 

@@ -57,6 +57,16 @@ export function configErrorEnvelope(error: unknown): ErrorEnvelope {
   if (!(error instanceof ConfigWriteError)) {
     return toErrorEnvelope(error);
   }
+  if (error.details.reason === 'project-scope-path') {
+    const command = error.details.command;
+    return createErrorEnvelope('KB_CONFIG_INVALID', {
+      details: { path: error.details.path ?? '' },
+      message: `Configuration path ${error.details.path ?? '(empty)'} is not valid at project scope; project plugin settings must use plugins.<configSection>.<key>.`,
+      hint: command
+        ? `Run "${command}" to write the project setting.`
+        : 'Project plugin settings must use plugins.<configSection>.<key>; repeat the command with the corrected path and original value.',
+    });
+  }
   switch (error.code) {
     case 'KB_PLUGIN_SETTINGS_INVALID':
       return createErrorEnvelope('KB_PLUGIN_SETTINGS_INVALID', {

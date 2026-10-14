@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { errorCatalog } from '@kb-labs/core-platform/error-envelope';
-import { createErrorEnvelope, createProductErrorEnvelope, ErrorEnvelopeError, normalizePluginHandlerFailure, type ILogger } from '@kb-labs/core-platform';
 import { registry, registerBuiltinCommands, registerBuiltinSystemCommands } from '@kb-labs/cli-commands';
 import { parseArgs } from '@kb-labs/cli-runtime';
 import { join } from 'node:path';
@@ -47,62 +46,5 @@ describe('error catalog recovery commands', () => {
       }
     }
     expect(problems).toEqual([]);
-  });
-});
-
-describe('registered plugin handler failure boundary', () => {
-  // case: S-203.2, S-203.3, S-203.6
-  it('normalises each failure kind for every live registered plugin command', () => {
-    const commands = registry.listCommands().filter((command) => command.available && !command.shadowed);
-    expect(commands.length).toBeGreaterThan(0);
-    for (const [index, command] of commands.entries()) {
-      const pluginId = command.manifest.v3Manifest?.id ?? command.packageName ?? command.manifest.group;
-      const commandPath = command.manifest.segments.join(' ');
-      const correlationId = `rail-${index}`;
-      const records: Array<Record<string, unknown>> = [];
-      const logger: ILogger = {
-        trace: () => {}, debug: () => {}, info: () => {}, warn: () => {},
-        error: (message, error, fields) => records.push({ message, error, ...fields }),
-        fatal: (message, error, fields) => records.push({ message, error, ...fields }),
-        child: () => logger,
-      };
-      const context = {
-        pluginId, command: commandPath, correlationId, logger,
-        logContext: { applicationId: 'test', serviceId: 'execution', instanceId: 'rail', layer: 'test' },
-        sensitiveValues: [],
-      };
-      const typedProduct = createProductErrorEnvelope({
-        code: 'RAIL_TYPED_FAILURE', message: 'A typed test failure.', hint: 'Correct the test input.', retryable: false,
-      });
-      const typedPlatform = createErrorEnvelope('KB_ADAPTER_NOT_CONFIGURED', {
-        details: { service: 'llm', adapter: 'platform.adapters.llm', command: 'kb adapter bind llm' },
-      });
-      expect(normalizePluginHandlerFailure(new ErrorEnvelopeError(typedProduct), context)).toMatchObject({
-        code: 'RAIL_TYPED_FAILURE', correlationId,
-      });
-      expect(normalizePluginHandlerFailure(new ErrorEnvelopeError(typedPlatform), context)).toMatchObject({
-        code: 'KB_ADAPTER_NOT_CONFIGURED', correlationId,
-      });
-      expect(records).toHaveLength(0);
-
-      for (const [failure, reason] of [
-        [new Error('unexpected test failure'), 'failed unexpectedly'],
-        [Object.assign(new Error('timed out'), { name: 'TimeoutError', code: 'TIMEOUT' }), 'timed out'],
-        [Object.assign(new Error('worker crashed'), { name: 'WorkerCrashedError', code: 'WORKER_CRASHED' }), 'execution process crashed'],
-      ] as const) {
-        const envelope = normalizePluginHandlerFailure(failure, context);
-        expect(envelope).toMatchObject({ code: 'KB_PLUGIN_COMMAND_FAILED', correlationId });
-        expect(envelope.message).toContain(reason);
-        expect(records.at(-1)).toMatchObject({ code: 'KB_PLUGIN_COMMAND_FAILED', correlationId, failureReason: reason });
-      }
-
-      const malformed = normalizePluginHandlerFailure({ code: 'RAIL_MISSING_HINT', message: 'Malformed', retryable: false }, context);
-      expect(malformed).toMatchObject({
-        code: 'KB_PLUGIN_CONTRACT_VIOLATION', correlationId,
-        message: expect.stringContaining(pluginId), details: { field: 'hint' },
-      });
-      expect(records).toHaveLength(4);
-      expect(records.map((record) => record.correlationId)).toEqual(Array(4).fill(correlationId));
-    }
   });
 });

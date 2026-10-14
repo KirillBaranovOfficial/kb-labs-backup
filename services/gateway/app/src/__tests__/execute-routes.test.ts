@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, type ILogger } from '@kb-labs/core-platform';
 
 // ── Mock heavy deps before importing routes ───────────────────────────────────
 // Use vi.hoisted() so variables are available when vi.mock() factory runs
@@ -228,7 +228,10 @@ describe('POST /api/v1/execute — error cases', () => {
   });
 
   it('on dispatch failure: streams execution:error + execution:done(exitCode=1)', async () => {
-    mockDispatcher.call.mockRejectedValue(new Error('ECONNREFUSED connection refused'));
+    mockDispatcher.call.mockRejectedValue(new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+      correlationId: 'host-agent-handler-correlation',
+      details: { plugin: 'p', command: 'h', failureReason: 'failed unexpectedly' },
+    })));
 
     const res = await app.inject({
       method: 'POST',
@@ -244,10 +247,10 @@ describe('POST /api/v1/execute — error cases', () => {
     const envelope = (errorEvent as { error: { code: string; correlationId: string; hint: string } }).error;
     expect(envelope).toMatchObject({
       code: 'KB_PLUGIN_COMMAND_FAILED',
-      correlationId: expect.any(String),
-      hint: expect.stringContaining('kb logs query --correlation-id'),
+      correlationId: 'host-agent-handler-correlation',
+      hint: expect.any(String),
     });
-    expect(noopLogger.error).toHaveBeenCalledTimes(1);
+    expect(noopLogger.error).not.toHaveBeenCalled();
 
     const doneEvent = events.find((e) => (e as { type: string }).type === 'execution:done');
     expect((doneEvent as { exitCode: number }).exitCode).toBe(1);
