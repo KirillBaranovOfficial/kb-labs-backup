@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { ICache } from '@kb-labs/core-platform';
+import { createErrorEnvelope, type ICache } from '@kb-labs/core-platform';
 import { signAccessToken, type JwtConfig } from '@kb-labs/gateway-auth';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import { createAuthMiddleware } from '../auth/middleware.js';
@@ -89,6 +89,24 @@ afterAll(async () => {
 // without the permission get 403 from the handler.
 
 describe('POST /auth/register', () => {
+  it('denies an authenticated machine without machine:register before registration', async () => {
+    authService.register.mockClear();
+    const token = await makeMachineJwt([]);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      headers: { Authorization: `Bearer ${token}` },
+      payload: { name: 'Unauthorized Agent' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_FORBIDDEN',
+      message: 'Permission denied: machine:register',
+    } });
+    expect(authService.register).not.toHaveBeenCalled();
+  });
+
   it('returns 200 with clientId, clientSecret, hostId, namespaceId on success (admin Bearer)', async () => {
     authService.register.mockResolvedValue({
       clientId: 'client-abc',
@@ -175,23 +193,19 @@ describe('POST /auth/register', () => {
   });
 
   // case: S-104.6
-  it('lets the route-owned machine-registration authorization return the anonymous refusal', async () => {
+  it('refuses anonymous machine registration at the global auth gate', async () => {
     authService.register.mockClear();
     const res = await app.inject({
       method: 'POST',
       url: '/auth/register',
       payload: { name: 'x' },
-      // No Authorization header — the route owns this authorization decision.
+      // No Authorization header — the global auth gate rejects before route dispatch.
     });
     expect(res.statusCode).toBe(401);
-    expect(res.json()).toMatchObject({
-      ok: false,
-      error: {
-        code: 'KB_AUTH_REQUIRED',
-        message: 'Authentication is required.',
-        hint: 'Run "kb auth login --gateway-url http://localhost:80 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
-      },
-    });
+    expect(res.json()).toMatchObject({ ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', {
+      details: { gatewayUrl: 'http://localhost:80' },
+    }) });
+    expect(res.json().error.correlationId).toEqual(expect.any(String));
     expect(authService.register).not.toHaveBeenCalled();
   });
 
@@ -204,11 +218,9 @@ describe('POST /auth/register', () => {
     });
 
     expect(res.statusCode).toBe(401);
-    expect(res.json()).toMatchObject({ ok: false, error: {
-      code: 'KB_AUTH_REQUIRED',
-      message: 'Authentication is required.',
-      hint: 'Run "kb auth login --gateway-url http://localhost:80 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
-    } });
+    expect(res.json()).toMatchObject({ ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', {
+      details: { gatewayUrl: 'http://localhost:80' },
+    }) });
   });
 });
 

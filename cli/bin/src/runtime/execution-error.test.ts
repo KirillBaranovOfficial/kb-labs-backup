@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ServicePortConfigError } from '@kb-labs/core-platform';
+import { ServicePortConfigError, createErrorEnvelope } from '@kb-labs/core-platform';
 import type { Presenter } from '@kb-labs/cli-runtime';
 import { AuthSessionOwner, HttpSseGatewayTransport } from '@kb-labs/cli-runtime/gateway';
 import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
@@ -37,7 +37,7 @@ describe('handleExecutionError', () => {
       error: expect.objectContaining({
         code: 'KB_AUTH_REQUIRED',
         message: 'Authentication is required.',
-        hint: 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+        hint: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'https://gateway.test' } }).hint,
       }),
     });
   });
@@ -52,7 +52,9 @@ describe('handleExecutionError', () => {
     expect(exitCode).toBe(1);
     const rendered = String(errorOutput.mock.calls[0]?.[0]);
     expect(rendered).toContain('Authentication is required. [KB_AUTH_REQUIRED]');
-    expect(rendered).toContain('Hint: Run "kb auth login --gateway-url https://gateway.test --email <email>"');
+    expect(rendered).toContain(`Hint: ${createErrorEnvelope('KB_AUTH_REQUIRED', {
+      details: { gatewayUrl: 'https://gateway.test' },
+    }).hint}`);
   });
 
   // case: S-203.1

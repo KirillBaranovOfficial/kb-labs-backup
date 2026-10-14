@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import workflow_steps
 from service_steps import Journey
+from invocations import catalogued_error_hint
 
 
 class WorkflowJourneyTests(unittest.TestCase):
@@ -155,10 +156,10 @@ class WorkflowJourneyTests(unittest.TestCase):
                             ["marketplace", "plugins", "list"], ["qa", "cases", "validate"]):
                 if not authenticated[0]:
                     if args == ["workflow", "defs", "list"]:
-                        return CompletedProcess(args, 1, "", 'KB_AUTH_REQUIRED: Authentication is required.\nHint: Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>"')
+                        return CompletedProcess(args, 1, "", f'KB_AUTH_REQUIRED: Authentication is required.\nHint: {catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000")}')
                     return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
                         "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
-                        "hint": 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>".',
+                        "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000"),
                     }}))
                 return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"id": "hello"}}))
             if args[:2] == ["auth", "login"]:

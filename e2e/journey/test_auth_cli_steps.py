@@ -20,11 +20,17 @@ from steps.accounts import run_cli_logout_steps
 from steps.auth import (assert_platform_auth_required, run_bootstrap_recovery_steps, run_cli_auth_forbidden,
                         run_cli_auth_status, assert_cli_session_absent, run_cli_corrupt_session_file,
                         assert_machine_registration_requires_auth)
+from invocations import catalogued_error_hint
 
 REAL_PROCESS_TIMEOUT_SECONDS = 60
 
 
 class CliAuthJourneyTests(unittest.TestCase):
+    def test_auth_required_hint_comes_from_the_catalogue_template(self):
+        hint = catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://gateway.test")
+        self.assertIn("http://gateway.test", hint)
+        self.assertNotIn("{gatewayUrl}", hint)
+
     # case: S-104.6
     def test_human_signup_attempt_keeps_401_and_returns_canonical_auth_envelope(self):
         result = subprocess.CompletedProcess(
@@ -32,7 +38,7 @@ class CliAuthJourneyTests(unittest.TestCase):
             json.dumps({"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED",
                 "message": "Authentication is required.",
-                "hint": 'Run "kb auth login --gateway-url http://gateway.test --email <email>".',
+                "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://gateway.test"),
             }}), "",
         )
         with patch("steps.auth.open_http", return_value=(401, result.stdout.encode(), {})) as request:
@@ -135,15 +141,15 @@ class CliAuthJourneyTests(unittest.TestCase):
             json.dumps({"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED",
                 "message": "Authentication is required.",
-                "hint": 'Run "kb auth login --gateway-url <url> --email <email>".',
+                "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>"),
             }}), "",
         )
         assert_platform_auth_required(result, ["config", "show", "--json"])
 
         for error in (
-            {"code": "KB_AUTH_REQUIRED", "message": "Different message.", "hint": 'Run "kb auth login --gateway-url <url> --email <email>".'},
+            {"code": "KB_AUTH_REQUIRED", "message": "Different message.", "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>")},
             {"code": "KB_AUTH_REQUIRED", "message": "Authentication is required.", "hint": "Different hint."},
-            {"code": "OTHER_ERROR", "message": "Authentication is required.", "hint": 'Run "kb auth login --gateway-url <url> --email <email>".'},
+            {"code": "OTHER_ERROR", "message": "Authentication is required.", "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>")},
         ):
             malformed = subprocess.CompletedProcess(
                 ["kb", "config", "show", "--json"], 1,

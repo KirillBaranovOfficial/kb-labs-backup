@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from invocations import catalogued_error_hint
 from secured_connection_steps import (validate_case_response, validate_cli_case,
                                       validate_hidden_health_response, validate_local_health_response)
 
@@ -82,8 +83,8 @@ class SecuredConnectionContractTests(unittest.TestCase):
     def test_revoked_session_sign_in_hint_is_not_mistaken_for_a_stack_trace(self):
         validate_cli_case(
             "S-031.3", 1,
-            'KB_AUTH_SESSION_REVOKED: The saved Gateway session was revoked. Run "kb auth login" '
-            'and enter your password at the prompt, or provide it with --password-stdin.',
+            "KB_AUTH_SESSION_REVOKED: The saved Gateway session was revoked. "
+            + catalogued_error_hint("KB_AUTH_SESSION_REVOKED", gatewayUrl="<url>"),
         )
 
     def test_client_apply_claim_requires_client_profile_empty_services_and_shim(self):

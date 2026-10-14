@@ -693,7 +693,7 @@ describe('JSON envelope coverage for the live CLI registry', () => {
             ok: false,
             error: {
               code: 'KB_AUTH_REQUIRED',
-              hint: 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+              hint: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'https://gateway.test' } }).hint,
               details: { gatewayUrl: 'https://gateway.test' },
             },
           });

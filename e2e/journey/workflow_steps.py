@@ -14,6 +14,7 @@ from kb_invocation import kb_command, kb_login_shell
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
 from invocations import (
     CompletedProcess,
+    catalogued_error_hint,
     decode_ux_error_result,
     invocation_context,
     read_ux_cli_result,
@@ -448,7 +449,8 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
                 assert_platform_auth_required(result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
             human_result = run_cli(["workflow", "defs", "list"], env=anonymous_env, cwd=project)
             human_output = (human_result.stdout or "") + (human_result.stderr or "")
-            login_hint = f'Run "kb auth login --gateway-url {env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")} --email <email>"'
+            login_hint = catalogued_error_hint(
+                "KB_AUTH_REQUIRED", gatewayUrl=env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
             if (human_result.returncode == 0 or "KB_AUTH_REQUIRED" not in human_output
                     or "Authentication is required." not in human_output or login_hint not in human_output):
                 raise AssertionError("unauthenticated `kb workflow defs list` did not show the catalogued login error and hint")

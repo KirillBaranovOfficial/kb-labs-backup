@@ -33,7 +33,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
                             prepare_service_api_session, service_api_token,
                             run_grouped_service_steps, run_service_steps)
 from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
-from invocations import run_pty_command, store_report_secret
+from invocations import catalogued_error_hint, run_pty_command, store_report_secret
 from steps.auth import run_secured_auth_steps
 
 
@@ -1686,7 +1686,7 @@ raise SystemExit(1)
                 return {
                     "code": "KB_AUTH_REQUIRED",
                     "message": "Authentication is required.",
-                    "hint": 'Run "kb auth login --gateway-url http://gateway.test --email <email>".',
+                    "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://gateway.test"),
                 }
             if path == "/auth/permissions":
                 return {"permissions": ["users:read"]}

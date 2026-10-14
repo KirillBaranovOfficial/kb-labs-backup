@@ -18,6 +18,7 @@ from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_ar
                                run_agent_session_steps,
                                secured_auth, secured_project_catalog_isolation, unknown_tool)
 from service_steps import FlowGraph, Journey
+from invocations import catalogued_error_hint
 import service_runner
 from service_runner import checks
 
@@ -149,7 +150,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         auth_error = {"ok": False, "error": {
             "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
-            "hint": 'Run "kb auth login --gateway-url <url> --email <email>".',
+            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>"),
             "correlationId": "corr-auth",
         }}
         responses = [
@@ -341,7 +342,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         unauthorized = {"ok": False, "error": {
             "code": "KB_AUTH_REQUIRED", "area": "auth", "stage": "login", "severity": "error",
             "retryable": False, "message": "Authentication is required.",
-            "hint": 'Run "kb auth login --gateway-url <url> --email <email>".', "correlationId": "corr-auth",
+            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>"), "correlationId": "corr-auth",
         }}
         calls = []
 
@@ -411,7 +412,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             return (401, {"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                 "area": "auth", "stage": "login", "severity": "error", "retryable": False,
-                "hint": 'Run "kb auth login --gateway-url <url> --email <email>".', "correlationId": "corr-auth",
+                "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>"), "correlationId": "corr-auth",
             }}, {})
 
         with patch("service_runner.request", side_effect=fake_request):
@@ -427,7 +428,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (401, {"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                 "area": "auth", "stage": "login", "severity": "error", "retryable": False,
-                "hint": 'Run "kb auth login --gateway-url <url> --email <email>".', "correlationId": "corr-auth",
+                "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>"), "correlationId": "corr-auth",
             }}, {}),
             (200, {"result": {"tools": []}}, {}),
         ])

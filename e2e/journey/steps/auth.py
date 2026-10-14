@@ -23,6 +23,7 @@ from invocations import (
     open_http,
     read_ux_cli_result,
     read_ux_http_result,
+    catalogued_error_hint,
     run_command,
     run_pty_command,
     store_report_secret,
@@ -65,7 +66,7 @@ def assert_machine_registration_requires_auth(base_url: str) -> None:
         body={"name": "new-member", "email": "new-member@example.test", "password": "HumanPass123!"},
         expected=401,
     )
-    expected_hint = f'Run "kb auth login --gateway-url {base_url.rstrip("/")} --email <email>".'
+    expected_hint = catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl=base_url.rstrip("/"))
     if (payload.get("code") != "KB_AUTH_REQUIRED"
             or payload.get("message") != "Authentication is required."
             or payload.get("hint") != expected_hint):
@@ -181,7 +182,7 @@ def assert_platform_auth_required(result: CompletedProcess[str], command: list[s
     if (result.returncode == 0 or not isinstance(failure, dict)
             or failure.get("code") != "KB_AUTH_REQUIRED"
             or failure.get("message") != "Authentication is required."
-            or failure.get("hint") != f'Run "kb auth login --gateway-url {gateway} --email <email>".'):
+            or failure.get("hint") != catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl=gateway)):
         raise AssertionError(f"unauthenticated {' '.join(command)} returned an unexpected result: {payload!r}")
 
 

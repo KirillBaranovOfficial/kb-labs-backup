@@ -251,22 +251,42 @@ def _cli_process_result(result: Any) -> tuple[str, int]:
     return stdout, result.returncode
 
 
-@lru_cache(maxsize=None)
-def _catalog_exit_status(code: str) -> tuple[str, int] | None:
+@lru_cache(maxsize=1)
+def _error_catalog_entries() -> dict[str, dict[str, Any]]:
     catalog_path = workspace_resource("core", "platform", "src", "error-envelope", "errors.catalog.json")
     try:
         catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         _invalid_ux_result(f"cannot read the shared error catalog at {catalog_path}: {error}")
-    for entry in catalog.get("codes", []):
-        if entry.get("code") == code:
-            exit_class = entry.get("processExitClass")
-            if exit_class == "input-refusal":
-                return exit_class, 2
-            if exit_class == "operation-failure":
-                return exit_class, 1
-            _invalid_ux_result(f"catalogued error {code} has no supported process exit class")
-    return None
+    return {entry["code"]: entry for entry in catalog.get("codes", []) if isinstance(entry, dict)
+            and isinstance(entry.get("code"), str)}
+
+
+def catalogued_error_hint(code: str, **values: str) -> str:
+    """Render a catalogued error hint from its authoritative template."""
+    entry = _error_catalog_entries().get(code)
+    if entry is None:
+        _invalid_ux_result(f"error code {code} is missing from the shared error catalog")
+    hint = entry.get("hint")
+    if not isinstance(hint, str):
+        _invalid_ux_result(f"catalogued error {code} has no hint template")
+    try:
+        return hint.format_map(values)
+    except KeyError as error:
+        _invalid_ux_result(f"catalogued error {code} hint needs template value {error.args[0]}")
+
+
+@lru_cache(maxsize=None)
+def _catalog_exit_status(code: str) -> tuple[str, int] | None:
+    entry = _error_catalog_entries().get(code)
+    if entry is None:
+        return None
+    exit_class = entry.get("processExitClass")
+    if exit_class == "input-refusal":
+        return exit_class, 2
+    if exit_class == "operation-failure":
+        return exit_class, 1
+    _invalid_ux_result(f"catalogued error {code} has no supported process exit class")
 
 
 @lru_cache(maxsize=1)

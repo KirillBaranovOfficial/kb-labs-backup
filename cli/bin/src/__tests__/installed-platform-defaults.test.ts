@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { access, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,6 +21,53 @@ describe('installed platform adapter defaults', () => {
     primaryGatewayServer = undefined;
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
     tempRoot = undefined;
+  });
+
+  // case: S-041.17, S-007.4
+  it('returns the secured auth refusal before project lookup in real registered and unregistered roots', async () => {
+    const workspaceRoot = path.resolve(process.cwd(), '../..');
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-secured-auth-order-'));
+    const platformRoot = path.join(tempRoot, 'platform');
+    const home = path.join(tempRoot, 'home');
+    const registeredProject = path.join(tempRoot, 'registered-project');
+    const unregisteredProject = path.join(tempRoot, 'unregistered-project');
+    await Promise.all([
+      mkdir(path.join(platformRoot, '.kb'), { recursive: true }),
+      mkdir(home, { recursive: true }),
+      mkdir(registeredProject, { recursive: true }),
+      mkdir(unregisteredProject, { recursive: true }),
+    ]);
+    await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), JSON.stringify({
+      gateway: { access: { mode: 'secured' } },
+      platform: { adapters: {} },
+    }));
+    await createProjectRegistry({ root: path.join(home, '.kb') }).add(registeredProject);
+
+    const cliPath = path.join(workspaceRoot, 'cli/bin/dist/bin.js');
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, KB_PLATFORM_ROOT: platformRoot };
+    delete env.KB_HOME;
+    delete env.KB_NET_OFFSET;
+    delete env.KB_PROJECT_ROOT;
+    delete env.KB_PROJECT_ID;
+    for (const cwd of [registeredProject, unregisteredProject]) {
+      const result = spawnSync(process.execPath, [cliPath, 'config', 'show', '--json'], {
+        cwd,
+        env,
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+
+      expect(result.error?.message, result.stderr || result.stdout).toBeUndefined();
+      expect(result.status, result.stderr || result.stdout).toBe(1);
+      const payload: unknown = JSON.parse(result.stdout);
+      expect(payload).toMatchObject({ ok: false, error: {
+        code: 'KB_AUTH_REQUIRED',
+        message: 'Authentication is required.',
+        hint: createErrorEnvelope('KB_AUTH_REQUIRED', {
+          details: { gatewayUrl: 'http://127.0.0.1:4000' },
+        }).hint,
+      } });
+    }
   });
 
   // case: S-124.1, S-124.9

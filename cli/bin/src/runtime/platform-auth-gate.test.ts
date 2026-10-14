@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { dispatchWithPlatformAuthGate } from './platform-auth-gate.js';
 import { isPlatformAuthExemptFlag } from './platform-auth-policy.js';
 
@@ -27,7 +28,7 @@ describe('platform authentication gate', () => {
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
       message: 'Authentication is required.',
-      hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+      hint: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'http://127.0.0.1:4000' } }).hint,
     } });
     expect(handler).not.toHaveBeenCalled();
   });
@@ -86,7 +87,7 @@ describe('platform authentication gate', () => {
     }, async () => 0);
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
-      hint: 'Run "kb auth login --gateway-url https://gateway.example.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+      hint: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'https://gateway.example.test' } }).hint,
     } });
   });
 

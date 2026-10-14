@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveCliGatewayTarget } from '@kb-labs/core-platform';
+import { createErrorEnvelope, resolveCliGatewayTarget } from '@kb-labs/core-platform';
+import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { registerBuiltinCommands, registerBuiltinSystemCommands, registry } from '@kb-labs/cli-commands';
 import { isPlatformAuthExempt } from '../platform-auth-policy.js';
 
@@ -159,7 +160,9 @@ describe('secured CLI auth ordering', () => {
       error: {
         code: 'KB_AUTH_REQUIRED',
         message: 'Authentication is required.',
-        hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4500 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+        hint: createErrorEnvelope('KB_AUTH_REQUIRED', {
+          details: { gatewayUrl: 'http://127.0.0.1:4500' },
+        }).hint,
       },
     });
     expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(
@@ -199,20 +202,26 @@ describe('secured CLI auth ordering', () => {
     const commands = [...systemCommands, ...pluginCommands];
     expect(commands.length).toBeGreaterThan(0);
     mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: false });
+    const registeredProjectRoot = path.join(isolatedHome, 'registered-project');
+    const unregisteredProjectRoot = path.join(isolatedHome, 'unregistered-project');
+    await mkdir(registeredProjectRoot, { recursive: true });
+    await mkdir(unregisteredProjectRoot, { recursive: true });
+    const projectRegistry = createProjectRegistry({ root: path.join(isolatedHome, '.kb') });
+    await projectRegistry.add(registeredProjectRoot);
+    const registeredRoots = new Set((await projectRegistry.list()).map(({ project }) => project.path));
     mocks.loadPlatformConfiguration.mockImplementation(async (cwd: string) => ({
       platformConfig: {},
       rawConfig: { gateway: { access: { mode: 'secured' } } },
       rawPlatformConfig: { gateway: { access: { mode: 'secured' } } },
       effectiveConfig: undefined,
       platformRoot: isolatedHome,
-      projectRoot: cwd.includes('registered-project') ? cwd : undefined,
+      projectRoot: registeredRoots.has(cwd) ? cwd : undefined,
       sameLocation: false,
-      sources: { platform: 'platform', project: cwd.includes('registered-project') ? 'project' : 'platform', fields: {} },
+      sources: { platform: 'platform', project: registeredRoots.has(cwd) ? 'project' : 'platform', fields: {} },
     }));
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    for (const projectContext of ['registered-project', 'unregistered-project']) {
-      const cwd = path.join(isolatedHome, projectContext);
+    for (const cwd of [registeredProjectRoot, unregisteredProjectRoot]) {
       for (const commandPath of commands) {
         const before = stdout.mock.calls.length;
         const exitCode = await executeCli([...commandPath, '--json'], { cwd });
@@ -223,7 +232,9 @@ describe('secured CLI auth ordering', () => {
         expect(JSON.parse(records[0]!)).toMatchObject({ ok: false, error: {
           code: 'KB_AUTH_REQUIRED',
           message: 'Authentication is required.',
-          hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4500 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+          hint: createErrorEnvelope('KB_AUTH_REQUIRED', {
+            details: { gatewayUrl: 'http://127.0.0.1:4500' },
+          }).hint,
         } });
       }
     }

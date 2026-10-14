@@ -95,7 +95,6 @@ function sendCorsPreflight(request: FastifyRequest, reply: FastifyReply): Fastif
 }
 
 declare module 'fastify' {
-  interface FastifyContextConfig { auth?: 'route'; }
   interface FastifyRequest { authContext?: AuthContext; }
 }
 
@@ -122,8 +121,6 @@ export function createAuthMiddleware(
       Object.assign(request.headers, forwardedIdentityHeaders(request.authContext, options.internalSecret));
       return;
     }
-    const routeOwnsAuthorization = request.routeOptions.config.auth === 'route';
-
     const rawPath = new URL(request.url, 'http://localhost').pathname;
     const routePath = rawPath.replace(/\/+/g, '/').replace(/\/+$/, '') || '/';
     const registryPublicRead = request.method === 'GET' && isRegistryPublicReadRoute(routePath);
@@ -157,7 +154,7 @@ export function createAuthMiddleware(
     if (!token && request.userAuthContext) { return; }
     if (request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') { return; }
     if (!token) {
-      if (registryPublicRead || routeOwnsAuthorization) { return; }
+      if (registryPublicRead) { return; }
       return unauthorized();
     }
     const verification = await resolveToken(token, cache, jwtConfig);
