@@ -142,7 +142,7 @@ describe('REST production route declarations', () => {
     else process.env.KB_TENANT_DEFAULT_TIER = originalTenantTier;
   });
 
-  // case: S-203.1, S-203.2, S-203.3, S-203.6
+  // case: S-203.1, S-203.2, S-203.3
   it('discovers production registrations and requires closed request and response schemas or an explicit raw declaration', async () => {
     process.env.KB_TENANT_DEFAULT_TIER = 'enterprise';
     const routes: RouteOptions[] = [];

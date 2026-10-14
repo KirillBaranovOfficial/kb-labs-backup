@@ -13,6 +13,11 @@ describe('shared plugin CLI declaration schema', () => {
     expect(CliFlagDeclSchema.safeParse({ name: 'run-id', type: 'string', alias: 'long' }).success).toBe(false);
   });
 
+  it('requires credential flags to be secret', () => {
+    expect(CliFlagDeclSchema.safeParse({ name: 'token', type: 'string', credential: true }).success).toBe(false);
+    expect(CliFlagDeclSchema.safeParse({ name: 'token', type: 'string', credential: true, secret: true }).success).toBe(true);
+  });
+
   it('requires the V3 command fields and validates flags with the same schema', () => {
     expect(CliCommandDeclSchema.safeParse({
       path: 'release clean install', describe: 'Install a packed release', handler: './commands/install.js#default',

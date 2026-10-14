@@ -18,7 +18,7 @@ describe('Gateway UX boundary', () => {
     await Promise.all(apps.splice(0).map(app => app.close()));
   });
 
-  // case: S-203.1, S-203.2, S-203.3, S-203.6
+  // case: S-203.1, S-203.2, S-203.3
   it('leaves a route raw only when its route definition declares ux: raw', async () => {
     const app = Fastify({ logger: false });
     apps.push(app);
@@ -119,7 +119,7 @@ describe('Gateway UX boundary', () => {
     expect(response.body).not.toContain('KB_FAKE');
   });
 
-  // case: S-203.1, S-203.2, S-203.3, S-203.6
+  // case: S-203.1, S-203.2, S-203.3
   it('covers each route discovered from the live Fastify registry', async () => {
     const app = Fastify({ logger: false });
     apps.push(app);

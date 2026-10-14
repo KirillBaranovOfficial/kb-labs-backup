@@ -495,7 +495,6 @@ describe('executeToolCall', () => {
     );
   });
 
-  // case: S-203.6
   it('applies the shared result contract to every tool produced by the registry', async () => {
     const snapshot = makeRegistry([
       cmd('mind search', 'read'),

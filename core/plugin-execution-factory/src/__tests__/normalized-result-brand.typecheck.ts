@@ -1,4 +1,4 @@
-import type { ExecutionBackend, NormalizedExecutionResult } from '../types.js';
+import type { ExecutionBackend, NormalizedExecutionResult } from '../index.js';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 
 // This compile-time assertion keeps structural backend values out of consumers.

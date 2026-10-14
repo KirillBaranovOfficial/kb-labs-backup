@@ -543,12 +543,12 @@ def _checks(mode: str, graph: FlowGraph | None = None):
     if mode == "secured":
         yield service_check("MCP UX result contract from live registry", "mcp",
                             lambda: mcp_ux_result_contract(pid(), auth_token(), secured=True),
-                            cases=["S-203.2", "S-203.6", "S-045.6", "S-140.7"],
+                            cases=["S-203.2", "S-045.6", "S-140.7"],
                             runners=("service-secured:explore",))
     else:
         yield service_check("MCP UX result contract from live registry", "mcp",
                             lambda: mcp_ux_result_contract(pid(), auth_token(), secured=False),
-                            cases=["S-203.2", "S-203.6"], runners=("service-local:explore",))
+                            cases=["S-203.2"], runners=("service-local:explore",))
     project_b = {}
     if graph is not None and graph.states.get("fixtures-installed", {}).get("passed") is True:
         project_b = service_project_b(graph)
