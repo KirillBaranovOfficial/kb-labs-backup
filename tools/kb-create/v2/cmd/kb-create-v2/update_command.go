@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
@@ -41,10 +42,16 @@ type updateCommandResult struct {
 type updateCommandInput struct {
 	Index, RequestFile, ScenarioID, Answers string
 	Direct                                  directRequest
+	RetryCommand                            string
 	Resume                                  bool
 	Executable, SecretEnv, Registry         string
+	ArtifactRunner                          artifacts.Runner
 	TelemetryEndpoint                       string
 	TelemetryConsent                        bool
+}
+
+func updateActivationRetryHint(input updateCommandInput) string {
+	return "the installed version is unchanged; inspect permissions and rerun `" + input.RetryCommand + "`"
 }
 
 func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps commandDependencies) (updateCommandResult, *diag.Diag) {
@@ -265,7 +272,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	offline := plan.Request.Source == contracts.SourceOffline
-	installer, err := newArtifactExecutor(layout, stage, input.Registry, offline, transcript, nil)
+	installer, err := newArtifactExecutor(layout, stage, input.Registry, offline, transcript, input.ArtifactRunner)
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "the shared artifact cache path could not be resolved", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the update", err)
 	}
@@ -307,16 +314,14 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the update operation log is outside the installation container", "inspect the staged update and rerun `kb-create update`", err)
 	}
-	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: snapshot.ID, LogPath: logRelative}); err != nil {
-		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the update recovery record could not be written", "check staged-root permissions, then rerun `kb-create update`", err)
-	}
 	runningRoot := ""
 	if priorHost.PID > 0 {
 		runningRoot = priorHost.TreeRoot
 	}
-	_, err = layout.Activate(stage, updated.Plan.ServiceGraph.PlatformVersion, updated.Plan.PlanHash, runningRoot)
+	_, err = layout.ActivateUpdate(stage, updated.Plan.ServiceGraph.PlatformVersion, updated.Plan.PlanHash, runningRoot,
+		versionroot.UpdateMetadata{SnapshotID: snapshot.ID, LogPath: logRelative})
 	if err != nil {
-		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update could not be atomically activated", "the installed version is unchanged; inspect permissions and rerun `kb-create update`", err)
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update could not be atomically activated", updateActivationRetryHint(input), err)
 	}
 	activated = true
 	root = layout.PlatformRoot()

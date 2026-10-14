@@ -72,7 +72,11 @@ var operationDescriptors = []operationDescriptor{
 		return executeHostRestart(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Executable: deps.Executable, Version: buildVersion})
 	}},
 	{Name: "update", Short: "Update the installation", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "scenario", "scenario-answers", "resume", "registry", "telemetry-endpoint", "telemetry-consent"}, Human: renderUpdate, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
-		input := updateCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Direct: readUpdateRequest(flags), Resume: flags.Bool("resume"), Executable: deps.Executable, SecretEnv: flags.String("secret-env"), Registry: flags.String("registry"), TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+		invocation, err := flags.Invocation()
+		if err != nil {
+			return nil, contracts.NewDiag(contracts.CodeOperationFailed, "the update invocation could not be reconstructed", "rerun the command with its original flags", err)
+		}
+		input := updateCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Direct: readUpdateRequest(flags), RetryCommand: invocation, Resume: flags.Bool("resume"), Executable: deps.Executable, SecretEnv: flags.String("secret-env"), Registry: flags.String("registry"), ArtifactRunner: deps.ArtifactRunner, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
 		return executeUpdate(ctx, input, deps)
 	}},
 	{Name: "uninstall", Short: "Remove the installation", Args: cobra.NoArgs, Flags: []string{"platform-root", "registry", "yes"}, Human: renderUninstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
@@ -80,14 +84,14 @@ var operationDescriptors = []operationDescriptor{
 		if deps.Runtime != nil {
 			artifactInstaller = deps.Runtime.Artifacts
 		}
-		return executeUninstall(ctx, uninstallCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd, Artifacts: artifactInstaller})
+		return executeUninstall(ctx, uninstallCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd, Artifacts: artifactInstaller, ArtifactRunner: deps.ArtifactRunner})
 	}},
 	{Name: "rollback", Short: "Restore a saved snapshot", Args: cobra.NoArgs, Flags: []string{"platform-root", "registry", "snapshot", "yes"}, Human: renderRollback, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		var artifactInstaller runtime.ArtifactInstaller
 		if deps.Runtime != nil {
 			artifactInstaller = deps.Runtime.Artifacts
 		}
-		return executeRollback(ctx, rollbackCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Snapshot: flags.String("snapshot"), Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd, Artifacts: artifactInstaller})
+		return executeRollback(ctx, rollbackCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Snapshot: flags.String("snapshot"), Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd, Artifacts: artifactInstaller, ArtifactRunner: deps.ArtifactRunner})
 	}},
 	{Name: "supervise", Short: "Run the host supervisor", Hidden: true, Args: cobra.NoArgs, Flags: []string{"platform-root", "foreground"}, Human: renderSupervise, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		return executeHostSupervise(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Foreground: flags.Bool("foreground"), Executable: deps.Executable, Version: buildVersion})

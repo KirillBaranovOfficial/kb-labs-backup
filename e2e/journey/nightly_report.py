@@ -2,6 +2,8 @@
 """Aggregate service journey JSON and sync nightly status/failure issues."""
 from __future__ import annotations
 
+from installed_fixture import layout_relative, layout_value
+
 import argparse
 import hashlib
 import json
@@ -210,7 +212,7 @@ def sync_issues(client, report: dict, pinned_number: int, run_url: str = "") -> 
             changed["created"].append(failure["fingerprint"])
     for marker, issue in by_marker.items():
         key = marker.removeprefix("nightly-fingerprint:")
-        if issue.get("state") == "open" and key not in active:
+        if issue.get(layout_value('sharedStateDirectory')) == "open" and key not in active:
             client.update(issue["number"], state="closed")
             changed["closed"].append(key)
     return changed

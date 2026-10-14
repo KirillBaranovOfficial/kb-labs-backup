@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import fnmatch
 import subprocess
 import shlex
 import tempfile
@@ -33,8 +34,7 @@ from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
                                   verify_stable_installation_spellings)
 from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_create_cli_result
-from journey_resources import (active_platform_root, case_catalog_root,
-                               create_fixture_install_container)
+from journey_resources import active_platform_root, case_catalog_root
 from test_install_layout import create_test_install_container, move_test_platform_into_container
 from test_catalog_exit_status import catalogued_exit
 from service_steps import Journey, record_candidate_provenance
@@ -85,50 +85,112 @@ def fake_product_install(args: list[str]) -> None:
     receipt_path.write_text(json.dumps({"id": "product-install-fixture", "plan": {"artifacts": [artifact]}}))
 
 
-def fixture_seeder_writes_layout_owned_path(source: str, layout: dict) -> list[str]:
-    """Find direct filesystem writes rooted at a seeder's install-root argument."""
-    owned_paths = set(layout["ownedEntries"])
-    owned_paths.update((layout["platformDataRoot"]["platformPath"], layout["platformDataRoot"]["statePath"]))
+def layout_owned_path_literals(source: str, layout: dict) -> list[str]:
+    """Find checked-in path spellings owned by platform-layout.json."""
+    paths = set(layout["ownedEntries"])
+    paths.update((layout["currentLink"], layout["versionRoots"]["path"],
+                  layout["sharedStateDirectory"], layout["installerStateDirectory"],
+                  layout["hostStateDirectory"], layout["ownershipRecord"],
+                  layout["ownershipRecordStagingPrefix"]))
+    paths.update((layout["platformDataRoot"]["platformPath"], layout["platformDataRoot"]["statePath"]))
     for projection in layout["sharedRuntimePaths"]:
-        owned_paths.update((projection["platformPath"], projection["statePath"]))
+        paths.update((projection["platformPath"], projection["statePath"]))
+    paths.update(layout["versionStatePaths"])
+    paths.update(layout["runtimeStatePaths"])
+    paths.update(value for key, value in layout["installerRecords"].items() if key != "snapshotRetention")
 
-    def under_install_root(node: ast.AST, root_names: set[str]) -> bool:
-        if isinstance(node, ast.Name):
-            return node.id in root_names
-        if isinstance(node, ast.Attribute):
-            return under_install_root(node.value, root_names)
-        if isinstance(node, ast.BinOp):
-            return under_install_root(node.left, root_names) or under_install_root(node.right, root_names)
-        if isinstance(node, ast.Call):
-            return any(under_install_root(argument, root_names) for argument in node.args)
-        return False
-
-    mutating_methods = {"mkdir", "open", "replace", "rename", "rmdir", "symlink_to", "touch",
-                        "unlink", "write_bytes", "write_text"}
-    tree = ast.parse(source)
     violations = []
-    for function in (node for node in ast.walk(tree)
-                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("_seed")):
-        arguments = [*function.args.args, *function.args.kwonlyargs]
-        root_names = {argument.arg for argument in arguments if "root" in argument.arg.lower()}
-        for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
-            if (isinstance(call.func, ast.Attribute) and call.func.attr in mutating_methods
-                    and under_install_root(call.func.value, root_names)):
-                violations.append(f"{function.name}:{call.lineno} writes under an install root; owned paths: {sorted(owned_paths)}")
+    tree = ast.parse(source)
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+    def is_path_literal(node: ast.Constant) -> bool:
+        parent = parents.get(node)
+        if isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Div):
+            return True
+        if isinstance(parent, ast.Call):
+            function = parent.func
+            if ((isinstance(function, ast.Name) and function.id in {"Path", "open"})
+                    or (isinstance(function, ast.Attribute) and function.attr == "joinpath")):
+                return True
+        if isinstance(parent, (ast.Assign, ast.AnnAssign)):
+            targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+            return any(isinstance(target, ast.Name)
+                       and any(part in target.id.lower() for part in ("path", "root", "file", "dir"))
+                       for target in targets)
+        return "/" in node.value or node.value.startswith(".")
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        value = node.value.replace("\\", "/")
+        if is_path_literal(node) and any(value == path or value.startswith(path + "/") for path in paths):
+            violations.append(f"line {node.lineno}: {node.value!r}")
+    return violations
+
+
+def journey_layout_path_violations(journey_root: Path, layout: dict, owner_module: Path) -> list[str]:
+    """Scan every non-test journey module outside the installed-fixture owner."""
+    owner = owner_module.resolve()
+    violations = []
+    for source_path in sorted(Path(journey_root).rglob("*.py")):
+        if not source_path.is_file() or source_path.resolve() == owner:
+            continue
+        if fnmatch.fnmatchcase(source_path.name, "test_*.py"):
+            continue
+        relative = source_path.relative_to(journey_root)
+        for violation in layout_owned_path_literals(source_path.read_text(), layout):
+            violations.append(f"{relative}:{violation}")
     return violations
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
-    def test_fixture_seeders_cannot_write_layout_owned_install_paths(self):
+    def test_journey_steps_resolve_layout_paths_by_identity(self):
         journey_root = Path(__file__).parents[2]
         layout = json.loads((journey_root / "tools/kb-create/v2/contracts/platform-layout.json").read_text())
-        source = (journey_root / "e2e/journey/installer_case_steps.py").read_text()
-        self.assertEqual(fixture_seeder_writes_layout_owned_path(source, layout), [])
+        journey_modules = journey_root / "e2e/journey"
+        violations = journey_layout_path_violations(
+            journey_modules, layout, journey_modules / "installed_fixture.py")
+        self.assertEqual(violations, [])
 
-        for owned_path in sorted(layout["ownedEntries"]):
-            mutation = f"def _seed_mutation(target_root):\n    (target_root / {owned_path!r}).write_text('hand-built')\n"
-            self.assertTrue(fixture_seeder_writes_layout_owned_path(mutation, layout),
-                            f"a hand-written mutation of {owned_path} must make the static rail fail")
+        platform_paths = sorted({
+            projection["platformPath"]
+            for projection in [layout["platformDataRoot"], *layout["sharedRuntimePaths"]]
+        })
+        self.assertTrue(platform_paths)
+        for platform_path in platform_paths:
+            write_routes = (
+                f"open(root / {platform_path!r}, 'w')",
+                f"Path(root / {platform_path!r}).write_text('')",
+                f"shutil.copy(source, root / {platform_path!r})",
+                f"os.replace(source, root / {platform_path!r})",
+                f"subprocess.run(['cp', source, root / {platform_path!r}])",
+            )
+            for route in write_routes:
+                violations_for_route = layout_owned_path_literals(f"def seed(root, source):\n    {route}\n", layout)
+                self.assertTrue(violations_for_route,
+                                f"write route {route!r} did not detect exact platform path {platform_path!r}")
+
+        owned_literals = platform_paths
+        with tempfile.TemporaryDirectory(prefix="journey-layout-rail-") as temp:
+            module_root = Path(temp) / "journey"
+            nested_steps = module_root / "steps"
+            nested_steps.mkdir(parents=True)
+            owner_module = module_root / "installed_fixture.py"
+            mutation_source = "\n".join(f"OWNED_PATH = {value!r}" for value in owned_literals) + "\n"
+            owner_module.write_text(mutation_source)
+            (module_root / "test_probe.py").write_text(mutation_source)
+            clean_step = nested_steps / "clean.py"
+            clean_step.write_text("def step(root):\n    return root\n")
+            self.assertEqual(journey_layout_path_violations(module_root, layout, owner_module), [])
+            mutated_step = nested_steps / "new_layout_probe.py"
+            mutated_step.write_text(mutation_source)
+            nested_violations = journey_layout_path_violations(module_root, layout, owner_module)
+            self.assertEqual(len(nested_violations), len(owned_literals))
+            self.assertIn("steps/new_layout_probe.py", nested_violations[0])
+
+        joined_mutation = "def step(root):\n    return root / \"state\" / \"cache\"\n"
+        self.assertTrue(layout_owned_path_literals(joined_mutation, layout),
+                        "slash-joined Path segments that form a layout path must make the rail red")
 
     def test_installation_spelling_matrix_uses_case_verbs_and_scenario_shim_owner(self):
         with tempfile.TemporaryDirectory(prefix="journey-install-spellings-") as temp:
@@ -685,7 +747,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     try:
                         active = active_platform_root(install_root)
                     except FileNotFoundError:
-                        active = create_fixture_install_container(install_root)
+                        active = create_test_install_container(install_root)
                     receipt_path = active / ".kb/v2/receipt.json"
                     first_install = not receipt_path.exists()
                     previous_receipt = None
@@ -1504,7 +1566,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(calls[0][1], "install")
             self.assertEqual(calls[0][calls[0].index("--index") + 1], str(index))
             self.assertEqual(calls[0][calls[0].index("--platform-root") + 1], str(target))
-            _add_installed_manifest_requirement(receipt_path, requirement)
+            _add_installed_manifest_requirement(target, requirement)
             target_active = active_platform_root(target)
             receipt = json.loads(receipt_path.read_text())
             manifest_path = target_active / "node_modules/@kb-labs/journey-fixture/kb-create.manifest.json"
@@ -1512,6 +1574,15 @@ class InstallerCaseStepsTest(unittest.TestCase):
             fixture_artifact = receipt["plan"]["artifacts"][0]
             self.assertEqual(fixture_artifact["config"], [requirement])
             self.assertEqual(manifest["requirements"], [requirement])
+
+    def test_fault_injection_refuses_to_create_a_layout_target(self):
+        from installed_fixture import inject_existing_fault
+
+        with tempfile.TemporaryDirectory(prefix="journey-fault-owner-") as temp:
+            root = Path(temp) / "fixture"
+            with self.assertRaisesRegex(RuntimeError, "not created by product install"):
+                inject_existing_fault(root, "sharedRuntimePaths.kb_kb_config_jsonc.platformPath", lambda _before: b"{}");
+            self.assertFalse((root / ".kb/kb.config.jsonc").exists())
 
     def test_uninstall_decline_claim_fails_for_a_failed_fake_response(self):
         with tempfile.TemporaryDirectory(prefix="journey-uninstall-decline-") as temp:

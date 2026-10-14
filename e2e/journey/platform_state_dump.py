@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from invocations import CompletedProcess, TimeoutExpired
+from installed_fixture import installed_path, layout_relative, layout_value
+
 import hashlib
 import json
 import os
@@ -138,13 +140,13 @@ def _registered_project_state(project_root: Path, env: Mapping[str, str] | None)
     project = next((row for row in projects if isinstance(row, dict)
                     and isinstance(row.get("id"), str)
                     and Path(row.get("path", "")).resolve() == project_root.resolve()), None)
-    return home / "state" / project["id"] if project else None
+    return home / layout_value('sharedStateDirectory') / project["id"] if project else None
 
 
 def _write_auth_state_probe(platform_root: Path, target: Path) -> int:
     """Write aggregate session health and database identity without credential material."""
     active = active_platform_root(platform_root)
-    config_path = active / ".kb/kb.config.jsonc"
+    config_path = active / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')
     try:
         config = json.loads(config_path.read_text())
         filename = config["platform"]["adapterOptions"]["documentDatabase"]["filename"]
@@ -196,7 +198,7 @@ def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platfo
     destination.mkdir(parents=True, exist_ok=True)
     used = 0
     platform_database = active_platform_root(Path(platform_root)) / ".kb" / "data" / "database" / "kb.sqlite"
-    databases = {*home.glob("state/*/database/kb.sqlite"), platform_database}
+    databases = {*home.glob(layout_relative('sharedStateDirectory', '*/database/kb.sqlite')), platform_database}
     for database in sorted(databases):
         try:
             connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=1)
@@ -311,11 +313,12 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             elif written:
                 (destination / relative).unlink(missing_ok=True)
 
-        for relative in (Path(".kb/marketplace.lock"), Path(".kb/kb.config.jsonc"),
-                         Path(".kb/v2/receipt.json")):
-            add(active / relative, relative)
+        for relative in (Path(layout_value('versionStatePaths.kb_marketplace_lock')), Path(layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')),
+                         Path('.kb/v2/receipt.json')):
+            source = installed_path(root, 'currentLink', '.kb/v2/receipt.json') if relative == Path('.kb/v2/receipt.json') else active / relative
+            add(source, relative)
         fingerprint_bytes = _write_state_fingerprints(
-            root / "state", destination / "shared-state-fingerprints.json"
+            root / layout_value('sharedStateDirectory'), destination / "shared-state-fingerprints.json"
         )
         if fingerprint_bytes and used + fingerprint_bytes <= CONTENT_BUDGET:
             used += fingerprint_bytes
@@ -330,8 +333,8 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             (destination / "auth-state-probe.json").unlink(missing_ok=True)
         snapshots = installer_record_path(root, "snapshots")
         for source in sorted(snapshots.glob("*.json")):
-            add(source, Path("installer/snapshots") / source.name)
-        receipt_path = active / ".kb/v2/receipt.json"
+            add(source, Path(layout_value("installerRecords.snapshots")) / source.name)
+        receipt_path = installed_path(root, 'currentLink', '.kb/v2/receipt.json')
         try:
             receipt_value = json.loads(receipt_path.read_text())
             artifacts = receipt_value.get("plan", {}).get("artifacts", [])

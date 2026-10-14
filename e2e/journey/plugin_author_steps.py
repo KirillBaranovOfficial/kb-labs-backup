@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command
+from installed_fixture import layout_relative, layout_value
 
 import json
 import os
@@ -60,7 +61,7 @@ def _plugins(kb: Path, *, cwd: Path, env: dict[str, str], command_runner) -> lis
 
 
 def _lock_entry(project: Path) -> tuple[dict, dict]:
-    lock_path = project / ".kb/marketplace.lock"
+    lock_path = project / layout_value('versionStatePaths.kb_marketplace_lock')
     if not lock_path.is_file():
         raise RuntimeError("project .kb/marketplace.lock was not created by marketplace plugins add")
     try:
@@ -516,7 +517,7 @@ def run_plugin_author_flow(
                 kb_path, cwd=project, env=child_env, command_runner=command_runner)
                if isinstance(item, dict)):
             raise RuntimeError("demo remains in the project plugin list after removal")
-        lock_path = project / ".kb/marketplace.lock"
+        lock_path = project / layout_value('versionStatePaths.kb_marketplace_lock')
         if lock_path.exists():
             try:
                 plugins = json.loads(lock_path.read_text(encoding="utf-8")).get("plugins", {})

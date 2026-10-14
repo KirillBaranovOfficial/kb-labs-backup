@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command
+from installed_fixture import layout_relative, layout_value
 from journey_values import MissingJourneyState, journey_value
 
 from project_service_path import project_service_path
@@ -499,7 +500,7 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         if health_status != 200 or not any(
             isinstance(runtime, dict)
             and runtime.get("projectId") == pid_value
-            and runtime.get("state") == "ready"
+            and runtime.get(layout_value('sharedStateDirectory')) == "ready"
             for runtime in runtimes
         ):
             return f"host health did not list registered project {pid_value} as a ready runtime"
@@ -1012,8 +1013,8 @@ def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
     kb_home_override = env.get("KB_HOME", "").strip()
     kb_home = Path(kb_home_override) if kb_home_override else Path(env["HOME"]) / ".kb"
     kb_home = kb_home.expanduser().resolve()
-    plan_path = (kb_home / "state" / project_id / "commit" / "plans" / "root" /
-                 "current" / "plan.json")
+    plan_path = (kb_home / layout_value('sharedStateDirectory') / project_id / "commit" / "plans" / "root" /
+                 layout_value('currentLink') / "plan.json")
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan = {
         "schemaVersion": "1.0",

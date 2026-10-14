@@ -351,7 +351,7 @@ func TestHandoffCrashBoundariesKeepCompleteActiveAndRecoveryRoots(t *testing.T) 
 			}
 			stage := stageVersion(t, layout, "2.0.0")
 			crash := errors.New("simulated process termination")
-			_, err := layout.activate(stage, "2.0.0", "plan-2", "", func(current HandoffPoint) error {
+			_, err := layout.activate(stage, "2.0.0", "plan-2", "", nil, func(current HandoffPoint) error {
 				if current == point {
 					return crash
 				}
@@ -1192,7 +1192,7 @@ func TestPreActivationUpdateHandoffsLeaveSharedStateAndRunningVersionUntouched(t
 				stage, err = layout.Stage()
 				if err == nil {
 					writeReceipt(t, stage, "2.0.0", "receipt-2.0.0")
-					_, err = layout.activate(stage, "2.0.0", "plan-2.0.0", active, func(current HandoffPoint) error {
+					_, err = layout.activate(stage, "2.0.0", "plan-2.0.0", active, nil, func(current HandoffPoint) error {
 						if current == point {
 							return interrupt
 						}
@@ -1327,7 +1327,7 @@ func interruptAtPoint(t *testing.T, point HandoffPoint) Layout {
 		t.Fatal(err)
 	}
 	writeReceipt(t, stage, "2.0.0", "receipt-update")
-	_, err = layout.activate(stage, "2.0.0", "update-plan", "", func(current HandoffPoint) error {
+	_, err = layout.activate(stage, "2.0.0", "update-plan", "", nil, func(current HandoffPoint) error {
 		if current == point {
 			return crash
 		}

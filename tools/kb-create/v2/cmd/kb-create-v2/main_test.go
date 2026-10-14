@@ -1244,7 +1244,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
 	_, fakehost := binaries(t)
-	port := freeLoopbackPort(t)
+	port := freeLoopbackPortWithOffset(t, 100)
 	root := filepath.Join(home, "kb-platform")
 	index := filepath.Join(home, "release-index.json")
 	testExecutable, err := os.Executable()

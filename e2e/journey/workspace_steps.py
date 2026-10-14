@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from installed_fixture import layout_relative, layout_value
+
 import json
 import os
 import shutil
@@ -21,11 +23,11 @@ def workspace_checkout_problem(repo_root: Path) -> str | None:
     required = (
         "cli/bin/dist/bin.js",
         "core/project-registry/dist/index.js",
-        ".kb/marketplace.lock",
+        layout_value('versionStatePaths.kb_marketplace_lock'),
         "plugins",
     )
     missing = [path for path in required if not (repo_root / path).exists()]
-    lock_path = repo_root / ".kb/marketplace.lock"
+    lock_path = repo_root / layout_value('versionStatePaths.kb_marketplace_lock')
     if lock_path.is_file():
         try:
             lock = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -74,7 +76,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
         env["KB_PLATFORM_ROOT"] = str(repo_root)
         kb_home = Path(home) / ".kb"
         kb_home.mkdir()
-        shutil.copy2(repo_root / ".kb/marketplace.lock", kb_home / "marketplace.lock")
+        shutil.copy2(repo_root / layout_value('versionStatePaths.kb_marketplace_lock'), kb_home / "marketplace.lock")
         env["KB_HOME"] = str(kb_home)
         env.pop("KB_NET_OFFSET", None)
         env["GATEWAY_PORT"] = "1"
@@ -223,11 +225,11 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 "name": "@kb-labs/release-manager-cli",
                 "kb": {"manifest": "./dist/manifest.js"},
             }), encoding="utf-8")
-            locked = json.loads((repo_root / ".kb/marketplace.lock").read_text())
+            locked = json.loads((repo_root / layout_value('versionStatePaths.kb_marketplace_lock')).read_text())
             locked["plugins"]["@kb-labs/release"]["link"] = "./plugins/release/manager-cli"
             config_source = repo_root / ".kb/kb.config.json"
             if not config_source.exists():
-                config_source = repo_root / ".kb/kb.config.jsonc"
+                config_source = repo_root / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')
             (kb_dir / config_source.name).write_bytes(config_source.read_bytes())
             isolated_lock = locked
             (kb_dir / "marketplace.lock").write_text(json.dumps(isolated_lock), encoding="utf-8")
@@ -285,7 +287,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
 
         def verify_synced_workspace_lock() -> str | None:
             try:
-                lock = json.loads((repo_root / ".kb/marketplace.lock").read_text())
+                lock = json.loads((repo_root / layout_value('versionStatePaths.kb_marketplace_lock')).read_text())
             except (OSError, json.JSONDecodeError) as error:
                 return f"workspace marketplace lock could not be read: {error}"
             expected_plugins = ("@kb-labs/release", "@kb-labs/review", "@kb-labs/mind", "@kb-labs/agents")

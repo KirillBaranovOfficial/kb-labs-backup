@@ -1,6 +1,10 @@
 package v2cli
 
 import (
+	"fmt"
+	"strings"
+
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -17,6 +21,7 @@ type flagDefinition struct {
 	Name, Usage string
 	Kind        flagKind
 	Default     string
+	Secret      bool
 }
 
 var flagCatalog = map[string]flagDefinition{
@@ -36,7 +41,7 @@ var flagCatalog = map[string]flagDefinition{
 	"secret-env":         {Name: "secret-env", Usage: "requirement=ENV_VAR secret sources (never serialized)"},
 	"doctor-input":       {Name: "doctor-input", Usage: "path to manifest-derived doctor JSON"},
 	"scenario":           {Name: "scenario", Usage: "built-in install scenario ID"},
-	"scenario-answers":   {Name: "scenario-answers", Usage: "JSON object of scenario answers"},
+	"scenario-answers":   {Name: "scenario-answers", Usage: "JSON object of scenario answers", Secret: true},
 	"resume":             {Name: "resume", Usage: "resume persisted non-secret scenario answers", Kind: boolFlag},
 	"fix":                {Name: "fix", Usage: "apply manifest-declared safe defaults", Kind: boolFlag},
 	"recover":            {Name: "recover", Usage: "recover the administrator account", Kind: boolFlag},
@@ -51,6 +56,7 @@ var flagCatalog = map[string]flagDefinition{
 	"telemetry-endpoint": {Name: "telemetry-endpoint", Usage: "opt-in anonymous telemetry endpoint"},
 	"foreground":         {Name: "foreground", Usage: "run the host directly in this process", Kind: boolFlag},
 	"telemetry-consent":  {Name: "telemetry-consent", Usage: "allow anonymous operational telemetry", Kind: boolFlag},
+	"json":               {Name: "json", Usage: "emit machine-readable output", Kind: boolFlag},
 }
 
 type commandFlagReader struct {
@@ -76,6 +82,50 @@ func (r *commandFlagReader) Bool(name string) bool {
 func (r *commandFlagReader) Strings(name string) []string {
 	r.reads[name] = struct{}{}
 	return append([]string(nil), (*r.values[name].(*repeatedValue))...)
+}
+
+func (r *commandFlagReader) Changed(name string) bool {
+	r.reads[name] = struct{}{}
+	flag := r.command.Flags().Lookup(name)
+	return flag != nil && flag.Changed
+}
+
+func (r *commandFlagReader) Invocation() (string, error) {
+	argv := strings.Fields(r.command.CommandPath())
+	var failure error
+	r.command.Flags().Visit(func(flag *pflag.Flag) {
+		if failure != nil {
+			return
+		}
+		definition, ok := flagCatalog[flag.Name]
+		if !ok {
+			failure = fmt.Errorf("changed command flag %q has no invocation declaration", flag.Name)
+			return
+		}
+		if definition.Secret {
+			return
+		}
+		name := "--" + flag.Name
+		if values, ok := r.values[flag.Name].(*repeatedValue); ok {
+			for _, value := range *values {
+				argv = append(argv, name, value)
+			}
+			return
+		}
+		if flag.Value.Type() == "bool" {
+			if flag.Value.String() == "true" {
+				argv = append(argv, name)
+			} else {
+				argv = append(argv, name+"=false")
+			}
+			return
+		}
+		argv = append(argv, name, flag.Value.String())
+	})
+	if failure != nil {
+		return "", failure
+	}
+	return contracts.ShellCommand(argv...), nil
 }
 
 func registerLocalFlags(command *cobra.Command, names []string, values map[string]any) {

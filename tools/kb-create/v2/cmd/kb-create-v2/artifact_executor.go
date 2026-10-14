@@ -14,7 +14,7 @@ func newArtifactExecutor(layout versionroot.Layout, root, registry string, offli
 		return artifacts.Composite{}, err
 	}
 	return artifacts.Composite{
-		Packages: artifacts.Pnpm{Root: root, Registry: registry, Offline: offline, Log: log, Runner: runner},
+		Packages: artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, Registry: registry, Offline: offline, Log: log, Runner: runner},
 		Binaries: artifacts.Binaries{Root: root, CacheRoot: cacheRoot, Offline: offline},
 	}, nil
 }

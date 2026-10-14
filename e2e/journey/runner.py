@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command, kb_login_shell, kb_login_shell_sequence
+from installed_fixture import layout_relative, layout_value
 from journey_values import journey_value
 
 import json
@@ -75,7 +76,7 @@ BASE_ENV = MappingProxyType(os.environ.copy())
 HOME = Path(tempfile.mkdtemp(prefix="kb-journey-home-"))
 BIN = HOME / ".local" / "bin"
 PLATFORM = HOME / "kb-platform"
-PLATFORM_CURRENT = PLATFORM / "current"
+PLATFORM_CURRENT = PLATFORM / layout_value('currentLink')
 PROJECT = HOME / "fresh-project"
 TIMES: dict[str, float] = {}
 MAX_PNPM_RSS_MIB = 0.0
@@ -752,8 +753,8 @@ def finalize_run(passed: bool) -> int:
         if not service_report.exists():
             record_runner_failure(service_report, mode, FIRST_FAILURE)
     if not passed:
-        candidates = sorted((PLATFORM / "state" / "diagnostics").glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-        logs = sorted((PLATFORM / "state" / "logs").glob("*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
+        candidates = sorted((PLATFORM / layout_value('sharedStateDirectory') / "diagnostics").glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        logs = sorted((PLATFORM / layout_value('sharedStateDirectory') / "logs").glob("*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
         for path in [*candidates[:1], *logs[:1]]:
             write_journey_diagnostic(
                 f"\n== {title}: {path.name} ==\n{path.read_text(errors='replace')[-5000:]}\n",
@@ -835,10 +836,10 @@ def verify_listener_ownership():
 
 def uninstall_removed_platform_root():
     receipt = PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json"
-    snapshots = PLATFORM / "state" / "snapshots"
+    snapshots = PLATFORM / layout_value('sharedStateDirectory') / "snapshots"
     layout = json.loads(workspace_resource("tools", "kb-create", "v2", "contracts", "platform-layout.json").read_text())
     roots = layout.get("versionRoots", {})
-    versions = PLATFORM / roots.get("path", "versions")
+    versions = PLATFORM / roots.get("path", layout_value('versionRoots.path'))
     return not PLATFORM.exists() and not versions.exists() and not receipt.exists() and not snapshots.exists()
 
 
@@ -913,7 +914,7 @@ def run_uninstall_group(graph: FlowGraph, env: dict[str, str], launcher: str) ->
     global PLATFORM_SIZE_MIB
     mode = "secured" if VARIANT.endswith("secured") else "local"
     if PLATFORM.exists():
-        owned_tree = (PLATFORM / "versions", PLATFORM / "state")
+        owned_tree = (PLATFORM / layout_value('versionRoots.path'), PLATFORM / layout_value('sharedStateDirectory'))
         PLATFORM_SIZE_MIB = sum(p.stat().st_size for tree in owned_tree for p in tree.rglob("*") if p.is_file()) / (1024 * 1024)
     uninstall_args = [launcher, "uninstall", "--platform-root", str(PLATFORM), "--registry", REGISTRY]
     scope_is_separate = PLATFORM.resolve() != PROJECT.resolve() and PLATFORM.exists() and PROJECT.is_dir()
@@ -1245,7 +1246,7 @@ def _main(*, update_variant_runner=None):
                                         "installed first-admin password")
                     first_admin_shown_once = (
                         credential.get("email") == "journey-admin@example.test"
-                        and credential.get("state") == "disclosed"
+                        and credential.get(layout_value('sharedStateDirectory')) == "disclosed"
                         and bool(password)
                         and result.stdout.count(password) == 1
                     )
@@ -1324,7 +1325,7 @@ def _main(*, update_variant_runner=None):
         installed_state = installed_payload.get("host", {})
         install_running = (installed_status.returncode == 0 and installed_payload.get("installed") is True
                            and installed_payload.get("running") is True and installed_payload.get("reachable") is True
-                           and installed_state.get("state") == "running")
+                           and installed_state.get(layout_value('sharedStateDirectory')) == "running")
     except (json.JSONDecodeError, AttributeError):
         install_running = False
     if FRONT_DOOR == "agent":
@@ -1603,7 +1604,7 @@ def _main(*, update_variant_runner=None):
                 installation = status_payload.get("installation", {})
                 status_ok = (result.returncode == 0 and status_payload.get("installed") is True
                              and status_payload.get("running") is True and status_payload.get("reachable") is True
-                             and host_status.get("state") == "running"
+                             and host_status.get(layout_value('sharedStateDirectory')) == "running"
                              and installation.get("receiptId") == active_receipt.get("id"))
             except (json.JSONDecodeError, AttributeError, OSError):
                 status_ok = False
@@ -1618,7 +1619,7 @@ def _main(*, update_variant_runner=None):
                     spelling_ok = (spelling_result.returncode == 0
                                    and spelling_status.get("running") is True
                                    and spelling_status.get("reachable") is True
-                                   and spelling_status.get("host", {}).get("state") == "running"
+                                   and spelling_status.get("host", {}).get(layout_value('sharedStateDirectory')) == "running"
                                    and spelling_installation.get("receiptId") == active_receipt.get("id"))
                 except (ValueError, json.JSONDecodeError, AttributeError):
                     spelling_ok = False

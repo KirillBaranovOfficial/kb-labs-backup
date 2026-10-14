@@ -12,8 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,6 +36,7 @@ import (
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
+	"github.com/spf13/cobra"
 )
 
 // recordingInstaller stands in for pnpm: what an update changes for the host is
@@ -50,35 +51,7 @@ type recordingInstaller struct {
 func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 	_, fakehost := binaries(t)
 	inst := newEmptyInstallation(t)
-	var primaryListener, secondaryListener net.Listener
-	for range 128 {
-		candidate, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		port := candidate.Addr().(*net.TCPAddr).Port
-		if port+100 > 65535 {
-			_ = candidate.Close()
-			continue
-		}
-		secondary, listenErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+100))
-		if listenErr != nil {
-			_ = candidate.Close()
-			continue
-		}
-		primaryListener, secondaryListener = candidate, secondary
-		inst.port = port
-		break
-	}
-	if primaryListener == nil || secondaryListener == nil {
-		t.Fatal("could not reserve a free Gateway port and its 100-port offset")
-	}
-	if err := primaryListener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := secondaryListener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	inst.port = freeLoopbackPortWithOffset(t, 100)
 
 	binary := []byte("built CLI fixture binary")
 	binaryDigest := sha256.Sum256(binary)
@@ -862,6 +835,7 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 	}
 }
 
+// case: S-223.6
 func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "install")
 	launcher, fakehost := binaries(t)
@@ -874,6 +848,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		"install": []byte("install binary fixture"),
 		"update1": []byte("first update binary fixture"),
 		"update2": []byte("second update binary fixture"),
+		"package": []byte("package tarball fixture"),
 	}
 	digests := make(map[string]string, len(fixtures))
 	for name, data := range fixtures {
@@ -881,7 +856,9 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		digests[name] = hex.EncodeToString(digest[:])
 	}
 	var requests int
+	packageRequests := 0
 	var stageProjectionFailure string
+	operationName := ""
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		name := strings.TrimPrefix(request.URL.Path, "/")
 		data, ok := fixtures[name]
@@ -890,27 +867,30 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			return
 		}
 		requests++
-		entries, err := os.ReadDir(filepath.Join(root, "versions"))
-		if err != nil {
-			stageProjectionFailure = err.Error()
-		} else {
-			stages := 0
-			for _, entry := range entries {
-				if !strings.HasPrefix(entry.Name(), ".stage-") {
-					continue
-				}
-				stages++
-				stage := filepath.Join(root, "versions", entry.Name())
-				for _, projection := range contracts.SharedRuntimeProjections() {
-					path := filepath.Join(stage, filepath.FromSlash(projection.PlatformPath))
-					if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
-						stageProjectionFailure = fmt.Sprintf("%s exists in staged version %s (stat error: %v)", projection.PlatformPath, stage, statErr)
+		if name == "package" {
+			packageRequests++
+		}
+		// StageInitial links declared projections before artifact downloads. Update stages stay unprojected until activation.
+		if operationName != "install" {
+			entries, err := os.ReadDir(filepath.Join(root, "versions"))
+			if err != nil {
+				stageProjectionFailure = fmt.Sprintf("download %s: %v", name, err)
+			} else {
+				stages := 0
+				for _, entry := range entries {
+					if !strings.HasPrefix(entry.Name(), ".stage-") {
+						continue
+					}
+					stages++
+					stage := filepath.Join(root, "versions", entry.Name())
+					if err := versionroot.ValidateNoSharedRuntimeProjectionEntries(stage); err != nil {
+						stageProjectionFailure = fmt.Sprintf("download %s: %v in %s", name, err, stage)
 						break
 					}
 				}
-			}
-			if stages == 0 {
-				stageProjectionFailure = "binary download did not observe a staged version"
+				if stages == 0 {
+					stageProjectionFailure = fmt.Sprintf("download %s did not observe a staged version", name)
+				}
 			}
 		}
 		writer.WriteHeader(http.StatusOK)
@@ -923,14 +903,17 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		Request:      contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 		Host:         hostSpec,
-		Artifacts: []contracts.Artifact{{ID: "fixture-binary", Kind: "binary", Version: "1.0.0",
-			URL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"}},
+		Artifacts: []contracts.Artifact{
+			{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"},
+			{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"]},
+		},
 	}
 	state, err := host.StateForRoot(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{}}
+	packageRunner := productionPackageFixtureRunner{packageName: "@kb-labs/fixture", version: "1.0.0"}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{}, ArtifactRunner: packageRunner}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	t.Cleanup(func() {
 		status, code, output := inst.run("status", "--json")
@@ -946,6 +929,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			t.Errorf("production artifact wiring test cleanup status: %s", output)
 		}
 	})
+	operationName = "install"
 	runApplyStreamForTest(t, resolvedPlan{Plan: installPlan, State: state}, deps)
 
 	layout, err := versionroot.New(root)
@@ -964,6 +948,25 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		}
 	}
 	assertBinaryCached("install")
+	assertActiveProjectionsAreLinks := func() {
+		t.Helper()
+		active, activeErr := layout.Active()
+		if activeErr != nil {
+			t.Fatalf("resolve active version for shared projections: %v", activeErr)
+		}
+		for _, projection := range contracts.SharedRuntimeProjections() {
+			path := filepath.Join(active, filepath.FromSlash(projection.PlatformPath))
+			info, statErr := os.Lstat(path)
+			if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("active version projection %s is not the activation link: mode=%v error=%v", projection.PlatformPath, info, statErr)
+			}
+			target, resolveErr := filepath.EvalSymlinks(path)
+			if resolveErr != nil || !strings.HasPrefix(target, layout.SharedStateDir()+string(filepath.Separator)) {
+				t.Fatalf("active version projection %s does not resolve into install-root shared state: target=%q error=%v", projection.PlatformPath, target, resolveErr)
+			}
+		}
+	}
+	assertActiveProjectionsAreLinks()
 
 	launcherState, err := host.StateHome()
 	if err != nil {
@@ -973,6 +976,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	var rollbackSnapshot string
 	for _, name := range []string{"update1", "update2"} {
 		version := map[string]string{"update1": "2.0.0", "update2": "3.0.0"}[name]
 		plan := contracts.ResolvedInstallPlan{
@@ -980,22 +984,281 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			Request:      contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
 			ServiceGraph: contracts.ServiceGraph{PlatformVersion: version, Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 			Host:         hostSpec,
-			Artifacts: []contracts.Artifact{{ID: "fixture-binary", Kind: "binary", Version: version,
-				URL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"}},
+			Artifacts: []contracts.Artifact{
+				{ID: "fixture-binary", Kind: "binary", Version: version, URL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"},
+				{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"]},
+			},
 		}
 		plan.Request.PlatformRoot = layout.PlatformRoot()
-		if _, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: "kb-create"}, root, plan,
-			state, launcherState, nil); failure != nil {
-			t.Fatalf("production update to %s failed: %v", version, failure)
+		operationName = name
+		runner := packageRunner
+		input := updateCommandInput{Executable: "kb-create", ArtifactRunner: runner}
+		if name == "update2" {
+			indexPath := filepath.Join(t.TempDir(), "release index.json")
+			requestPath := filepath.Join(t.TempDir(), "request input.json")
+			input.RetryCommand = updateTestRetryInvocation(t, indexPath, requestPath, root)
+			priorRoot, priorErr := layout.Active()
+			if priorErr != nil {
+				t.Fatal(priorErr)
+			}
+			priorMetadata, readErr := os.ReadFile(filepath.Join(root, "installer", "layout.json"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			priorReceipt, readErr := os.ReadFile(receipt.Path(priorRoot))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			priorOperation, readErr := os.ReadFile(filepath.Join(root, "installer", "update-operation.json"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			input.ArtifactRunner = productionPackageFixtureRunner{packageName: "@kb-labs/fixture", version: "1.0.0", injectProjection: true}
+			_, refusal := runUpdateCommand(context.Background(), input, root, plan, state, launcherState, nil)
+			if refusal == nil || refusal.Code != contracts.CodeApplyFailed || !strings.Contains(refusal.Cause, ".kb/v2/cache") {
+				t.Fatalf("activation refusal = %#v; want shared-cache stage refusal", refusal)
+			}
+			if got, activeErr := layout.Active(); activeErr != nil || got != priorRoot {
+				t.Fatalf("refusal changed current root: before=%q after=%q error=%v", priorRoot, got, activeErr)
+			}
+			if got, readErr := os.ReadFile(filepath.Join(root, "installer", "layout.json")); readErr != nil || !bytes.Equal(got, priorMetadata) {
+				t.Fatalf("refusal changed layout metadata: %v", readErr)
+			}
+			if got, readErr := os.ReadFile(receipt.Path(priorRoot)); readErr != nil || !bytes.Equal(got, priorReceipt) {
+				t.Fatalf("refusal changed active receipt: %v", readErr)
+			}
+			if got, readErr := os.ReadFile(filepath.Join(root, "installer", "update-operation.json")); readErr != nil || !bytes.Equal(got, priorOperation) {
+				t.Fatalf("refusal changed durable update recovery record: %v", readErr)
+			}
+			commandText := quotedCommandFromHint(t, refusal.Hint)
+			process := exec.Command("sh", "-c", "set -- "+commandText+"; printf '%s\\0' \"$@\"")
+			output, processErr := process.Output()
+			if processErr != nil {
+				t.Fatalf("parse activation retry hint: %v", processErr)
+			}
+			gotArgv := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+			wantArgv := []string{"kb-create", "update", "--index", indexPath, "--input", requestPath, "--platform-root", root}
+			if !reflect.DeepEqual(gotArgv, wantArgv) {
+				t.Fatalf("retry command argv = %#v, want original invocation %#v", gotArgv, wantArgv)
+			}
+			input.ArtifactRunner = runner
 		}
+		result, failure := runUpdateCommand(context.Background(), input, root, plan,
+			state, launcherState, nil)
 		if stageProjectionFailure != "" {
 			t.Fatalf("shared projection existed in a staged tree during %s: %s", name, stageProjectionFailure)
 		}
+		if failure != nil {
+			t.Fatalf("production update to %s failed: %v; cause=%s", version, failure, failure.Cause)
+		}
+		if name == "update1" {
+			rollbackSnapshot, _ = result.Snapshot["id"].(string)
+		}
+		if name == "update2" {
+			updatedMetadata, readErr := layout.UpdateMetadata()
+			if readErr != nil || updatedMetadata.SnapshotID != result.Snapshot["id"] {
+				t.Fatalf("successful retry did not publish recovery record: metadata=%#v error=%v", updatedMetadata, readErr)
+			}
+		}
 		assertBinaryCached(name)
+		assertActiveProjectionsAreLinks()
 	}
-	if requests != 3 {
-		t.Fatalf("production artifact downloads = %d, want first install and two updates", requests)
+	if requests != 5 || packageRequests != 1 {
+		t.Fatalf("production artifact downloads = %d (package tarball %d), want install, update 1, refused update 2, retry update 2, and one shared package tarball", requests, packageRequests)
 	}
+	packageCache := filepath.Join(cacheRoot, "packages", digests["package"]+".tgz")
+	if cached, readErr := os.ReadFile(packageCache); readErr != nil || !bytes.Equal(cached, fixtures["package"]) {
+		t.Fatalf("package tarball was not reused from install-root shared cache %s: %v", packageCache, readErr)
+	}
+	if rollbackSnapshot == "" {
+		t.Fatal("first update omitted the snapshot needed by production rollback")
+	}
+	if _, code, raw := inst.run("stop", "--json"); code != 0 {
+		t.Fatalf("stop before production rollback: %d %s", code, raw)
+	}
+	if _, failure := executeRollback(context.Background(), rollbackCommandInput{
+		PlatformRoot: root, Snapshot: rollbackSnapshot, Yes: true, Executable: "kb-create", ArtifactRunner: operationLogTestRunner{},
+	}); failure != nil {
+		t.Fatalf("production rollback construction failed: %v (reason=%s cause=%s meta=%v)", failure, failure.Reason, failure.Cause, failure.Meta)
+	}
+	rolledBack, err := receipt.Read(platformRootForTest(t, root))
+	if err != nil || rolledBack.Plan.ServiceGraph.PlatformVersion != "1.0.0" {
+		t.Fatalf("production rollback did not restore update1 snapshot: version=%q error=%v", rolledBack.Plan.ServiceGraph.PlatformVersion, err)
+	}
+}
+
+func updateTestRetryInvocation(t *testing.T, indexPath, requestPath, platformRoot string) string {
+	t.Helper()
+	root := &cobra.Command{Use: "kb-create"}
+	command := &cobra.Command{Use: "update"}
+	root.AddCommand(command)
+	descriptor, ok := lookupOperationDescriptor("update")
+	if !ok {
+		t.Fatal("update operation descriptor is missing")
+	}
+	values := make(map[string]any)
+	registerLocalFlags(command, descriptor.Flags, values)
+	if err := command.ParseFlags([]string{"--index", indexPath, "--input", requestPath, "--platform-root", platformRoot}); err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := newCommandFlagReader(command, values).Invocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return invocation
+}
+
+func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testing.T) {
+	installRoot := filepath.Join(t.TempDir(), "install")
+	stage := filepath.Join(t.TempDir(), "stage")
+	if err := os.MkdirAll(stage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := versionroot.New(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures := map[string][]byte{"binary": []byte("binary fixture"), "package": []byte("package fixture")}
+	digests := make(map[string]string, len(fixtures))
+	for name, data := range fixtures {
+		digest := sha256.Sum256(data)
+		digests[name] = hex.EncodeToString(digest[:])
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		name := strings.TrimPrefix(request.URL.Path, "/")
+		data, ok := fixtures[name]
+		if !ok {
+			http.NotFound(writer, request)
+			return
+		}
+		_, _ = writer.Write(data)
+	}))
+	defer server.Close()
+	executor, err := newArtifactExecutor(layout, stage, "", false, io.Discard,
+		productionPackageFixtureRunner{packageName: "@kb-labs/fixture", version: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := []contracts.Artifact{
+		{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/binary", SHA256: digests["binary"], Target: "bin/kb-create"},
+		{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"]},
+	}
+	if err := executor.InstallWithProgress(items, func(_ string, start bool) error {
+		if start {
+			return nil
+		}
+		return versionroot.ValidateNoSharedRuntimeProjectionEntries(stage)
+	}); err != nil {
+		t.Fatalf("production artifact executor install: %v", err)
+	}
+	if err := versionroot.ValidateNoSharedRuntimeProjectionEntries(stage); err != nil {
+		t.Fatalf("artifact executor created a shared projection in its unprojected stage: %v", err)
+	}
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, digest := range digests {
+		cachePath := filepath.Join(cacheRoot, map[string]string{"binary": "binaries/" + digest, "package": "packages/" + digest + ".tgz"}[name])
+		if _, err := os.Stat(cachePath); err != nil {
+			t.Errorf("%s artifact was not fetched into the install-root cache: %v", name, err)
+		}
+	}
+}
+
+func TestUpdateActivationRetryHintPreservesOriginalInvocation(t *testing.T) {
+	for _, includePlatformRoot := range []bool{false, true} {
+		name := "default root"
+		if includePlatformRoot {
+			name = "selected root"
+		}
+		t.Run(name, func(t *testing.T) {
+			selectedRoot := filepath.Join(t.TempDir(), "platform root")
+			index := filepath.Join(t.TempDir(), "release index.json")
+			request := filepath.Join(t.TempDir(), "install request.json")
+			secret := `{"adminPassword":"do-not-print"}`
+			root := &cobra.Command{Use: "kb-create"}
+			command := &cobra.Command{Use: "update"}
+			root.AddCommand(command)
+			registerPersistentFlags(root)
+			values := make(map[string]any)
+			descriptor, ok := lookupOperationDescriptor("update")
+			if !ok {
+				t.Fatal("update command descriptor is not registered")
+			}
+			registerLocalFlags(command, descriptor.Flags, values)
+			args := []string{"--index", index, "--input", request}
+			want := []string{"kb-create", "update", "--index", index, "--input", request}
+			if includePlatformRoot {
+				args = append(args, "--platform-root", selectedRoot)
+				want = append(want, "--platform-root", selectedRoot)
+			}
+			args = append(args, "--scenario-answers", secret)
+			if err := command.ParseFlags(args); err != nil {
+				t.Fatal(err)
+			}
+			flags := newCommandFlagReader(command, values)
+			invocation, err := flags.Invocation()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hint := updateActivationRetryHint(updateCommandInput{RetryCommand: invocation})
+			commandText := quotedCommandFromHint(t, hint)
+			process := exec.Command("sh", "-c", "set -- "+commandText+"; printf '%s\\0' \"$@\"")
+			output, err := process.Output()
+			if err != nil {
+				t.Fatalf("parse retry command with sh: %v", err)
+			}
+			parsed := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+			if !reflect.DeepEqual(parsed, want) {
+				t.Fatalf("retry argv = %#v, want %#v", parsed, want)
+			}
+			if strings.Contains(invocation, secret) {
+				t.Fatal("retry invocation exposed a value declared secret")
+			}
+		})
+	}
+}
+
+type productionPackageFixtureRunner struct {
+	packageName      string
+	version          string
+	injectProjection bool
+}
+
+func (r productionPackageFixtureRunner) Run(_ context.Context, output io.Writer, _ string, args ...string) error {
+	root := ""
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--dir" {
+			root = args[i+1]
+			break
+		}
+	}
+	if root == "" {
+		return fmt.Errorf("pnpm fixture did not receive --dir")
+	}
+	packageRoot := filepath.Join(root, "node_modules", filepath.FromSlash(r.packageName))
+	if err := os.MkdirAll(packageRoot, 0o755); err != nil {
+		return err
+	}
+	manifest, err := json.Marshal(map[string]string{"name": r.packageName, "version": r.version})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), manifest, 0o644); err != nil {
+		return err
+	}
+	if r.injectProjection {
+		projection := filepath.Join(root, ".kb", "v2", "cache")
+		if err := os.MkdirAll(projection, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(projection, "injected"), []byte("fault"), 0o600); err != nil {
+			return err
+		}
+	}
+	_, err = io.WriteString(output, "local package fixture installed\n")
+	return err
 }
 
 func assertContainerParent(t *testing.T, parent string) {
@@ -1279,10 +1542,8 @@ func TestRestartFailureRestoresPreviousVersionAndReportsRecoveryDetails(t *testi
 	if err := os.WriteFile(filepath.Join(inst.root, logRelative), []byte("update completed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: "snapshot-before-v2", LogPath: logRelative}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layout.Activate(stage, "2.0.0", badPlan.PlanHash, ""); err != nil {
+	if _, err := layout.ActivateUpdate(stage, "2.0.0", badPlan.PlanHash, "",
+		versionroot.UpdateMetadata{SnapshotID: "snapshot-before-v2", LogPath: logRelative}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1335,10 +1596,8 @@ func TestRestartRecoveryDirectCallerReturnsSameCataloguedResult(t *testing.T) {
 	if err := receipt.Write(stage, installed); err != nil {
 		t.Fatal(err)
 	}
-	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: "snapshot-direct-v2"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layout.Activate(stage, "2.0.0", badPlan.PlanHash, ""); err != nil {
+	if _, err := layout.ActivateUpdate(stage, "2.0.0", badPlan.PlanHash, "",
+		versionroot.UpdateMetadata{SnapshotID: "snapshot-direct-v2"}); err != nil {
 		t.Fatal(err)
 	}
 	previous, err := host.NewRunner(inst.root)
@@ -1391,10 +1650,8 @@ func restartWithRecoveryFault(t *testing.T, fault string) (installation, string)
 	if err := receipt.Write(stage, installed); err != nil {
 		t.Fatal(err)
 	}
-	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: "snapshot-v2"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layout.Activate(stage, "2.0.0", badPlan.PlanHash, ""); err != nil {
+	if _, err := layout.ActivateUpdate(stage, "2.0.0", badPlan.PlanHash, "",
+		versionroot.UpdateMetadata{SnapshotID: "snapshot-v2"}); err != nil {
 		t.Fatal(err)
 	}
 	recovery, err := layout.RecoveryRoot()

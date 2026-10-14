@@ -1,0 +1,226 @@
+"""Single owner for product-created installed-root fixtures and controlled damage."""
+from __future__ import annotations
+
+import json
+import shutil
+from contextlib import contextmanager
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Iterator, Optional
+
+if TYPE_CHECKING:
+    from invocations import CompletedProcess
+
+
+PathTransform = Callable[[bytes], Optional[bytes]]
+
+
+def _layout() -> dict:
+    source = Path(__file__).resolve().parents[2] / "tools" / "kb-create" / "v2" / "contracts" / "platform-layout.json"
+    value = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("platform layout contract is not an object")
+    return value
+
+
+def _path_slug(value: str) -> str:
+    return "_".join(part.strip(".").replace(".", "_") for part in Path(value).parts)
+
+
+def _layout_path_values() -> dict[str, str]:
+    contract = _layout()
+    paths = {
+        "currentLink": contract["currentLink"],
+        "versionRoots.path": contract["versionRoots"]["path"],
+        "sharedStateDirectory": contract["sharedStateDirectory"],
+        "installerStateDirectory": contract["installerStateDirectory"],
+        "hostStateDirectory": contract["hostStateDirectory"],
+        "ownershipRecord": contract["ownershipRecord"],
+        "ownershipRecordStagingPrefix": contract["ownershipRecordStagingPrefix"],
+        "platformDataRoot.platformPath": contract["platformDataRoot"]["platformPath"],
+        "platformDataRoot.statePath": contract["platformDataRoot"]["statePath"],
+    }
+    for projection in contract["sharedRuntimePaths"]:
+        slug = _path_slug(projection["platformPath"])
+        for field in ("platformPath", "statePath"):
+            identity = f"sharedRuntimePaths.{slug}.{field}"
+            if identity in paths:
+                raise ValueError(f"platform layout has ambiguous path identity {identity!r}")
+            paths[identity] = projection[field]
+    for field in ("versionStatePaths", "runtimeStatePaths"):
+        for value in contract[field]:
+            slug = _path_slug(value)
+            identity = f"{field}.{slug}"
+            if identity in paths:
+                raise ValueError(f"platform layout has ambiguous path identity {identity!r}")
+            paths[identity] = value
+    paths.update({f"installerRecords.{name}": value
+                  for name, value in contract["installerRecords"].items() if isinstance(value, str)})
+    return paths
+
+
+def _identity_value(identity: str) -> str:
+    try:
+        return _layout_path_values()[identity]
+    except KeyError as error:
+        raise ValueError(f"platform layout identity {identity!r} does not name a declared path") from error
+
+
+def layout_value(identity: str) -> str:
+    """Read one relative path value by its platform-layout.json identity."""
+    return _identity_value(identity)
+
+
+def layout_relative(identity: str, suffix: str) -> str:
+    """Resolve a child spelling beneath a layout-owned path identity."""
+    base = Path(_identity_value(identity))
+    child = Path(suffix)
+    if child.is_absolute() or ".." in child.parts:
+        raise ValueError(f"path suffix escapes layout identity {identity!r}")
+    return str(base / child)
+
+
+def installed_path(root: Path, identity: str, *suffix: str) -> Path:
+    """Resolve an installed path from a layout identity and optional children."""
+    path = Path(root) / _identity_value(identity)
+    for part in suffix:
+        child = Path(part)
+        if child.is_absolute() or ".." in child.parts:
+            raise ValueError(f"path suffix escapes layout identity {identity!r}")
+        path /= child
+    return path
+
+
+def active_platform_root(root: Path) -> Path:
+    """Resolve the active product-created version from declared layout links."""
+    root = Path(root)
+    current = installed_path(root, "currentLink")
+    versions = installed_path(root, "versionRoots.path")
+    if not current.is_symlink():
+        if not root.exists() or (root.is_dir() and not any(root.iterdir())):
+            raise FileNotFoundError(f"no installed platform at {root}")
+        raise ValueError(f"unsupported platform layout at {root}: current is not a symlink")
+    target = current.readlink()
+    if target.is_absolute():
+        raise ValueError(f"unsupported platform layout at {root}: current link is not relative")
+    try:
+        active = current.resolve(strict=True)
+        active.relative_to(versions.resolve(strict=True))
+    except (OSError, ValueError) as error:
+        raise ValueError(f"unsupported platform layout at {root}: current does not select a complete version") from error
+    if not active.is_dir():
+        raise ValueError(f"unsupported platform layout at {root}: current does not select a directory")
+    return active
+
+
+def _mutate_existing_target(target: Path, transform: PathTransform, identity: str) -> Path:
+    try:
+        before = target.read_bytes()
+    except FileNotFoundError as error:
+        raise RuntimeError(f"fixture fault target was not created by product install: {target}") from error
+    after = transform(before)
+    if after is None:
+        target.unlink()
+    else:
+        target.write_bytes(after)
+    return target
+
+
+def inject_existing_fault(root: Path, identity: str, transform: PathTransform, *suffix: str) -> Path:
+    """Mutate or remove an existing product-created file; never create a target."""
+    return _mutate_existing_target(installed_path(root, identity, *suffix), transform, identity)
+
+
+def inject_existing_version_fault(root: Path, identity: str, transform: PathTransform,
+                                 *suffix: str) -> Path:
+    """Mutate or remove an existing file inside the product-created active version."""
+    target = active_platform_root(root) / _identity_value(identity)
+    for part in suffix:
+        child = Path(part)
+        if child.is_absolute() or ".." in child.parts:
+            raise ValueError(f"path suffix escapes layout identity {identity!r}")
+        target /= child
+    return _mutate_existing_target(target, transform, identity)
+
+
+def install_fixture_root(root: Path, *, launcher: str, index: Path, run_command: Callable[..., CompletedProcess],
+                         label: str, selection: tuple[str, str] | None = None) -> Path:
+    """Obtain a complete installation only through the product installer."""
+    args = [launcher, "install", "--json", "--index", str(index), "--platform-root", str(root),
+            "--service-profile", "default", "--scenario", "explore",
+            "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"]
+    if selection:
+        args.extend(selection)
+    result = run_command(args)
+    if result.returncode != 0:
+        raise RuntimeError(f"{label}: product install exited {result.returncode}")
+    receipt_path = installed_path(root, "currentLink", ".kb/v2/receipt.json")
+    if not receipt_path.is_file():
+        raise RuntimeError(f"{label}: product install omitted its active receipt")
+    return receipt_path
+
+
+
+def add_installed_manifest_requirement(root: Path, requirement: dict) -> None:
+    """Inject one diagnostic requirement into product-created receipt and manifest files."""
+    receipt_identity = "currentLink"
+    receipt_suffix = (".kb/v2/receipt.json",)
+    receipt_path = installed_path(root, receipt_identity, *receipt_suffix)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    artifacts = receipt.get("plan", {}).get("artifacts", [])
+    selected = next((item for item in artifacts if item.get("kind") != "binary" and item.get("package")), None)
+    if not isinstance(selected, dict):
+        raise RuntimeError("product-installed fixture has no package artifact for a manifest requirement")
+    manifest_suffix = ("node_modules", selected["package"], "kb-create.manifest.json")
+    manifest_path = installed_path(root, receipt_identity, *manifest_suffix)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    receipt_requirements = list(selected.get("config", []))
+    manifest_requirements = list(manifest.get("requirements", []))
+    if requirement in receipt_requirements or requirement in manifest_requirements:
+        raise RuntimeError("manifest requirement fixture was already present before its fault injection")
+    selected["config"] = [*receipt_requirements, requirement]
+    manifest["requirements"] = [*manifest_requirements, requirement]
+    inject_existing_fault(root, receipt_identity,
+                          lambda _current: (json.dumps(manifest) + "\n").encode(), *manifest_suffix)
+    inject_existing_fault(root, receipt_identity,
+                          lambda _current: (json.dumps(receipt, indent=2) + "\n").encode(), *receipt_suffix)
+
+
+def stop_fixture_host(root: Path, launcher: str, run_command: Callable[..., CompletedProcess]) -> None:
+    from platform_update_steps import _json_command
+
+    receipt_path = installed_path(root, "currentLink", ".kb/v2/receipt.json")
+    if receipt_path.is_file():
+        status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
+                               f"host lifecycle status for {root}")
+        if status.get("host", {}).get("state") == "running":
+            _json_command(run_command, [launcher, "stop", "--platform-root", str(root), "--json"],
+                          f"stop fixture host for {root}")
+
+
+def cleanup_fixture_root(root: Path, launcher: str, run_command: Callable[..., CompletedProcess]) -> None:
+    """Uninstall a product-created fixture, then remove its enclosing temp root."""
+    from platform_update_steps import _json_command
+
+    stop_fixture_host(root, launcher, run_command)
+    if installed_path(root, "currentLink", ".kb/v2/receipt.json").is_file():
+        _json_command(run_command, [launcher, "uninstall", "--platform-root", str(root), "--yes", "--json"],
+                      f"uninstall installer fixture root {root}")
+    shutil.rmtree(root, ignore_errors=True)
+
+
+@contextmanager
+def installed_fixture(root: Path, *, launcher: str, index: Path,
+                      run_command: Callable[..., CompletedProcess], label: str,
+                      selection: tuple[str, str] | None = None) -> Iterator[Path]:
+    try:
+        receipt_path = install_fixture_root(root, launcher=launcher, index=index,
+                                            run_command=run_command, label=label, selection=selection)
+        yield receipt_path
+    except BaseException as original:
+        try:
+            cleanup_fixture_root(root, launcher, run_command)
+        except BaseException as cleanup_error:
+            original.add_note(f"fixture cleanup also failed: {cleanup_error}")
+        raise
+    else:
+        cleanup_fixture_root(root, launcher, run_command)

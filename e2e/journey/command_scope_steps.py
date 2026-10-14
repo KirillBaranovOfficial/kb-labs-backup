@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from installed_fixture import layout_relative, layout_value
+
 import json
 import os
 import tempfile
@@ -168,7 +170,7 @@ def run_config_failure_steps(journey: Journey, repo_root: Path) -> None:
             code, added = invoke(["project", "add", str(project), "--json"])
             if code != 0 or added.get("ok") is not True:
                 return f"could not register config fixture: {added}"
-            state = Path(env["KB_HOME"]) / "state" / added["data"]["project"]["id"]
+            state = Path(env["KB_HOME"]) / layout_value('sharedStateDirectory') / added["data"]["project"]["id"]
             settings = state / "config.jsonc"
 
             def expect_failure(target: Path, expected_hint: str, contents: str | None = None, directory: bool = False) -> str | None:

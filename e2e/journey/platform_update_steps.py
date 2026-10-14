@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command
+from installed_fixture import layout_relative, layout_value
 
 import hashlib
 import json
@@ -132,10 +133,10 @@ def run_platform_update_steps(
     """Update the running installation, exercise a project command, and roll back."""
     journey = Journey(mode, f"platform-update-{mode}", parent=parent_journey)
     root = str(platform_root)
-    receipt_path = platform_root / "current/.kb/v2/receipt.json"
-    config_paths = [platform_root / "current/.kb/kb.config.jsonc"]
+    receipt_path = platform_root / layout_relative('currentLink', '.kb/v2/receipt.json')
+    config_paths = [platform_root / layout_relative('currentLink', layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath'))]
     snapshot_id = ""
-    runtime_log_path = platform_root / "current/.kb/logs/post-update-before-restart.log"
+    runtime_log_path = platform_root / layout_relative('currentLink', layout_relative('sharedRuntimePaths.kb_logs.platformPath', 'post-update-before-restart.log'))
     updated_plan_hash = ""
     updated_plan: dict = {}
     pending_restart_services: list[dict] = []
@@ -171,8 +172,8 @@ def run_platform_update_steps(
         outside_install_state = _outside_install_snapshot(platform_root, allowed_outside_roots)
         shared_file_fingerprints_before = shared_runtime_file_fingerprints(platform_root)
         running_tree_before = active_platform_root(platform_root)
-        running_lock_before = (running_tree_before / ".kb/marketplace.lock").read_bytes()
-        running_config_before = (running_tree_before / ".kb/kb.config.jsonc").read_bytes()
+        running_lock_before = (running_tree_before / layout_value('versionStatePaths.kb_marketplace_lock')).read_bytes()
+        running_config_before = (running_tree_before / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')).read_bytes()
         receipt = json.loads(receipt_path.read_text())
         installation_id = str(receipt.get("installationId") or "")
         gateway_url = str(receipt.get("verification", {}).get("hostHealthUrl") or "")
@@ -289,9 +290,9 @@ def run_platform_update_steps(
         if not result.get("logPath"):
             raise RuntimeError("update result did not include its operation log path")
         assert_shared_file_fingerprints("successful update before restart")
-        if running_tree_before is None or (running_tree_before / ".kb/marketplace.lock").read_bytes() != running_lock_before:
+        if running_tree_before is None or (running_tree_before / layout_value('versionStatePaths.kb_marketplace_lock')).read_bytes() != running_lock_before:
             raise RuntimeError("successful update changed the still-running version's marketplace lock")
-        if running_tree_before is None or (running_tree_before / ".kb/kb.config.jsonc").read_bytes() != running_config_before:
+        if running_tree_before is None or (running_tree_before / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')).read_bytes() != running_config_before:
             raise RuntimeError("successful update changed the still-running version's config view")
         post_update_status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
                                            "status after update before restart")
@@ -332,7 +333,7 @@ def run_platform_update_steps(
             raise RuntimeError("kb-create status did not report the pending restart object")
         if pending != pending_restart_object:
             raise RuntimeError("kb-create status pendingRestart differs from the update result")
-        for status_root in (platform_root, platform_root / "current", (platform_root / "current").resolve()):
+        for status_root in (platform_root, platform_root / layout_value('currentLink'), (platform_root / layout_value('currentLink')).resolve()):
             spelling_status = _json_command(
                 run_command, [launcher, "status", "--platform-root", str(status_root), "--json"],
                 f"updated status through {status_root}")
@@ -609,7 +610,7 @@ def run_platform_update_steps(
                                      "--input", str(request_file), "--secret-env", f"{secret}={env_name}"])
             if identical.returncode != 0:
                 raise RuntimeError("an identical stored --secret-env value was not accepted")
-            shared_before = snapshot_state_tree(platform_root / "state")
+            shared_before = snapshot_state_tree(platform_root / layout_value('sharedStateDirectory'))
             os.environ[env_name] = changed
             refused = run_command([launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
                                    "--input", str(request_file), "--secret-env", f"{secret}={env_name}"])
@@ -620,7 +621,7 @@ def run_platform_update_steps(
                 raise RuntimeError(f"changed update secret did not return a typed refusal: {error}") from error
             if refused.returncode == 0 or failure.get("code") != "KB_UPDATE_SECRET_REFUSED":
                 raise RuntimeError("changed --secret-env value was not refused with KB_UPDATE_SECRET_REFUSED")
-            if snapshot_state_tree(platform_root / "state") != shared_before:
+            if snapshot_state_tree(platform_root / layout_value('sharedStateDirectory')) != shared_before:
                 raise RuntimeError("refused update-time secret change modified shared runtime state")
             hint = failure.get("hint")
             if not isinstance(hint, str) or hint.count("`") < 2:
@@ -642,7 +643,7 @@ def run_platform_update_steps(
             except (FileNotFoundError, ValueError) as error:
                 raise RuntimeError(f"the suggested apply command left no valid active platform root: {error}") from error
             if (not current_link_path(platform_root).is_symlink()
-                    or not (active_root / ".kb/v2/receipt.json").is_file()
+                    or not (current_link_path(platform_root) / '.kb/v2/receipt.json').is_file()
                     or status.get("running") is not True or status.get("reachable") is not True
                     or doctor.get("platform", {}).get("ok") is not True):
                 raise RuntimeError("the suggested apply command did not leave a healthy installed host")
