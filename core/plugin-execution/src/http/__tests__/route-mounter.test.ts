@@ -1,22 +1,21 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
+import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory';
 import { mountRoutes } from '../route-mounter.js';
-import type { ExecutionBackend, NormalizedExecutionResult } from '../../types.js';
+import type { ExecutionBackend, ExecutionResult } from '../../types.js';
 
-function backendReturning(result: NormalizedExecutionResult): ExecutionBackend {
-  return {
-    async execute() {
-      return result;
-    },
-    async health() {
-      return { healthy: true, backend: 'in-process' };
-    },
-    async stats() {
-      return { totalExecutions: 0, successCount: 0, errorCount: 0, avgExecutionTimeMs: 0 };
-    },
-    async shutdown() {},
+function backendReturning(result: ExecutionResult): ExecutionBackend {
+  const logger: ILogger = {
+    trace: () => {}, debug: () => {}, info: () => {}, warn: () => {},
+    error: () => {}, fatal: () => {}, child: () => logger,
   };
+  return createNormalizedExecutionBackend({
+    async execute() { return result; },
+    async health() { return { healthy: true, backend: 'in-process' }; },
+    async stats() { return { totalExecutions: 0, successCount: 0, errorCount: 0, avgExecutionTimeMs: 0 }; },
+    async shutdown() {},
+  }, logger);
 }
 
 const manifest = {
@@ -48,7 +47,7 @@ it('returns a shared safe error envelope for plugin REST failures', async () => 
   });
   await mountRoutes(server, manifest, { ...options, backend: backendReturning({
     ok: false,
-    error: { normalized: true, envelope, code: envelope.code, message: envelope.message },
+    error: { message: envelope.message, envelope },
     executionTimeMs: 1,
   }) });
 
