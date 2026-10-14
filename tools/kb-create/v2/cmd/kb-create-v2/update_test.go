@@ -914,27 +914,50 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			return
 		}
 		requests++
-		entries, err := os.ReadDir(filepath.Join(root, "versions"))
-		if err != nil {
-			stageProjectionFailure = err.Error()
-		} else {
-			stages := 0
-			for _, entry := range entries {
-				if !strings.HasPrefix(entry.Name(), ".stage-") {
-					continue
-				}
-				stages++
-				stage := filepath.Join(root, "versions", entry.Name())
-				for _, projection := range contracts.SharedRuntimeProjections() {
-					path := filepath.Join(stage, filepath.FromSlash(projection.PlatformPath))
-					if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
-						stageProjectionFailure = fmt.Sprintf("%s exists in staged version %s (stat error: %v)", projection.PlatformPath, stage, statErr)
-						break
+		// StageInitial links declared projections before artifact downloads. Update stages stay unprojected until activation.
+		if name != "install" {
+			entries, err := os.ReadDir(filepath.Join(root, "versions"))
+			if err != nil {
+				stageProjectionFailure = fmt.Sprintf("download %s: %v", name, err)
+			} else {
+				stages := 0
+				for _, entry := range entries {
+					if !strings.HasPrefix(entry.Name(), ".stage-") {
+						continue
+					}
+					stages++
+					stage := filepath.Join(root, "versions", entry.Name())
+					for _, projection := range contracts.SharedRuntimeProjections() {
+						path := filepath.Join(stage, filepath.FromSlash(projection.PlatformPath))
+						info, statErr := os.Lstat(path)
+						if os.IsNotExist(statErr) {
+							continue
+						}
+						if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+							stageLayout, layoutErr := versionroot.New(root)
+							if layoutErr == nil {
+								sharedPath, sharedErr := stageLayout.SharedRuntimePath(projection.PlatformPath)
+								sharedTarget, targetErr := filepath.EvalSymlinks(sharedPath)
+								projectionTarget, projectionErr := filepath.EvalSymlinks(path)
+								if sharedErr == nil && targetErr == nil && projectionErr == nil && projectionTarget == sharedTarget {
+									continue
+								}
+							}
+						}
+						{
+							mode := ""
+							if info != nil {
+								mode = info.Mode().String()
+							}
+							stageProjectionFailure = fmt.Sprintf("download %s: %s exists in staged version %s (mode=%s lstat=%v)",
+								name, projection.PlatformPath, stage, mode, statErr)
+							break
+						}
 					}
 				}
-			}
-			if stages == 0 {
-				stageProjectionFailure = "binary download did not observe a staged version"
+				if stages == 0 {
+					stageProjectionFailure = fmt.Sprintf("download %s did not observe a staged version", name)
+				}
 			}
 		}
 		writer.WriteHeader(http.StatusOK)
@@ -988,6 +1011,25 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		}
 	}
 	assertBinaryCached("install")
+	assertActiveProjectionsAreLinks := func() {
+		t.Helper()
+		active, activeErr := layout.Active()
+		if activeErr != nil {
+			t.Fatalf("resolve active version for shared projections: %v", activeErr)
+		}
+		for _, projection := range contracts.SharedRuntimeProjections() {
+			path := filepath.Join(active, filepath.FromSlash(projection.PlatformPath))
+			info, statErr := os.Lstat(path)
+			if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("active version projection %s is not the activation link: mode=%v error=%v", projection.PlatformPath, info, statErr)
+			}
+			target, resolveErr := filepath.EvalSymlinks(path)
+			if resolveErr != nil || !strings.HasPrefix(target, layout.SharedStateDir()+string(filepath.Separator)) {
+				t.Fatalf("active version projection %s does not resolve into install-root shared state: target=%q error=%v", projection.PlatformPath, target, resolveErr)
+			}
+		}
+	}
+	assertActiveProjectionsAreLinks()
 
 	launcherState, err := host.StateHome()
 	if err != nil {
@@ -997,6 +1039,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	var rollbackSnapshot string
 	for _, name := range []string{"update1", "update2"} {
 		version := map[string]string{"update1": "2.0.0", "update2": "3.0.0"}[name]
 		plan := contracts.ResolvedInstallPlan{
@@ -1008,17 +1051,37 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 				URL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"}},
 		}
 		plan.Request.PlatformRoot = layout.PlatformRoot()
-		if _, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: "kb-create"}, root, plan,
-			state, launcherState, nil); failure != nil {
-			t.Fatalf("production update to %s failed: %v", version, failure)
-		}
+		result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: "kb-create"}, root, plan,
+			state, launcherState, nil)
 		if stageProjectionFailure != "" {
 			t.Fatalf("shared projection existed in a staged tree during %s: %s", name, stageProjectionFailure)
 		}
+		if failure != nil {
+			t.Fatalf("production update to %s failed: %v; cause=%s", version, failure, failure.Cause)
+		}
+		if name == "update1" {
+			rollbackSnapshot, _ = result.Snapshot["id"].(string)
+		}
 		assertBinaryCached(name)
+		assertActiveProjectionsAreLinks()
 	}
 	if requests != 3 {
 		t.Fatalf("production artifact downloads = %d, want first install and two updates", requests)
+	}
+	if rollbackSnapshot == "" {
+		t.Fatal("first update omitted the snapshot needed by production rollback")
+	}
+	if _, code, raw := inst.run("stop", "--json"); code != 0 {
+		t.Fatalf("stop before production rollback: %d %s", code, raw)
+	}
+	if _, failure := executeRollback(context.Background(), rollbackCommandInput{
+		PlatformRoot: root, Snapshot: rollbackSnapshot, Yes: true, Executable: "kb-create", ArtifactRunner: operationLogTestRunner{},
+	}); failure != nil {
+		t.Fatalf("production rollback construction failed: %v (reason=%s cause=%s meta=%v)", failure, failure.Reason, failure.Cause, failure.Meta)
+	}
+	rolledBack, err := receipt.Read(platformRootForTest(t, root))
+	if err != nil || rolledBack.Plan.ServiceGraph.PlatformVersion != "1.0.0" {
+		t.Fatalf("production rollback did not restore update1 snapshot: version=%q error=%v", rolledBack.Plan.ServiceGraph.PlatformVersion, err)
 	}
 }
 
