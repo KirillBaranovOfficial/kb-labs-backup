@@ -4,7 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import shlex
-from pathlib import Path
+import shutil
+import sys
+from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 
@@ -13,13 +15,17 @@ class RunnerImageResource(NamedTuple):
 
     source: str
     destination: str
+    stage_source: str | None = None
 
 
 RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("tools/kb-create/install.sh", "/usr/local/share/kb-create/install.sh"),
     RunnerImageResource("e2e/journey", "/opt/kb-journey/e2e/journey"),
-    RunnerImageResource(".journey/runner-inputs/project-service-path.js",
-                        "/opt/kb-journey/core/plugin-contracts/dist/project-service-path.js"),
+    RunnerImageResource(
+        ".journey/runner-inputs/project-service-path.js",
+        "/opt/kb-journey/core/plugin-contracts/dist/project-service-path.js",
+        "core/plugin-contracts/dist/project-service-path.js",
+    ),
     RunnerImageResource("docs/qa/scenarios", "/opt/kb-journey/docs/qa/scenarios"),
     RunnerImageResource("e2e/platform/fixtures/installer-cases",
                         "/opt/kb-journey/e2e/platform/fixtures/installer-cases"),
@@ -78,6 +84,36 @@ def workspace_resource(*parts: str) -> Path:
     return resource_root().joinpath(*parts)
 
 
+def stage_runner_image_inputs() -> tuple[Path, ...]:
+    """Stage declared runner inputs whose repository source is generated or ignored."""
+    staged_paths = []
+    for resource in RUNNER_IMAGE_RESOURCES:
+        if resource.stage_source is None:
+            continue
+        built_input = workspace_resource(*PurePosixPath(resource.stage_source).parts)
+        if not built_input.is_file():
+            raise FileNotFoundError(
+                f"The journey runner needs {built_input.relative_to(resource_root())}. "
+                "Run `corepack pnpm --filter @kb-labs/plugin-contracts... --workspace-concurrency=2 build` first."
+            )
+        staged_input = workspace_resource(*PurePosixPath(resource.source).parts)
+        staged_input.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built_input, staged_input)
+        staged_paths.append(staged_input)
+    if not staged_paths:
+        raise RuntimeError("the journey runner resource set declares no staged runner inputs")
+    return tuple(staged_paths)
+
+
+def main() -> int:
+    try:
+        stage_runner_image_inputs()
+    except FileNotFoundError as error:
+        print(error, file=sys.stderr)
+        return 2
+    return 0
+
+
 def workspace_tool_entrypoints() -> tuple[Path, ...]:
     """Resolve declared Go tool entrypoints from the workspace resource set."""
     return tuple(
@@ -112,6 +148,10 @@ def parse_shell_commands(value: str) -> list[list[str]]:
         raise ValueError("shell command sequence contains an empty command")
     commands.append(current)
     return commands
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 def installer_case_fixture_root() -> Path:

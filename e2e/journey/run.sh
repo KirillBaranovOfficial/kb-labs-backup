@@ -103,29 +103,15 @@ cleanup() {
       (( status != 0 )) || status=1
     fi
   done
-  if (( COMPOSE_AVAILABLE )) && [[ -n "${RUN_STARTED_AT:-}" ]]; then
-    local container_ids=() container_id
-    local container_listing
-    if container_listing=$("${COMPOSE[@]}" ps -aq --all); then
-      while IFS= read -r container_id; do
-        [[ -z "$container_id" ]] || container_ids+=(--container "$container_id")
-      done <<< "$container_listing"
-      if ! python3 e2e/journey/container_outcomes.py --report-dir .journey/reports \
-        --since "$RUN_STARTED_AT" "${container_ids[@]}"; then
-        echo "Journey container outcome capture failed. Next: cat .journey/reports/container-outcomes.json" >&2
-        (( status != 0 )) || status=1
+  if (( COMPOSE_AVAILABLE )); then
+    if [[ -n "${RUN_STARTED_AT:-}" ]]; then
+      if ! bash e2e/journey/teardown-compose.sh "$status" .journey/reports "$RUN_STARTED_AT" "${COMPOSE[@]}"; then
+        status=1
       fi
-    else
-      echo "Journey container outcome capture failed: Compose could not list containers before teardown. Next: docker compose -f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml ps --all" >&2
+    elif ! "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null; then
+      echo "Journey Compose cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
       (( status != 0 )) || status=1
     fi
-    if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -f .journey/reports/journey-summary.md ]]; then
-      cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"
-    fi
-  fi
-  if (( COMPOSE_AVAILABLE )) && ! "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null; then
-    echo "Journey Compose cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
-    (( status != 0 )) || status=1
   fi
   exit "$status"
 }

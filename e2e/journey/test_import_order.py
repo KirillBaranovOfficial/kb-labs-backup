@@ -51,6 +51,20 @@ def _journey_modules(journey_root: Path = JOURNEY_DIR,
 
 
 class JourneyImportOrderTests(unittest.TestCase):
+    def test_runner_inputs_are_materialized_by_the_runner_stage(self):
+        staged = subprocess.run(
+            ["bash", str(JOURNEY_DIR / "stage-runner-inputs.sh")],
+            cwd=REPOSITORY_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(
+            staged.returncode,
+            0,
+            f"runner input stage failed\nstdout:\n{staged.stdout}\nstderr:\n{staged.stderr}",
+        )
+
     def test_every_journey_module_imports_first_in_a_fresh_interpreter(self):
         env = os.environ.copy()
         env["PYTHONPATH"] = str(JOURNEY_DIR)
@@ -98,6 +112,14 @@ class JourneyImportOrderTests(unittest.TestCase):
         )
 
     def test_copied_runner_tree_resolves_resources_and_imports_its_modules(self):
+        staged = subprocess.run(
+            ["bash", str(JOURNEY_DIR / "stage-runner-inputs.sh")],
+            cwd=REPOSITORY_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(staged.returncode, 0, staged.stderr or staged.stdout)
         resources = _docker_copy_resources()
         with tempfile.TemporaryDirectory(prefix="journey-runner-image-") as temporary:
             image_root = Path(temporary)
