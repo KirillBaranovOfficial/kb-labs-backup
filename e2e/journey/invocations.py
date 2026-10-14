@@ -5,16 +5,21 @@ from journey_values import journey_value
 from contextvars import ContextVar
 import json
 import inspect
+import errno
+import fcntl
 import os
 import pty
+import platform
 from pathlib import Path
 import re
 import shlex
 import select
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
 from typing import Any, Callable, Mapping, MutableMapping, NoReturn
@@ -22,7 +27,151 @@ from urllib.error import HTTPError, URLError
 
 from platform_state_dump import _redact_json, _redact_text
 
-WIZARD_PROMPT_EVENT = "\x1eKB-LABS-WIZARD-PROMPT\x1f"
+class PtyReadinessUnsupported(RuntimeError):
+    """The operating system cannot report whether a PTY child is reading its terminal."""
+
+
+_LINUX_READ_SYSCALLS = {"x86_64": 0, "amd64": 0, "aarch64": 63, "arm64": 63}
+
+
+def _parse_proc_stat(stat: str) -> tuple[int, int, int, str] | None:
+    fields = stat.rpartition(")")[2].split()
+    if len(fields) < 5:
+        return None
+    return int(fields[1]), int(fields[3]), int(fields[4]), fields[0]  # parent, session, tty, state
+
+
+def _proc_stat(pid: int) -> tuple[int, int, int, str] | None:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    except FileNotFoundError:
+        return None
+    except PermissionError as error:
+        raise PtyReadinessUnsupported(
+            "Linux procfs process state is not readable with this user's permissions"
+        ) from error
+    return _parse_proc_stat(stat)
+
+
+def _pty_reader_pids(root_pid: int) -> list[int]:
+    proc = Path("/proc")
+    root = _proc_stat(root_pid)
+    if root is None:
+        return []
+    pids = {root_pid}
+    parent_by_pid: dict[int, int] = {}
+    for entry in proc.iterdir():
+        if not entry.name.isdecimal():
+            continue
+        pid = int(entry.name)
+        try:
+            details = _proc_stat(pid)
+        except PtyReadinessUnsupported:
+            continue
+        if details is not None:
+            parent_by_pid[pid] = details[0]
+    changed = True
+    while changed:
+        changed = False
+        for pid, parent in parent_by_pid.items():
+            if parent in pids and pid not in pids:
+                pids.add(pid)
+                changed = True
+    return sorted(pids)
+
+
+def _decode_linux_device_number(encoded: int) -> tuple[int, int]:
+    major = ((encoded >> 8) & 0xFFF) | ((encoded >> 32) & ~0xFFF)
+    minor = (encoded & 0xFF) | ((encoded >> 12) & ~0xFF)
+    return major, minor
+
+
+def _linux_terminal_reader(pid: int, terminal_path: str) -> tuple[int, int, str] | None:
+    """Return the exact task blocked reading fd 0 from this controlling PTY."""
+    if not sys.platform.startswith("linux"):
+        raise PtyReadinessUnsupported(
+            f"PTY read readiness is not supported on {platform.system()}; the journey requires Linux procfs"
+        )
+    machine = platform.machine().lower()
+    read_syscall = _LINUX_READ_SYSCALLS.get(machine)
+    if read_syscall is None:
+        raise PtyReadinessUnsupported(
+            f"PTY read readiness is not supported for Linux architecture {machine}"
+        )
+    try:
+        pids = _pty_reader_pids(pid)
+        terminal_stat = os.stat(terminal_path)
+    except OSError as error:
+        raise PtyReadinessUnsupported(f"Linux procfs process state is unavailable: {error}") from error
+    terminal_device = (os.major(terminal_stat.st_rdev), os.minor(terminal_stat.st_rdev))
+    for child_pid in pids:
+        details = _proc_stat(child_pid)
+        if details is None:
+            continue
+        _, session_id, controlling_tty, _ = details
+        if (session_id != pid
+                or _decode_linux_device_number(controlling_tty) != terminal_device):
+            continue
+        try:
+            if os.readlink(f"/proc/{child_pid}/fd/0") != terminal_path:
+                continue
+            tasks = Path(f"/proc/{child_pid}/task").iterdir()
+            for task in tasks:
+                task_state = _parse_proc_stat(Path(task, "stat").read_text(encoding="ascii"))
+                if task_state is None or task_state[3] not in {"S", "D"}:
+                    continue
+                syscall = Path(task, "syscall").read_text(encoding="ascii").split()
+                if len(syscall) >= 2:
+                    try:
+                        is_terminal_read = (int(syscall[0], 10) == read_syscall
+                                            and int(syscall[1], 16) == 0)
+                    except ValueError:
+                        continue
+                    if is_terminal_read:
+                        return child_pid, int(task.name), " ".join(syscall)
+        except FileNotFoundError:
+            continue
+        except PermissionError as error:
+            raise PtyReadinessUnsupported(
+                "Linux procfs syscall state is not readable with this user's permissions"
+            ) from error
+        except OSError:
+            continue
+    return None
+
+
+def pty_terminal_read_ready(pid: int, terminal_path: str) -> bool:
+    """Report a child task blocked in read(0) on this controlling PTY."""
+    return _linux_terminal_reader(pid, terminal_path) is not None
+
+
+def _terminal_pending_input(slave_fd: int) -> int:
+    """Return bytes queued for the child to read, including no-echo input."""
+    value = bytearray(struct.pack("i", 0))
+    fcntl.ioctl(slave_fd, termios.TIOCINQ, value, True)
+    return struct.unpack("i", value)[0]
+
+
+def _drain_pty(master: int, transcript: bytearray) -> bool:
+    """Drain all output currently queued on the PTY master; report new bytes."""
+    changed = False
+    while True:
+        try:
+            chunk = os.read(master, 8192)
+        except BlockingIOError:
+            return changed
+        except OSError as error:
+            if error.errno in (errno.EIO, errno.EBADF):
+                return changed
+            raise
+        if not chunk:
+            return changed
+        transcript.extend(chunk)
+        changed = True
+
+
+def _acquire_controlling_terminal(slave_fd: int) -> None:
+    fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
 
 _STEP_ID: ContextVar[str] = ContextVar("journey_step_id", default="journey.setup")
 _REPORT_ROOT: ContextVar[Path | None] = ContextVar("journey_report_root", default=None)
@@ -575,56 +724,77 @@ def _run_monitored_command(argv: list[str], *, cwd: str | Path | None,
 def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
                     env: Mapping[str, str] | None = None, timeout: float = 900,
                     on_output: Callable[[str], str | bytes | None] | None = None,
-                    on_idle: Callable[[str, bool], str | bytes | None] | None = None,
-                    idle_interval: float = 0.2,
+                    on_read_ready: Callable[[str], str | bytes | None] | None = None,
                     monitor_process: Callable[[int], None] | None = None,
                     start_new_session: bool = False,
                     raise_on_timeout: bool = True) -> tuple[subprocess.CompletedProcess[str], float]:
     """Run a command on a PTY and record its complete transcript and case step."""
+    if on_read_ready and not sys.platform.startswith("linux"):
+        raise PtyReadinessUnsupported(
+            f"PTY read readiness is not supported on {platform.system()}; the journey requires Linux procfs"
+        )
+    if on_read_ready and not start_new_session:
+        raise ValueError("PTY read readiness requires a new session with a controlling terminal")
     started = time.monotonic()
     master, slave = pty.openpty()
+    if on_read_ready:
+        os.set_blocking(master, False)
+    terminal_path = os.ttyname(slave)
     process = None
     transcript = bytearray()
     timed_out = False
-    last_output_at = started
-    idle_notified = False
     try:
         process = subprocess.Popen(argv, cwd=str(cwd) if cwd else None,
                                    env=dict(env) if env is not None else None,
                                    stdin=slave, stdout=slave, stderr=slave,
-                                   close_fds=True, start_new_session=start_new_session)
-        os.close(slave)
+                                   close_fds=True, start_new_session=start_new_session,
+                                   preexec_fn=(lambda: _acquire_controlling_terminal(slave))
+                                   if on_read_ready else None)
+        if not on_read_ready:
+            os.close(slave)
+            slave = -1
         deadline = started + timeout
         while process.poll() is None and time.monotonic() < deadline:
             if monitor_process:
                 monitor_process(process.pid)
-            readable, _, _ = select.select([master], [], [], min(0.2, idle_interval))
-            if not readable:
-                now = time.monotonic()
-                if on_idle and not idle_notified and transcript and now - last_output_at >= idle_interval:
-                    answer = on_idle(transcript.decode(errors="replace"), process.poll() is None)
-                    idle_notified = True
+            readable, _, _ = select.select([master], [], [], 0.05)
+            if readable:
+                if on_read_ready:
+                    output_changed = _drain_pty(master, transcript)
+                else:
+                    try:
+                        chunk = os.read(master, 8192)
+                    except OSError:
+                        remaining = max(0, deadline - time.monotonic())
+                        try:
+                            process.wait(timeout=remaining)
+                        except subprocess.TimeoutExpired:
+                            timed_out = True
+                        break
+                    output_changed = bool(chunk)
+                    transcript.extend(chunk)
+                if output_changed and on_output:
+                    answer = on_output(transcript.decode(errors="replace"))
                     if answer:
                         os.write(master, answer.encode() if isinstance(answer, str) else answer)
-                continue
-            try:
-                chunk = os.read(master, 8192)
-            except OSError:
-                remaining = max(0, deadline - time.monotonic())
-                try:
-                    process.wait(timeout=remaining)
-                except subprocess.TimeoutExpired:
-                    timed_out = True
-                break
-            if not chunk:
-                continue
-            transcript.extend(chunk)
-            last_output_at = time.monotonic()
-            idle_notified = False
-            if on_output:
-                answer = on_output(transcript.decode(errors="replace"))
-                if answer:
-                    os.write(master, answer.encode() if isinstance(answer, str) else answer)
+            if on_read_ready:
+                # Readiness is one invariant: the same child task is still
+                # blocked in terminal read(0), all output queued before that
+                # read has been drained into the transcript, and the PTY has
+                # no input bytes left from an answer already sent by this owner.
+                observed_reader = _linux_terminal_reader(process.pid, terminal_path)
+                if observed_reader is not None:
+                    drained = _drain_pty(master, transcript)
+                    if drained and on_output:
+                        answer = on_output(transcript.decode(errors="replace"))
+                        if answer:
+                            os.write(master, answer.encode() if isinstance(answer, str) else answer)
+                    confirmed_reader = _linux_terminal_reader(process.pid, terminal_path)
+                    if (confirmed_reader == observed_reader
+                            and _terminal_pending_input(slave) == 0):
+                        answer = on_read_ready(transcript.decode(errors="replace"))
+                        if answer:
+                            os.write(master, answer.encode() if isinstance(answer, str) else answer)
         if process.poll() is None and time.monotonic() >= deadline:
             timed_out = True
         if timed_out:
@@ -668,12 +838,13 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
             process.wait()
         raise
     finally:
-        try:
-            os.close(slave)
-        except OSError:
-            pass
+        if slave >= 0:
+            try:
+                os.close(slave)
+            except OSError:
+                pass
         os.close(master)
-    rendered = transcript.decode(errors="replace").replace(WIZARD_PROMPT_EVENT, "")
+    rendered = transcript.decode(errors="replace")
     duration = time.monotonic() - started
     error = (f"timed out after {timeout}s" if rendered else
              f"no output received before the timeout ({timeout}s)") if timed_out else None

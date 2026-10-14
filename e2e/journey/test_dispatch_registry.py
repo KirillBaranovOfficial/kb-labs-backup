@@ -415,6 +415,10 @@ def _studio_process_creation_violations(root: Path) -> list[str]:
     return sorted(violations)
 
 
+def _kb_create_journey_knowledge_violations(sources: dict[str, str]) -> list[str]:
+    return sorted(filename for filename, source in sources.items() if "JOURNEY" in source)
+
+
 class DispatchRegistryTests(unittest.TestCase):
     def test_shared_project_and_auth_mutators_declare_state_invalidation(self):
         runner_source = Path(__file__).with_name("runner.py")
@@ -445,6 +449,21 @@ class DispatchRegistryTests(unittest.TestCase):
         for state in ("project-registered", "session", "host-running"):
             self.assertIn(f'invalidate_state(\n                    "{state}"', recovery,
                           f"bootstrap recovery must declare its mutation of {state}")
+
+    def test_kb_create_go_source_has_no_journey_knowledge(self):
+        root = Path(__file__).resolve().parents[2]
+        sources = {}
+        for source_path in sorted((root / "tools").rglob("*.go")):
+            if source_path.name.endswith("_test.go"):
+                continue
+            sources[source_path.relative_to(root).as_posix()] = source_path.read_text(
+                encoding="utf-8", errors="replace")
+        self.assertEqual(_kb_create_journey_knowledge_violations(sources), [])
+
+    def test_kb_create_journey_knowledge_rail_rejects_source_mutation(self):
+        self.assertEqual(_kb_create_journey_knowledge_violations({
+            "tools/kb-create/install.go": 'const hidden = "KB_JOURNEY_PROMPT_MODE"',
+        }), ["tools/kb-create/install.go"])
 
     def test_built_workspace_cli_missing_reports_exact_build_command(self):
         with tempfile.TemporaryDirectory(prefix="journey-missing-cli-build-") as temporary:

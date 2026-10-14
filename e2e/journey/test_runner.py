@@ -5,6 +5,7 @@ import io
 import json
 import os
 import ast
+import platform
 import sys
 import tempfile
 import unittest
@@ -160,109 +161,197 @@ class RunnerInstallFailureTests(unittest.TestCase):
             self.assertEqual(report["status"], "FAIL")
             self.assertIn("KB_JOURNEY_SELECTED_OWNING_STEPS", report["first_failure"]["message"])
 
-    def test_ordered_prompt_responder_consumes_new_pty_output_once(self):
+    def test_ordered_prompt_responder_consumes_only_the_next_ready_prompt(self):
         runner = importlib.import_module("runner")
-        from invocations import WIZARD_PROMPT_EVENT
         responder = runner.OrderedPromptResponder([
             (r"Project directory", "/tmp/project"),
             (r"Platform channel", "stable"),
         ])
         transcript = "Project directory (press Enter to install without a project): "
-        self.assertIsNone(responder(transcript))
-        self.assertEqual(responder(transcript + WIZARD_PROMPT_EVENT), "/tmp/project\n")
-        transcript += WIZARD_PROMPT_EVENT
-        transcript += "\rPlatform channel [stable] (default stable): "
-        self.assertEqual(responder(transcript + WIZARD_PROMPT_EVENT), "stable\n")
-        responder.finish()
-
-    def test_ordered_prompt_responder_ignores_real_install_progress_after_last_answer(self):
-        runner = importlib.import_module("runner")
-        from invocations import WIZARD_PROMPT_EVENT
-        responder = runner.OrderedPromptResponder([
-            (r"Project directory", "/tmp/project"),
-        ])
-        prompt = "Project directory (press Enter to install without a project): "
-        self.assertEqual(responder(prompt + WIZARD_PROMPT_EVENT), "/tmp/project\n")
-        progress = prompt + WIZARD_PROMPT_EVENT + "\nApplying installation…\n"
-        self.assertIsNone(responder(progress))
-        responder.finish()
-
-    def test_ordered_prompt_responder_rejects_unexpected_prompt_after_last_answer(self):
-        runner = importlib.import_module("runner")
-        from invocations import WIZARD_PROMPT_EVENT
-        responder = runner.OrderedPromptResponder([(r"Project directory", "/tmp/project")])
-        prompt = "Project directory (press Enter to install without a project): "
-        self.assertEqual(responder(prompt + WIZARD_PROMPT_EVENT), "/tmp/project\n")
-        output = (prompt + WIZARD_PROMPT_EVENT
-                  + "\nApplying installation…\nChoose access mode: " + WIZARD_PROMPT_EVENT)
-        with self.assertRaisesRegex(
-                RuntimeError,
-                r"unexpected wizard prompt.*Choose access mode.*no prompt was expected"):
-            responder(output)
-
-    def test_ordered_prompt_responder_rejects_unexpected_prompt_between_expected_prompts(self):
-        runner = importlib.import_module("runner")
-        from invocations import WIZARD_PROMPT_EVENT
-        responder = runner.OrderedPromptResponder([
-            (r"Project directory", "/tmp/project"),
-            (r"Platform channel", "stable"),
-        ])
-        prompt = "Project directory (press Enter to install without a project): "
-        self.assertEqual(responder(prompt + WIZARD_PROMPT_EVENT), "/tmp/project\n")
-        output = prompt + WIZARD_PROMPT_EVENT + "\rChoose access mode: " + WIZARD_PROMPT_EVENT
-        with self.assertRaisesRegex(
-                RuntimeError,
-                r"unexpected wizard prompt.*Choose access mode.*expected prompt 'Platform channel'"):
-            responder(output)
+        self.assertEqual(responder(transcript), "/tmp/project\n")
+        transcript += "\nApplying installation…\nPlatform channel [stable] (default stable): "
+        self.assertEqual(responder(transcript), "stable\n")
+        responder.finish(transcript)
 
     def test_ordered_prompt_responder_reports_expected_prompt_never_shown(self):
         runner = importlib.import_module("runner")
-        from invocations import WIZARD_PROMPT_EVENT
         responder = runner.OrderedPromptResponder([
             (r"Project directory", "/tmp/project"),
             (r"Platform channel", "stable"),
         ])
-        prompt = "Project directory (press Enter to install without a project): "
-        self.assertEqual(responder(prompt + WIZARD_PROMPT_EVENT), "/tmp/project\n")
-        progress = prompt + WIZARD_PROMPT_EVENT + "\nApplying installation…\n"
-        responder(progress)
-        with self.assertRaisesRegex(RuntimeError, r"output tail.*Applying installation.*expected prompt 'Platform channel'"):
-            responder.finish()
+        transcript = "Project directory: "
+        self.assertEqual(responder(transcript), "/tmp/project\n")
+        progress = transcript + "\nApplying installation…\n"
+        with self.assertRaisesRegex(
+                RuntimeError,
+                r"installer exited before expected prompt 'Platform channel'.*Applying installation"):
+            responder.finish(progress)
 
-    def test_ordered_prompt_responder_handles_split_prompt_and_cr_redraw_without_guessing(self):
+    def test_ordered_prompt_responder_rejects_unexpected_prompt_between_expected_prompts(self):
         runner = importlib.import_module("runner")
-        from invocations import WIZARD_PROMPT_EVENT
         responder = runner.OrderedPromptResponder([
             (r"Project directory", "/tmp/project"),
             (r"Platform channel", "stable"),
         ])
-        responder("Downloading? 50%\rProject dire")
-        transcript = "Downloading? 50%\rProject directory (press Enter to install without a project): "
-        self.assertIsNone(responder(transcript))
-        self.assertEqual(responder(transcript + WIZARD_PROMPT_EVENT), "/tmp/project\n")
-        repeated = transcript + WIZARD_PROMPT_EVENT + "\rProject directory (press Enter to install without a project): " + WIZARD_PROMPT_EVENT
-        with self.assertRaisesRegex(RuntimeError, r"unexpected wizard prompt.*Project directory.*expected prompt 'Platform channel'"):
-            responder(repeated)
+        first = "Project directory: "
+        self.assertEqual(responder(first), "/tmp/project\n")
+        with self.assertRaisesRegex(
+                RuntimeError,
+                r"unexpected wizard prompt.*Choose access mode.*expected prompt 'Platform channel'"):
+            responder(first + "\rChoose access mode: ")
 
-    def test_pty_prompt_responder_handles_redraws_and_stops_on_unexpected_prompt(self):
+    def test_ordered_prompt_responder_rejects_prompt_after_all_answers(self):
         runner = importlib.import_module("runner")
-        from invocations import WIZARD_PROMPT_EVENT
-        responder = runner.OrderedPromptResponder([
-            (r"Project directory", "/tmp/project"),
-            (r"Platform channel", "stable"),
-        ])
-        prompt = "Project directory (press Enter to install without a project): " + WIZARD_PROMPT_EVENT
-        unexpected = "\rChoose access mode: " + WIZARD_PROMPT_EVENT
-        child = (
-            "import os; "
-            f"os.write(1, {prompt.encode()!r}); "
-            "os.read(0, 4096); "
-            f"os.write(1, {unexpected.encode()!r}); os.read(0, 4096)"
+        responder = runner.OrderedPromptResponder([(r"Project directory", "/tmp/project")])
+        prompt = "Project directory: "
+        self.assertEqual(responder(prompt), "/tmp/project\n")
+        with self.assertRaisesRegex(RuntimeError, r"unexpected wizard prompt.*Choose access mode.*no prompt was expected"):
+            responder(prompt + "Applying installation…\nChoose access mode: ")
+
+    def test_ordered_prompt_responder_handles_split_prompt_and_carriage_return_redraw(self):
+        runner = importlib.import_module("runner")
+        responder = runner.OrderedPromptResponder([(r"Project directory", "/tmp/project")])
+        fragments = ["Downloading? 50%\rProject dire", "ctory (press Enter to install without a project): "]
+        transcript = "".join(fragments)
+        self.assertEqual(responder(transcript), "/tmp/project\n")
+        self.assertEqual(
+            responder._normalize_redraws("Applying installation…\r\nChoose access mode: "),
+            "Applying installation…\nChoose access mode:",
         )
-        with self.assertRaisesRegex(RuntimeError, r"unexpected wizard prompt.*Choose access mode.*expected prompt 'Platform channel'"):
-            runner.run_pty_command([sys.executable, "-c", child], timeout=5,
-                                   on_output=responder,
-                                   idle_interval=0.02, start_new_session=True)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux procfs is required for PTY read readiness")
+    def test_real_pty_adversarial_readiness_uses_complete_prompt_and_answers_once(self):
+        runner = importlib.import_module("runner")
+        child = r'''import os, sys, termios, threading, time
+def line(): return input()
+os.write(1, b"Prompt one")
+time.sleep(0.03)
+os.write(1, b" complete: ")
+assert line() == "first-answer"
+os.write(1, "\nApplying installation…\n".encode())
+for phase in ("Download and verify artifacts / install packages", "Render config", "Start host", "Verify installation"):
+    os.write(1, f"  … {phase}\n".encode())
+    time.sleep(0.01)
+    os.write(1, f"  ✓ {phase} (1ms)\n".encode())
+os.write(1, b"Secret: ")
+fd = 0
+old = termios.tcgetattr(fd)
+raw = termios.tcgetattr(fd)
+raw[3] &= ~(termios.ECHO | termios.ICANON)
+raw[6][termios.VMIN] = 1
+raw[6][termios.VTIME] = 0
+termios.tcsetattr(fd, termios.TCSANOW, raw)
+secret = bytearray()
+while True:
+    part = os.read(fd, 1)
+    if part == b"\n": break
+    secret.extend(part)
+termios.tcsetattr(fd, termios.TCSANOW, old)
+assert secret == b"hidden-answer"
+os.write(1, b"\n")
+def second_read():
+    os.write(1, b"Prompt three: ")
+    assert line() == "last-answer"
+thread = threading.Thread(target=second_read)
+thread.start()
+thread.join()
+'''
+        expectations = [(r"Prompt one complete", "first-answer"),
+                        (r"Secret", "hidden-answer"),
+                        (r"Prompt three", "last-answer")]
+        responder = runner.OrderedPromptResponder(expectations)
+        judged = []
+        answers = []
+
+        def respond(transcript):
+            position = responder.position
+            answer = responder(transcript)
+            judged.append((expectations[position][0], transcript))
+            answers.append(answer)
+            return answer
+
+        result, _ = runner.run_pty_command(
+            [sys.executable, "-c", child], timeout=10, on_read_ready=respond,
+            start_new_session=True,
+        )
+        responder.finish(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(answers), 3)
+        self.assertEqual(len({prompt for prompt, _ in judged}), 3)
+        for prompt, transcript in judged:
+            self.assertIn(prompt, transcript)
+        self.assertIn("Applying installation…", result.stdout)
+        self.assertIn("  … Download and verify artifacts / install packages", result.stdout)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux procfs is required for PTY read readiness")
+    def test_real_pty_go_wizard_bufio_reader_uses_linux_kernel_readiness(self):
+        runner = importlib.import_module("runner")
+        machine = platform.machine().lower()
+        machine = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
+        binary = Path(__file__).resolve().parent / ".cache" / f"wizard-pty-linux-{machine}"
+        if not binary.is_file():
+            self.fail(f"missing cross-compiled wizard fixture {binary}; build with the Round 8 report command")
+        expectations = [
+            (r"Project directory \(press Enter to install without a project\)", ""),
+            (r"Platform channel", "stable"),
+            (r"Service profile", "default"),
+            (r"Studio access", "secured"),
+            (r"Admin email: ", "admin@example.test"),
+            (r"Admin tenant: ", "acme-team"),
+            (r"Admin password: ", ""),
+            (r"Session signing secret: ", ""),
+        ]
+        responder = runner.OrderedPromptResponder(expectations)
+        judged = []
+
+        def respond(transcript):
+            position = responder.position
+            answer = responder(transcript)
+            judged.append((expectations[position][0], transcript))
+            return answer
+
+        with tempfile.TemporaryDirectory(prefix="journey-go-wizard-") as temporary:
+            platform_root = Path(temporary) / "platform"
+            result, _ = runner.run_pty_command(
+                [str(binary), str(platform_root)], timeout=10, on_read_ready=respond,
+                start_new_session=True,
+            )
+        responder.finish(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("WIZARD DONE", result.stdout)
+        self.assertEqual(len(judged), len(expectations))
+        for prompt, transcript in judged:
+            self.assertRegex(transcript, prompt)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux procfs is required for PTY read readiness")
+    def test_real_pty_unexpected_prompt_fails_at_the_terminal_read(self):
+        runner = importlib.import_module("runner")
+        child = (
+            "import sys,time; "
+            "print('Project directory: ', end='', flush=True); input(); "
+            "print('Applying installation…', flush=True); time.sleep(0.1); "
+            "print('Choose access mode: ', end='', flush=True); input()"
+        )
+        for expectations, message in (
+                ([(r"Project directory", "/tmp/project")], "no prompt was expected"),
+                ([(r"Project directory", "/tmp/project"),
+                  (r"Platform channel", "stable")], "expected prompt 'Platform channel'")):
+            with self.subTest(message=message):
+                responder = runner.OrderedPromptResponder(expectations)
+                with self.assertRaisesRegex(
+                        RuntimeError,
+                        rf"unexpected wizard prompt.*Choose access mode.*{message}"):
+                    runner.run_pty_command(
+                        [sys.executable, "-c", child], timeout=5, on_read_ready=responder,
+                        start_new_session=True,
+                    )
+
+    @unittest.skipUnless(not sys.platform.startswith("linux"), "non-Linux unsupported-platform contract")
+    def test_pty_readiness_reports_unsupported_platform_truthfully(self):
+        from invocations import PtyReadinessUnsupported
+        module = importlib.import_module("invocations")
+        with self.assertRaisesRegex(PtyReadinessUnsupported, "not supported on Darwin"):
+            module.pty_terminal_read_ready(os.getpid(), "/dev/pts/0")
 
     def test_secured_commit_scenario_installs_commit_through_marketplace_and_checks_its_group(self):
         runner = importlib.import_module("runner")

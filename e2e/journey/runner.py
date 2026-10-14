@@ -528,53 +528,58 @@ def check_selected_step_completion(journey_results: list[dict], selected_steps: 
 
 
 class OrderedPromptResponder:
-    """Answer only at the wizard's explicit prompt-read boundary."""
+    """Answer only when the PTY owner observes a real terminal read."""
 
     def __init__(self, expectations: list[tuple[str, str]]):
         self.expectations = [(re.compile(pattern, re.I), answer) for pattern, answer in expectations]
         self.position = 0
         self.cursor = 0
-        self.pending = ""
 
     def __call__(self, transcript: str) -> str | None:
-        self.pending += transcript[self.cursor:]
-        self.cursor = len(transcript)
-        from invocations import WIZARD_PROMPT_EVENT
-        if WIZARD_PROMPT_EVENT not in self.pending:
-            return None
-        prompt_output, self.pending = self.pending.split(WIZARD_PROMPT_EVENT, 1)
-        visible = self._normalize_redraws(prompt_output)
+        visible = self._normalize_redraws(transcript[self.cursor:])
         if self.position >= len(self.expectations):
-            raise RuntimeError(f"unexpected wizard prompt {visible!r}; no prompt was expected")
+            raise RuntimeError(f"unexpected wizard prompt output {visible!r}; no prompt was expected")
         pattern, answer = self.expectations[self.position]
         if not pattern.search(visible):
             raise RuntimeError(
                 f"unexpected wizard prompt {visible!r}; expected prompt {pattern.pattern!r}")
         self.position += 1
+        self.cursor = len(transcript)
         return answer + "\n"
 
     @staticmethod
     def _normalize_redraws(output: str) -> str:
         rows: list[str] = []
         line = ""
-        for character in output:
+        output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", output)
+        offset = 0
+        while offset < len(output):
+            character = output[offset]
             if character == "\r":
-                line = ""
+                if offset + 1 < len(output) and output[offset + 1] == "\n":
+                    if line:
+                        rows.append(line)
+                    line = ""
+                    offset += 1
+                else:
+                    line = ""
             elif character == "\n":
                 if line:
                     rows.append(line)
                 line = ""
             else:
                 line += character
+            offset += 1
         if line:
             rows.append(line)
-        return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", "\n".join(rows)).strip()
+        return "\n".join(rows).strip()
 
-    def finish(self) -> None:
+    def finish(self, transcript: str) -> None:
         missing = [pattern.pattern for pattern, _ in self.expectations[self.position:]]
         if missing:
-            tail = self._normalize_redraws(self.pending)
-            raise RuntimeError(f"wizard ended with output tail {tail!r}; expected prompt {missing[0]!r}")
+            tail = self._normalize_redraws(transcript[self.cursor:])
+            raise RuntimeError(
+                f"installer exited before expected prompt {missing[0]!r}; last output was {tail!r}")
 
 
 def require(result, expected=0, step="command"):
@@ -673,13 +678,13 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = "", acces
         new_text = transcript[prompt_responder.cursor:]
         if apply_started is None and re.search(r"Applying installation", new_text, re.I):
             apply_started = time.monotonic()
-        return prompt_responder(transcript)
+        return None
     prompt_env = dict(env)
-    prompt_env["KB_JOURNEY_WIZARD_PROMPT_EVENTS"] = "1"
     result, duration = run_pty_command(command, env=prompt_env, timeout=900, on_output=respond,
+                                       on_read_ready=prompt_responder,
                                        monitor_process=_sample_pnpm_rss_for_run,
                                        start_new_session=True, raise_on_timeout=False)
-    prompt_responder.finish()
+    prompt_responder.finish(result.stdout)
     return result.returncode, result.stdout, duration, apply_started - started if apply_started else None
 
 

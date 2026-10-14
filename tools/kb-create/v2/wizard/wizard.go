@@ -29,8 +29,6 @@ type IO struct {
 	// PendingSecrets holds values in memory until the resolved plan accepts the
 	// requirements. The apply owner persists them after validating all sources.
 	PendingSecrets map[string]secrets.PendingSecret
-	// BeforeRead signals that a rendered prompt is about to block on terminal input.
-	BeforeRead func() error
 	// ReadSecret reads one line of secret input without echoing it. When nil, a
 	// real terminal is read with echo disabled and any other input (a pipe, a
 	// test) is read as a plain line.
@@ -38,18 +36,9 @@ type IO struct {
 	SkipRequirements []string
 }
 
-// PromptEventMarker is an invisible control token for terminal harnesses. It is
-// written only when a caller opts in through IO.BeforeRead.
-const PromptEventMarker = "\x1eKB-LABS-WIZARD-PROMPT\x1f"
-
-func renderPrompt(output io.Writer, beforeRead func() error, format string, values ...any) error {
-	if _, err := fmt.Fprintf(output, format, values...); err != nil {
-		return err
-	}
-	if beforeRead != nil {
-		return beforeRead()
-	}
-	return nil
+func renderPrompt(output io.Writer, format string, values ...any) error {
+	_, err := fmt.Fprintf(output, format, values...)
+	return err
 }
 
 // secretAttempts bounds how often a hidden, unverifiable answer is re-asked
@@ -77,7 +66,7 @@ func Request(source catalog.Catalog, platformRoot string, terminal IO) (contract
 	}
 	reader := bufio.NewReader(terminal.In)
 	channels := availableChannels(source)
-	channel, err := choose(reader, terminal.Out, "Platform channel", channels, string(contracts.ChannelStable), terminal.BeforeRead)
+	channel, err := choose(reader, terminal.Out, "Platform channel", channels, string(contracts.ChannelStable))
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
@@ -91,15 +80,15 @@ func Request(source catalog.Catalog, platformRoot string, terminal IO) (contract
 		profiles = append(profiles, profile)
 	}
 	sort.Strings(profiles)
-	profile, err := choose(reader, terminal.Out, "Service profile", profiles, "default", terminal.BeforeRead)
+	profile, err := choose(reader, terminal.Out, "Service profile", profiles, "default")
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
-	plugins, err := chooseMany(reader, terminal.Out, "Plugins (comma-separated IDs; blank for none)", componentIDs(source.Plugins), terminal.BeforeRead)
+	plugins, err := chooseMany(reader, terminal.Out, "Plugins (comma-separated IDs; blank for none)", componentIDs(source.Plugins))
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
-	adapters, err := chooseMany(reader, terminal.Out, "Adapters (comma-separated IDs; blank for automatic providers)", adapterIDs(source.Adapters), terminal.BeforeRead)
+	adapters, err := chooseMany(reader, terminal.Out, "Adapters (comma-separated IDs; blank for automatic providers)", adapterIDs(source.Adapters))
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
@@ -122,7 +111,7 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 	}
 	reader := bufio.NewReader(terminal.In)
 	if strings.TrimSpace(projectRoot) == "" {
-		if err := renderPrompt(terminal.Out, terminal.BeforeRead,
+		if err := renderPrompt(terminal.Out,
 			"Project directory (press Enter to install without a project): "); err != nil {
 			return contracts.InstallRequest{}, err
 		}
@@ -144,7 +133,7 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		if err != nil {
 			return contracts.InstallRequest{}, err
 		}
-		scenarioID, err = choose(reader, terminal.Out, "Scenario", ids, "explore", terminal.BeforeRead)
+		scenarioID, err = choose(reader, terminal.Out, "Scenario", ids, "explore")
 		if err != nil {
 			return contracts.InstallRequest{}, err
 		}
@@ -157,7 +146,7 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		definition = withoutRequirements(definition, terminal.SkipRequirements)
 	}
 	channels := availableChannels(source)
-	channel, err := choose(reader, terminal.Out, "Platform channel", channels, string(contracts.ChannelStable), terminal.BeforeRead)
+	channel, err := choose(reader, terminal.Out, "Platform channel", channels, string(contracts.ChannelStable))
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
@@ -171,7 +160,7 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		profiles = append(profiles, profile)
 	}
 	sort.Strings(profiles)
-	profile, err := choose(reader, terminal.Out, "Service profile", profiles, "default", terminal.BeforeRead)
+	profile, err := choose(reader, terminal.Out, "Service profile", profiles, "default")
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
@@ -236,13 +225,13 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 				for _, option := range field.Options {
 					options = append(options, option.Value)
 				}
-				value, chooseErr := choose(reader, terminal.Out, label, options, defaultString(field.Default), terminal.BeforeRead)
+				value, chooseErr := choose(reader, terminal.Out, label, options, defaultString(field.Default))
 				if chooseErr != nil {
 					return contracts.InstallRequest{}, chooseErr
 				}
 				raw = fmt.Sprintf("%q", value)
 			} else {
-				if err := renderPrompt(terminal.Out, terminal.BeforeRead, "%s: ", label); err != nil {
+				if err := renderPrompt(terminal.Out, "%s: ", label); err != nil {
 					return contracts.InstallRequest{}, err
 				}
 				value, readErr := reader.ReadString('\n')
@@ -314,7 +303,7 @@ func withoutRequirements(definition scenario.Scenario, requirements []string) sc
 // proofread. Format errors and mismatches re-ask instead of aborting the journey.
 func askSecret(reader *bufio.Reader, terminal IO, session *flow.Session, field scenario.Field, label string) (string, bool, bool, error) {
 	for attempt := 1; ; attempt++ {
-		if err := renderPrompt(terminal.Out, terminal.BeforeRead, "%s: ", label); err != nil {
+		if err := renderPrompt(terminal.Out, "%s: ", label); err != nil {
 			return "", false, false, err
 		}
 		value, err := readSecret(reader, terminal)
@@ -338,7 +327,7 @@ func askSecret(reader *bufio.Reader, terminal IO, session *flow.Session, field s
 			fmt.Fprintf(terminal.Out, "%s: skipped\n", label)
 			return "", true, false, nil
 		default:
-			if err := renderPrompt(terminal.Out, terminal.BeforeRead, "Confirm %s: ", strings.ToLower(label)); err != nil {
+			if err := renderPrompt(terminal.Out, "Confirm %s: ", strings.ToLower(label)); err != nil {
 				return "", false, false, err
 			}
 			again, confirmErr := readSecret(reader, terminal)
@@ -402,9 +391,8 @@ func defaultString(raw []byte) string {
 	return ""
 }
 
-func choose(reader *bufio.Reader, output io.Writer, label string, options []string, fallback string,
-	beforeRead func() error) (string, error) {
-	if err := renderPrompt(output, beforeRead, "%s [%s] (default %s): ", label, strings.Join(options, ", "), fallback); err != nil {
+func choose(reader *bufio.Reader, output io.Writer, label string, options []string, fallback string) (string, error) {
+	if err := renderPrompt(output, "%s [%s] (default %s): ", label, strings.Join(options, ", "), fallback); err != nil {
 		return "", err
 	}
 	value, err := reader.ReadString('\n')
@@ -423,9 +411,8 @@ func choose(reader *bufio.Reader, output io.Writer, label string, options []stri
 	return "", fmt.Errorf("%s %q is not available", strings.ToLower(label), value)
 }
 
-func chooseMany(reader *bufio.Reader, output io.Writer, label string, options []string,
-	beforeRead func() error) ([]string, error) {
-	if err := renderPrompt(output, beforeRead, "%s [%s]: ", label, strings.Join(options, ", ")); err != nil {
+func chooseMany(reader *bufio.Reader, output io.Writer, label string, options []string) ([]string, error) {
+	if err := renderPrompt(output, "%s [%s]: ", label, strings.Join(options, ", ")); err != nil {
 		return nil, err
 	}
 	value, err := reader.ReadString('\n')

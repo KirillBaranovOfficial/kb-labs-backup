@@ -1,33 +1,15 @@
 package wizard
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 )
-
-func TestChooseSignalsAfterRenderingTheActualPrompt(t *testing.T) {
-	var output bytes.Buffer
-	_, err := choose(bufio.NewReader(strings.NewReader("stable\n")), &output,
-		"Platform channel", []string{"stable"}, "stable", func() error {
-			_, writeErr := output.WriteString(PromptEventMarker)
-			return writeErr
-		})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "Platform channel [stable] (default stable): " + PromptEventMarker
-	if output.String() != want {
-		t.Fatalf("rendered wizard prompt = %q, want %q", output.String(), want)
-	}
-}
 
 // case: S-187.7
 func TestRequestScenarioUsesSharedProjectSelectionValidation(t *testing.T) {
