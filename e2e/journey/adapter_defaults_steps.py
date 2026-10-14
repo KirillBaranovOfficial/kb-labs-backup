@@ -1,6 +1,8 @@
 """Installed-platform journeys for adapter defaults and platform-only bindings."""
 from __future__ import annotations
 
+from installed_fixture import layout_relative, layout_value
+
 import json
 import os
 import re
@@ -95,7 +97,7 @@ def _project_state_dir(project_root: Path, env: dict[str, str]) -> Path:
     project = next((row for row in projects if isinstance(row, dict) and Path(row.get("path", "")).resolve() == canonical), None)
     if not project or not isinstance(project.get("id"), str):
         raise RuntimeError(f"project is not registered in {registry_path}: {canonical}")
-    return kb_home / "state" / project["id"]
+    return kb_home / layout_value('sharedStateDirectory') / project["id"]
 
 
 def _repository_tree(root: Path) -> dict[str, bytes | str]:
@@ -299,7 +301,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         runtimes = health.get("projectRuntimes", {}).get("runtimes", []) if isinstance(health, dict) else []
         project_id = project_state.name
         if not any(isinstance(runtime, dict) and runtime.get("projectId") == project_id
-                   and runtime.get("state") == "ready" for runtime in runtimes):
+                   and runtime.get(layout_value('sharedStateDirectory')) == "ready" for runtime in runtimes):
             raise RuntimeError(f"host health did not list project runtime {project_id} as ready after its first workflow request")
         return run_id, record, record_value
 
@@ -393,7 +395,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         if installed_helpers:
             raise RuntimeError(f"installed platform contains SDK test/build helpers: {', '.join(installed_helpers)}")
 
-    journey.step("installed platform excludes SDK test and build helpers", "installer",
+    journey.step("installed platform excludes SDK test and build helpers", layout_value('installerStateDirectory'),
                  assert_sdk_helper_packages_are_not_installed, cases=["S-054.16"])
 
     def assert_installed_layout_cli_loads_defaults() -> None:
@@ -498,7 +500,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         if not manifest.is_file():
             raise RuntimeError("kb-create doctor --fix did not restore the missing manifest projection")
 
-    journey.step("doctor reports missing manifests read-only and repairs only with fix", "installer",
+    journey.step("doctor reports missing manifests read-only and repairs only with fix", layout_value('installerStateDirectory'),
                  assert_doctor_manifest_repair_is_explicit, cases=["S-054.13"])
 
     def assert_unbound_analytics_uses_manifest_default() -> None:

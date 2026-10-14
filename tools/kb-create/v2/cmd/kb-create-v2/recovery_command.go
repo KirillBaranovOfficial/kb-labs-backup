@@ -41,16 +41,19 @@ type uninstallCommandInput struct {
 	Yes, JSON                          bool
 	Command                            *cobra.Command
 	Artifacts                          runtime.ArtifactInstaller
+	ArtifactRunner                     artifacts.Runner
 }
 type rollbackCommandInput struct {
 	PlatformRoot, Registry, Executable, Snapshot string
 	Yes, JSON                                    bool
 	Command                                      *cobra.Command
 	Artifacts                                    runtime.ArtifactInstaller
+	ArtifactRunner                               artifacts.Runner
 }
 type recoveryRuntimeInput struct {
 	Registry, Executable string
 	Artifacts            runtime.ArtifactInstaller
+	ArtifactRunner       artifacts.Runner
 }
 
 func executeUninstall(ctx context.Context, input uninstallCommandInput) (recoveryCommandResult, *diag.Diag) {
@@ -131,7 +134,7 @@ func executeUninstall(ctx context.Context, input uninstallCommandInput) (recover
 	if err != nil {
 		return recoveryCommandResult{}, unsupportedPlatformLayout(root, err)
 	}
-	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable, Artifacts: input.Artifacts}, root, state, "uninstall", "", true, func(ctx context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
+	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable, Artifacts: input.Artifacts, ArtifactRunner: input.ArtifactRunner}, root, state, "uninstall", "", true, func(ctx context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
 		return runtime.Uninstall(root, deps)
 	})
 	if failure != nil {
@@ -208,7 +211,7 @@ func executeRollback(ctx context.Context, input rollbackCommandInput) (recoveryC
 		return recoveryCommandResult{}, asDiag(err)
 	}
 	defer release()
-	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable, Artifacts: input.Artifacts}, root, state, "rollback", target, false, func(_ context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
+	result, failure := runRecoveryMutation(ctx, recoveryRuntimeInput{Registry: input.Registry, Executable: input.Executable, Artifacts: input.Artifacts, ArtifactRunner: input.ArtifactRunner}, root, state, "rollback", target, false, func(_ context.Context, deps runtime.Dependencies) (contracts.Snapshot, error) {
 		installer := deps.Artifacts
 		return lifecycle.Mutate(platformRoot, platformRoot, layout.SnapshotsDir(), time.Now().UTC(), func() error {
 			_, rollbackErr := runtime.Rollback(platformRoot, target, deps)
@@ -261,7 +264,11 @@ func runRecoveryMutation(ctx context.Context, input recoveryRuntimeInput, root s
 	defer transcript.Close()
 	var installer runtime.ArtifactInstaller = input.Artifacts
 	if installer == nil {
-		installer = artifacts.Composite{Packages: artifacts.Pnpm{Root: activeRoot, Registry: input.Registry, Log: transcript}, Binaries: artifacts.Binaries{Root: activeRoot, CacheRoot: filepath.Join(activeRoot, ".kb", "v2", "cache")}}
+		executor, executorErr := newArtifactExecutor(layout, activeRoot, input.Registry, false, transcript, input.ArtifactRunner)
+		if executorErr != nil {
+			return recoveryMutationResult{}, asDiag(executorErr)
+		}
+		installer = executor
 	}
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: correlationID}
 	command := hostCommand{PlatformRoot: root, Executable: input.Executable, Version: buildVersion}

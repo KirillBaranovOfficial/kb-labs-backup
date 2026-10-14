@@ -6,8 +6,8 @@ from pathlib import Path
 import tempfile
 
 from invocations import (decode_ux_success_result, invocation_context, read_ux_cli_result,
-                         run_command)
-from journey_resources import active_platform_root, create_fixture_install_container
+                         run_command, store_report_secret)
+from installed_fixture import inject_existing_version_fault, installed_fixture
 from service_steps import Journey
 
 
@@ -37,40 +37,36 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
             "@kb-labs/commit-entry", "S-197.5", command_env,
         )
 
-    def isolated_platform_environment() -> tuple[tempfile.TemporaryDirectory[str] | None, dict[str, str]]:
+    def check_in_isolated_platform() -> str | None:
         platform_root = Path(env.get("KB_PLATFORM_ROOT", ""))
         if not platform_root.is_dir():
-            return None, env
-        temp = tempfile.TemporaryDirectory(prefix="kb-project-plugin-scope-", dir=env.get("HOME"))
-        fixture_root = Path(temp.name) / "platform"
-        fixture_version = create_fixture_install_container(fixture_root, "fixture")
-        source_version = active_platform_root(platform_root)
-        for entry in source_version.iterdir():
-            if entry.name in {".kb", "pnpm-workspace.yaml"}:
-                continue
-            (fixture_version / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
-        source_kb = source_version / ".kb"
-        target_kb = fixture_version / ".kb"
-        target_kb.mkdir()
-        for filename in ("kb.config.json", "kb.config.jsonc"):
-            source = source_kb / filename
-            if source.exists():
-                (target_kb / filename).write_bytes(source.read_bytes())
-        source_lock = source_kb / "marketplace.lock"
-        if source_lock.exists():
-            lock = json.loads(source_lock.read_text())
-            lock.get("plugins", {}).pop("@kb-labs/commit", None)
-            (target_kb / "marketplace.lock").write_text(json.dumps(lock, indent=2) + "\n")
-        isolated_env = {**env, "KB_PLATFORM_ROOT": str(fixture_root)}
-        return temp, isolated_env
+            return check(env)
+        with tempfile.TemporaryDirectory(prefix="kb-project-plugin-scope-", dir=env.get("HOME")) as temp:
+            fixture_root = Path(temp) / "platform"
+            home = Path(env["HOME"])
+            launcher = str(home / ".local/bin/kb-create")
+            index = home / ".local/share/kb-create/release-index.json"
+            installer_secret = env.get("KB_JOURNEY_ADMIN_PASSWORD")
+            if not installer_secret:
+                return "plugin isolation fixture install requires KB_JOURNEY_ADMIN_PASSWORD from the installed journey"
+            installer_env = env.copy()
+            store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", installer_secret,
+                                "plugin isolation fixture install password")
 
-    def check_in_isolated_platform() -> str | None:
-        temp, isolated_env = isolated_platform_environment()
-        try:
-            return check(isolated_env)
-        finally:
-            if temp is not None:
-                temp.cleanup()
+            def install_command(args: list[str]):
+                with invocation_context(step_id="S-197.5"):
+                    return run_command(args, cwd=project_a, env=installer_env, runner=runner, timeout=1200)
+
+            with installed_fixture(fixture_root, launcher=launcher, index=index,
+                                   run_command=install_command, label="plugin isolation fixture"):
+                def remove_commit_plugin(current: bytes) -> bytes:
+                    lock = json.loads(current)
+                    lock.get("plugins", {}).pop("@kb-labs/commit", None)
+                    return (json.dumps(lock, indent=2) + "\n").encode()
+
+                inject_existing_version_fault(fixture_root, "versionStatePaths.kb_marketplace_lock", remove_commit_plugin)
+                isolated_env = {**env, "KB_PLATFORM_ROOT": str(fixture_root)}
+                return check(isolated_env)
 
     journey.step("reject cross-project plugin commands with install guidance", "plugins",
                  check_in_isolated_platform, cases=["S-197.5"])

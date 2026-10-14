@@ -64,61 +64,27 @@ def _platform_layout() -> dict:
 
 
 def current_link_path(install_root: Path) -> Path:
-    current = _platform_layout().get("currentLink")
-    if not isinstance(current, str) or not current:
-        raise ValueError("platform layout contract omits currentLink")
-    return Path(install_root) / current
+    """Resolve the current link by its platform-layout identity."""
+    from installed_fixture import installed_path
+    return installed_path(install_root, "currentLink")
 
 
 def version_roots_path(install_root: Path) -> Path:
-    versions = _platform_layout().get("versionRoots", {}).get("path")
-    if not isinstance(versions, str) or not versions:
-        raise ValueError("platform layout contract omits versionRoots.path")
-    return Path(install_root) / versions
+    """Resolve the versions directory by its platform-layout identity."""
+    from installed_fixture import installed_path
+    return installed_path(install_root, "versionRoots.path")
 
 
 def active_platform_root(install_root: Path) -> Path:
-    """Resolve the version selected by the install container's stable link."""
-    install_root = Path(install_root)
-    current = current_link_path(install_root)
-    if not current.is_symlink():
-        if not install_root.exists() or (install_root.is_dir() and not any(install_root.iterdir())):
-            raise FileNotFoundError(f"no installed platform at {install_root}")
-        raise ValueError(f"unsupported platform layout at {install_root}: current is not a symlink")
-    target = current.readlink()
-    if target.is_absolute():
-        raise ValueError(f"unsupported platform layout at {install_root}: current link is not relative")
-    try:
-        active = current.resolve(strict=True)
-        active.relative_to(version_roots_path(install_root).resolve(strict=True))
-    except (OSError, ValueError) as error:
-        raise ValueError(f"unsupported platform layout at {install_root}: current does not select a complete version") from error
-    if not active.is_dir():
-        raise ValueError(f"unsupported platform layout at {install_root}: current does not select a directory")
-    return active
+    """Resolve the active version through the installed-fixture path owner."""
+    from installed_fixture import active_platform_root as resolve_active
+    return resolve_active(install_root)
 
 
 def installer_record_path(install_root: Path, record: str) -> Path:
-    """Resolve an installer-owned record from the shipped layout contract."""
-    layout = _platform_layout()
-    relative = layout.get("installerRecords", {}).get(record)
-    if not isinstance(relative, str) or not relative:
-        raise ValueError(f"platform layout does not declare installer record {record!r}")
-    return install_root / relative
-
-
-def create_fixture_install_container(install_root: Path, version_key: str = "fixture") -> Path:
-    """Create an empty container for deterministic journey fixture contents."""
-    contract = _platform_layout()
-    versions = contract.get("versionRoots", {}).get("path")
-    current = contract.get("currentLink")
-    if not isinstance(versions, str) or not versions or not isinstance(current, str) or not current:
-        raise ValueError("platform layout contract omits its container paths")
-    install_root = Path(install_root)
-    active = install_root / versions / version_key
-    active.mkdir(parents=True, exist_ok=True)
-    install_root.joinpath(current).symlink_to(Path(versions) / version_key)
-    return active
+    """Resolve an installer-owned record through the installed-root owner."""
+    from installed_fixture import installed_path
+    return installed_path(install_root, f"installerRecords.{record}")
 
 
 def snapshot_tree(root: Path) -> dict[str, tuple[str, bytes | str | None]]:

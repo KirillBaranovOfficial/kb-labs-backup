@@ -1,6 +1,8 @@
 """Installed-platform update and rollback journey steps."""
 from __future__ import annotations
 
+from installed_fixture import layout_relative, layout_value
+
 import hashlib
 import json
 import os
@@ -120,11 +122,11 @@ def run_platform_update_steps(
     """Update the running installation, exercise a project command, and roll back."""
     journey = Journey(mode, f"platform-update-{mode}", parent=parent_journey)
     root = str(platform_root)
-    receipt_path = platform_root / "current/.kb/v2/receipt.json"
-    config_paths = [platform_root / "current/.kb/kb.config.jsonc"]
-    secrets_path = platform_root / "current/.kb/v2/secrets.env"
+    receipt_path = platform_root / layout_relative('currentLink', '.kb/v2/receipt.json')
+    config_paths = [platform_root / layout_relative('currentLink', layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath'))]
+    secrets_path = platform_root / layout_relative('currentLink', layout_value('sharedRuntimePaths.kb_v2_secrets_env.platformPath'))
     snapshot_id = ""
-    runtime_log_path = platform_root / "current/.kb/logs/post-update-before-restart.log"
+    runtime_log_path = platform_root / layout_relative('currentLink', layout_relative('sharedRuntimePaths.kb_logs.platformPath', 'post-update-before-restart.log'))
     updated_plan_hash = ""
     updated_plan: dict = {}
     pending_restart_services: list[dict] = []
@@ -157,10 +159,10 @@ def run_platform_update_steps(
         nonlocal saved_user_session_established, installation_id, gateway_url, initial_plan, outside_install_state
         nonlocal shared_state_before, running_tree_before, running_lock_before, running_config_before
         outside_install_state = _outside_install_snapshot(platform_root, allowed_outside_roots)
-        shared_state_before = snapshot_state_tree(platform_root / "state")
+        shared_state_before = snapshot_state_tree(platform_root / layout_value('sharedStateDirectory'))
         running_tree_before = active_platform_root(platform_root)
-        running_lock_before = (running_tree_before / ".kb/marketplace.lock").read_bytes()
-        running_config_before = (running_tree_before / ".kb/kb.config.jsonc").read_bytes()
+        running_lock_before = (running_tree_before / layout_value('versionStatePaths.kb_marketplace_lock')).read_bytes()
+        running_config_before = (running_tree_before / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')).read_bytes()
         receipt = json.loads(receipt_path.read_text())
         installation_id = str(receipt.get("installationId") or "")
         gateway_url = str(receipt.get("verification", {}).get("hostHealthUrl") or "")
@@ -277,11 +279,11 @@ def run_platform_update_steps(
             raise RuntimeError("update pendingRestart did not identify each old running service version")
         if not result.get("logPath"):
             raise RuntimeError("update result did not include its operation log path")
-        if snapshot_state_tree(platform_root / "state") != shared_state_before:
+        if snapshot_state_tree(platform_root / layout_value('sharedStateDirectory')) != shared_state_before:
             raise RuntimeError("successful update changed the install-root shared state tree before restart")
-        if running_tree_before is None or (running_tree_before / ".kb/marketplace.lock").read_bytes() != running_lock_before:
+        if running_tree_before is None or (running_tree_before / layout_value('versionStatePaths.kb_marketplace_lock')).read_bytes() != running_lock_before:
             raise RuntimeError("successful update changed the still-running version's marketplace lock")
-        if running_tree_before is None or (running_tree_before / ".kb/kb.config.jsonc").read_bytes() != running_config_before:
+        if running_tree_before is None or (running_tree_before / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')).read_bytes() != running_config_before:
             raise RuntimeError("successful update changed the still-running version's config view")
         post_update_status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
                                            "status after update before restart")
@@ -322,7 +324,7 @@ def run_platform_update_steps(
             raise RuntimeError("kb-create status did not report the pending restart object")
         if pending != pending_restart_object:
             raise RuntimeError("kb-create status pendingRestart differs from the update result")
-        for status_root in (platform_root, platform_root / "current", (platform_root / "current").resolve()):
+        for status_root in (platform_root, platform_root / layout_value('currentLink'), (platform_root / layout_value('currentLink')).resolve()):
             spelling_status = _json_command(
                 run_command, [launcher, "status", "--platform-root", str(status_root), "--json"],
                 f"updated status through {status_root}")
@@ -601,7 +603,7 @@ def run_platform_update_steps(
     journey.step("restart the installed host and run an adapter command", "platform.restart",
                  restart_and_verify_identity, cases=["PC-001.15"])
     def update_secret_policy() -> None:
-        secrets_path = active_platform_root(platform_root) / ".kb/v2/secrets.env"
+        secrets_path = active_platform_root(platform_root) / layout_value('sharedRuntimePaths.kb_v2_secrets_env.platformPath')
         values = {}
         for line in secrets_path.read_text(encoding="utf-8").splitlines():
             name, separator, value = line.partition("=")
@@ -612,7 +614,7 @@ def run_platform_update_steps(
         secret, original = next(iter(sorted(values.items())))
         env_name = "KB_X10_UPDATE_SECRET"
         previous = os.environ.get(env_name)
-        shared_before = snapshot_state_tree(platform_root / "state")
+        shared_before = snapshot_state_tree(platform_root / layout_value('sharedStateDirectory'))
         os.environ[env_name] = original
         identical = run_command([launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
                                  "--input", str(request_file), "--secret-env", f"{secret}={env_name}"])
@@ -628,7 +630,7 @@ def run_platform_update_steps(
             raise RuntimeError(f"changed update secret did not return a typed refusal: {error}") from error
         if refused.returncode == 0 or failure.get("code") != "KB_UPDATE_SECRET_REFUSED":
             raise RuntimeError("changed --secret-env value was not refused with KB_UPDATE_SECRET_REFUSED")
-        if snapshot_state_tree(platform_root / "state") != shared_before:
+        if snapshot_state_tree(platform_root / layout_value('sharedStateDirectory')) != shared_before:
             raise RuntimeError("refused update-time secret change modified shared runtime state")
         hint = failure.get("hint")
         if not isinstance(hint, str) or hint.count("`") < 2:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from installed_fixture import layout_relative, layout_value
+
 from project_service_path import project_service_path
 
 import json
@@ -124,7 +126,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             locks = []
             for project in projects:
                 try:
-                    locks.append(json.loads((project / ".kb/marketplace.lock").read_text()).get("plugins", {}))
+                    locks.append(json.loads((project / layout_value('versionStatePaths.kb_marketplace_lock')).read_text()).get("plugins", {}))
                 except (OSError, json.JSONDecodeError):
                     return f"{project.name} marketplace lock could not be inspected"
             if "@kb-labs/mind" not in locks[0] or "@kb-labs/commit" in locks[0]:

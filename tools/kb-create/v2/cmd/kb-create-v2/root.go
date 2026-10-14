@@ -79,14 +79,14 @@ var operationDescriptors = []operationDescriptor{
 		if deps.Runtime != nil {
 			artifactInstaller = deps.Runtime.Artifacts
 		}
-		return executeUninstall(ctx, uninstallCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd, Artifacts: artifactInstaller})
+		return executeUninstall(ctx, uninstallCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd, Artifacts: artifactInstaller, ArtifactRunner: deps.ArtifactRunner})
 	}},
 	{Name: "rollback", Short: "Restore a saved snapshot", Args: cobra.NoArgs, Flags: []string{"platform-root", "registry", "snapshot", "yes"}, Human: renderRollback, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		var artifactInstaller runtime.ArtifactInstaller
 		if deps.Runtime != nil {
 			artifactInstaller = deps.Runtime.Artifacts
 		}
-		return executeRollback(ctx, rollbackCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Snapshot: flags.String("snapshot"), Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd, Artifacts: artifactInstaller})
+		return executeRollback(ctx, rollbackCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Snapshot: flags.String("snapshot"), Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd, Artifacts: artifactInstaller, ArtifactRunner: deps.ArtifactRunner})
 	}},
 	{Name: "supervise", Short: "Run the host supervisor", Hidden: true, Args: cobra.NoArgs, Flags: []string{"platform-root", "foreground"}, Human: renderSupervise, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		return executeHostSupervise(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Foreground: flags.Bool("foreground"), Executable: deps.Executable, Version: buildVersion})
