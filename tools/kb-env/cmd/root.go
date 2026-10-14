@@ -47,14 +47,13 @@ Commands:
 }
 
 // Execute renders any error as a structured diagnostic and sets the exit code.
-func Execute() {
+func Execute() diag.ExitStatus {
 	_, err := rootCmd.ExecuteC()
 	if err == nil {
-		return
+		return diag.SuccessStatus()
 	}
 	d := diag.FromError(err)
-	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
-	os.Exit(code.Code())
+	return result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
 }
 
 func init() {

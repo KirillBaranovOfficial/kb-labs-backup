@@ -8,11 +8,19 @@ import json
 import os
 from pathlib import Path
 import shlex
-import subprocess
 import urllib.request
 
-from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context, invocation_link,
-                         open_http, read_ux_cli_result, read_ux_http_result, run_command)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    invocation_context,
+    invocation_link,
+    open_http,
+    read_ux_cli_result,
+    read_ux_http_result,
+    run_command,
+)
 from journey_resources import active_platform_root
 from project_service_path import project_service_path
 from service_steps import Journey
@@ -38,16 +46,16 @@ def _http(path: str, *, token: str, method: str = "GET", payload: object = None,
         raise AssertionError(f"HTTP {method} {path} did not return a UX JSON envelope: {error}") from error
 
 
-def _cli(command: list[str], step_id: str, runner, *, cwd: str) -> subprocess.CompletedProcess[str]:
+def _cli(command: list[str], step_id: str, runner, *, cwd: str) -> CompletedProcess[str]:
     with invocation_context(step_id=step_id):
         return runner(command, cwd=cwd, env=os.environ.copy(),
                       timeout=180, capture_output=True, text=True, check=False)
 
 
-def _json_contains(result: subprocess.CompletedProcess[str], expected: str) -> bool:
+def _json_contains(result: CompletedProcess[str], expected: str) -> bool:
     if result.returncode != 0:
         return False
-    payload = read_ux_cli_result(result.stdout, result.returncode)
+    payload = read_ux_cli_result(result)
     if result.returncode == 0:
         payload = decode_ux_success_result(payload)
     values: list[str] = []
@@ -66,10 +74,10 @@ def _json_contains(result: subprocess.CompletedProcess[str], expected: str) -> b
     return expected in values
 
 
-def _json_string_field(result: subprocess.CompletedProcess[str] | None, field: str) -> str | None:
+def _json_string_field(result: CompletedProcess[str] | None, field: str) -> str | None:
     if result is None:
         raise ValueError("CLI result is required")
-    payload = read_ux_cli_result(result.stdout, result.returncode)
+    payload = read_ux_cli_result(result)
     if result.returncode == 0:
         payload = decode_ux_success_result(payload)
 
@@ -92,14 +100,14 @@ def _json_string_field(result: subprocess.CompletedProcess[str] | None, field: s
     return find(payload)
 
 
-def _json_object(result: subprocess.CompletedProcess[str] | None) -> dict[str, object]:
+def _json_object(result: CompletedProcess[str] | None) -> dict[str, object]:
     if result is None:
         raise ValueError("CLI result is required")
-    payload = read_ux_cli_result(result.stdout, result.returncode)
+    payload = read_ux_cli_result(result)
     return decode_ux_success_result(payload) if result.returncode == 0 else decode_ux_error_result(payload)
 
 
-def _install_error(result: subprocess.CompletedProcess[str]) -> str:
+def _install_error(result: CompletedProcess[str]) -> str:
     try:
         payload = _json_object(result)
         message = payload.get("message")

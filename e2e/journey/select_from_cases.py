@@ -16,8 +16,14 @@ from functools import lru_cache
 from pathlib import Path
 
 from hermetic_cli import run_hermetic_cli
-from invocations import (decode_ux_success_result, describe_cli_failure, invocation_context,
-                         print_report_text, read_ux_cli_result)
+from invocations import (
+    CompletedProcess,
+    decode_ux_success_result,
+    describe_cli_failure,
+    invocation_context,
+    print_report_text,
+    read_ux_cli_result,
+)
 from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
 from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import read_journey_selection, read_requested_cases
@@ -883,8 +889,8 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
             "selectedOwningSteps": {key: sorted(value) for key, value in sorted(selected_owners.items())}}
 
 
-def read_coverage_result(stdout: str, returncode: int) -> dict:
-    payload = decode_ux_success_result(read_ux_cli_result(stdout, returncode))
+def read_coverage_result(result: CompletedProcess[str]) -> dict:
+    payload = decode_ux_success_result(read_ux_cli_result(result))
     if not isinstance(payload, dict):
         raise ValueError("QA coverage result data is not an object")
     return payload
@@ -1004,7 +1010,7 @@ def main() -> int:
             result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120)
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
-        results.append(read_coverage_result(result.stdout, result.returncode))
+        results.append(read_coverage_result(result))
     requested = ",".join(read_requested_cases(os.environ))
     if requested:
         print_report_text(json.dumps(selection_from_coverage(results, requested)), flush=True)

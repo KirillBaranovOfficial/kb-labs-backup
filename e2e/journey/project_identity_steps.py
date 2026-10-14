@@ -6,22 +6,28 @@ from project_service_path import project_service_path
 
 import json
 import os
-import subprocess
 import tempfile
 from pathlib import Path
 
 from service_steps import Journey
-from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
-                         read_ux_cli_result, run_command, run_with_runner)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    invocation_context,
+    read_ux_cli_result,
+    run_command,
+    run_with_runner,
+)
 from marketplace_steps import _output, _registry_version
 
 
-def _cli_success(result: subprocess.CompletedProcess[str]):
-    return decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+def _cli_success(result: CompletedProcess[str]):
+    return decode_ux_success_result(read_ux_cli_result(result))
 
 
-def _cli_error(result: subprocess.CompletedProcess[str]):
-    return decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
+def _cli_error(result: CompletedProcess[str]):
+    return decode_ux_error_result(read_ux_cli_result(result))
 
 
 def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], registry: str,
@@ -29,7 +35,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
     """Register two disposable repositories and prove their CLI scope boundaries."""
     command_runner = runner
 
-    def run(cwd: Path, *args: str, step_id: str) -> subprocess.CompletedProcess[str]:
+    def run(cwd: Path, *args: str, step_id: str) -> CompletedProcess[str]:
         with invocation_context(step_id=step_id):
             return run_with_runner(command_runner, kb_command([ *args], executable=cli), cwd=cwd, env=env, timeout=180)
 

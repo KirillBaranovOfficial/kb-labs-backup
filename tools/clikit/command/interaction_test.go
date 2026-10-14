@@ -141,7 +141,7 @@ func TestExecuteDoesNotRenderResultAgainAfterLiveHumanProgress(t *testing.T) {
 		return result.Return(map[string]string{"ok": "data"})
 	}})
 	if code := Execute(root, []string{"run"}, &terminal, &stderr); code != diag.SuccessStatus() {
-		t.Fatalf("Execute() = %d; stderr=%s", code, stderr.String())
+		t.Fatalf("Execute() = %d; stderr=%s", code.Code(), stderr.String())
 	}
 	if got := terminal.String(); got != "prompt visible\n" {
 		t.Fatalf("human output = %q, want live progress exactly once", got)

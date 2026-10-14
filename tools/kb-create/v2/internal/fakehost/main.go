@@ -5,18 +5,28 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 )
 
 func main() {
+	command.Exit(run())
+}
+
+func run() diag.ExitStatus {
 	port := flag.Int("port", 0, "loopback port to serve /health on")
 	ignoreTerm := flag.Bool("ignore-term", false, "ignore SIGTERM (forces the launcher to kill)")
 	unhealthy := flag.Bool("unhealthy", false, "answer /health with 500")
@@ -31,11 +41,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "API_TOKEN="+token)
 		}
 		fmt.Fprintln(os.Stderr, `{"ok":false,"error":{"code":"KB_CONFIG_INVALID","message":"Adapter option \"platform.adapterOptions.analytics.retentionDays\" is invalid: must be a positive integer.","cause":"must be a positive integer","hint":"kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90","details":{"path":"platform.adapterOptions.analytics.retentionDays"}}}`)
-		os.Exit(7)
+		return childExitStatus(7)
 	}
 	if *exitCode >= 0 {
 		fmt.Fprintln(os.Stderr, "fakehost: exiting early")
-		os.Exit(*exitCode)
+		return childExitStatus(*exitCode)
 	}
 	if *stderrLine != "" {
 		fmt.Fprintln(os.Stderr, *stderrLine)
@@ -43,7 +53,7 @@ func main() {
 	if *dumpEnv != "" {
 		if err := os.WriteFile(*dumpEnv, []byte(strings.Join(os.Environ(), "\n")+"\n"), 0o600); err != nil {
 			fmt.Fprintln(os.Stderr, "fakehost:", err)
-			os.Exit(4)
+			return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The fake host could not write its test environment.", diag.WithCauseAndReason(err.Error()), diag.WithHint("Check the fake host environment path and rerun the test.")))
 		}
 	}
 	signals := make(chan os.Signal, 1)
@@ -56,7 +66,7 @@ func main() {
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *port))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fakehost:", err)
-		os.Exit(3)
+		return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The fake host could not start its test listener.", diag.WithCauseAndReason(err.Error()), diag.WithHint("Check the test listener address and rerun the test.")))
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -78,4 +88,23 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)
+	return diag.SuccessStatus()
+}
+
+func childExitStatus(code int) diag.ExitStatus {
+	if code == 0 {
+		return diag.SuccessStatus()
+	}
+	var child *exec.ExitError
+	var command *exec.Cmd
+	if runtime.GOOS == "windows" {
+		command = exec.Command("cmd.exe", "/c", "exit", fmt.Sprint(code))
+	} else {
+		command = exec.Command("sh", "-c", "exit "+fmt.Sprint(code))
+	}
+	command.Stdout, command.Stderr = nil, nil
+	if err := command.Run(); !errors.As(err, &child) {
+		return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The fake host could not simulate a child process exit.", diag.WithCauseAndReason(fmt.Sprint(err)), diag.WithHint("Check the system shell used by the fake host test.")))
+	}
+	return diag.ChildProcessStatus(child)
 }

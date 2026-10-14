@@ -85,6 +85,6 @@ func TestInteractionPTYChild(t *testing.T) {
 		return err
 	}})
 	if code := Execute(root, []string{"run"}, os.Stdout, os.Stderr); code.Code() != 0 {
-		t.Fatalf("Execute() = %d", code)
+		t.Fatalf("Execute() = %d", code.Code())
 	}
 }

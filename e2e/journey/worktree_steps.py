@@ -62,7 +62,7 @@ def run_worktree_steps(
             if add.returncode != 0:
                 return f"kb project add failed for worktree fixture: {(add.stderr or add.stdout).strip()}"
             try:
-                project_data = decode_ux_success_result(read_ux_cli_result(add.stdout, add.returncode))
+                project_data = decode_ux_success_result(read_ux_cli_result(add))
                 project_id = project_data["project"]["id"]
             except (ValueError, KeyError, TypeError) as error:
                 return f"kb project add returned no project ID for worktree fixture: {error}"
@@ -95,7 +95,7 @@ def run_worktree_steps(
             if run.returncode != 0:
                 return fail_and_remove(f"workflow run from registered worktree failed: {(run.stderr or run.stdout).strip()}")
             try:
-                run_payload = decode_ux_success_result(read_ux_cli_result(run.stdout, run.returncode))
+                run_payload = decode_ux_success_result(read_ux_cli_result(run))
                 run_id = run_payload.get("runId") if isinstance(run_payload, dict) else None
                 if not run_id:
                     return fail_and_remove("workflow run from worktree returned no run ID")
@@ -117,7 +117,7 @@ def run_worktree_steps(
             unknown = runner([str(cli), "project", "show", "--json"], cwd=unregistered_checkout,
                              env=child_env, capture_output=True, text=True, check=False, timeout=90)
             try:
-                error = decode_ux_error_result(read_ux_cli_result(unknown.stdout, unknown.returncode))
+                error = decode_ux_error_result(read_ux_cli_result(unknown))
             except (ValueError, KeyError, TypeError) as error:
                 return fail_and_remove(f"unregistered worktree did not return a typed project error: {error}")
             if unknown.returncode == 0 or error.get("code") != "KB_PROJECT_UNKNOWN":

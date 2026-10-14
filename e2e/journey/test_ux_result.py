@@ -43,14 +43,44 @@ def _process_creation_sites(root: Path) -> dict[str, list[int]]:
                 sites.setdefault(relative, []).append(node.lineno)
     return sites
 
+import subprocess
+import fnmatch
+import tempfile
+
+
 from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
                          KB_CREATE_JSON_STREAM_COMMANDS, read_kb_create_cli_result,
                          read_ux_cli_result, read_ux_cli_stream)
 from test_catalog_exit_status import catalogued_exit
 
+PROCESS_OWNER = "invocations.py"
+PROCESS_MODULE_FAMILIES = {
+    "subprocess": "launches processes and creates completed results",
+    "pty": "creates terminal-backed child processes",
+    "multiprocessing": "creates worker processes",
+    "asyncio.subprocess": "creates asynchronous child processes",
+}
+ASYNCIO_PROCESS_FUNCTION_FAMILIES = {
+    "create_subprocess_exec": "creates an asynchronous child process",
+    "create_subprocess_shell": "creates a shell child process asynchronously",
+}
+OS_PROCESS_FUNCTION_FAMILIES = {
+    "system": "runs a shell command",
+    "popen": "opens a child process pipe",
+    "fork": "creates a child process",
+    "startfile": "launches a file through the operating system",
+    "spawn*": "creates a child process",
+    "exec*": "replaces the current process",
+    "posix_spawn*": "creates a child process",
+}
+
 
 def kb_create_stdout_decoder_violations(source: str, filename: str) -> list[str]:
-    """Track kb-create command vectors through subprocess results to JSON readers."""
+    """Track ordinary kb-create result dataflow; the process import rail fixes the owner.
+
+    This flow check intentionally does not model deliberate dynamic imports,
+    importlib, getattr, or ctypes routes; those are code-review concerns.
+    """
     tree = ast.parse(source, filename=filename)
     violations = []
     for function in (node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))):
@@ -139,6 +169,81 @@ def kb_create_stdout_decoder_violations(source: str, filename: str) -> list[str]
     return violations
 
 
+def process_import_violations(source: str, filename: str) -> list[str]:
+    """Reject imports and resolved attributes that can start a process.
+
+    The single owner keeps subprocess/pty/multiprocessing/asyncio.subprocess
+    because it must launch commands and preserve their process results. The
+    runtime result invariant in invocations checks every process it starts;
+    steps cannot create another route because ordinary imports are rejected.
+    The rail covers ordinary Python imports and resolved os attributes. Deliberate
+    dynamic imports, importlib, computed getattr, and ctypes are code-review
+    concerns, not patterns this static rail attempts to recognize.
+    """
+    tree = ast.parse(source, filename=filename)
+    module_aliases: dict[str, str] = {}
+    violations: list[str] = []
+
+    def is_os_process_function(name: str) -> bool:
+        return any(fnmatch.fnmatchcase(name, pattern) for pattern in OS_PROCESS_FUNCTION_FAMILIES)
+
+    def attribute_path(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            parent = attribute_path(node.value)
+            return f"{parent}.{node.attr}" if parent else None
+        return None
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in PROCESS_MODULE_FAMILIES:
+                    violations.append(f"{filename}:{node.lineno} imports {alias.name}: {PROCESS_MODULE_FAMILIES[alias.name]}")
+                local_name = alias.asname or alias.name.split(".", 1)[0]
+                module_aliases[local_name] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module in PROCESS_MODULE_FAMILIES:
+                violations.append(f"{filename}:{node.lineno} imports {module}: {PROCESS_MODULE_FAMILIES[module]}")
+            elif module == "os":
+                blocked = [alias.name for alias in node.names
+                           if alias.name == "*" or is_os_process_function(alias.name)]
+                if blocked:
+                    names = ", ".join(blocked)
+                    violations.append(f"{filename}:{node.lineno} imports process functions from os: {names}")
+            elif module == "asyncio":
+                blocked = [alias.name for alias in node.names
+                           if alias.name == "subprocess" or alias.name in ASYNCIO_PROCESS_FUNCTION_FAMILIES]
+                if blocked:
+                    violations.append(f"{filename}:{node.lineno} imports asyncio process APIs: {', '.join(blocked)}")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            path = attribute_path(node)
+            if not path:
+                continue
+            root, separator, suffix = path.partition(".")
+            imported = module_aliases.get(root)
+            if not imported or not separator:
+                continue
+            resolved = f"{imported}.{suffix}"
+            if imported == "os" and is_os_process_function(suffix.split(".", 1)[0]):
+                violations.append(f"{filename}:{node.lineno} accesses os process function {resolved}")
+            elif imported == "asyncio" and (
+                    suffix == "subprocess" or suffix.startswith("subprocess.")
+                    or suffix in ASYNCIO_PROCESS_FUNCTION_FAMILIES):
+                violations.append(f"{filename}:{node.lineno} accesses asyncio process API {resolved}")
+    return violations
+
+
+def journey_modules_for_process_import_rail(journey_root: Path) -> list[Path]:
+    """Use the source directory and unittest's test_*.py pattern for coverage."""
+    owner = journey_root / PROCESS_OWNER
+    return sorted(path for path in journey_root.rglob("*.py")
+                  if path.is_file() and not fnmatch.fnmatchcase(path.name, "test_*.py")
+                  and path != owner and "__pycache__" not in path.parts)
+
+
 class UxResultDecodeTests(unittest.TestCase):
     def test_journey_kb_create_stdout_has_one_json_decoder_owner(self):
         journey_root = Path(__file__).parent
@@ -162,21 +267,42 @@ class UxResultDecodeTests(unittest.TestCase):
                              f"{path} runs kb-create JSON outside the Python decoder owner")
 
     def test_python_journey_process_launches_use_the_shared_invocation_boundary(self):
+        """Only invocations.py imports process owners; its outputs enforce status classes.
+
+        This makes every ordinary step process go through the runtime catalog
+        invariant before a result reaches a step. Deliberately evasive imports
+        or calls (dynamic import, getattr, ctypes) are code-review concerns.
+        Test modules matching unittest's `test_*.py` discovery pattern are
+        excluded because their fixtures intentionally build fake results.
+        """
         journey_root = Path(__file__).parent
-        launch_methods = {"run", "Popen", "call", "check_call", "check_output", "system", "popen"}
-        violations = []
-        for path in journey_root.rglob("*.py"):
-            if path.name.startswith("test_") or path == journey_root / "invocations.py":
-                continue
-            tree = ast.parse(path.read_text(), filename=str(path))
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                    continue
-                owner = node.func.value
-                if (isinstance(owner, ast.Name) and owner.id in {"subprocess", "os"}
-                        and node.func.attr in launch_methods):
-                    violations.append(f"{path}:{node.lineno} launches a process outside invocations.py")
+        modules = journey_modules_for_process_import_rail(journey_root)
+        violations = [violation for path in modules
+                      for violation in process_import_violations(path.read_text(), str(path))]
         self.assertEqual(violations, [])
+
+    def test_process_import_mutations_are_rejected_by_import_structure(self):
+        mutations = {
+            "from subprocess import run as launch": "from subprocess import run as launch\nlaunch(['tool'])\n",
+            "import subprocess as sp": "import subprocess as sp\nsp.run(['tool'])\n",
+            "from os import system": "from os import system\nsystem('tool')\n",
+            "os.popen": "import os\nos.popen('tool')\n",
+        }
+        for label, source in mutations.items():
+            with self.subTest(mutation=label):
+                self.assertTrue(process_import_violations(source, "steps/mutation.py"))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            nested = Path(temporary) / "steps" / "new_group"
+            nested.mkdir(parents=True)
+            module = nested / "terminal.py"
+            module.write_text("import pty\n")
+            disguised_owner = nested / PROCESS_OWNER
+            disguised_owner.write_text("import pty\n")
+            violations = [violation for path in journey_modules_for_process_import_rail(Path(temporary))
+                          for violation in process_import_violations(path.read_text(), str(path))]
+            self.assertEqual(len(violations), 2)
+            self.assertTrue(all("pty" in violation for violation in violations))
 
     def test_raw_json_parser_mutation_on_kb_create_result_is_rejected(self):
         mutated = '''
@@ -220,24 +346,43 @@ def bad_sink():
 
     def test_cli_exit_code_must_match_success_envelope(self):
         with self.assertRaisesRegex(ValueError, "exit code does not match"):
-            read_ux_cli_result('{"ok":true,"data":{}}', 1)
+            read_ux_cli_result(subprocess.CompletedProcess(["kb"], 1, '{"ok":true,"data":{}}', ""))
 
     def test_cli_exit_code_must_match_error_envelope(self):
         with self.assertRaisesRegex(ValueError, "exit code does not match"):
-            read_ux_cli_result('{"ok":false,"error":{"code":"KB_TEST","message":"failed"}}', 0)
+            read_ux_cli_result(subprocess.CompletedProcess(["kb"], 0, '{"ok":false,"error":{"code":"KB_TEST","message":"failed"}}', ""))
 
     def test_cli_stream_validates_terminal_exit_and_preserves_result_events(self):
         stream = ('{"ok":true,"data":{"phase":"Apply","state":"completed"}}\n'
                   '{"ok":true,"data":{"operation":"apply","receipt":{}},"meta":{"stream":{"result":true}}}\n'
                   '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":0}}}\n')
-        records = read_ux_cli_stream(stream, 0)
+        records = read_ux_cli_stream(subprocess.CompletedProcess(["kb-create", "apply"], 0, stream, ""))
         self.assertEqual(records[-2]["data"]["operation"], "apply")
 
     def test_cli_stream_rejects_terminal_exit_code_mismatch(self):
         stream = ('{"ok":false,"error":{"code":"KB_TEST","message":"failed"}}\n'
                   '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":1}}}\n')
         with self.assertRaisesRegex(ValueError, "terminal record does not match"):
-            read_ux_cli_stream(stream, 0)
+            read_ux_cli_stream(subprocess.CompletedProcess(["kb-create", "apply"], 0, stream, ""))
+
+    def test_catalogued_error_status_is_checked_at_the_shared_boundary(self):
+        failure = '{"ok":false,"error":{"code":"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE","message":"index unavailable"}}'
+        result = subprocess.CompletedProcess(["kb-create", "plan"], 2, failure, "")
+        with self.assertRaisesRegex(ValueError, r"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE \(operation-failure\).*process status 2.*terminal status None"):
+            read_kb_create_cli_result("plan", result)
+
+    def test_result_owner_rejects_non_process_shapes(self):
+        for result in ({"stdout": "{}", "returncode": 0},
+                       type("CustomResult", (), {"stdout": "{}", "returncode": 0})()):
+            with self.subTest(result=type(result).__name__), self.assertRaisesRegex(ValueError, "requires a subprocess.CompletedProcess"):
+                read_ux_cli_result(result)
+
+    def test_catalogued_stream_reports_process_and_terminal_statuses(self):
+        stream = ('{"ok":false,"error":{"code":"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE","message":"failed"}}\n'
+                  '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":2}}}\n')
+        result = subprocess.CompletedProcess(["kb-create", "apply"], 1, stream, "")
+        with self.assertRaisesRegex(ValueError, r"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE \(operation-failure\).*process status 1.*terminal status 2"):
+            read_kb_create_cli_result("apply", result)
 
     def test_setup_failure_description_preserves_typed_error_and_hint(self):
         output = '{"ok":false,"error":{"code":"KB_DOCTOR_INVALID","message":"Manifest scan failed.","hint":"Run `kb-create doctor --fix` and retry."}}'
@@ -263,12 +408,14 @@ def bad_sink():
         stream = (fixtures / "gateway-index-apply-refusal.jsonl").read_text()
         plan_status = int((fixtures / "gateway-index-plan-refusal.exit").read_text().strip())
         apply_status = int((fixtures / "gateway-index-apply-refusal.exit").read_text().strip())
-        self.assertEqual(read_kb_create_cli_result("plan", document, plan_status)["ok"], False)
-        self.assertEqual(read_kb_create_cli_result("apply", stream, apply_status)["ok"], False)
+        plan_result = subprocess.CompletedProcess(["kb-create", "plan"], plan_status, document, "")
+        apply_result = subprocess.CompletedProcess(["kb-create", "apply"], apply_status, stream, "")
+        self.assertEqual(read_kb_create_cli_result("plan", plan_result)["ok"], False)
+        self.assertEqual(read_kb_create_cli_result("apply", apply_result)["ok"], False)
         with self.assertRaisesRegex(ValueError, "not JSON"):
-            read_kb_create_cli_result("plan", stream, plan_status)
+            read_kb_create_cli_result("plan", apply_result)
         with self.assertRaisesRegex(ValueError, "non-JSON record"):
-            read_kb_create_cli_result("apply", document, apply_status)
+            read_kb_create_cli_result("apply", plan_result)
         for status in (plan_status, apply_status):
             self.assertEqual(status, catalogued_exit("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE"))
 

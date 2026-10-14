@@ -5,11 +5,17 @@ from kb_invocation import kb_command
 
 import json
 import os
-import subprocess
 from pathlib import Path
 
-from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context, read_ux_cli_result,
-                         run_command, run_with_runner)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    invocation_context,
+    read_ux_cli_result,
+    run_command,
+    run_with_runner,
+)
 
 
 GREET_WORKFLOW = """name: greet
@@ -32,7 +38,7 @@ jobs:
 """
 
 
-def _cli(command: list[str], *, cwd: Path, env: dict[str, str], runner) -> subprocess.CompletedProcess[str]:
+def _cli(command: list[str], *, cwd: Path, env: dict[str, str], runner) -> CompletedProcess[str]:
     with invocation_context(step_id="journey.setup"):
         return run_with_runner(runner, command, cwd=cwd, env=env, timeout=180,
                                capture_output=True, text=True, check=False)
@@ -42,7 +48,7 @@ def _install(package: str, *, cwd: Path, env: dict[str, str], runner) -> None:
     command = kb_command([ "marketplace", "install", package, "--json"])
     result = _cli(command, cwd=cwd, env=env, runner=runner)
     try:
-        payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+        payload = decode_ux_success_result(read_ux_cli_result(result))
     except ValueError as error:
         raise RuntimeError(f"marketplace install {package} returned an invalid UX result: {error}") from error
     installed = payload.get("installed", []) if isinstance(payload, dict) else []
@@ -56,7 +62,7 @@ def _verify_greet(*, cwd: Path, env: dict[str, str], runner) -> None:
     command = kb_command([ "workflow", "defs", "list", "--json"])
     result = _cli(command, cwd=cwd, env=env, runner=runner)
     try:
-        payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+        payload = decode_ux_success_result(read_ux_cli_result(result))
     except ValueError as error:
         raise RuntimeError(f"workflow defs list returned an invalid UX result after installing greet: {error}") from error
     if (result.returncode != 0 or not isinstance(payload, list)
@@ -69,7 +75,7 @@ def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner)
     list_command = kb_command([ "marketplace", "plugins", "list", "--json"])
     listed = _cli(list_command, cwd=cwd, env=env, runner=runner)
     try:
-        payload = decode_ux_success_result(read_ux_cli_result(listed.stdout, listed.returncode))
+        payload = decode_ux_success_result(read_ux_cli_result(listed))
     except ValueError as error:
         raise RuntimeError(f"marketplace plugins list returned an invalid UX result: {error}") from error
     entries = payload.get("entries") if isinstance(payload, dict) else None
@@ -83,7 +89,7 @@ def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner)
         uninstall = kb_command([ "marketplace", "uninstall", installed_id, "--json"])
         removed = _cli(uninstall, cwd=cwd, env=env, runner=runner)
         try:
-            envelope = read_ux_cli_result(removed.stdout, removed.returncode)
+            envelope = read_ux_cli_result(removed)
         except ValueError as error:
             raise RuntimeError(f"marketplace uninstall {installed_id} returned an invalid UX result: {error}") from error
         if removed.returncode != 0:
@@ -95,7 +101,7 @@ def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner)
             raise RuntimeError(f"marketplace uninstall {installed_id} returned non-object UX data")
     verified = _cli(list_command, cwd=cwd, env=env, runner=runner)
     try:
-        final_payload = decode_ux_success_result(read_ux_cli_result(verified.stdout, verified.returncode))
+        final_payload = decode_ux_success_result(read_ux_cli_result(verified))
     except ValueError as error:
         raise RuntimeError(f"marketplace plugins list returned an invalid UX result after attachment setup: {error}") from error
     final_entries = final_payload.get("entries") if isinstance(final_payload, dict) else None

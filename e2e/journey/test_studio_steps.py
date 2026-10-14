@@ -89,7 +89,7 @@ class StudioJourneyTests(unittest.TestCase):
             browsers_path = Path(directory) / "browsers"
             env = {"PLAYWRIGHT_BROWSERS_PATH": str(browsers_path)}
 
-            with patch("studio_steps.subprocess.Popen") as popen:
+            with patch("invocations.subprocess.Popen") as popen:
                 passed, elapsed, message = run_studio_browser_step(
                     ["playwright"], env, report, "local", True)
             saved = json.loads(report.read_text())
@@ -116,7 +116,7 @@ class StudioJourneyTests(unittest.TestCase):
             executable.write_text("fake executable for preflight")
             env = {"PLAYWRIGHT_BROWSERS_PATH": str(browsers_path)}
 
-            with patch("studio_steps.subprocess.Popen") as popen:
+            with patch("invocations.subprocess.Popen") as popen:
                 passed, elapsed, message = run_studio_browser_step(
                     ["playwright"], env, report, "secured", True)
 
@@ -251,7 +251,7 @@ class StudioJourneyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "service-local.json"
             report.write_text(json.dumps({"status": "FAIL", "steps": []}))
-            with patch("studio_steps.subprocess.run") as run:
+            with patch("invocations.subprocess.run") as run:
                 passed, elapsed, message = run_studio_browser_step(
                     ["playwright"], {}, report, "local", False)
             saved = json.loads(report.read_text())

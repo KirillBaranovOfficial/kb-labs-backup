@@ -228,7 +228,7 @@ class CliAuthJourneyTests(unittest.TestCase):
         state = {"email": None}
         with tempfile.TemporaryDirectory(prefix="auth-status-home-") as home:
             env = {"HOME": home}
-            with patch("steps.auth.subprocess.run", side_effect=invoke):
+            with patch("invocations.subprocess.run", side_effect=invoke):
                 old_run_pty = auth_steps.run_pty_command
 
                 def run_pty(command, *, env, timeout, on_output):
@@ -260,7 +260,7 @@ class CliAuthJourneyTests(unittest.TestCase):
             "code": "KB_AUTH_FORBIDDEN", "details": {"permission": "users:write"},
             "message": "Permission denied.",
         }}
-        with patch("steps.auth.subprocess.run", return_value=subprocess.CompletedProcess(
+        with patch("invocations.subprocess.run", return_value=subprocess.CompletedProcess(
                 args, 1, json.dumps(response), "")) as invoke:
             run_cli_auth_forbidden("/isolated/bin/kb", {"HOME": "/isolated"})
         self.assertEqual(invoke.call_args.args[0], args)

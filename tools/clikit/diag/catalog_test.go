@@ -2,12 +2,16 @@ package diag
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -140,172 +144,270 @@ func TestGoToolsDoNotAssignProcessExitStatusOutsideDiag(t *testing.T) {
 	}
 }
 
-func TestPrimaryCLIsExitOnlyAtTheirTypedMainBoundary(t *testing.T) {
+func TestGoToolsHaveOneTypedProcessExitOwner(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	toolRoots := []string{"kb-create", "kb-dev", "kb-devkit", "kb-deploy", "kb-monitor"}
-	testedMainPaths := map[string]struct{}{}
-	for _, tool := range toolRoots {
-		toolRoot := filepath.Join(root, "tools", tool)
-		mainPath := filepath.Join(toolRoot, "main.go")
-		testedMainPaths[filepath.Clean(mainPath)] = struct{}{}
-		mainSource, err := os.ReadFile(mainPath)
-		if err != nil {
-			t.Fatal(err)
+	toolsDir := filepath.Join(root, "tools")
+	expectedOwner := filepath.Join(toolsDir, "clikit", "command", "process.go")
+	if err := validateTypedProcessExitOwner(toolsDir, expectedOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	mutations := []struct {
+		name, source string
+	}{
+		{"wrapper-code", `package p; import "os"; type wrapper struct{}; func (wrapper) Code() int { return 2 }; func f() { os.Exit(wrapper{}.Code()) }`},
+		{"alias", `package p; import "os"; func f() { exit := os.Exit; exit(2) }`},
+		{"syscall-helper", `package helper; import "syscall"; func helper() { syscall.Exit(2) }`},
+		{"log-fatal", `package p; import "log"; func handler() { log.Fatal("x") }`},
+		{"new-main", `package main; import "os"; func main() { os.Exit(2) }`},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			mutationTools := filepath.Join(t.TempDir(), "tools")
+			if err := writeExitOwnerFixture(mutationTools); err != nil {
+				t.Fatal(err)
+			}
+			mutationDirectory := filepath.Join(mutationTools, "mutation")
+			if mutation.name == "syscall-helper" {
+				mutationDirectory = filepath.Join(mutationTools, "sixth-binary", "internal", "helper")
+			}
+			if err := os.MkdirAll(mutationDirectory, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(mutationDirectory, "mutation.go"), []byte(mutation.source), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if mutation.name == "syscall-helper" {
+				mainDirectory := filepath.Join(mutationTools, "sixth-binary")
+				if err := os.MkdirAll(mainDirectory, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				mainSource := `package main
+import command "github.com/kb-labs/clikit/command"
+func main() { command.Exit(2) }
+`
+				if err := os.WriteFile(filepath.Join(mainDirectory, "main.go"), []byte(mainSource), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := validateTypedProcessExitOwner(mutationTools, filepath.Join(mutationTools, "clikit", "command", "process.go")); err == nil {
+				t.Fatal("mutation passed the process exit rail")
+			}
+		})
+	}
+}
+
+func validateTypedProcessExitOwner(toolsDir, expectedOwner string) error {
+	packages, mains, err := loadToolPackages(toolsDir)
+	if err != nil {
+		return err
+	}
+	var exits []string
+	for directory, pkg := range packages {
+		aliases := terminationAliases(pkg.files, pkg.info)
+		for _, file := range pkg.files {
+			ast.Inspect(file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if ok && isProcessTermination(call.Fun, pkg.info, aliases) {
+					exits = append(exits, filepath.Join(directory, filepath.Base(pkg.fset.Position(call.Pos()).Filename))+":"+strconv.Itoa(pkg.fset.Position(call.Pos()).Line))
+				}
+				return true
+			})
 		}
-		mainFile, err := parser.ParseFile(token.NewFileSet(), mainPath, mainSource, 0)
-		if err != nil {
-			t.Fatal(err)
+	}
+	if len(exits) != 1 || !strings.HasPrefix(exits[0], expectedOwner+":") {
+		return fmt.Errorf("process termination sites = %v; want only %s", exits, expectedOwner)
+	}
+	for directory, files := range mains {
+		if countSharedExitCalls(files) != 1 {
+			return fmt.Errorf("package main in %s must hand one typed status to clikit/command.Exit", directory)
 		}
-		mainExits := 0
-		ast.Inspect(mainFile, func(node ast.Node) bool {
+	}
+	return nil
+}
+
+func writeExitOwnerFixture(toolsDir string) error {
+	ownerDirectory := filepath.Join(toolsDir, "clikit", "command")
+	if err := os.MkdirAll(ownerDirectory, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(ownerDirectory, "process.go"), []byte(`package command
+import "os"
+func Exit(status int) { os.Exit(status) }
+`), 0o600)
+}
+
+type parsedToolPackage struct {
+	fset  *token.FileSet
+	files []*ast.File
+	info  *types.Info
+}
+
+func loadToolPackages(toolsDir string) (map[string]parsedToolPackage, map[string][]*ast.File, error) {
+	packages := map[string]parsedToolPackage{}
+	mains := map[string][]*ast.File{}
+	byDirectory := map[string][]string{}
+	err := filepath.WalkDir(toolsDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != toolsDir && (entry.Name() == "vendor" || entry.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) == ".go" && !strings.HasSuffix(path, "_test.go") {
+			byDirectory[filepath.Dir(path)] = append(byDirectory[filepath.Dir(path)], path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	for directory, paths := range byDirectory {
+		fset := token.NewFileSet()
+		var files []*ast.File
+		packageName := ""
+		for _, path := range paths {
+			file, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				return nil, nil, err
+			}
+			if packageName == "" {
+				packageName = file.Name.Name
+			}
+			if file.Name.Name != packageName {
+				continue
+			}
+			files = append(files, file)
+		}
+		info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object), Uses: make(map[*ast.Ident]types.Object), Selections: make(map[*ast.SelectorExpr]*types.Selection)}
+		config := types.Config{Importer: importer.Default(), Error: func(error) {}}
+		_, _ = config.Check(filepath.ToSlash(directory), fset, files, info)
+		packages[directory] = parsedToolPackage{fset: fset, files: files, info: info}
+		if packageName == "main" {
+			mains[directory] = files
+		}
+	}
+	return packages, mains, nil
+}
+
+func terminationAliases(files []*ast.File, info *types.Info) map[types.Object]bool {
+	aliases := map[types.Object]bool{}
+	for pass := 0; pass < 2; pass++ {
+		for _, file := range files {
+			ast.Inspect(file, func(node ast.Node) bool {
+				var names []*ast.Ident
+				var values []ast.Expr
+				switch value := node.(type) {
+				case *ast.AssignStmt:
+					for _, lhs := range value.Lhs {
+						if ident, ok := lhs.(*ast.Ident); ok {
+							names = append(names, ident)
+						} else {
+							names = append(names, nil)
+						}
+					}
+					values = value.Rhs
+				case *ast.ValueSpec:
+					names, values = value.Names, value.Values
+				}
+				for index, name := range names {
+					if name == nil || index >= len(values) {
+						continue
+					}
+					object := info.Defs[name]
+					if object == nil {
+						object = info.Uses[name]
+					}
+					if object != nil && isProcessObject(usedObject(values[index], info), aliases) {
+						aliases[object] = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	return aliases
+}
+
+func usedObject(expression ast.Expr, info *types.Info) types.Object {
+	switch value := expression.(type) {
+	case *ast.Ident:
+		return info.Uses[value]
+	case *ast.SelectorExpr:
+		if selection := info.Selections[value]; selection != nil {
+			return selection.Obj()
+		}
+		return info.Uses[value.Sel]
+	}
+	return nil
+}
+
+func isProcessObject(object types.Object, aliases map[types.Object]bool) bool {
+	if object == nil {
+		return false
+	}
+	if aliases[object] {
+		return true
+	}
+	pkg := object.Pkg()
+	if pkg == nil {
+		return false
+	}
+	name := object.Name()
+	switch pkg.Path() {
+	case "os", "syscall":
+		return name == "Exit"
+	case "log":
+		return strings.HasPrefix(name, "Fatal")
+	case "runtime":
+		return name == "Goexit"
+	default:
+		return false
+	}
+}
+
+func isProcessTermination(expression ast.Expr, info *types.Info, aliases map[types.Object]bool) bool {
+	return isProcessObject(usedObject(expression, info), aliases)
+}
+
+func countSharedExitCalls(files []*ast.File) int {
+	count := 0
+	for _, file := range files {
+		imports := map[string]string{}
+		for _, imported := range file.Imports {
+			path, err := strconv.Unquote(imported.Path.Value)
+			if err != nil || path != "github.com/kb-labs/clikit/command" {
+				continue
+			}
+			name := filepath.Base(path)
+			if imported.Name != nil {
+				name = imported.Name.Name
+			}
+			imports[name] = path
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
-			if !ok || !isExitCall(call) {
+			if !ok {
 				return true
 			}
-			mainExits++
-			if len(call.Args) != 1 || !isCodeMethod(call.Args[0]) {
-				t.Errorf("%s process boundary must exit with the typed Execute status Code()", mainPath)
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "Exit" {
+				return true
+			}
+			owner, ok := selector.X.(*ast.Ident)
+			if ok && imports[owner.Name] == "github.com/kb-labs/clikit/command" {
+				count++
 			}
 			return true
 		})
-		if mainExits != 1 {
-			t.Errorf("%s has %d process exits, want exactly one typed boundary", mainPath, mainExits)
-		}
-
-		commandDir := filepath.Join(toolRoot, "cmd")
-		if tool == "kb-create" {
-			commandDir = filepath.Join(toolRoot, "v2", "cmd", "kb-create-v2")
-		}
-		err = filepath.WalkDir(commandDir, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() && (entry.Name() == "vendor" || entry.Name() == "node_modules") {
-				return filepath.SkipDir
-			}
-			if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			source, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
-			if err != nil {
-				return err
-			}
-			ast.Inspect(file, func(node ast.Node) bool {
-				if call, ok := node.(*ast.CallExpr); ok && isExitCall(call) {
-					t.Errorf("%s bypasses the typed process boundary", path)
-				}
-				return true
-			})
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
 	}
-
-	// Discover additional user-facing command binaries inside those modules by
-	// their use of the shared diagnostic package. Their main boundary must obey
-	// the same typed exit contract as the primary commands.
-	for _, tool := range toolRoots {
-		toolRoot := filepath.Join(root, "tools", tool)
-		err := filepath.WalkDir(toolRoot, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() && (entry.Name() == "vendor" || entry.Name() == "node_modules") {
-				return filepath.SkipDir
-			}
-			if entry.IsDir() || filepath.Base(path) != "main.go" {
-				return nil
-			}
-			if _, tested := testedMainPaths[filepath.Clean(path)]; tested {
-				return nil
-			}
-			mainSource, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			mainFile, err := parser.ParseFile(token.NewFileSet(), path, mainSource, 0)
-			if err != nil {
-				return err
-			}
-			if mainFile.Name.Name != "main" {
-				return nil
-			}
-			usesDiag := false
-			for _, imported := range mainFile.Imports {
-				if strings.Trim(imported.Path.Value, "\"") == "github.com/kb-labs/clikit/diag" {
-					usesDiag = true
-				}
-			}
-			if !usesDiag {
-				return nil
-			}
-			exits := 0
-			ast.Inspect(mainFile, func(node ast.Node) bool {
-				call, ok := node.(*ast.CallExpr)
-				if !ok || !isExitCall(call) {
-					return true
-				}
-				exits++
-				if len(call.Args) != 1 || !isCodeMethod(call.Args[0]) {
-					t.Errorf("%s process boundary must exit with the typed Execute status Code()", path)
-				}
-				return true
-			})
-			if exits != 1 {
-				t.Errorf("%s has %d process exits, want exactly one typed boundary", path, exits)
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if !hasExitBypass("package command\nfunc run() { os.Exit(1) }\n") {
-		t.Fatal("os.Exit in a command handler mutation was not detected")
-	}
-}
-
-func isExitCall(call *ast.CallExpr) bool {
-	selector, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || (selector.Sel.Name != "Exit") {
-		return false
-	}
-	packageName, ok := selector.X.(*ast.Ident)
-	return ok && (packageName.Name == "os" || packageName.Name == "syscall")
-}
-
-func isCodeMethod(node ast.Expr) bool {
-	call, ok := node.(*ast.CallExpr)
-	if !ok || len(call.Args) != 0 {
-		return false
-	}
-	selector, ok := call.Fun.(*ast.SelectorExpr)
-	return ok && selector.Sel.Name == "Code"
-}
-
-func hasExitBypass(source string) bool {
-	file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", source, 0)
-	if err != nil {
-		return false
-	}
-	found := false
-	ast.Inspect(file, func(node ast.Node) bool {
-		if call, ok := node.(*ast.CallExpr); ok && isExitCall(call) {
-			found = true
-		}
-		return true
-	})
-	return found
+	return count
 }
 
 func TestExitStatusTypeRejectsIntegerAndWrappedLiteralMutations(t *testing.T) {

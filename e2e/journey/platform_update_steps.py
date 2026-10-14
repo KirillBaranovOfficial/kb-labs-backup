@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import secrets as secure_random
-import subprocess
 from pathlib import Path
 from typing import Callable
 
@@ -16,22 +15,28 @@ from bootstrap_secret_steps import password_absence_failure
 from journey_resources import (active_platform_root, current_link_path,
                                parse_shell_commands, shared_runtime_file_fingerprints,
                                snapshot_state_tree)
-from invocations import (decode_ux_error_result, decode_ux_success_result,
-                         read_kb_create_cli_result, read_ux_cli_result,
-                         run_command as invoke_command, run_with_runner)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    read_kb_create_cli_result,
+    read_ux_cli_result,
+    run_command as invoke_command,
+    run_with_runner,
+)
 from service_port_assertions import assert_service_ports_preserved
 
 
-CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
+CommandRunner = Callable[[list[str]], CompletedProcess]
 
 
 def _json_command(run_command: CommandRunner, args: list[str], label: str) -> dict:
     result = run_command(args)
     try:
-        value = read_kb_create_cli_result(args[1], result.stdout, result.returncode)
+        value = read_kb_create_cli_result(args[1], result)
         if result.returncode != 0:
             error = decode_ux_error_result(value)
-            raise RuntimeError(f"{label}: {error!r}{_log_tail(args[1], result.stdout, result.returncode)}")
+            raise RuntimeError(f"{label}: {error!r}{_log_tail(args[1], result)}")
         payload = decode_ux_success_result(value)
     except ValueError as error:
         raise RuntimeError(f"{label}: expected a valid ADR-0049 result: {error}") from error
@@ -40,11 +45,11 @@ def _json_command(run_command: CommandRunner, args: list[str], label: str) -> di
     return payload
 
 
-def _log_tail(command: str, stdout: str, returncode: int) -> str:
+def _log_tail(command: str, result: CompletedProcess[str]) -> str:
     """The end of the operation log named by a failed launcher result, so the journey report shows the cause."""
     try:
-        envelope = read_kb_create_cli_result(command, stdout, returncode)
-        payload = decode_ux_error_result(envelope) if returncode else decode_ux_success_result(envelope)
+        envelope = read_kb_create_cli_result(command, result)
+        payload = decode_ux_error_result(envelope) if result.returncode else decode_ux_success_result(envelope)
         log_path = payload.get("logPath")
         text = Path(log_path).read_text(encoding="utf-8", errors="replace") if log_path else ""
     except (ValueError, AttributeError, OSError, TypeError):
@@ -111,7 +116,7 @@ def run_platform_update_steps(
     base_version: str,
     updated_version: str,
     run_command: CommandRunner = invoke_command,
-    verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
+    verify_user: Callable[[], CompletedProcess] | None = None,
     expire_user_session: Callable[[], None] | None = None,
     bootstrap_password: str | None = None,
     bootstrap_outside_roots: tuple[tuple[str, Path], ...] = (),
@@ -119,9 +124,9 @@ def run_platform_update_steps(
     allowed_outside_roots: tuple[Path, ...] = (),
 ) -> Journey:
     command_runner = run_command
-    def run_command(args: list[str]) -> subprocess.CompletedProcess:
+    def run_command(args: list[str]) -> CompletedProcess:
         result = run_with_runner(command_runner, args)
-        return subprocess.CompletedProcess(args, result.returncode,
+        return CompletedProcess(args, result.returncode,
                                             stdout=(result.stdout or "") + (result.stderr or ""),
                                             stderr=result.stderr)
     """Update the running installation, exercise a project command, and roll back."""
@@ -193,7 +198,7 @@ def run_platform_update_steps(
             saved_user_session_established = True
             protected = run_command(kb_command([ "project", "list", "--json"], executable=kb_binary))
             try:
-                protected_result = read_ux_cli_result(protected.stdout, protected.returncode)
+                protected_result = read_ux_cli_result(protected)
                 if protected.returncode != 0:
                     failure = decode_ux_error_result(protected_result)
                     raise RuntimeError(f"saved session failed its pre-update project request: {failure!r}")
@@ -363,7 +368,7 @@ def run_platform_update_steps(
         nonlocal saved_session_succeeded_after_update
         result = run_command(kb_command([ "project", "list", "--json"], executable=kb_binary))
         try:
-            envelope = read_ux_cli_result(result.stdout, result.returncode)
+            envelope = read_ux_cli_result(result)
             if result.returncode != 0:
                 failure = decode_ux_error_result(envelope)
                 raise RuntimeError(f"project list after update was rejected: {failure!r}")
@@ -475,7 +480,7 @@ def run_platform_update_steps(
         if result.returncode == 0:
             raise RuntimeError("rollback unexpectedly accepted an unknown snapshot")
         try:
-            envelope = read_kb_create_cli_result("rollback", result.stdout, result.returncode)
+            envelope = read_kb_create_cli_result("rollback", result)
             error = decode_ux_error_result(envelope)
         except ValueError as error:
             raise RuntimeError(f"unknown-snapshot rollback returned an invalid ADR-0049 result: {error}") from error
@@ -530,7 +535,7 @@ def run_platform_update_steps(
                 raise RuntimeError("saved user session did not run a protected command successfully after update")
         command = run_command(kb_command([ "project", "list", "--json"], executable=kb_binary))
         try:
-            envelope = read_ux_cli_result(command.stdout, command.returncode)
+            envelope = read_ux_cli_result(command)
             if command.returncode != 0:
                 failure = decode_ux_error_result(envelope)
                 raise RuntimeError(f"project list after rollback was rejected: {failure!r}")
@@ -609,7 +614,7 @@ def run_platform_update_steps(
             refused = run_command([launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
                                    "--input", str(request_file), "--secret-env", f"{secret}={env_name}"])
             try:
-                envelope = read_kb_create_cli_result("update", refused.stdout, refused.returncode)
+                envelope = read_kb_create_cli_result("update", refused)
                 failure = decode_ux_error_result(envelope)
             except ValueError as error:
                 raise RuntimeError(f"changed update secret did not return a typed refusal: {error}") from error

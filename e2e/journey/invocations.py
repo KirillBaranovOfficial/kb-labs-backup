@@ -3,6 +3,7 @@ from __future__ import annotations
 from journey_values import journey_value
 
 from contextvars import ContextVar
+from functools import lru_cache
 import json
 import inspect
 import errno
@@ -17,6 +18,7 @@ import select
 import signal
 import struct
 import subprocess
+from subprocess import CalledProcessError, CompletedProcess, PIPE, STDOUT, TimeoutExpired
 import sys
 import tempfile
 import termios
@@ -252,8 +254,112 @@ def decode_ux_error_result(value: Any) -> Any:
     return error
 
 
-def read_ux_cli_result(stdout: str, returncode: int) -> dict[str, Any]:
+def _cli_process_result(result: Any) -> tuple[str, int]:
+    if type(result) is not subprocess.CompletedProcess:
+        _invalid_ux_result("CLI result reader requires a subprocess.CompletedProcess from the shared invocation boundary")
+    stdout = result.stdout or ""
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode(errors="replace")
+    if not isinstance(stdout, str) or not isinstance(result.returncode, int):
+        _invalid_ux_result("CLI process result has invalid stdout or exit status")
+    return stdout, result.returncode
+
+
+@lru_cache(maxsize=None)
+def _catalog_exit_status(code: str) -> tuple[str, int] | None:
+    catalog_path = Path(__file__).resolve().parents[2] / "core" / "platform" / "src" / "error-envelope" / "errors.catalog.json"
+    try:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        _invalid_ux_result(f"cannot read the shared error catalog at {catalog_path}: {error}")
+    for entry in catalog.get("codes", []):
+        if entry.get("code") == code:
+            exit_class = entry.get("processExitClass")
+            if exit_class == "input-refusal":
+                return exit_class, 2
+            if exit_class == "operation-failure":
+                return exit_class, 1
+            _invalid_ux_result(f"catalogued error {code} has no supported process exit class")
+    return None
+
+
+@lru_cache(maxsize=1)
+def _go_cli_binary_names() -> frozenset[str]:
+    tools_root = Path(__file__).resolve().parents[2] / "tools"
+    names = set()
+    for main_source in tools_root.rglob("main.go"):
+        if {"vendor", "node_modules"}.intersection(main_source.parts):
+            continue
+        try:
+            source = main_source.read_text(encoding="utf-8")
+        except OSError as error:
+            _invalid_ux_result(f"cannot read Go CLI entrypoint {main_source}: {error}")
+        if (re.search(r"(?m)^package\s+main\s*$", source)
+                and '"github.com/kb-labs/clikit/command"' in source):
+            names.add(main_source.parent.name)
+    return frozenset(names)
+
+
+def _is_go_cli_result(result: subprocess.CompletedProcess[str]) -> bool:
+    arguments = result.args if isinstance(result.args, (list, tuple)) else shlex.split(str(result.args))
+    return bool(arguments) and Path(str(arguments[0])).name in _go_cli_binary_names()
+
+
+def _validate_error_process_status(error: dict[str, Any], process_status: int,
+                                  terminal_status: int | None = None) -> None:
+    code = error.get("code")
+    if not isinstance(code, str):
+        return
+    classification = _catalog_exit_status(code)
+    if classification is None:
+        return
+    exit_class, expected = classification
+    if process_status != expected or (terminal_status is not None and terminal_status != expected):
+        _invalid_ux_result(
+            f"catalogued error {code} ({exit_class}) has process status {process_status} "
+            f"and terminal status {terminal_status}; expected {expected}"
+        )
+
+
+def validate_catalogued_cli_status(result: Any) -> None:
+    """Check catalogued diagnostics on every captured invocation, including failures not later decoded by a step."""
+    if type(result) is subprocess.CompletedProcess:
+        stdout, process_status = _cli_process_result(result)
+    elif isinstance(result, dict):
+        stdout, process_status = result.get("stdout", ""), result.get("returncode")
+    else:
+        stdout, process_status = getattr(result, "stdout", ""), getattr(result, "returncode", None)
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode(errors="replace")
+    if not isinstance(stdout, str) or not isinstance(process_status, int):
+        return
+    documents = []
+    try:
+        documents.append(json.loads(stdout))
+    except json.JSONDecodeError:
+        try:
+            documents.extend(json.loads(line) for line in stdout.splitlines() if line.strip())
+        except json.JSONDecodeError:
+            return
+    terminal_statuses = [document.get("meta", {}).get("stream", {}).get("exitCode")
+                         for document in documents if isinstance(document, dict)
+                         and document.get("meta", {}).get("stream", {}).get("terminal") is True]
+    for document in documents:
+        if isinstance(document, dict) and document.get("ok") is False:
+            error = document.get("error")
+            if isinstance(error, dict) and isinstance(error.get("code"), str):
+                terminal_status = terminal_statuses[-1] if terminal_statuses else None
+                _validate_error_process_status(error, process_status, terminal_status)
+
+
+def _validate_go_cli_invocation(argv: list[str], result: Any) -> None:
+    if argv and Path(str(argv[0])).name in _go_cli_binary_names():
+        validate_catalogued_cli_status(result)
+
+
+def read_ux_cli_result(result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     """Parse a CLI JSON result and validate its UX success or error envelope."""
+    stdout, returncode = _cli_process_result(result)
     try:
         value = json.loads(stdout)
     except json.JSONDecodeError as error:
@@ -266,14 +372,17 @@ def read_ux_cli_result(stdout: str, returncode: int) -> dict[str, Any]:
     if value.get("ok") is True:
         decode_ux_success_result(value)
     else:
-        decode_ux_error_result(value)
+        error = decode_ux_error_result(value)
+        if _is_go_cli_result(result):
+            _validate_error_process_status(error, returncode)
     if (returncode == 0) != (value["ok"] is True):
         _invalid_ux_result("CLI exit code does not match its UX result envelope")
     return value
 
 
-def read_ux_cli_stream(stdout: str, returncode: int) -> list[dict[str, Any]]:
+def read_ux_cli_stream(result: subprocess.CompletedProcess[str]) -> list[dict[str, Any]]:
     """Validate JSONL UX records and the terminal record's process status."""
+    stdout, returncode = _cli_process_result(result)
     records = []
     for line in stdout.splitlines():
         if not line.strip():
@@ -304,10 +413,14 @@ def read_ux_cli_stream(stdout: str, returncode: int) -> list[dict[str, Any]]:
     terminal_meta = terminal.get("meta", {})
     stream = terminal_meta.get("stream", {}) if isinstance(terminal_meta, dict) else {}
     exit_code = stream.get("exitCode") if isinstance(stream, dict) else None
+    failures = [record for record in records[:-1] if record.get("ok") is False]
+    if _is_go_cli_result(result):
+        for record in failures:
+            _validate_error_process_status(decode_ux_error_result(record), returncode, exit_code)
     if (terminal.get("ok") is not True or terminal.get("data", "not-null") is not None
             or not isinstance(stream, dict) or stream.get("terminal") is not True
             or exit_code not in {0, 1, 2}
-            or (returncode == 0) != (exit_code == 0)):
+            or returncode != exit_code):
         _invalid_ux_result("CLI stream terminal record does not match its process exit code")
     if len(result_records) > 1:
         _invalid_ux_result("CLI stream contains multiple result records")
@@ -318,19 +431,28 @@ def read_ux_cli_stream(stdout: str, returncode: int) -> list[dict[str, Any]]:
     return records
 
 
-def read_kb_create_cli_stream(command: str, stdout: str, returncode: int) -> list[dict[str, Any]]:
+def read_kb_create_cli_stream(command: str, result: subprocess.CompletedProcess[str]) -> list[dict[str, Any]]:
     """Validate that a kb-create command registered for streams emitted a valid stream."""
     if command not in KB_CREATE_JSON_STREAM_COMMANDS:
         _invalid_ux_result(f"kb-create {command} is registered for a single JSON document, not a stream")
-    return read_ux_cli_stream(stdout, returncode)
+    records = read_ux_cli_stream(result)
+    if result.returncode != 0:
+        failures = [record for record in records[:-1] if record.get("ok") is False]
+        for record in failures:
+            _validate_error_process_status(decode_ux_error_result(record), result.returncode,
+                                          records[-1].get("meta", {}).get("stream", {}).get("exitCode"))
+    return records
 
 
-def read_kb_create_cli_result(command: str, stdout: str, returncode: int) -> dict[str, Any]:
+def read_kb_create_cli_result(command: str, result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
     """Validate the registered kb-create command's JSON output form and return its result."""
     if command not in KB_CREATE_JSON_STREAM_COMMANDS:
-        return read_ux_cli_result(stdout, returncode)
-    records = read_kb_create_cli_stream(command, stdout, returncode)
-    if returncode == 0:
+        envelope = read_ux_cli_result(result)
+        if envelope.get("ok") is False:
+            _validate_error_process_status(decode_ux_error_result(envelope), result.returncode)
+        return envelope
+    records = read_kb_create_cli_stream(command, result)
+    if result.returncode == 0:
         results = [record for record in records[:-1]
                    if record.get("ok") is True
                    and record.get("meta", {}).get("stream", {}).get("result") is True]
@@ -347,14 +469,15 @@ def describe_cli_failure(command: str, stdout: str, stderr: str, returncode: int
     """Describe a failed CLI invocation using its typed error when available."""
     detail = " ".join(f"{stdout} {stderr}".split())
     words = shlex.split(command)
+    result = subprocess.CompletedProcess(words, returncode, stdout, stderr)
     if len(words) > 1 and words[0] == "kb-create":
         try:
-            value = read_kb_create_cli_result(words[1], stdout, returncode)
+            value = read_kb_create_cli_result(words[1], result)
         except ValueError:
             value = None
     else:
         try:
-            value = read_ux_cli_result(stdout, returncode)
+            value = read_ux_cli_result(result)
         except ValueError:
             value = None
     if isinstance(value, dict) and isinstance(value.get("error"), dict):
@@ -536,7 +659,8 @@ def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,
     try:
         result = None
         if argv and Path(argv[0]).name == "kb-create" and len(argv) > 1:
-            result = read_kb_create_cli_result(argv[1], output, exit_code)
+            process_result = CompletedProcess(argv, exit_code, stdout, stderr)
+            result = read_kb_create_cli_result(argv[1], process_result)
         else:
             result = json.loads(output)
     except (json.JSONDecodeError, ValueError):
@@ -645,6 +769,7 @@ def run_command(argv: list[str], *, cwd: str | Path | None = None,
         record_invocation(kind="command", argv=argv, cwd=cwd, env=env, exit_code=None,
                           duration_seconds=time.monotonic() - started, error=str(error))
         raise
+    _validate_go_cli_invocation(argv, result)
     raw_stdout = result.stdout or ""
     raw_stderr = result.stderr or ""
     stdout = raw_stdout.decode(errors="replace") if isinstance(raw_stdout, bytes) else raw_stdout
@@ -711,14 +836,16 @@ def _run_monitored_command(argv: list[str], *, cwd: str | Path | None,
             raise
     rendered_stdout = stdout.decode(errors="replace") if text_mode else stdout
     rendered_stderr = stderr.decode(errors="replace") if text_mode else stderr
+    completed = subprocess.CompletedProcess(argv, process.returncode,
+                                              stdout=rendered_stdout, stderr=rendered_stderr)
+    _validate_go_cli_invocation(argv, completed)
     record_invocation(kind="command", argv=argv, cwd=cwd, env=env,
                       exit_code=process.returncode,
                       stdout=rendered_stdout if isinstance(rendered_stdout, str) else rendered_stdout.decode(errors="replace"),
                       stderr=("" if merge_stderr else
                               rendered_stderr if isinstance(rendered_stderr, str) else rendered_stderr.decode(errors="replace")),
                       duration_seconds=time.monotonic() - started)
-    return subprocess.CompletedProcess(argv, process.returncode,
-                                        stdout=rendered_stdout, stderr=rendered_stderr)
+    return completed
 
 
 def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
@@ -845,6 +972,8 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
                 pass
         os.close(master)
     rendered = transcript.decode(errors="replace")
+    completed = subprocess.CompletedProcess(argv, process.returncode, stdout=rendered, stderr="")
+    _validate_go_cli_invocation(argv, completed)
     duration = time.monotonic() - started
     error = (f"timed out after {timeout}s" if rendered else
              f"no output received before the timeout ({timeout}s)") if timed_out else None
@@ -853,7 +982,7 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
                       duration_seconds=duration, error=error)
     if timed_out and raise_on_timeout:
         raise PtyCommandTimeout(argv, timeout, rendered)
-    return subprocess.CompletedProcess(argv, process.returncode, stdout=rendered, stderr=""), duration
+    return completed, duration
 
 
 def run_streaming_command(argv: list[str], *, cwd: str | Path | None = None,
@@ -910,10 +1039,12 @@ def run_streaming_command(argv: list[str], *, cwd: str | Path | None = None,
         raise
     duration = time.monotonic() - started
     transcript = "".join(transcript_parts)
+    completed = subprocess.CompletedProcess(argv, return_code, stdout=transcript, stderr="")
+    validate_catalogued_cli_status(completed)
     record_invocation(kind="command", argv=argv, cwd=cwd, env=env,
                       exit_code=return_code, stdout=transcript,
                       duration_seconds=duration)
-    return subprocess.CompletedProcess(argv, return_code, stdout=transcript, stderr=""), duration
+    return completed, duration
 
 
 class BackgroundCommand:

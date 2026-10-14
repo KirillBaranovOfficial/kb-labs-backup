@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -19,7 +20,7 @@ import (
 )
 
 func main() {
-	os.Exit(execute().Code())
+	command.Exit(execute())
 }
 
 func execute() diag.ExitStatus {

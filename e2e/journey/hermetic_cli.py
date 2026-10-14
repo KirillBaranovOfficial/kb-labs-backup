@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import Callable, Mapping
 
-from invocations import print_report_text, run_command
+from invocations import (
+    CompletedProcess,
+    print_report_text,
+    run_command,
+)
 
 
 def run_hermetic_cli(
@@ -16,9 +19,9 @@ def run_hermetic_cli(
     *,
     cwd: str | Path | None = None,
     env: Mapping[str, str] | None = None,
-    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    runner: Callable[..., CompletedProcess[str]] | None = None,
     timeout: float = 300,
-) -> subprocess.CompletedProcess[str]:
+) -> CompletedProcess[str]:
     """Run a host-side CLI with fresh HOME and no installed-platform overrides."""
     if len(command) > 1 and Path(command[1]).as_posix().endswith("cli/bin/dist/bin.js"):
         workspace_root = Path(cwd or Path.cwd())

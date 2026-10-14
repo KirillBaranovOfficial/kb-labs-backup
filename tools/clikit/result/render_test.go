@@ -52,7 +52,7 @@ func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
 	var out, herr bytes.Buffer
 	code := RenderDiag(&out, &herr, d, ModeJSON)
 	if code != diag.ExitCode(d) {
-		t.Errorf("exit = %d", code)
+		t.Errorf("exit = %d", code.Code())
 	}
 	var env map[string]any
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil {

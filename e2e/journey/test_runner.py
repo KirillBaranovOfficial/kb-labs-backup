@@ -4,6 +4,7 @@ import importlib
 import io
 import json
 import os
+import subprocess
 import ast
 import platform
 import sys
@@ -557,7 +558,7 @@ thread.join()
                                     "installation": {"receiptId": "receipt-main"}}})
             elif "project show" in " ".join(argv):
                 if failed_project_probe:
-                    return runner.subprocess.CompletedProcess(command, 7, "project show: secondary shim missing", ""), 0.0
+                    return subprocess.CompletedProcess(command, 7, "project show: secondary shim missing", ""), 0.0
                 output = json.dumps({"ok": True, "data": {"project": {"id": "prj_main", "name": "fresh-project"}}})
             elif "project list" in " ".join(argv):
                 output = json.dumps({"ok": True, "data": {"projects": [{"id": "prj_main"}]}})
@@ -611,7 +612,7 @@ thread.join()
                 output = json.dumps(result_record) + "\n" + json.dumps(terminal)
             else:
                 output = json.dumps({"ok": True, "data": {}})
-            return runner.subprocess.CompletedProcess(command, 0, output, ""), 0.0
+            return subprocess.CompletedProcess(command, 0, output, ""), 0.0
 
         def fake_http(_opener, request, **_kwargs):
             url = request.full_url
@@ -1082,7 +1083,7 @@ thread.join()
             selection = "S-042.1,S-042.2"
             selected_claims = selection.split(",")
             selected_owners = {f"claim {claim_id}": [claim_id] for claim_id in selected_claims}
-            completed = runner.subprocess.CompletedProcess(
+            completed = subprocess.CompletedProcess(
                 ["install.sh", "--version"], 0,
                 stdout="KB_INSTALL_NODE_VERSION Node.js 24", stderr="",
             )
@@ -1226,7 +1227,7 @@ thread.join()
         }
         process_status = 1
         self.assertEqual(process_status, catalogued_exit(envelope["code"]))
-        result = runner.subprocess.CompletedProcess(
+        result = subprocess.CompletedProcess(
             ["kb-create", "install", "--json"], process_status,
             stdout="\n".join((
                 json.dumps({"ok": False, "error": envelope}),

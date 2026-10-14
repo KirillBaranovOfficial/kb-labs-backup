@@ -67,7 +67,7 @@ func TestCataloguedFailureUsesSharedExitStatusForEveryRegisteredCommand(t *testi
 				var stdout, stderr bytes.Buffer
 				code := clikitcommand.Execute(newRootCommand(), []string{command.Name(), "--json"}, &stdout, &stderr)
 				if code != want {
-					t.Fatalf("exit = %d, want %d: stdout=%s stderr=%s", code, want, stdout.String(), stderr.String())
+					t.Fatalf("exit = %d, want %d: stdout=%s stderr=%s", code.Code(), want.Code(), stdout.String(), stderr.String())
 				}
 				if descriptor.JSONStream {
 					lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))
@@ -103,7 +103,7 @@ func TestCataloguedFailureUsesSharedExitStatusForEveryRegisteredCommand(t *testi
 						records = append(records, record)
 					}
 					if records[0].Error.Code != failure.Code || !records[1].Meta.Stream.Terminal || records[1].Meta.Stream.ExitCode != want.Code() {
-						t.Fatalf("stream records do not preserve %s/status %d: %s", failure.Code, want, stdout.String())
+						t.Fatalf("stream records do not preserve %s/status %d: %s", failure.Code, want.Code(), stdout.String())
 					}
 					return
 				}
@@ -136,7 +136,7 @@ func TestEveryOperationUsesJSONAndHumanOutputBoundary(t *testing.T) {
 				var stdout, stderr bytes.Buffer
 				code := clikitcommand.Execute(newRootCommand(), []string{descriptor.Name, "--json"}, &stdout, &stderr)
 				if code.Code() < 0 || code.Code() > 2 {
-					t.Fatalf("exit code = %d", code)
+					t.Fatalf("exit code = %d", code.Code())
 				}
 				var envelope map[string]any
 				if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
@@ -160,7 +160,7 @@ func TestEveryOperationUsesJSONAndHumanOutputBoundary(t *testing.T) {
 				var stdout, stderr bytes.Buffer
 				code := clikitcommand.Execute(newRootCommand(), []string{descriptor.Name}, &stdout, &stderr)
 				if code.Code() < 0 || code.Code() > 2 {
-					t.Fatalf("exit code = %d", code)
+					t.Fatalf("exit code = %d", code.Code())
 				}
 				output := stdout.String() + stderr.String()
 				if strings.TrimSpace(output) == "" {

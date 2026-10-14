@@ -8,12 +8,14 @@ import json
 import os
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
 from invocations import (
+    CompletedProcess,
+    PIPE,
+    STDOUT,
     decode_ux_success_result,
     invocation_context,
     read_ux_cli_result,
@@ -32,9 +34,9 @@ EDITED_GREETING = "Edited demo greeting for ${who}!"
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str],
-         command_runner: Callable[..., subprocess.CompletedProcess[str]]) -> str:
+         command_runner: Callable[..., CompletedProcess[str]]) -> str:
     result = command_runner(command, cwd=cwd, env=env, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            stdout=PIPE, stderr=STDOUT,
                             check=False)
     if result.returncode != 0:
         detail = " ".join((result.stdout or "").split())
@@ -42,10 +44,15 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str],
     return result.stdout or ""
 
 
+def _invoke(command: list[str], *, cwd: Path, env: dict[str, str],
+            command_runner: Callable[..., CompletedProcess[str]]) -> CompletedProcess[str]:
+    return run_with_runner(command_runner, command, cwd=cwd, env=env, timeout=300)
+
+
 def _plugins(kb: Path, *, cwd: Path, env: dict[str, str], command_runner) -> list[dict]:
-    output = _run(kb_command([ "marketplace", "plugins", "list", "--json"], executable=str(kb)),
-                  cwd=cwd, env=env, command_runner=command_runner)
-    data = decode_ux_success_result(read_ux_cli_result(output, 0))
+    result = _invoke([str(kb), "marketplace", "plugins", "list", "--json"],
+                     cwd=cwd, env=env, command_runner=command_runner)
+    data = decode_ux_success_result(read_ux_cli_result(result))
     entries = data.get("entries") if isinstance(data, dict) else None
     if not isinstance(entries, list):
         raise RuntimeError("kb marketplace plugins list --json returned no entries array")
@@ -67,9 +74,8 @@ def _lock_entry(project: Path) -> tuple[dict, dict]:
     return lock, entry
 
 
-def _json_payload(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
-    output = result.stdout or ""
-    payload = decode_ux_success_result(read_ux_cli_result(output, result.returncode))
+def _json_payload(result: CompletedProcess[str], command: list[str]) -> dict:
+    payload = decode_ux_success_result(read_ux_cli_result(result))
     if not isinstance(payload, dict):
         raise ValueError(f"`{' '.join(command)}` success data is not a JSON object")
     return payload
@@ -112,15 +118,15 @@ def _stage_case_file(project: Path, env: dict[str, str], label: str) -> Path:
 
 
 def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, registry: str,
-                          command_runner: Callable[..., subprocess.CompletedProcess[str]],
+                          command_runner: Callable[..., CompletedProcess[str]],
                           env: dict[str, str]) -> None:
     """Claim Commit generation, Review, and progress behavior in the installed fixture project."""
     project = project.resolve()
     env = env.copy()
     env["NPM_CONFIG_REGISTRY"] = registry
 
-    def cli(args: list[str], *, step_id: str | None = None) -> subprocess.CompletedProcess[str]:
-        command = kb_command([ *args], executable=str(kb_path))
+    def cli(args: list[str], *, step_id: str | None = None) -> CompletedProcess[str]:
+        command = [str(kb_path), *args]
         context = invocation_context(step_id=step_id) if step_id else invocation_context()
         with context:
             return run_with_runner(command_runner, command, cwd=project, env=env, timeout=180)
@@ -410,7 +416,7 @@ def run_plugin_author_flow(
     kb_path: Path,
     registry: str,
     *,
-    command_runner: Callable[..., subprocess.CompletedProcess[str]] = run_command,
+    command_runner: Callable[..., CompletedProcess[str]] = run_command,
     base_env: dict[str, str] | None = None,
 ) -> None:
     """Run S-003 in an installed project and record each catalog step."""
@@ -430,7 +436,7 @@ def run_plugin_author_flow(
             stdout = stdout.decode(errors="replace")
         if isinstance(stderr, bytes):
             stderr = stderr.decode(errors="replace")
-        return subprocess.CompletedProcess(command, result.returncode,
+        return CompletedProcess(command, result.returncode,
                                             stdout=stdout + stderr, stderr=stderr)
     plugin_root = project / PLUGIN_DIR
     entry = project / ENTRY_DIR

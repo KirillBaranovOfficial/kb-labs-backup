@@ -91,7 +91,7 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
             if result.returncode != 0:
                 return f"heuristic Review failed in Project B: {(result.stderr or result.stdout).strip()}"
             try:
-                payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+                payload = decode_ux_success_result(read_ux_cli_result(result))
             except ValueError as error:
                 return f"heuristic Review returned an invalid UX result: {error}"
             result_data = payload

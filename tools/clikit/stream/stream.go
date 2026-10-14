@@ -20,7 +20,9 @@ type Writer struct {
 }
 
 // New creates a JSONL writer for one command invocation.
-func New(output io.Writer) *Writer { return &Writer{output: output} }
+func New(output io.Writer) *Writer {
+	return &Writer{output: output, exitStatus: diag.SuccessStatus()}
+}
 
 // ExitStatus returns the typed terminal status selected for this stream.
 func (w *Writer) ExitStatus() diag.ExitStatus { return w.exitStatus }
@@ -74,6 +76,9 @@ func (w *Writer) Fail(d *diag.Diag) error {
 func (w *Writer) Finish(status diag.ExitStatus) error {
 	if w.finished {
 		return fmt.Errorf("stream already has a terminal record")
+	}
+	if !status.IsSelected() {
+		return fmt.Errorf("terminal status was not explicitly selected")
 	}
 	if status != w.exitStatus {
 		return fmt.Errorf("terminal status does not match the stream diagnostic")
