@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 )
@@ -28,7 +29,11 @@ func TestPlatformDataRootProjectsToSharedInstallState(t *testing.T) {
 			t.Fatalf("platform data root %q must be declared only by platformDataRoot", runtimePath)
 		}
 	}
-	for _, projection := range SharedRuntimePaths() {
+	var layout platformLayout
+	if err := json.Unmarshal(PlatformLayoutDocument(), &layout); err != nil {
+		t.Fatal(err)
+	}
+	for _, projection := range layout.SharedRuntimePaths {
 		if projection.PlatformPath == dataRoot.PlatformPath {
 			t.Fatal("platform data root must be a first-class layout field, not a shared-runtime path entry")
 		}
@@ -44,7 +49,7 @@ func TestVersionRootsDirectoryFollowsEmbeddedPlatformLayout(t *testing.T) {
 	if got, want := HostStateDirectory(root), filepath.Join(root, "installer", "host"); got != want {
 		t.Fatalf("HostStateDirectory(%q) = %q, want %q", root, got, want)
 	}
-	for _, shared := range SharedRuntimePaths() {
+	for _, shared := range SharedRuntimeProjections() {
 		if shared.PlatformPath == ".kb/marketplace.lock" {
 			t.Fatal("marketplace lock describes one sealed version and must not be shared between roots")
 		}
@@ -66,7 +71,7 @@ func TestVersionRootsDirectoryFollowsEmbeddedPlatformLayout(t *testing.T) {
 		t.Fatal("contract must classify the sealed package lock as version-owned")
 	}
 	sharedPaths := map[string]string{}
-	for _, shared := range SharedRuntimePaths() {
+	for _, shared := range SharedRuntimeProjections() {
 		sharedPaths[shared.PlatformPath] = shared.StatePath
 	}
 	for platformPath, statePath := range map[string]string{".kb/logs": "state/logs", ".kb/diagnostics": "state/diagnostics"} {
