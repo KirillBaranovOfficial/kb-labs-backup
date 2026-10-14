@@ -71,7 +71,7 @@ beforeAll(async () => {
   registerGatewayUxErrorResponses(app);
 
   const cache = makeCache();
-  app.addHook('preHandler', createAuthMiddleware(cache, testJwtConfig));
+  app.addHook('onRequest', createAuthMiddleware(cache, testJwtConfig));
 
   // We inject the mocked authService via cast — same interface
   registerAuthRoutes(app, authService as never);
@@ -174,14 +174,41 @@ describe('POST /auth/register', () => {
     );
   });
 
-  it('returns 401 for anonymous (no Authorization header)', async () => {
+  // case: S-104.6
+  it('lets the route-owned machine-registration authorization return the anonymous refusal', async () => {
+    authService.register.mockClear();
     const res = await app.inject({
       method: 'POST',
       url: '/auth/register',
       payload: { name: 'x' },
-      // No Authorization header — middleware blocks with 401
+      // No Authorization header — the route owns this authorization decision.
     });
     expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_AUTH_REQUIRED',
+        message: 'Authentication is required.',
+        hint: 'Run "kb auth login --gateway-url http://localhost:80 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+      },
+    });
+    expect(authService.register).not.toHaveBeenCalled();
+  });
+
+  // case: S-104.6
+  it('refuses an anonymous human signup body before machine request validation', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { name: 'new-member', email: 'new-member@example.test', password: 'HumanPass123!' },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_REQUIRED',
+      message: 'Authentication is required.',
+      hint: 'Run "kb auth login --gateway-url http://localhost:80 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+    } });
   });
 });
 

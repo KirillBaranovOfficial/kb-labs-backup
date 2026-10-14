@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveCliGatewayTarget } from '@kb-labs/core-platform';
+import { registerBuiltinCommands, registerBuiltinSystemCommands, registry } from '@kb-labs/cli-commands';
+import { isPlatformAuthExempt } from '../platform-auth-policy.js';
 
 const mocks = vi.hoisted(() => ({
   loadPlatformConfiguration: vi.fn(),
@@ -165,6 +167,67 @@ describe('secured CLI auth ordering', () => {
       undefined,
       'platform',
     );
+    expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
+    expect(mocks.initializePlatform).not.toHaveBeenCalled();
+    expect(mocks.tryResolveGateway).not.toHaveBeenCalled();
+    expect(mocks.executeViaGateway).not.toHaveBeenCalled();
+  });
+
+  // case: S-041.7, S-041.17, S-007.4
+  it('gates every registered session-protected system command before project resolution in either project context', async () => {
+    isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-registry-auth-'));
+    process.env.HOME = isolatedHome;
+    process.env.KB_HOME = path.join(isolatedHome, '.kb');
+    process.env.GATEWAY_PORT = '4300';
+    process.env.KB_NET_OFFSET = '200';
+    delete process.env.KB_GATEWAY_URL;
+    delete process.env.KB_PLATFORM_ROOT;
+
+    registerBuiltinSystemCommands();
+    await registerBuiltinCommands({
+      cwd: path.resolve(import.meta.dirname, '../../../../../'),
+      platformRoot: path.resolve(import.meta.dirname, '../../../../../'),
+      projectRoot: path.resolve(import.meta.dirname, '../../../../../'),
+    });
+    const systemCommands = registry.listSystemCommands()
+      .filter((command) => !isPlatformAuthExempt(
+        command.category ? `${command.category} ${command.name}` : command.name,
+        'system',
+      ))
+      .map((command) => command.category ? [command.category, command.name] : [command.name]);
+    const pluginCommands = registry.listCommands().map((command) => command.manifest.segments);
+    const commands = [...systemCommands, ...pluginCommands];
+    expect(commands.length).toBeGreaterThan(0);
+    mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: false });
+    mocks.loadPlatformConfiguration.mockImplementation(async (cwd: string) => ({
+      platformConfig: {},
+      rawConfig: { gateway: { access: { mode: 'secured' } } },
+      rawPlatformConfig: { gateway: { access: { mode: 'secured' } } },
+      effectiveConfig: undefined,
+      platformRoot: isolatedHome,
+      projectRoot: cwd.includes('registered-project') ? cwd : undefined,
+      sameLocation: false,
+      sources: { platform: 'platform', project: cwd.includes('registered-project') ? 'project' : 'platform', fields: {} },
+    }));
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (const projectContext of ['registered-project', 'unregistered-project']) {
+      const cwd = path.join(isolatedHome, projectContext);
+      for (const commandPath of commands) {
+        const before = stdout.mock.calls.length;
+        const exitCode = await executeCli([...commandPath, '--json'], { cwd });
+        const records = stdout.mock.calls.slice(before).map(([record]) => String(record));
+
+        expect(exitCode, commandPath.join(' ')).toBe(1);
+        expect(records, commandPath.join(' ')).toHaveLength(1);
+        expect(JSON.parse(records[0]!)).toMatchObject({ ok: false, error: {
+          code: 'KB_AUTH_REQUIRED',
+          message: 'Authentication is required.',
+          hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4500 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+        } });
+      }
+    }
+
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
     expect(mocks.initializePlatform).not.toHaveBeenCalled();
     expect(mocks.tryResolveGateway).not.toHaveBeenCalled();
