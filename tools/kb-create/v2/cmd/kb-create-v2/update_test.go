@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -35,6 +36,7 @@ import (
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
+	"github.com/spf13/cobra"
 )
 
 // recordingInstaller stands in for pnpm: what an update changes for the host is
@@ -898,6 +900,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		"install": []byte("install binary fixture"),
 		"update1": []byte("first update binary fixture"),
 		"update2": []byte("second update binary fixture"),
+		"package": []byte("package tarball fixture"),
 	}
 	digests := make(map[string]string, len(fixtures))
 	for name, data := range fixtures {
@@ -905,7 +908,9 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		digests[name] = hex.EncodeToString(digest[:])
 	}
 	var requests int
+	packageRequests := 0
 	var stageProjectionFailure string
+	operationName := ""
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		name := strings.TrimPrefix(request.URL.Path, "/")
 		data, ok := fixtures[name]
@@ -914,8 +919,11 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			return
 		}
 		requests++
+		if name == "package" {
+			packageRequests++
+		}
 		// StageInitial links declared projections before artifact downloads. Update stages stay unprojected until activation.
-		if name != "install" {
+		if operationName != "install" {
 			entries, err := os.ReadDir(filepath.Join(root, "versions"))
 			if err != nil {
 				stageProjectionFailure = fmt.Sprintf("download %s: %v", name, err)
@@ -947,14 +955,17 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		Request:      contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 		Host:         hostSpec,
-		Artifacts: []contracts.Artifact{{ID: "fixture-binary", Kind: "binary", Version: "1.0.0",
-			URL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"}},
+		Artifacts: []contracts.Artifact{
+			{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"},
+			{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"]},
+		},
 	}
 	state, err := host.StateForRoot(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{}}
+	packageRunner := productionPackageFixtureRunner{packageName: "@kb-labs/fixture", version: "1.0.0"}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{}, ArtifactRunner: packageRunner}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	t.Cleanup(func() {
 		status, code, output := inst.run("status", "--json")
@@ -970,6 +981,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			t.Errorf("production artifact wiring test cleanup status: %s", output)
 		}
 	})
+	operationName = "install"
 	runApplyStreamForTest(t, resolvedPlan{Plan: installPlan, State: state}, deps)
 
 	layout, err := versionroot.New(root)
@@ -1024,11 +1036,14 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			Request:      contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
 			ServiceGraph: contracts.ServiceGraph{PlatformVersion: version, Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
 			Host:         hostSpec,
-			Artifacts: []contracts.Artifact{{ID: "fixture-binary", Kind: "binary", Version: version,
-				URL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"}},
+			Artifacts: []contracts.Artifact{
+				{ID: "fixture-binary", Kind: "binary", Version: version, URL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"},
+				{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"]},
+			},
 		}
 		plan.Request.PlatformRoot = layout.PlatformRoot()
-		result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: "kb-create"}, root, plan,
+		operationName = name
+		result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: "kb-create", ArtifactRunner: packageRunner}, root, plan,
 			state, launcherState, nil)
 		if stageProjectionFailure != "" {
 			t.Fatalf("shared projection existed in a staged tree during %s: %s", name, stageProjectionFailure)
@@ -1042,8 +1057,12 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		assertBinaryCached(name)
 		assertActiveProjectionsAreLinks()
 	}
-	if requests != 3 {
-		t.Fatalf("production artifact downloads = %d, want first install and two updates", requests)
+	if requests != 4 || packageRequests != 1 {
+		t.Fatalf("production artifact downloads = %d (package tarball %d), want three binaries and one shared package tarball", requests, packageRequests)
+	}
+	packageCache := filepath.Join(cacheRoot, "packages", digests["package"]+".tgz")
+	if cached, readErr := os.ReadFile(packageCache); readErr != nil || !bytes.Equal(cached, fixtures["package"]) {
+		t.Fatalf("package tarball was not reused from install-root shared cache %s: %v", packageCache, readErr)
 	}
 	if rollbackSnapshot == "" {
 		t.Fatal("first update omitted the snapshot needed by production rollback")
@@ -1060,6 +1079,71 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 	if err != nil || rolledBack.Plan.ServiceGraph.PlatformVersion != "1.0.0" {
 		t.Fatalf("production rollback did not restore update1 snapshot: version=%q error=%v", rolledBack.Plan.ServiceGraph.PlatformVersion, err)
 	}
+}
+
+func TestUpdateActivationRetryHintPreservesExplicitPlatformRoot(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		root     string
+		explicit bool
+	}{
+		{name: "default root"},
+		{name: "selected root", root: filepath.Join(t.TempDir(), "platform root"), explicit: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			command := &cobra.Command{Use: "update"}
+			root := command.Flags().String("platform-root", "", "platform root")
+			if testCase.explicit {
+				if err := command.Flags().Set("platform-root", testCase.root); err != nil {
+					t.Fatal(err)
+				}
+			}
+			flags := newCommandFlagReader(command, map[string]any{"platform-root": root})
+			input := updateCommandInput{
+				Direct:               directRequest{PlatformRoot: flags.String("platform-root")},
+				PlatformRootExplicit: flags.Changed("platform-root"),
+			}
+			wantCommand := contracts.ShellCommand("kb-create", "update")
+			if testCase.explicit {
+				wantCommand = contracts.ShellCommand("kb-create", "update", "--platform-root", testCase.root)
+			}
+			want := "the installed version is unchanged; inspect permissions and rerun `" + wantCommand + "`"
+			if got := updateActivationRetryHint(input); got != want {
+				t.Fatalf("retry hint = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+type productionPackageFixtureRunner struct {
+	packageName string
+	version     string
+}
+
+func (r productionPackageFixtureRunner) Run(_ context.Context, output io.Writer, _ string, args ...string) error {
+	root := ""
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--dir" {
+			root = args[i+1]
+			break
+		}
+	}
+	if root == "" {
+		return fmt.Errorf("pnpm fixture did not receive --dir")
+	}
+	packageRoot := filepath.Join(root, "node_modules", filepath.FromSlash(r.packageName))
+	if err := os.MkdirAll(packageRoot, 0o755); err != nil {
+		return err
+	}
+	manifest, err := json.Marshal(map[string]string{"name": r.packageName, "version": r.version})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), manifest, 0o644); err != nil {
+		return err
+	}
+	_, err = io.WriteString(output, "local package fixture installed\n")
+	return err
 }
 
 func assertContainerParent(t *testing.T, parent string) {

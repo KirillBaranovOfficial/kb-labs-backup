@@ -40,13 +40,22 @@ func TestPnpmUsesVerifiedTarballInsteadOfRegistrySpec(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
 	defer server.Close()
 	root := t.TempDir()
+	cacheRoot := t.TempDir()
 	runner := &fakeRunner{}
-	if err := (Pnpm{Root: root, Runner: runner}).Install([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: sum, Tarball: server.URL}}); err != nil {
+	if err := (Pnpm{Root: root, CacheRoot: cacheRoot, Runner: runner}).Install([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: sum, Tarball: server.URL}}); err != nil {
 		t.Fatal(err)
 	}
-	want := "file:" + filepath.Join(root, ".kb", "v2", "cache", "packages", sum+".tgz")
+	want := "file:" + filepath.Join(cacheRoot, "packages", sum+".tgz")
 	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, []string{"add", "--dir", root, "--reporter=append-only", want}) {
 		t.Fatalf("calls = %#v", runner.calls)
+	}
+}
+
+func TestPnpmRestoreRequiresSharedCacheForSealedArtifacts(t *testing.T) {
+	item := contracts.Artifact{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: strings.Repeat("a", 64), Tarball: "https://registry.test/platform.tgz"}
+	err := (Pnpm{Root: t.TempDir(), Runner: &fakeRunner{}}).Restore([]contracts.Artifact{item})
+	if err == nil || !strings.Contains(err.Error(), "install root shared cache") {
+		t.Fatalf("restore error = %v, want missing shared cache contract", err)
 	}
 }
 
@@ -243,7 +252,7 @@ func TestPnpmReportsExpectedAndReceivedTarballChecksums(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
 	defer server.Close()
 	runner := &fakeRunner{}
-	err := (Pnpm{Root: t.TempDir(), Runner: runner}).Install([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: sum, Tarball: server.URL}})
+	err := (Pnpm{Root: t.TempDir(), CacheRoot: t.TempDir(), Runner: runner}).Install([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: sum, Tarball: server.URL}})
 	if err == nil || !strings.Contains(err.Error(), "expected "+sum) || !strings.Contains(err.Error(), fmt.Sprintf("got %x", sha256.Sum256(payload))) || len(runner.calls) != 0 {
 		t.Fatalf("error/calls = %v / %#v", err, runner.calls)
 	}
@@ -251,6 +260,7 @@ func TestPnpmReportsExpectedAndReceivedTarballChecksums(t *testing.T) {
 
 func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T) {
 	root := t.TempDir()
+	cacheRoot := t.TempDir()
 	workspace := filepath.Join(root, "pnpm-workspace.yaml")
 	if err := os.WriteFile(workspace, []byte("overrides:\n  lodash: 4.17.21\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -258,10 +268,9 @@ func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T)
 	old := contracts.Artifact{ID: "platform", Kind: "platform-member", Package: "@kb/platform", Version: "2.0.0", SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("old"))), Tarball: "https://registry.test/platform-old.tgz"}
 	oldRuntime := contracts.Artifact{ID: "runtime", Kind: "core", Package: "@kb/runtime", Version: "2.0.0", SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("old-runtime"))), Tarball: "https://registry.test/runtime-old.tgz"}
 	updated := contracts.Artifact{ID: "platform", Kind: "platform-member", Package: "@kb/platform", Version: "2.1.0", SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("new"))), Tarball: "https://registry.test/platform-new.tgz"}
-	updatedRuntime := contracts.Artifact{ID: "runtime", Kind: "core", Package: "@kb/runtime", Version: "2.1.0", SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("new-runtime"))), Tarball: "https://registry.test/runtime-new.tgz"}
 	for _, payload := range [][]byte{[]byte("old"), []byte("old-runtime"), []byte("new"), []byte("new-runtime")} {
 		sum := fmt.Sprintf("%x", sha256.Sum256(payload))
-		cache := filepath.Join(root, ".kb", "v2", "cache", "packages")
+		cache := filepath.Join(cacheRoot, "packages")
 		if err := os.MkdirAll(cache, 0o750); err != nil {
 			t.Fatal(err)
 		}
@@ -269,22 +278,22 @@ func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	pm := Pnpm{Root: root, Runner: &fakeRunner{}}
+	pm := Pnpm{Root: root, CacheRoot: cacheRoot, Runner: &fakeRunner{}}
 	if err := pm.Install([]contracts.Artifact{old, oldRuntime}); err != nil {
 		t.Fatalf("initial install: %v", err)
 	}
-	assertSealedArtifactOverrides(t, workspace, []contracts.Artifact{old, oldRuntime})
-	if err := pm.Install([]contracts.Artifact{updated, updatedRuntime}); err != nil {
+	assertSealedArtifactOverrides(t, workspace, cacheRoot, []contracts.Artifact{old, oldRuntime})
+	if err := pm.Install([]contracts.Artifact{updated}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	assertSealedArtifactOverrides(t, workspace, []contracts.Artifact{updated, updatedRuntime})
+	assertSealedArtifactOverrides(t, workspace, cacheRoot, []contracts.Artifact{updated})
 	if err := pm.Restore([]contracts.Artifact{old, oldRuntime}); err != nil {
 		t.Fatalf("rollback package restore: %v", err)
 	}
-	assertSealedArtifactOverrides(t, workspace, []contracts.Artifact{old, oldRuntime})
+	assertSealedArtifactOverrides(t, workspace, cacheRoot, []contracts.Artifact{old, oldRuntime})
 }
 
-func assertSealedArtifactOverrides(t *testing.T, workspace string, artifacts []contracts.Artifact) {
+func assertSealedArtifactOverrides(t *testing.T, workspace, cacheRoot string, artifacts []contracts.Artifact) {
 	t.Helper()
 	data, err := os.ReadFile(workspace)
 	if err != nil {
@@ -301,14 +310,15 @@ func assertSealedArtifactOverrides(t *testing.T, workspace string, artifacts []c
 	}
 	wantNames := make(map[string]struct{}, len(artifacts))
 	for _, artifact := range artifacts {
-		want := filepath.ToSlash(filepath.Join("file:.kb", "v2", "cache", "packages", artifact.SHA256+".tgz"))
+		want := "file:" + filepath.ToSlash(filepath.Join(cacheRoot, "packages", artifact.SHA256+".tgz"))
 		wantNames[artifact.Package] = struct{}{}
 		if config.Overrides[artifact.Package] != want {
 			t.Fatalf("override for %s = %q, want %q; config: %s", artifact.Package, config.Overrides[artifact.Package], want, data)
 		}
 	}
 	for name, value := range config.Overrides {
-		if strings.HasPrefix(value, "file:.kb/v2/cache/packages/") {
+		managedCachePrefix := "file:" + filepath.ToSlash(filepath.Join(cacheRoot, "packages")) + "/"
+		if strings.HasPrefix(value, "file:.kb/v2/cache/packages/") || strings.HasPrefix(value, managedCachePrefix) {
 			if _, exists := wantNames[name]; !exists {
 				t.Fatalf("stale sealed override remains for %s: %q", name, value)
 			}
@@ -659,7 +669,7 @@ func TestPnpmExcludesExactPlanVersionsAndPreservesWorkspaceEntries(t *testing.T)
 		{ID: "new-file", Package: "@kb/new-file", Version: "1.5.0", SHA256: sum, Tarball: "https://registry.test/new-file.tgz"},
 	}
 	runner := &fakeRunner{}
-	if err := (Pnpm{Root: root, Runner: runner}).Install(plan); err != nil {
+	if err := (Pnpm{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache"), Runner: runner}).Install(plan); err != nil {
 		t.Fatal(err)
 	}
 	assertReleaseAgeExclusions(t, workspace, []string{
@@ -667,7 +677,7 @@ func TestPnpmExcludesExactPlanVersionsAndPreservesWorkspaceEntries(t *testing.T)
 	})
 
 	// A rollback to plan N must merge N's exact versions after the snapshot is restored.
-	if err := (Pnpm{Root: root, Runner: &fakeRunner{}}).Restore(plan); err != nil {
+	if err := (Pnpm{Root: root, CacheRoot: filepath.Join(root, ".kb", "v2", "cache"), Runner: &fakeRunner{}}).Restore(plan); err != nil {
 		t.Fatal(err)
 	}
 	assertReleaseAgeExclusions(t, workspace, []string{
