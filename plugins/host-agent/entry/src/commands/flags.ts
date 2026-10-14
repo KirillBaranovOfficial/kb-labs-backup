@@ -11,7 +11,6 @@ export const registerFlags = {
   workspace: {
     type: 'array' as const,
     describe: 'Workspace paths this agent is allowed to access (can specify multiple)',
-    string: true,
   },
   namespace: {
     type: 'string' as const,

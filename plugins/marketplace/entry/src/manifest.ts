@@ -30,7 +30,7 @@ export const manifest = {
       { path: 'marketplace install',   operationType: 'mutate' as const, describe: 'Install package(s)', flags: [
         { name: 'dev', type: 'boolean' as const, description: 'Install development dependencies' },
         { name: 'scope', type: 'string' as const, description: 'Target platform or project scope' },
-        { name: 'token', type: 'string' as const, description: 'Marketplace access token', credential: true, secret: true },
+        { name: 'token', type: 'string' as const, description: 'Marketplace access token', secret: true },
         { name: 'dry-run', type: 'boolean' as const, description: 'Preview without installing' },
       ], handler: './commands/install.js#default' },
       { path: 'marketplace uninstall', operationType: 'mutate' as const, describe: 'Uninstall package(s)',                         handler: './commands/uninstall.js#default' },
