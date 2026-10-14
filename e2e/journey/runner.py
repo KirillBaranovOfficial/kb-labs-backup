@@ -32,7 +32,7 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_apply_scenario_step,
                                   run_uninstall_decline_step, run_missing_project_request_steps)
 from installer_case_steps import parse_install_refusal
-from journey_resources import case_catalog_root, journey_module, workspace_resource
+from journey_resources import case_catalog_root, journey_module, resource_root, workspace_resource
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, record_candidate_provenance, record_runner_failure,
@@ -184,7 +184,7 @@ def outer_selection_groups() -> dict[str, dict]:
             ("marketplace-lifecycle", "e2e/journey/marketplace_steps.py"),
             ("update", "e2e/journey/platform_update_steps.py"),
             ("update-variants", "e2e/journey/platform_update_variant_steps.py")):
-        resolved = journey_source_group_declaration(source, Path(__file__).resolve().parents[2])
+        resolved = journey_source_group_declaration(source, resource_root())
         spec = dict(groups.get(group, {}))
         spec["cases"] = tuple(sorted(set(spec.get("cases", ())) | set(resolved["cases"])))
         spec["steps"] = tuple(sorted(set(spec.get("steps", ())) | set(resolved["steps"])))
@@ -192,7 +192,7 @@ def outer_selection_groups() -> dict[str, dict]:
     fixture_specs = fixture_group_declarations(
         ISOLATED_FIXTURE_GROUPS,
         CASE_JOURNEY.runner_selector if CASE_JOURNEY is not None else "",
-        Path(__file__).resolve().parents[2],
+        resource_root(),
     )
     for name, declaration in fixture_specs.items():
         groups[f"isolated-fixture:{name}"] = declaration

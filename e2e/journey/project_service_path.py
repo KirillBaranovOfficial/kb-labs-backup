@@ -3,12 +3,13 @@
 from functools import lru_cache
 from pathlib import Path
 from invocations import run_command
+from journey_resources import resource_root, workspace_resource
 from journey_values import MissingJourneyState
 
 
 def require_project_service_path_builder() -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    builder = repo_root / "core/plugin-contracts/dist/project-service-path.js"
+    repo_root = resource_root()
+    builder = workspace_resource("core", "plugin-contracts", "dist", "project-service-path.js")
     if not builder.is_file():
         raise RuntimeError(
             "The shared project service URL builder is not built. Run "

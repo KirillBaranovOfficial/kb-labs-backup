@@ -5,6 +5,67 @@ import hashlib
 import json
 import shlex
 from pathlib import Path
+from typing import NamedTuple
+
+
+class RunnerImageResource(NamedTuple):
+    """One repository input copied into the journey runner image."""
+
+    source: str
+    destination: str
+
+
+RUNNER_IMAGE_RESOURCES = (
+    RunnerImageResource("tools/kb-create/install.sh", "/usr/local/share/kb-create/install.sh"),
+    RunnerImageResource("e2e/journey", "/opt/kb-journey/e2e/journey"),
+    RunnerImageResource(".journey/runner-inputs/project-service-path.js",
+                        "/opt/kb-journey/core/plugin-contracts/dist/project-service-path.js"),
+    RunnerImageResource("docs/qa/scenarios", "/opt/kb-journey/docs/qa/scenarios"),
+    RunnerImageResource("e2e/platform/fixtures/installer-cases",
+                        "/opt/kb-journey/e2e/platform/fixtures/installer-cases"),
+    RunnerImageResource("contracts/ux-result", "/opt/kb-journey/contracts/ux-result"),
+    RunnerImageResource("core/platform/src/error-envelope/error-envelope.schema.json",
+                        "/opt/kb-journey/core/platform/src/error-envelope/error-envelope.schema.json"),
+    RunnerImageResource("core/platform/src/error-envelope/errors.catalog.json",
+                        "/opt/kb-journey/core/platform/src/error-envelope/errors.catalog.json"),
+    RunnerImageResource("tools/kb-create/v2/contracts/platform-layout.json",
+                        "/opt/kb-journey/tools/kb-create/v2/contracts/platform-layout.json"),
+    RunnerImageResource("contracts/ux-result", "/opt/kb-contracts/ux-result"),
+    RunnerImageResource("core/platform/src/error-envelope/error-envelope.schema.json",
+                        "/opt/kb-contracts/error-envelope.schema.json"),
+    RunnerImageResource("e2e/journey/entrypoint.py", "/usr/local/bin/kb-journey-runner"),
+    RunnerImageResource("e2e/journey/studio-playwright.config.mjs",
+                        "/opt/kb-studio-playwright/playwright.config.mjs"),
+    RunnerImageResource("e2e/studio/scenarios/default/cases/fresh-host.spec.ts",
+                        "/opt/kb-studio-playwright/fresh-host.spec.ts"),
+    RunnerImageResource("e2e/studio/scenarios/default/cases/studio-first-tier.spec.ts",
+                        "/opt/kb-studio-playwright/studio-first-tier.spec.ts"),
+    RunnerImageResource("e2e/studio/scenarios/default/cases/analytics.spec.ts",
+                        "/opt/kb-studio-playwright/analytics.spec.ts"),
+    RunnerImageResource("e2e/studio/scenarios/default/cases/admin-users.spec.ts",
+                        "/opt/kb-studio-playwright/admin-users.spec.ts"),
+    RunnerImageResource("e2e/studio/scenarios/default/cases/auth.spec.ts",
+                        "/opt/kb-studio-playwright/auth.spec.ts"),
+    RunnerImageResource("tools/clikit/diag/gen/main.go", "/opt/kb-journey/tools/clikit/diag/gen/main.go"),
+    RunnerImageResource("tools/kb-create/main.go", "/opt/kb-journey/tools/kb-create/main.go"),
+    RunnerImageResource("tools/kb-create/v2/testsupport/wizard-pty/main.go",
+                        "/opt/kb-journey/tools/kb-create/v2/testsupport/wizard-pty/main.go"),
+    RunnerImageResource("tools/kb-create/v2/testsupport/identity-supervisor/main.go",
+                        "/opt/kb-journey/tools/kb-create/v2/testsupport/identity-supervisor/main.go"),
+    RunnerImageResource("tools/kb-create/v2/internal/fakehost/main.go",
+                        "/opt/kb-journey/tools/kb-create/v2/internal/fakehost/main.go"),
+    RunnerImageResource("tools/kb-create/v2/cmd/gen-gateway-bootstrap/main.go",
+                        "/opt/kb-journey/tools/kb-create/v2/cmd/gen-gateway-bootstrap/main.go"),
+    RunnerImageResource("tools/kb-create/v2/cmd/kb-create-release-index/main.go",
+                        "/opt/kb-journey/tools/kb-create/v2/cmd/kb-create-release-index/main.go"),
+    RunnerImageResource("tools/kb-create/v2/cmd/kb-create-v2/main.go",
+                        "/opt/kb-journey/tools/kb-create/v2/cmd/kb-create-v2/main.go"),
+    RunnerImageResource("tools/kb-deploy/main.go", "/opt/kb-journey/tools/kb-deploy/main.go"),
+    RunnerImageResource("tools/kb-devkit/main.go", "/opt/kb-journey/tools/kb-devkit/main.go"),
+    RunnerImageResource("tools/kb-env/main.go", "/opt/kb-journey/tools/kb-env/main.go"),
+    RunnerImageResource("tools/kb-dev/main.go", "/opt/kb-journey/tools/kb-dev/main.go"),
+    RunnerImageResource("tools/kb-monitor/main.go", "/opt/kb-journey/tools/kb-monitor/main.go"),
+)
 
 
 def resource_root() -> Path:
@@ -15,6 +76,15 @@ def resource_root() -> Path:
 def workspace_resource(*parts: str) -> Path:
     """Return a resource using its path relative to the repository root."""
     return resource_root().joinpath(*parts)
+
+
+def workspace_tool_entrypoints() -> tuple[Path, ...]:
+    """Resolve declared Go tool entrypoints from the workspace resource set."""
+    return tuple(
+        workspace_resource(*resource.source.split("/"))
+        for resource in RUNNER_IMAGE_RESOURCES
+        if resource.source.startswith("tools/") and resource.source.endswith("/main.go")
+    )
 
 
 def journey_module(name: str) -> Path:

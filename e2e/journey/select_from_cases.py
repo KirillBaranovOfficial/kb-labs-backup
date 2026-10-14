@@ -27,6 +27,7 @@ from invocations import (
 from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
 from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import read_journey_selection, read_requested_cases
+from journey_resources import resource_root
 
 
 RUNNER_CONTEXT_NAMES = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
@@ -921,7 +922,7 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
     owners_by_step: dict[str, dict[str, set[str]]] = {}
     ineligible_by_step: dict[str, set[str]] = {}
     unclaimed_by_case: dict[str, set[str]] = {}
-    root = Path(__file__).resolve().parents[2]
+    root = resource_root()
     for coverage in results:
         for case in coverage.get("cases", []):
             if case.get("status") != "active":
@@ -999,7 +1000,7 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
 
 def main() -> int:
     if sys.argv[1:] == ["--write-plan-baseline"]:
-        root = Path(__file__).resolve().parents[2]
+        root = resource_root()
         print_report_text(str(write_full_runner_plan_baseline(root)), flush=True)
         return 0
     results = []

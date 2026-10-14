@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator, Optional
 
+from journey_resources import workspace_resource
+
 if TYPE_CHECKING:
     from invocations import CompletedProcess
 
@@ -15,7 +17,7 @@ PathTransform = Callable[[bytes], Optional[bytes]]
 
 
 def _layout() -> dict:
-    source = Path(__file__).resolve().parents[2] / "tools" / "kb-create" / "v2" / "contracts" / "platform-layout.json"
+    source = workspace_resource("tools", "kb-create", "v2", "contracts", "platform-layout.json")
     value = json.loads(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError("platform layout contract is not an object")

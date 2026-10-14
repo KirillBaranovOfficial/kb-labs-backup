@@ -39,22 +39,34 @@ def is_dockerignored(path, rules):
     return ignored
 
 
-def copy_sources(dockerfile):
+def copy_instructions(dockerfile):
+    resources = []
     for line in dockerfile.read_text().splitlines():
         if not line.lstrip().startswith("COPY "):
             continue
         instruction = line.strip()[len("COPY "):]
         if instruction.startswith("["):
             values = json.loads(instruction)
-            yield from values[:-1]
+            sources, destination = values[:-1], values[-1]
+            for source in sources:
+                target = f"{destination.rstrip('/')}/{Path(source).name}" if len(sources) > 1 else destination
+                resources.append((source, target))
             continue
         tokens = shlex.split(instruction)
         source_tokens = []
-        for token in tokens:
+        for token in tokens[:-1]:
             if token.startswith("--"):
                 continue
             source_tokens.append(token)
-        yield from source_tokens[:-1]
+        destination = tokens[-1]
+        for source in source_tokens:
+            target = f"{destination.rstrip('/')}/{Path(source).name}" if len(source_tokens) > 1 else destination
+            resources.append((source, target))
+    return resources
+
+
+def copy_sources(dockerfile):
+    return (source for source, _destination in copy_instructions(dockerfile))
 
 
 class DockerBuildInputsTest(unittest.TestCase):

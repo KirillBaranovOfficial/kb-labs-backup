@@ -28,6 +28,7 @@ from typing import Any, Callable, Mapping, MutableMapping, NoReturn
 from urllib.error import HTTPError, URLError
 
 import redaction
+from journey_resources import workspace_resource, workspace_tool_entrypoints
 
 class PtyReadinessUnsupported(RuntimeError):
     """The operating system cannot report whether a PTY child is reading its terminal."""
@@ -252,7 +253,7 @@ def _cli_process_result(result: Any) -> tuple[str, int]:
 
 @lru_cache(maxsize=None)
 def _catalog_exit_status(code: str) -> tuple[str, int] | None:
-    catalog_path = Path(__file__).resolve().parents[2] / "core" / "platform" / "src" / "error-envelope" / "errors.catalog.json"
+    catalog_path = workspace_resource("core", "platform", "src", "error-envelope", "errors.catalog.json")
     try:
         catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -270,11 +271,8 @@ def _catalog_exit_status(code: str) -> tuple[str, int] | None:
 
 @lru_cache(maxsize=1)
 def _go_cli_binary_names() -> frozenset[str]:
-    tools_root = Path(__file__).resolve().parents[2] / "tools"
     names = set()
-    for main_source in tools_root.rglob("main.go"):
-        if {"vendor", "node_modules"}.intersection(main_source.parts):
-            continue
+    for main_source in workspace_tool_entrypoints():
         try:
             source = main_source.read_text(encoding="utf-8")
         except OSError as error:

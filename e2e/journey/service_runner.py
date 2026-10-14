@@ -7,6 +7,7 @@ from installed_fixture import layout_relative, layout_value
 from journey_values import MissingJourneyState, journey_value
 
 from project_service_path import project_service_path
+from journey_resources import resource_root
 
 import argparse
 from contextlib import ExitStack
@@ -821,7 +822,7 @@ SERVICE_GROUPS = {
 def service_selection_groups(root: Path | None = None) -> dict[str, dict]:
     """Attach resolver-owned marketplace registrations to the service graph."""
     groups = {name: dict(spec) for name, spec in SERVICE_GROUPS.items()}
-    source_root = root or Path(__file__).resolve().parents[2]
+    source_root = root or resource_root()
     declaration = journey_source_group_declaration("e2e/journey/marketplace_steps.py", source_root)
     lifecycle = dict(groups["marketplace-lifecycle"])
     lifecycle["cases"] = tuple(sorted(set(lifecycle.get("cases", ())) | set(declaration["cases"])))
@@ -889,7 +890,7 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
     graph.flow("project registry and current-project flows", "project-registry", "projects",
                lambda: run_project_registry_steps(journey, str(cli_path), env, registry),
                cases=["S-043.1", "S-196.1"], record_empty_success=False)
-    workspace_root = Path(journey_value("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+    workspace_root = Path(journey_value("KB_JOURNEY_WORKSPACE_ROOT", resource_root()))
 
     def run_workspace_flows() -> None:
         problem = workspace_checkout_problem(workspace_root)
