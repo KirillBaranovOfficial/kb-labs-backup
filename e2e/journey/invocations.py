@@ -27,7 +27,7 @@ import time
 from typing import Any, Callable, Mapping, MutableMapping, NoReturn
 from urllib.error import HTTPError, URLError
 
-from platform_state_dump import _redact_json, _redact_text
+import redaction
 
 class PtyReadinessUnsupported(RuntimeError):
     """The operating system cannot report whether a PTY child is reading its terminal."""
@@ -177,31 +177,16 @@ def _acquire_controlling_terminal(slave_fd: int) -> None:
 
 _STEP_ID: ContextVar[str] = ContextVar("journey_step_id", default="journey.setup")
 _REPORT_ROOT: ContextVar[Path | None] = ContextVar("journey_report_root", default=None)
-# Only long values are safe to replace globally: shorter secrets can be ordinary
-# identifiers, exit codes, URL fragments, or path components in useful evidence.
-MIN_SECRET_VALUE_LENGTH = 12
-_SECRET_ARGUMENT_NAME = r"(?:password|token|secret|api[-_]?key|private[-_]?key)"
-_SECRET_ARGUMENT = re.compile(rf"(?i)^--{_SECRET_ARGUMENT_NAME}$")
-_SECRET_ARGUMENT_TEXT = re.compile(
-    rf"(?i)(--{_SECRET_ARGUMENT_NAME}(?:=\s*|\s+))([^\s,;]+)"
-)
-
 # `root.go` routes these registered commands to JSON stream executors. Every
 # other registered kb-create command returns one ADR-0049 document.
 KB_CREATE_JSON_STREAM_COMMANDS = frozenset({"install", "apply"})
 
-
-def is_secret_key(key: str) -> bool:
-    """Return whether an environment key is covered by the report redactor."""
-    return any(part in key.upper() for part in ("PASSWORD", "TOKEN", "SECRET", "API_KEY"))
-
-
 def store_report_secret(env: MutableMapping[str, str], key: str, value: str, source: str) -> str:
     """Validate and store a harness credential where subprocesses and reports can redact it."""
-    if not is_secret_key(key):
+    if not redaction.is_secret_key(key):
         raise AssertionError(f"{source} must use a secret-like environment key")
-    if len(value) < MIN_SECRET_VALUE_LENGTH:
-        raise AssertionError(f"{source} must contain at least {MIN_SECRET_VALUE_LENGTH} characters for safe journey reporting")
+    if len(value) < redaction.MIN_SECRET_VALUE_LENGTH:
+        raise AssertionError(f"{source} must contain at least {redaction.MIN_SECRET_VALUE_LENGTH} characters for safe journey reporting")
     env[key] = value
     return value
 
@@ -522,69 +507,12 @@ def invocation_context(*, step_id: str | None = None, report_root: str | Path | 
     return Context()
 
 
-def _secret_values(env: Mapping[str, str] | None, extra: tuple[str, ...] = ()) -> set[str]:
-    environments = (os.environ, env) if env is not None else (os.environ,)
-    secrets = {value for values in environments for key, value in values.items()
-               if len(value) >= MIN_SECRET_VALUE_LENGTH and is_secret_key(key)}
-    return secrets | {secret for secret in extra if len(secret) >= MIN_SECRET_VALUE_LENGTH}
-
-
-def _redact(value: str, env: Mapping[str, str] | None = None,
-            extra_secrets: tuple[str, ...] = ()) -> str:
-    for secret in _secret_values(env, extra_secrets):
-        value = value.replace(secret, "[REDACTED]")
-    value = _redact_text(value, "")
-    return _SECRET_ARGUMENT_TEXT.sub(r"\1[REDACTED]", value)
-
-
-def redact_report_value(value: Any, env: Mapping[str, str] | None = None,
-                        secrets: tuple[str, ...] = ()) -> Any:
-    """Redact strings and secret-keyed fields before journey evidence leaves memory."""
-    if isinstance(value, str):
-        return _redact(value, env, secrets)
-    if isinstance(value, dict):
-        redacted = {}
-        for key, item in value.items():
-            if str(key).casefold() == "argv" and isinstance(item, list):
-                redacted[key] = _redact_argv(item, env, secrets)
-            else:
-                redacted[key] = redact_report_value(item, env, secrets)
-        return _redact_json(redacted)
-    if isinstance(value, list):
-        return [redact_report_value(item, env, secrets) for item in value]
-    if isinstance(value, tuple):
-        return tuple(redact_report_value(item, env, secrets) for item in value)
-    return value
-
-
-def _redact_argv(argv: list[Any], env: Mapping[str, str] | None,
-                 secrets: tuple[str, ...]) -> list[Any]:
-    result: list[Any] = []
-    redact_next = False
-    for raw in argv:
-        argument = raw if isinstance(raw, str) else str(raw)
-        if redact_next:
-            result.append("[REDACTED]")
-            redact_next = False
-            continue
-        flag, separator, _inline_value = argument.partition("=")
-        if argument.startswith("--") and _SECRET_ARGUMENT.search(flag):
-            if separator:
-                result.append(f"{flag}=[REDACTED]")
-            else:
-                result.append(argument)
-                redact_next = True
-            continue
-        result.append(_redact(argument, env, secrets))
-    return result
-
-
 def write_report_json(path: str | Path, value: Any, *, env: Mapping[str, str] | None = None,
                       append: bool = False, indent: int | None = 2,
                       ensure_ascii: bool = False, secrets: tuple[str, ...] = ()) -> Any:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    redacted = redact_report_value(value, env, secrets)
+    redacted = redaction.redact_report_value(value, env, secrets)
     rendered = json.dumps(redacted, indent=indent, ensure_ascii=ensure_ascii) + "\n"
     with target.open("a" if append else "w", encoding="utf-8") as stream:
         stream.write(rendered)
@@ -593,7 +521,7 @@ def write_report_json(path: str | Path, value: Any, *, env: Mapping[str, str] | 
 
 def write_report_text(path: str | Path, value: str, *, env: Mapping[str, str] | None = None,
                       append: bool = False, secrets: tuple[str, ...] = ()) -> str:
-    rendered = _redact(value, env, secrets)
+    rendered = redaction.redact_text(value, env, secrets)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a" if append else "w", encoding="utf-8") as stream:
@@ -603,7 +531,7 @@ def write_report_text(path: str | Path, value: str, *, env: Mapping[str, str] | 
 
 def print_report_text(value: str, *, env: Mapping[str, str] | None = None,
                       stream=None, end: str = "\n", flush: bool = False) -> str:
-    rendered = _redact(value, env)
+    rendered = redaction.redact_text(value, env)
     output = stream or sys.stdout
     output.write(rendered + end)
     if flush:

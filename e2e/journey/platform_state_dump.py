@@ -17,12 +17,12 @@ from typing import Any
 
 from journey_resources import active_platform_root, installer_record_path
 from kb_invocation import kb_command, kb_shell_text
+import redaction
 
 MAX_DUMP_BYTES = 5 * 1024 * 1024
 CONTENT_BUDGET = MAX_DUMP_BYTES - 64 * 1024
 MAX_FILE_BYTES = 1024 * 1024
 TAIL_LINES = 400
-SECRET_KEY = re.compile(r"(?i)(password|token|secret|apiKey|key)")
 UNKNOWN_COMMAND = re.compile(r"Unknown command:\s*([^\n\r]+)")
 SERVICE_LOG_BUDGET = 2 * 1024 * 1024
 
@@ -52,30 +52,6 @@ class PlatformStateDumpOnce:
         return dump_platform_state(*args, **kwargs)
 
 
-def _redact_json(value):
-    if isinstance(value, dict):
-        return {key: "[REDACTED]" if SECRET_KEY.search(str(key)) else _redact_json(item)
-                for key, item in value.items()}
-    if isinstance(value, list):
-        return [_redact_json(item) for item in value]
-    return value
-
-
-def _redact_text(text: str, admin_password: str) -> str:
-    if admin_password:
-        text = text.replace(admin_password, "[REDACTED]")
-    text = re.sub(
-        r"(?i)(\b[A-Z0-9_]*(?:PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s]+",
-        r"\1[REDACTED]",
-        text,
-    )
-    # JSONC is not strict JSON; redact scalar values for secret-named keys.
-    return re.sub(
-        r'(?i)(["\']?(?:password|token|secret|apiKey|key)["\']?\s*:\s*)("(?:\\.|[^"\\])*"|\'[^\']*\'|[^,}\]\s]+)',
-        r'\1"[REDACTED]"', text,
-    )
-
-
 def _write_evidence_text(target: Path, value: str, *, env: Mapping[str, str] | None = None,
                          secrets: tuple[str, ...] = (), append: bool = False) -> str:
     from invocations import write_report_text
@@ -103,11 +79,11 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
         target.parent.mkdir(parents=True, exist_ok=True)
         if source.suffix.lower() == ".json":
             try:
-                _write_evidence_json(target, json.loads(content), secrets=(admin_password,))
+                _write_evidence_json(target, redaction.redact_json(json.loads(content)), secrets=(admin_password,))
                 return target.stat().st_size
             except json.JSONDecodeError:
                 pass
-        _write_evidence_text(target, content, secrets=(admin_password,))
+        _write_evidence_text(target, redaction.redact_text(content, secrets=(admin_password,)), secrets=(admin_password,))
         return target.stat().st_size
     except OSError:
         return 0

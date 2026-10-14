@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import invocations
+import redaction
 
 
 def secret_environment_write_violations(source_text: str, filename: str = "<source>") -> list[str]:
@@ -25,7 +26,7 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
     def secret_keys(mapping):
         return [key for key in (literal_key(item) for item in mapping.keys)
-                if key is not None and invocations.is_secret_key(key)]
+                if key is not None and redaction.is_secret_key(key)]
 
     def is_env_mapping(node):
         if isinstance(node, ast.Name):
@@ -37,7 +38,7 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
         if isinstance(node, ast.Dict) and secret_keys(node):
             return True
         if isinstance(node, ast.Call) and any(
-                keyword.arg and invocations.is_secret_key(keyword.arg) for keyword in node.keywords):
+                keyword.arg and redaction.is_secret_key(keyword.arg) for keyword in node.keywords):
             return True
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
             return ((is_env_mapping(node.left) and contains_secret_mapping_write(node.right))
@@ -65,7 +66,7 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
                 key = literal_key(target.slice) if isinstance(target, ast.Subscript) else None
                 if (isinstance(target, ast.Subscript) and is_env_mapping(target.value)
                         and isinstance(target.ctx, (ast.Store, ast.Del))
-                        and key is not None and invocations.is_secret_key(key)):
+                        and key is not None and redaction.is_secret_key(key)):
                     violations.append(f"{filename}:{node.lineno}: direct secret-key assignment")
                 if (is_env_mapping(target) and contains_secret_mapping_write(node.value)):
                     violations.append(f"{filename}:{node.lineno}: secret literal assigned to environment")
@@ -78,12 +79,12 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
                     if any(keyword.arg is None and contains_secret_mapping_write(keyword.value)
                            for keyword in node.keywords):
                         violations.append(f"{filename}:{node.lineno}: secret mapping expanded into environment write")
-                    if any(keyword.arg and invocations.is_secret_key(keyword.arg)
+                    if any(keyword.arg and redaction.is_secret_key(keyword.arg)
                            for keyword in node.keywords):
                         violations.append(f"{filename}:{node.lineno}: secret key passed to environment write")
                     if node.func.attr == "setdefault" and node.args:
                         key = literal_key(node.args[0])
-                        if key is not None and invocations.is_secret_key(key):
+                        if key is not None and redaction.is_secret_key(key):
                             violations.append(f"{filename}:{node.lineno}: direct secret-key setdefault")
             for keyword in node.keywords:
                 if keyword.arg == "env" and contains_secret_mapping_write(keyword.value):
