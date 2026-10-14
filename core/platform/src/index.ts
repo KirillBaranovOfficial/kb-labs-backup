@@ -176,6 +176,8 @@ export type {
 // Context-aware logging contract
 export {
   createContextLogger,
+  createProcessRootLogContext,
+  registerProcessSensitiveValues,
   isAgentDiagnosticsEnabled,
   PLATFORM_LOG_FIELDS,
   type IContextLogger,

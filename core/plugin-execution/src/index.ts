@@ -25,6 +25,7 @@
  */
 
 // Types
+export { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory';
 export type {
   // Handler contract
   PluginHandler,

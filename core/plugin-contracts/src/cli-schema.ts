@@ -6,6 +6,7 @@ interface CliFlagBase {
   default?: unknown;
   description?: string;
   required?: boolean;
+  secret?: boolean;
 }
 
 export type CliFlagDecl =
@@ -43,6 +44,9 @@ function validateFlag(value: unknown): CliSchemaIssue[] {
   }
   if (value.required !== undefined && typeof value.required !== 'boolean') {
     issues.push({ path: ['required'], message: 'Required must be a boolean' });
+  }
+  if (value.secret !== undefined && typeof value.secret !== 'boolean') {
+    issues.push({ path: ['secret'], message: 'Secret must be a boolean' });
   }
   if (value.choices !== undefined) {
     if (value.type !== 'string') {

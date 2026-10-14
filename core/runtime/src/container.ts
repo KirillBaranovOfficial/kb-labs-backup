@@ -23,9 +23,8 @@ import type {
   ILogBuffer,
   INotifier,
   RawMiddlewareDecl,
-  ErrorEnvelope,
 } from '@kb-labs/core-platform';
-import type { IExecutionBackend } from '@kb-labs/core-contracts';
+import type { ExecutionBackend } from '@kb-labs/plugin-execution-factory';
 import type { IDocumentDatabase, IKVStore, IProcessExecutor } from '@kb-labs/core-platform/adapters';
 
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
@@ -561,7 +560,7 @@ export class PlatformContainer {
   private _resources?: IResourceManager;
   private _resourceBroker?: IResourceBroker;
   private _socketServer?: { getSocketPath(): string };
-  private _executionBackend?: IExecutionBackend<unknown, ErrorEnvelope>;
+  private _executionBackend?: ExecutionBackend;
   private _environmentManager?: EnvironmentManager;
   private _workspaceManager?: WorkspaceManager;
   private _snapshotManager?: SnapshotManager;
@@ -688,7 +687,7 @@ export class PlatformContainer {
    *
    * @param backend - ExecutionBackend instance (from @kb-labs/plugin-execution)
    */
-  initExecutionBackend(backend: IExecutionBackend<unknown, ErrorEnvelope>): void {
+  initExecutionBackend(backend: ExecutionBackend): void {
     if (this._executionBackend) {
       this.logger.warn('ExecutionBackend already initialized, replacing');
     }
@@ -705,7 +704,7 @@ export class PlatformContainer {
    * @throws Error if ExecutionBackend not initialized via initPlatform()
    * @returns ExecutionBackend instance
    */
-  get executionBackend(): IExecutionBackend<unknown, ErrorEnvelope> {
+  get executionBackend(): ExecutionBackend {
     if (!this._executionBackend) {
       throw new Error(
         'ExecutionBackend not initialized. ' +

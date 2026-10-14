@@ -16,7 +16,6 @@ export interface PluginHandlerFailureContext {
   correlationId: string;
   logger: ILogger;
   logContext: PlatformLogContext;
-  sensitiveValues: readonly string[];
   returnedFailure?: boolean;
 }
 
@@ -30,8 +29,7 @@ function recordPluginFailure(
 ): void {
   const logger = createContextLogger(context.logger, context.logContext)
     .forOperation('plugin.handler.failed', { correlationId: context.correlationId })
-    .forPlugin({ pluginId: context.pluginId })
-    .withSensitiveValues(context.sensitiveValues);
+    .forPlugin({ pluginId: context.pluginId });
   const logError = asError(error);
   if (typeof error === 'object' && error !== null && 'stack' in error && typeof error.stack === 'string') {
     logError.stack = error.stack;
@@ -98,7 +96,7 @@ export function normalizePluginHandlerFailure(
   const malformedField = invalidEnvelopeIssue?.field ??
     (canonicalEnvelope?.code === 'KB_PLUGIN_CONTRACT_VIOLATION' ? canonicalEnvelope.details?.field ?? 'envelope' : undefined) ??
     (context.returnedFailure && !typedEnvelope ? 'envelope' : undefined);
-  const envelope = malformedField
+  const rawEnvelope = malformedField
     ? createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
         correlationId: context.correlationId,
         message: `Plugin ${context.pluginId} command ${context.command} returned malformed error field "${malformedField}".`,
@@ -116,6 +114,8 @@ export function normalizePluginHandlerFailure(
             failureReason: reason,
           },
         });
+  const envelope = createContextLogger(context.logger, context.logContext)
+    .redactSensitiveValues(rawEnvelope);
   if (typedEnvelope) {
     recordPluginFailure(context, envelope, error, 'typed product or platform error');
     return envelope;

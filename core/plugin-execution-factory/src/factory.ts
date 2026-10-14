@@ -17,6 +17,7 @@ import { isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import type { ILogger } from '@kb-labs/core-platform';
 import { normalizePluginHandlerFailure } from './plugin-handler-failure.js';
+import { brandNormalizedExecutionResult } from './normalized-result.js';
 
 export function ensureHostProcessExecutor(platform: BackendOptions['platform']): void {
   const host = platform as BackendOptions['platform'] & IPlatformAdapters & {
@@ -152,11 +153,13 @@ class NormalizingExecutionBackend implements ExecutionBackend {
           },
         };
       } else {
-        return { ...result, ok: true };
+        return brandNormalizedExecutionResult({ ...result, ok: true });
       }
     }
 
-    if (isNormalizedExecutionFailure(result.error)) return result as NormalizedExecutionResult;
+    if (isNormalizedExecutionFailure(result.error)) {
+      return brandNormalizedExecutionResult(result as NormalizedExecutionResult);
+    }
 
     const descriptor = request.descriptor;
     const correlationId = descriptor.requestId || request.executionId;
@@ -172,13 +175,9 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         instanceId: String(process.pid),
         layer: hostType,
       },
-      sensitiveValues: Object.entries(request.env ?? {})
-        .filter(([key]) => /(?:secret|token|password|credential|api[_-]?key)/i.test(key))
-        .map(([, value]) => value)
-        .filter((value): value is string => value !== undefined),
       returnedFailure,
     });
-    return {
+    return brandNormalizedExecutionResult({
       ...result,
       ok: false,
       error: {
@@ -188,7 +187,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         message: error.message,
         details: error.details,
       } as NormalizedExecutionFailure,
-    };
+    });
   }
 
   health() { return this.backend.health(); }

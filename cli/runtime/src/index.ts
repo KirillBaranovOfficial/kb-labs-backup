@@ -90,6 +90,7 @@ export { createTextPresenter } from './presenter/text.js';
 export { createJsonPresenter } from './presenter/json.js';
 export { colors } from './presenter/colors.js';
 export { createLoader } from './presenter/loader.js';
+export { registerSecretFlagValues, type CommandFlagValueDeclaration } from './secret-flags.js';
 
 // ---------------------------------------------------------------------------
 // Telemetry

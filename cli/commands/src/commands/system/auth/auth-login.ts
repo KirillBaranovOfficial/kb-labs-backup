@@ -23,9 +23,9 @@ import { promptForPassword, readPasswordFromStdin } from './password-input.js';
 type LoginFlags = {
   'gateway-url': { type: 'string'; description: string };
   'client-id': { type: 'string'; description: string };
-  'client-secret': { type: 'string'; description: string };
+  'client-secret': { type: 'string'; secret: true; description: string };
   email: { type: 'string'; description: string };
-  password: { type: 'string'; description: string };
+  password: { type: 'string'; secret: true; description: string };
   'password-stdin': { type: 'boolean'; description: string };
   json: { type: 'boolean'; description: string };
 };
@@ -58,9 +58,9 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
   flags: {
     'gateway-url': { type: 'string', description: 'Gateway server URL' },
     'client-id': { type: 'string', description: 'Client ID from service account registration' },
-    'client-secret': { type: 'string', description: 'Client Secret from service account registration' },
+    'client-secret': { type: 'string', secret: true, description: 'Client Secret from service account registration' },
     email: { type: 'string', description: 'Email for human (admin) login' },
-    password: { type: 'string', description: 'Password for human (admin) login' },
+    password: { type: 'string', secret: true, description: 'Password for human (admin) login' },
     'password-stdin': { type: 'boolean', description: 'Read the human password from stdin' },
     json: { type: 'boolean', description: 'Output in JSON format' },
   },

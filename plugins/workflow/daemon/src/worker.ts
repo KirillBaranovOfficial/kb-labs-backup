@@ -20,7 +20,6 @@ import type {
   IAnalytics,
   IWorkspaceProvider,
 } from "@kb-labs/core-platform";
-import type { IExecutionBackend } from "@kb-labs/core-contracts";
 import type {
   ExecutionTarget,
   ExpressionContext,
@@ -30,7 +29,7 @@ import type {
   StepRun,
 } from "@kb-labs/workflow-contracts";
 import type { ExecutionBackend } from "@kb-labs/plugin-execution";
-import { createContextLogger } from "@kb-labs/core-platform";
+import { createContextLogger, registerProcessSensitiveValues } from "@kb-labs/core-platform";
 import {
   buildShellSafeCommand,
   interpolateObject,
@@ -56,7 +55,7 @@ interface StepSpecRaw {
 }
 
 interface Platform {
-  readonly executionBackend: IExecutionBackend;
+  readonly executionBackend: ExecutionBackend;
   readonly hasExecutionBackend: boolean;
   getAdapter<T = unknown>(name: string): T | undefined;
 }
@@ -179,9 +178,7 @@ export async function createWorkflowWorker(
 
   // Create SandboxRunner with ExecutionBackend
   const runner = new SandboxRunner({
-    // IExecutionBackend<unknown> (core-contracts) is structurally compatible with
-    // ExecutionBackend (plugin-execution) — both expose the same execute/health/stats/shutdown API.
-    backend: executionBackend as unknown as ExecutionBackend,
+    backend: executionBackend,
     cliApi,
     workspaceRoot,
     platformRoot,
@@ -311,6 +308,7 @@ export async function createWorkflowWorker(
       ...getJobSecretNames(job),
     ]);
     const jobSecrets = await secretProvider.resolve([...declaredJobSecretNames]);
+    registerProcessSensitiveValues(Object.values(jobSecrets));
     const jobLogger = createContextLogger(logger, {
       applicationId: "workflow-daemon",
       serviceId: "workflow",
@@ -327,8 +325,7 @@ export async function createWorkflowWorker(
         "workflow.run_id": run.id,
         "workflow.job_id": job.id,
         "workflow.job_name": job.jobName,
-      })
-      .withSensitiveValues(Object.values(jobSecrets));
+      });
 
     jobLogger.info("Processing job", {
       runId: run.id,
@@ -638,6 +635,7 @@ export async function createWorkflowWorker(
           ]);
           const stepSecretNames = [...declaredStepSecretNames];
           const stepSecrets = await secretProvider.resolve(stepSecretNames);
+          registerProcessSensitiveValues(Object.values(stepSecrets));
           const unresolvedSecretName = stepSecretNames.find((name) => stepSecrets[name] === undefined);
           if (unresolvedSecretName !== undefined) {
             throw createMissingSecretError(secretProvider, unresolvedSecretName);
@@ -657,7 +655,7 @@ export async function createWorkflowWorker(
               ...stepSecrets,
             },
           };
-          const safeStepLogger = stepLogger.withSensitiveValues(Object.values(stepSecrets));
+          const safeStepLogger = stepLogger;
 
           // Debug input and expression records use the same secret-aware logger as
           // execution records so declared environment values cannot escape here.

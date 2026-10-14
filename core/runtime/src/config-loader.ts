@@ -60,13 +60,36 @@ import {
 import { DiscoveryManager } from "@kb-labs/core-discovery";
 import { findRegisteredProjectRoot, resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
 import { canonicalizeProjectPath, createProjectRegistry, ProjectRegistryError } from "@kb-labs/core-project-registry";
-import { AdapterProjectScopeError, PlatformConfigError } from "@kb-labs/core-platform";
+import { AdapterProjectScopeError, PlatformConfigError, registerProcessSensitiveValues } from "@kb-labs/core-platform";
 
 import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
 import { interpolateConfig } from "./config-interpolation.js";
 import { requireProjectContext } from "./project-context.js";
 import { applyLocalNetworkOffset } from "./config-net-offset.js";
 import { PLATFORM_CONFIG_PRODUCT } from "./schema/platform-config-schema.js";
+import { discoverAdapters } from "./discover-adapters.js";
+
+function collectDeclaredSecretValues(
+  value: unknown,
+  secretFields: ReadonlySet<string>,
+  parentField?: string,
+  output: string[] = [],
+): string[] {
+  if (typeof value === 'string') {
+    if (parentField && secretFields.has(parentField)) output.push(value);
+    return output;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectDeclaredSecretValues(entry, secretFields, parentField, output);
+    return output;
+  }
+  if (typeof value === 'object' && value !== null) {
+    for (const [key, nested] of Object.entries(value)) {
+      collectDeclaredSecretValues(nested, secretFields, key, output);
+    }
+  }
+  return output;
+}
 
 function expandPlatformDir(raw: string, projectRoot: string): string {
   let value = raw.trim();
@@ -685,6 +708,26 @@ export async function loadPlatformConfig(
     interpolateConfig(merged, strictInterpolation, env),
     env,
   );
+  const adapterManifests = await discoverAdapters(roots.platformRoot);
+  const secretValues: string[] = [];
+  for (const [slot, binding] of Object.entries(effective.adapters ?? {})) {
+    const packageNames = Array.isArray(binding) ? binding : typeof binding === 'string' ? [binding] : [];
+    for (const packageName of packageNames) {
+      const adapter = adapterManifests.get(packageName) ??
+        [...adapterManifests.values()].find(({ packageName: discoveredName }) => discoveredName === packageName);
+      if (!adapter) continue;
+      const secretFields = new Set(
+        Object.entries(adapter.module.manifest.configSchema ?? {})
+          .filter(([, schema]) => schema.secret === true)
+          .map(([field]) => field),
+      );
+      if (secretFields.size > 0) {
+        const options = effective.adapterOptions?.[slot as keyof NonNullable<PlatformConfig['adapterOptions']>];
+        secretValues.push(...collectDeclaredSecretValues(options, secretFields));
+      }
+    }
+  }
+  registerProcessSensitiveValues(secretValues);
 
   const result: LoadPlatformConfigResultBase = {
     platformConfig: effective,
