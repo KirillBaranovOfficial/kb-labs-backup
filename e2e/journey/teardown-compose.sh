@@ -12,7 +12,7 @@ if container_listing=$("${compose[@]}" ps -aq --all); then
     [[ -z "$container_id" ]] || container_ids+=(--container "$container_id")
   done <<< "$container_listing"
   if ! python3 e2e/journey/container_outcomes.py --report-dir "$report_dir" \
-    --since "$started_at" "${container_ids[@]}"; then
+    --since "$started_at" ${container_ids[@]+"${container_ids[@]}"}; then
     echo "Journey container outcome capture failed; cleanup continues. Next: e2e/journey/run.sh --down" >&2
     status=1
   fi

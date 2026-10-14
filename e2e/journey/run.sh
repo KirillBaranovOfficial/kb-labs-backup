@@ -82,7 +82,8 @@ cleanup() {
   local status=$?
   trap - EXIT INT TERM
   local monitor_pid monitor_status
-  for monitor_pid in "${ACTIVE_MONITORS[@]}"; do
+  # bash 3.2 (macOS /bin/bash) treats an empty array as unbound under set -u.
+  for monitor_pid in ${ACTIVE_MONITORS[@]+"${ACTIVE_MONITORS[@]}"}; do
     if kill -0 "$monitor_pid" 2>/dev/null; then
       if kill "$monitor_pid" 2>/dev/null; then
         monitor_status=143
@@ -191,7 +192,7 @@ start_project_container_monitors() {
   container_listing=$("${COMPOSE[@]}" ps -aq --all)
   while IFS= read -r container_id; do
     [[ -z "$container_id" ]] && continue
-    case " ${MONITORED_CONTAINER_IDS[*]} " in
+    case " ${MONITORED_CONTAINER_IDS[*]-} " in
       *" $container_id "*) ;;
       *) start_container_monitor "$container_id" ;;
     esac
