@@ -41,15 +41,6 @@ def tool_error(code: str, message: str, hint: str):
     }}
 
 
-def extract_captured_project_mcp_rows(calls_path: Path) -> list[tuple[int, dict]]:
-    with calls_path.open(encoding="utf-8") as calls_file:
-        return [
-            (line_number, json.loads(line))
-            for line_number, line in enumerate(calls_file, 1)
-            if 178 <= line_number <= 186
-        ]
-
-
 class ProjectMcpJourneyTests(unittest.TestCase):
     def setUp(self):
         def read_installed_contract(*parts: str) -> bytes:
@@ -530,43 +521,58 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, payload)
 
-    def test_mcp_http_reader_accepts_protocol_json_without_ux_wrapper(self):
+    def test_mcp_http_reader_replays_gateway_project_route_fixture(self):
         from service_runner import request_mcp
 
-        response = {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-03-26"}}
-        with patch("service_runner.open_http", return_value=(200, json.dumps(response).encode(), {
-                "Content-Type": "application/json"})):
-            self.assertEqual(request_mcp("/mcp", payload={"method": "initialize"})[:2], (200, response))
-
-    def test_mcp_http_reader_replays_the_secured_project_rows(self):
-        from service_runner import request_mcp
-
-        calls_path = Path(__file__).resolve().parents[2].parent / "reports" / "j59c-secured" / "invocations" / "calls.jsonl"
-        captured = extract_captured_project_mcp_rows(calls_path)
-        self.assertEqual(len(captured), 9)
-        expected_steps = {
-            178: "S-045.1", 179: "S-045.2", 180: "S-045.3",
-            181: "S-045.5,S-140.6", 182: "S-140.1", 183: "S-140.2",
-            184: "S-140.3", 185: "S-140.4", 186: "S-203.2,S-045.6,S-140.7",
-        }
-        for line_number, row in captured:
-            with self.subTest(capture_row=line_number, step=row["step_id"]):
-                self.assertEqual(row["step_id"], expected_steps[line_number])
-                response = row["stdout"].encode("utf-8")
-                with patch("service_runner.open_http", return_value=(row["exit_code"], response, {})):
-                    try:
-                        status, outcome, _ = request_mcp("/mcp", payload=row.get("request_body"))
-                    except RuntimeError as error:
-                        self.assertEqual(row["exit_code"], 200)
-                        self.assertIn("[REDACTED]", row["stdout"])
-                        self.assertIn("invalid MCP JSON or event-stream data", str(error))
-                        continue
-                self.assertEqual(status, row["exit_code"])
+        fixture_path = Path(__file__).parent / "fixtures" / "project-mcp-responses.json"
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        self.assertEqual({row["step"] for row in fixture}, {
+            "initialize", "tools/list", "tool call", "error",
+        })
+        for row in fixture:
+            with self.subTest(step=row["step"]):
+                headers = {name: value for name, value in row["headers"].items()}
+                with patch("service_runner.open_http", return_value=(
+                        row["status"], row["body"].encode("utf-8"), headers)):
+                    status, outcome, actual_headers = request_mcp(
+                        "/api/v1/projects/project-fixture/mcp", payload={}, step=row["step"])
+                self.assertEqual(status, row["status"])
+                self.assertEqual(actual_headers, headers)
                 self.assertIsInstance(outcome, dict)
-                if line_number == 181:
-                    self.assertEqual(outcome["error"]["code"], "KB_AUTH_REQUIRED")
+                self.assertEqual(outcome.get("jsonrpc"), "2.0")
+                if row["step"] == "initialize":
+                    self.assertEqual(outcome["result"]["protocolVersion"], "2025-03-26")
+                elif row["step"] == "tools/list":
+                    self.assertIsInstance(outcome["result"]["tools"], list)
+                elif row["step"] == "tool call":
+                    self.assertIn("result", outcome)
                 else:
-                    self.assertEqual(outcome["jsonrpc"], "2.0")
+                    self.assertIn("error", outcome)
+
+    def test_http_reader_enforces_call_kind_media_type_contract(self):
+        from service_runner import JourneyResponseError, request, request_mcp
+
+        responses = [
+            ("mcp + html json", request_mcp, "mcp", "text/html", b'{"jsonrpc":"2.0"}'),
+            ("mcp + html", request_mcp, "mcp", "text/html", b"<html>no</html>"),
+            ("ux + event stream", request, "ux", "text/event-stream", b"data: {}\n\n"),
+        ]
+        for label, reader, kind, media_type, body in responses:
+            with self.subTest(response=label):
+                with patch("service_runner.open_http", return_value=(200, body, {
+                        "Content-Type": media_type})):
+                    with self.assertRaises(JourneyResponseError) as raised:
+                        if kind == "mcp":
+                            reader("/mcp", payload={}, step=label)
+                        else:
+                            reader("/rest", step=label)
+                error = raised.exception
+                self.assertEqual(error.call_kind, kind)
+                self.assertEqual(error.media_type, media_type)
+                self.assertEqual(error.journey_step, label)
+                self.assertIn(kind, str(error))
+                self.assertIn(media_type, str(error))
+                self.assertIn(label, str(error))
 
 
 

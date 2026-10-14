@@ -1,0 +1,38 @@
+[
+  {
+    "step": "initialize",
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream",
+      "x-mcp-fixture": "initialize"
+    },
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"serverInfo\":{\"name\":\"kb-mcp\",\"version\":\"1\"}}}\n\n"
+  },
+  {
+    "step": "tools/list",
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "x-mcp-fixture": "tools/list"
+    },
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"kb-labs__mcp_diagnostics\",\"inputSchema\":{\"type\":\"object\"}}]}}"
+  },
+  {
+    "step": "tool call",
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream",
+      "x-mcp-fixture": "tool call"
+    },
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"loaded cleanly\"}],\"isError\":false}}\n\n"
+  },
+  {
+    "step": "error",
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "x-mcp-fixture": "error"
+    },
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":4,\"error\":{\"code\":-32602,\"message\":\"Invalid params\"}}"
+  }
+]

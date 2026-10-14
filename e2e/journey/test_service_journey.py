@@ -843,6 +843,8 @@ raise SystemExit(1)
             self.assertIn("HTML", expect_html("/", "Studio shell"))
 
     def test_studio_project_api_requires_the_shared_json_envelope(self):
+        from service_runner import JourneyResponseError
+
         headers = {"content-type": "application/json"}
         with patch("service_runner.open_http", return_value=(200, b'{"ok":true,"data":{"projects":[]}}', headers)):
             status, body, _ = request_result("/api/v1/projects")
@@ -850,7 +852,7 @@ raise SystemExit(1)
         self.assertEqual(body, {"projects": []})
 
         with patch("service_runner.open_http", return_value=(200, b'{"projects":[]}', headers)):
-            with self.assertRaisesRegex(RuntimeError, "UX JSON envelope"):
+            with self.assertRaisesRegex(JourneyResponseError, "UX JSON envelope"):
                 request_result("/api/v1/projects")
 
     def test_first_failure_and_json_result(self):
@@ -1566,20 +1568,19 @@ raise SystemExit(1)
         self.assertEqual(len(commands), 1)
         self.assertEqual(commands[0][3:6], ["kb", "auth", "login"])
 
-    def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
-        import json
+    def test_mcp_probe_uses_shared_mcp_reader(self):
         tools = [{"name": name, "inputSchema": {"type": "object"}}
                  for name in ("kb-labs-commit__commit", "kb-labs-workflow__workflow_run", "kb-labs__mcp_diagnostics")]
-        event = 'event: message\ndata: ' + json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}) + '\n\n'
-        with patch("service_runner.request", return_value=(200, event, {})) as request:
+        with patch("service_runner.request_mcp", return_value=(200, {"jsonrpc": "2.0", "result": {"tools": tools}}, {})) as request:
             failure = mcp_probe("prj_test", "token")
         self.assertIsNone(failure)
         self.assertEqual(request.call_args.kwargs["accept"], "application/json, text/event-stream")
+        self.assertEqual(request.call_args.kwargs["step"], "project-scoped MCP tools/list")
 
     def test_mcp_probe_uses_sanitized_platform_member_manifest_id(self):
         tools = [{"name": name, "inputSchema": {"type": "object"}}
                  for name in ("kb-labs-commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics")]
-        with patch("service_runner.request", return_value=(200, {"result": {"tools": tools}}, {})):
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             failure = mcp_probe("prj_test", "token")
         self.assertIn("kb-labs-workflow__workflow_run", failure)
 
@@ -1644,18 +1645,23 @@ raise SystemExit(1)
 
     def test_mcp_initialize_checks_protocol_response(self):
         response = {"result": {"protocolVersion": "2025-03-26"}}
-        with patch("service_runner.request", return_value=(200, response, {})) as request:
+        with patch("service_runner.request", return_value=(200, response, {})) as ux_request, \
+                patch("service_runner.request_mcp", return_value=(200, response, {})) as request:
             self.assertIsNone(mcp_initialize("prj_test", "token"))
+        request.assert_called_once()
+        ux_request.assert_not_called()
         self.assertEqual(request.call_args.kwargs["payload"]["method"], "initialize")
-        with patch("service_runner.request", return_value=(200, {"result": {}}, {})):
+        self.assertEqual(request.call_args.kwargs["step"], "project-scoped MCP initialize")
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {}}, {})):
             self.assertIn("no result", mcp_initialize("prj_test", "token"))
 
     def test_mcp_diagnostics_checks_clean_project_result(self):
         result = {"result": {"isError": False, "content": [{"text": "Project loaded cleanly"}]}}
-        with patch("service_runner.request", return_value=(200, result, {})) as request:
+        with patch("service_runner.request_mcp", return_value=(200, result, {})) as request:
             self.assertIsNone(mcp_diagnostics("prj_test", "token"))
         self.assertEqual(request.call_args.kwargs["payload"]["params"]["name"], "kb-labs__mcp_diagnostics")
-        with patch("service_runner.request", return_value=(200, {"result": {"isError": True, "content": []}}, {})):
+        self.assertEqual(request.call_args.kwargs["step"], "project-scoped MCP diagnostics")
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"isError": True, "content": []}}, {})):
             self.assertIn("did not report", mcp_diagnostics("prj_test", "token"))
 
     def test_health_claim_requires_json_object(self):

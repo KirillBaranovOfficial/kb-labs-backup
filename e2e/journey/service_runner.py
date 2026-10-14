@@ -357,36 +357,49 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
     return None
 
 
-def _decode_mcp_response(raw: bytes, content_type: str) -> dict:
-    def parse_event_stream() -> object:
-        data = "\n".join(
-            line[5:].strip() for line in raw.decode("utf-8").splitlines()
-            if line.startswith("data:")
+class JourneyResponseError(ValueError):
+    def __init__(self, call_kind: str, media_type: str, step: str, reason: str):
+        self.call_kind = call_kind
+        self.media_type = media_type
+        self.journey_step = step
+        self.reason = reason
+        shown_media_type = media_type or "<missing>"
+        super().__init__(
+            f"journey step {step!r} received media type {shown_media_type!r}, "
+            f"which is invalid for {call_kind}: {reason}"
         )
-        return json.loads(data)
 
+
+HTTP_RESPONSE_MEDIA_TYPES: dict[str, frozenset[str] | None] = {
+    "ux": frozenset({"application/json"}),
+    "mcp": frozenset({"application/json", "text/event-stream"}),
+    "raw": None,
+}
+
+
+def _decode_mcp_response(raw: bytes, content_type: str, *, step: str) -> dict:
     try:
-        if content_type.lower().startswith("text/event-stream"):
-            parsed = parse_event_stream()
-        elif content_type:
+        if content_type == "application/json":
             parsed = json.loads(raw)
         else:
-            try:
-                parsed = json.loads(raw)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                parsed = parse_event_stream()
+            data = "\n".join(
+                line[5:].strip() for line in raw.decode("utf-8").splitlines()
+                if line.startswith("data:")
+            )
+            parsed = json.loads(data)
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
-        raise ValueError("response is neither MCP JSON nor event-stream data") from error
+        raise JourneyResponseError("mcp", content_type, step, "body is not valid MCP JSON") from error
     if not isinstance(parsed, dict):
-        raise ValueError("response is not an MCP object")
+        raise JourneyResponseError("mcp", content_type, step, "body is not an MCP object")
     return parsed
 
 
 def request(path: str, *, method="GET", payload=None, token="", accept=None,
-            response_kind="ux") -> tuple[int, object, dict[str, str]]:
+            response_kind="ux", step: str | None = None) -> tuple[int, object, dict[str, str]]:
     """Build, send, and decode one HTTP exchange at its declared response boundary."""
-    if response_kind not in {"ux", "mcp", "raw"}:
+    if response_kind not in HTTP_RESPONSE_MEDIA_TYPES:
         raise ValueError(f"unsupported HTTP response kind: {response_kind}")
+    step = step or f"{method} {path}"
     if accept is None:
         accept = "application/json, text/event-stream" if response_kind == "mcp" else "application/json"
     body = json.dumps(payload).encode() if payload is not None else None
@@ -402,27 +415,35 @@ def request(path: str, *, method="GET", payload=None, token="", accept=None,
         raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
     if response_kind == "raw":
         return status, raw, response_headers
+    content_type_header = response_headers.get("Content-Type", response_headers.get("content-type", ""))
+    media_type = content_type_header.split(";", 1)[0].strip().lower()
+    allowed_media_types = HTTP_RESPONSE_MEDIA_TYPES[response_kind]
+    if allowed_media_types is not None and media_type not in allowed_media_types:
+        raise JourneyResponseError(
+            response_kind,
+            media_type,
+            step,
+            f"allowed media types are {', '.join(sorted(allowed_media_types))}",
+        )
     if response_kind == "ux":
         try:
             envelope = read_ux_http_result(raw, status)
             parsed = (decode_ux_success_result(envelope) if 200 <= status < 300
                       else decode_ux_error_result(envelope))
         except ValueError as error:
-            raise RuntimeError(f"HTTP {method} {path} did not return a UX JSON envelope: {error}") from error
+            raise JourneyResponseError("ux", media_type, step, f"body is not a UX JSON envelope: {error}") from error
         return status, parsed, response_headers
-
-    content_type = response_headers.get("Content-Type", response_headers.get("content-type", ""))
     try:
-        parsed = _decode_mcp_response(raw, content_type)
-    except ValueError as error:
-        raise RuntimeError(f"HTTP {method} {path} returned invalid MCP JSON or event-stream data") from error
+        parsed = _decode_mcp_response(raw, media_type, step=step)
+    except JourneyResponseError:
+        raise
     return status, parsed, response_headers
 
 
-def request_mcp(path: str, *, method="POST", payload=None, token="",
+def request_mcp(path: str, *, step: str, method="POST", payload=None, token="",
                 accept="application/json, text/event-stream") -> tuple[int, object, dict[str, str]]:
     return request(path, method=method, payload=payload, token=token,
-                   accept=accept, response_kind="mcp")
+                   accept=accept, response_kind="mcp", step=step)
 
 
 def request_raw(path: str, *, accept="application/json") -> tuple[int, bytes, dict[str, str]]:
@@ -762,21 +783,10 @@ def discover_workflow(project_id: str, token: str) -> str | None:
     return None
 
 
-def _mcp_response(project_id: str, token: str, payload: dict) -> tuple[int, object]:
-    status, body, _ = request(project_service_path(project_id, "mcp"), method="POST", token=token,
-                              accept="application/json, text/event-stream", payload=payload)
-    if isinstance(body, str) and any(line.startswith("data:") for line in body.splitlines()):
-        data = "\n".join(line[5:].strip() for line in body.splitlines() if line.startswith("data:"))
-        try:
-            body = json.loads(data)
-        except json.JSONDecodeError:
-            return status, None
-    return status, body
-
-
 def mcp_initialize(project_id: str, token: str) -> str | None:
     route = project_service_path(project_id, "mcp")
-    status, body = _mcp_response(project_id, token, {
+    status, body, _ = request_mcp(route, token=token, step="project-scoped MCP initialize",
+                                  accept="application/json, text/event-stream", payload={
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": "2025-03-26", "capabilities": {},
                    "clientInfo": {"name": "kb-labs-journey", "version": "1.0.0"}},
@@ -791,7 +801,8 @@ def mcp_initialize(project_id: str, token: str) -> str | None:
 
 def mcp_probe(project_id: str, token: str) -> str | None:
     route = project_service_path(project_id, "mcp")
-    status, body = _mcp_response(project_id, token, {
+    status, body, _ = request_mcp(route, token=token, step="project-scoped MCP tools/list",
+                                  accept="application/json, text/event-stream", payload={
         "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {},
     })
     if status != 200:
@@ -812,7 +823,9 @@ def mcp_probe(project_id: str, token: str) -> str | None:
 
 
 def mcp_diagnostics(project_id: str, token: str) -> str | None:
-    status, body = _mcp_response(project_id, token, {
+    status, body, _ = request_mcp(project_service_path(project_id, "mcp"), token=token,
+                                  step="project-scoped MCP diagnostics",
+                                  accept="application/json, text/event-stream", payload={
         "jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": {"name": "kb-labs__mcp_diagnostics", "arguments": {}},
     })

@@ -14,10 +14,10 @@ from service_steps import Journey
 
 
 
-def _request(*args, **kwargs):
+def _request(*args, step: str, **kwargs):
     # Import lazily because service_runner also registers these step functions.
     from service_runner import request_mcp
-    return request_mcp(*args, **kwargs)
+    return request_mcp(*args, step=step, **kwargs)
 
 
 def _ux_request(*args, **kwargs):
@@ -116,6 +116,7 @@ def _valid_error_result(body: object) -> str | None:
 def mcp_ux_result_contract(project_id: str, token: str, *, secured: bool = False) -> str | None:
     status, body, _ = _request(
         project_service_path(project_id, "mcp"), method="POST", token=token,
+        step="project MCP UX result contract tools/list",
         accept="application/json, text/event-stream",
         payload={"jsonrpc": "2.0", "id": 2030, "method": "tools/list", "params": {}},
     )
@@ -152,6 +153,7 @@ def mcp_ux_result_contract(project_id: str, token: str, *, secured: bool = False
 
         no_token_status, no_token_body, _ = _request(
             project_service_path(project_id, "mcp"), method="POST", token="",
+            step="secured project MCP UX result contract tools/list without token",
             accept="application/json, text/event-stream",
             payload={"jsonrpc": "2.0", "id": 2091, "method": "tools/list", "params": {}},
         )
@@ -170,6 +172,7 @@ def mcp_call(project_id: str, request_id: int, name: str, arguments: dict, token
         project_service_path(project_id, "mcp"),
         method="POST",
         token=token,
+        step=f"project MCP tools/call {name}",
         accept="application/json, text/event-stream",
         payload={
             "jsonrpc": "2.0",
@@ -231,6 +234,7 @@ def secured_auth(project_id: str) -> str | None:
             method="POST",
             payload={"jsonrpc": "2.0", "id": 145, "method": "tools/list", "params": {}},
             token=token,
+            step="secured project MCP tools/list token check",
             accept="application/json, text/event-stream",
         )
         if status != 401:
@@ -259,6 +263,7 @@ def secured_project_catalog_isolation(project_a: str, project_b: str, token: str
         with invocation_context(step_id="mcp.secured-catalog"):
             missing_status, missing_body, _ = _request(
                 path, method="POST", payload=payload, accept="application/json, text/event-stream",
+                step="project-scoped secured MCP tools/list without token",
             )
         envelope = missing_body.get("error") if isinstance(missing_body, dict) else None
         if (missing_status != 401 or not isinstance(envelope, dict)
@@ -273,6 +278,7 @@ def secured_project_catalog_isolation(project_a: str, project_b: str, token: str
         with invocation_context(step_id="mcp.secured-catalog"):
             status, body, _ = _request(
                 path, method="POST", token=token, payload=payload,
+                step="project-scoped secured MCP tools/list with token",
                 accept="application/json, text/event-stream",
             )
         if status != 200:
@@ -301,6 +307,7 @@ def local_auth(project_id: str) -> str | None:
         method="POST",
         payload={"jsonrpc": "2.0", "id": 454, "method": "tools/list", "params": {}},
         token="",
+        step="local project MCP tools/list",
         accept="application/json, text/event-stream",
     )
     if status != 200:
@@ -325,6 +332,7 @@ def commit_tool_schema(project_id: str, token: str) -> str | None:
         project_service_path(project_id, "mcp"),
         method="POST",
         token=token,
+        step="project Commit tool schema tools/list",
         accept="application/json, text/event-stream",
         payload={"jsonrpc": "2.0", "id": 1401, "method": "tools/list", "params": {}},
     )
@@ -380,6 +388,7 @@ def project_isolation(project_a: str, project_b: str, project_b_root: str, token
         project_service_path(project_b, "mcp"),
         method="POST",
         token=token,
+        step="project B MCP tools/list isolation",
         accept="application/json, text/event-stream",
         payload={"jsonrpc": "2.0", "id": 1405, "method": "tools/list", "params": {}},
     )
@@ -399,6 +408,7 @@ def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str)
         with invocation_context(step_id="mcp.project-catalog"):
             status, body, _ = _request(
                 project_service_path(project_id, "mcp"), method="POST", token=token,
+                step="project plugin catalog tools/list",
                 accept="application/json, text/event-stream",
                 payload={"jsonrpc": "2.0", "id": 1993, "method": "tools/list", "params": {}},
             )
@@ -424,6 +434,7 @@ def project_readonly_tool_isolation(project_a: str, project_b: str, token: str) 
     with invocation_context(step_id="mcp.project-readonly-tool"):
         status_a, body_a, _ = _request(
             project_service_path(project_a, "mcp"), method="POST", token=token,
+            step="project A read-only Commit tool call",
             accept="application/json, text/event-stream",
             payload={"jsonrpc": "2.0", "id": 1994, "method": "tools/call",
                      "params": {"name": tool_name, "arguments": {"json": True}}},
@@ -443,6 +454,7 @@ def project_readonly_tool_isolation(project_a: str, project_b: str, token: str) 
     with invocation_context(step_id="mcp.project-readonly-tool"):
         status_b, body_b, _ = _request(
             project_service_path(project_b, "mcp"), method="POST", token=token,
+            step="project B read-only Commit tool call",
             accept="application/json, text/event-stream",
             payload={"jsonrpc": "2.0", "id": 1994, "method": "tools/call",
                      "params": {"name": tool_name, "arguments": {"json": True}}},

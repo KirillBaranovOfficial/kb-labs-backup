@@ -1,4 +1,7 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type Server } from "node:http";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { errorCatalog, renderTemplate } from "@kb-labs/core-platform";
@@ -45,21 +48,26 @@ describe("registerProjectRoutes", () => {
     ], transport)).rejects.toThrow(/invalid project service id/i);
   });
 
-  async function setup(transport: (port: number) => { resolveProjectService: (projectId: string, serviceId: string) => Promise<{ baseUrl: string; pathPrefix?: string; headers: Record<string, string>; release: () => void } | undefined> }, upstreamReply?: { statusCode: number; body: string; stall?: boolean; stream?: boolean }, services = PROJECT_SERVICES, timeoutMs = 30_000) {
+  async function setup(transport: (port: number) => { resolveProjectService: (projectId: string, serviceId: string) => Promise<{ baseUrl: string; pathPrefix?: string; headers: Record<string, string>; release: () => void } | undefined> }, upstreamReply?: { statusCode: number; body: string; contentType?: string; headers?: Record<string, string>; stall?: boolean; stream?: boolean } | Array<{ statusCode: number; body: string; contentType?: string; headers?: Record<string, string>; stall?: boolean; stream?: boolean }>, services = PROJECT_SERVICES, timeoutMs = 30_000) {
     const seen: Array<{ url?: string; headers: Record<string, unknown>; body: string }> = [];
     upstream = createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on("data", (c: Buffer) => chunks.push(c));
       req.on("end", () => {
         seen.push({ url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString() });
-        if (upstreamReply?.stall) return;
-        if (upstreamReply?.stream) {
-          res.writeHead(upstreamReply.statusCode, { "content-type": "text/event-stream" });
+        const reply = Array.isArray(upstreamReply) ? upstreamReply[seen.length - 1] : upstreamReply;
+        if (reply?.stall) return;
+        if (reply?.stream) {
+          res.writeHead(reply.statusCode, { "content-type": "text/event-stream" });
           res.write("data: open\\n\\n");
           return;
         }
-        res.writeHead(upstreamReply?.statusCode ?? 202, { "x-up": "1", "content-type": "application/json" });
-        res.end(upstreamReply?.body ?? '"ok"');
+        res.writeHead(reply?.statusCode ?? 202, {
+          "x-up": "1",
+          "content-type": reply?.contentType ?? "application/json",
+          ...reply?.headers,
+        });
+        res.end(reply?.body ?? '"ok"');
       });
     });
     await new Promise<void>((resolve) => {
@@ -118,6 +126,76 @@ describe("registerProjectRoutes", () => {
 
     expect(response.statusCode).toBe(202);
     expect(seen[0]?.url).toBe("/mcp/");
+  });
+
+  it("keeps the journey MCP wire fixture in sync with bytes and headers forwarded by the project route", async () => {
+    const wireReplies = [
+      {
+        step: "initialize",
+        statusCode: 200,
+        contentType: "text/event-stream",
+        body: 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"kb-mcp","version":"1"}}}\n\n',
+      },
+      {
+        step: "tools/list",
+        statusCode: 200,
+        contentType: "application/json",
+        body: '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"kb-labs__mcp_diagnostics","inputSchema":{"type":"object"}}]}}',
+      },
+      {
+        step: "tool call",
+        statusCode: 200,
+        contentType: "text/event-stream",
+        body: 'event: message\ndata: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"loaded cleanly"}],"isError":false}}\n\n',
+      },
+      {
+        step: "error",
+        statusCode: 200,
+        contentType: "application/json",
+        body: '{"jsonrpc":"2.0","id":4,"error":{"code":-32602,"message":"Invalid params"}}',
+      },
+    ];
+    const seen = await setup((port) => ({
+      resolveProjectService: async () => ({
+        baseUrl: `http://127.0.0.1:${port}`,
+        pathPrefix: "/mcp",
+        headers: {},
+        release: () => undefined,
+      }),
+    }), wireReplies.map(({ statusCode, contentType, body }, index) => ({
+      statusCode,
+      contentType,
+      body,
+      headers: { "x-mcp-fixture": wireReplies[index]!.step },
+    })), [{ serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" }]);
+
+    const forwarded = [];
+    for (let index = 0; index < wireReplies.length; index += 1) {
+      const response = await app!.inject({
+        method: "POST",
+        url: "/api/v1/projects/prj_fixture/mcp",
+        headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
+        payload: JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "test" }),
+      });
+      forwarded.push({
+        step: wireReplies[index]!.step,
+        status: response.statusCode,
+        headers: {
+          "content-type": response.headers["content-type"],
+          "x-mcp-fixture": response.headers["x-mcp-fixture"],
+        },
+        body: response.rawPayload.toString("utf8"),
+      });
+    }
+    expect(seen).toHaveLength(wireReplies.length);
+
+    const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../e2e/journey/fixtures/project-mcp-responses.json");
+    const generated = `${JSON.stringify(forwarded, null, 2)}\n`;
+    if (process.env.KB_UPDATE_PROJECT_MCP_FIXTURE === "1") {
+      await mkdir(dirname(fixturePath), { recursive: true });
+      await writeFile(fixturePath, generated, "utf8");
+    }
+    await expect(readFile(fixturePath, "utf8")).resolves.toBe(generated);
   });
 
   // case: S-192.5
