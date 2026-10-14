@@ -1,5 +1,4 @@
-import type { ExecutionMetadata, ExecutionError } from '@kb-labs/core-contracts';
-import type { ErrorEnvelope } from '@kb-labs/core-platform';
+import type { ExecutionMetadata, ExecutionError, ErrorEnvelope } from '@kb-labs/core-platform';
 
 const NORMALIZED_RESULT: unique symbol = Symbol('normalized-execution-result');
 

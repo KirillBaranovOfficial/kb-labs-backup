@@ -204,7 +204,7 @@ describe('Error Handling', () => {
       expect(wrapped.message).toBe('Original error');
       expect(wrapped.code).toBe('KB_RUNTIME_UNEXPECTED');
       expect(wrapped.details?.originalName).toBe('Error');
-      expect(wrapped.details?.stack).toContain('Original stack');
+      expect(wrapped.stack).toContain('Original stack');
     });
 
     it('should wrap TypeError with custom code', () => {
@@ -253,8 +253,7 @@ describe('Error Handling', () => {
 
       expect(restored.message).toBe(original.message);
       expect(restored.code).toBe(original.code);
-      // name is NOT preserved - fromJSON always creates PluginError
-      expect(restored.name).toBe('PluginError');
+      expect(restored.name).toBe('PermissionError');
       expect(restored.details).toEqual(original.details);
       expect(restored.stack).toBe(original.stack);
 

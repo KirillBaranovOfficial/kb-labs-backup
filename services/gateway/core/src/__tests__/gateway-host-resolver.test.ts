@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GatewayHostResolver } from '../resolver/gateway-host-resolver.js';
-import type { ExecutionTarget } from '@kb-labs/core-contracts';
+import type { ExecutionTarget } from '@kb-labs/core-platform';
 
 // Mock fetch globally
 const originalFetch = globalThis.fetch;

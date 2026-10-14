@@ -38,9 +38,8 @@ import type {
   ExecutionDiagnostics as CoreExecutionDiagnostics,
   ExecutionErrorCode as CoreExecutionErrorCode,
   ExecutionMetadata as CoreExecutionMetadata,
-  HealthStatus as CoreHealthStatus,
-  ExecutionStats as CoreExecutionStats,
-} from '@kb-labs/core-contracts';
+} from '@kb-labs/core-platform';
+import type { HealthStatus as CoreHealthStatus, ExecutionStats as CoreExecutionStats } from '@kb-labs/core-contracts';
 import type { NormalizedExecutionFailure, NormalizedExecutionResult } from './normalized-result.js';
 
 // Re-export runtime types for convenience (consumers use these, not custom types)
@@ -458,7 +457,7 @@ export interface RemoteOptions {
    * Example: GatewayDispatchTransport from @kb-labs/gateway-core.
    */
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  transport: import('@kb-labs/core-contracts').IExecutionTransport;
+  transport: import('@kb-labs/core-platform').IExecutionTransport;
 
   /**
    * Absolute path on host that maps to /workspace inside container.

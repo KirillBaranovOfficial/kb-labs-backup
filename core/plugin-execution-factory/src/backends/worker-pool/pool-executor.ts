@@ -112,7 +112,7 @@ export class PoolExecutor {
 
       return {
         ok: false,
-        ...normalizeExecutionFailure(error),
+        ...normalizeExecutionFailure(error, request),
         executionTimeMs: performance.now() - startTime,
         metadata: {
           workerId: worker.id,

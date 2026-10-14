@@ -274,7 +274,7 @@ export class InProcessBackend implements RawExecutionBackend {
 
       return {
         ok: false,
-        ...normalizeExecutionFailure(error),
+        ...normalizeExecutionFailure(error, request),
         executionTimeMs,
         metadata: {
           backend: 'in-process',

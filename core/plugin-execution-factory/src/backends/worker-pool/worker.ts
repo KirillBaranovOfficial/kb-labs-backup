@@ -29,7 +29,8 @@ interface WithMiddlewareDecls {
 import type { ExecutionRequest, ExecutionResult, PlatformTransportFactory, PlatformTransportServer } from '../../types.js';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { InteractiveInputRequiredError } from '@kb-labs/plugin-contracts';
-import { serializeCataloguedError, rebuildCataloguedError } from './error-codec.js';
+import { serializeError, SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { serializeCataloguedError } from './error-codec.js';
 import { WorkerCrashedError, TimeoutError } from '../../errors.js';
 
 /**
@@ -158,7 +159,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
   // Pending request tracking
   private pendingRequests = new Map<string, {
     resolve: (result: ExecutionResult) => void;
-    reject: (error: Error) => void;
+    reject: (error: unknown) => void;
     timeoutId: ReturnType<typeof setTimeout>;
     onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
@@ -616,19 +617,13 @@ export class Worker extends EventEmitter<WorkerEvents> {
         const pending = this.pendingRequests.get(msg.requestId);
         if (pending) {
           if (msg.error.cataloguedError) {
-            const error = rebuildCataloguedError(msg.error.cataloguedError);
-            error.stack = msg.error.stack;
-            pending.reject(error);
+            pending.reject(new SerializedErrorEnvelopeError(
+              msg.error.cataloguedError,
+              msg.error.serializedError,
+            ));
             break;
           }
-          const error = new Error(msg.error.message);
-          Object.assign(error, {
-            code: msg.error.code,
-            hint: msg.error.hint,
-            cause: msg.error.cause,
-          });
-          error.stack = msg.error.stack;
-          pending.reject(error);
+          pending.reject(msg.error.serializedError);
         }
         break;
       }
@@ -674,6 +669,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
               promptId: msg.promptId,
               value: undefined,
               error: serializedError,
+              serializedError: serializeError(error),
             };
             proc.send(result);
           });
@@ -687,6 +683,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
             promptId: msg.promptId,
             value: undefined,
             error: serializeCataloguedError(error),
+            serializedError: serializeError(error),
           };
           this.process.send(result);
         }

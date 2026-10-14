@@ -5,6 +5,10 @@
  */
 
 import type { ErrorCode as PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
+import {
+  serializeError,
+  type SerializedError,
+} from '@kb-labs/core-platform';
 
 /**
  * Base plugin error class
@@ -40,22 +44,23 @@ export class PluginError extends Error {
   /**
    * Convert to JSON-serializable object (for IPC)
    */
-  toJSON(): SerializedError {
+  toJSON(): SerializedPluginError {
     return {
+      ...serializeError(this),
       name: this.name,
       message: this.message,
       code: this.code,
       details: this.details,
       hint: this.hint,
-      stack: this.stack,
     };
   }
 
   /**
    * Create from serialized error (from IPC)
    */
-  static fromJSON(data: SerializedError): PluginError {
+  static fromJSON(data: SerializedPluginError): PluginError {
     const error = new PluginError(data.message, data.code, data.details, data.hint);
+    error.name = data.name;
     error.stack = data.stack;
     return error;
   }
@@ -151,14 +156,11 @@ export class PlatformError extends PluginError {
 /**
  * Serialized error for IPC transport
  */
-export interface SerializedError {
-  name: string;
-  message: string;
+export type SerializedPluginError = SerializedError & {
   code: ErrorCode;
   details?: Record<string, string>;
   hint?: string;
-  stack?: string;
-}
+};
 
 /**
  * Check if an error is a PluginError
@@ -176,10 +178,11 @@ export function wrapError(error: unknown, defaultCode: ErrorCode = 'KB_RUNTIME_U
   }
 
   if (error instanceof Error) {
-    return new PluginError(error.message, defaultCode, {
-      originalName: error.name,
-      ...(error.stack ? { stack: error.stack } : {}),
-    });
+    const wrapped = new PluginError(error.message, defaultCode, { originalName: error.name });
+    wrapped.name = error.name;
+    wrapped.stack = error.stack;
+    Object.defineProperty(wrapped, 'cause', { value: error, configurable: true });
+    return wrapped;
   }
 
   return new PluginError(String(error), defaultCode);

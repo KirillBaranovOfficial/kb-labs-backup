@@ -10,7 +10,7 @@ import type { WorkerPoolConfig, UIPromptMessage } from './types.js';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { Worker } from './worker.js';
 import type { ExecutionRequest, ExecutionResult, PlatformTransportFactory } from '../../types.js';
-import { QueueFullError } from '../../errors.js';
+import { AbortError, QueueFullError } from '../../errors.js';
 import { normalizeExecutionFailure } from '../../utils.js';
 
 // Modular components
@@ -160,7 +160,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
     if (this.lifecycleManager.isShuttingDownState()) {
       return {
         ok: false,
-        error: { message: 'Pool is shutting down', code: 'ABORTED' },
+        ...normalizeExecutionFailure(new AbortError('Pool is shutting down')),
         executionTimeMs: 0,
       };
     }
@@ -188,7 +188,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
     if (options?.signal?.aborted) {
       return {
         ok: false,
-        error: { message: 'Request aborted', code: 'ABORTED' },
+        ...normalizeExecutionFailure(new AbortError('Request aborted')),
         executionTimeMs: performance.now() - startTime,
       };
     }

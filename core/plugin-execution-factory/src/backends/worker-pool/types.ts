@@ -6,6 +6,8 @@
  */
 
 import type { ExecutionRequest, ExecutionResult } from '../../types.js';
+import type { SerializedError } from '@kb-labs/core-platform';
+import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
 import type { SerializedCataloguedError } from './error-codec.js';
 
@@ -173,13 +175,13 @@ export interface ErrorMessage extends BaseWorkerMessage {
   type: 'error';
   requestId: string;
   error: {
+    serializedError: SerializedError;
     message: string;
     code?: string;
     hint?: string;
     cause?: string;
     details?: Record<string, string>;
     cataloguedError?: SerializedCataloguedError;
-    stack?: string;
   };
 }
 
@@ -270,12 +272,19 @@ export interface UIPromptMessage extends BaseWorkerMessage {
 /**
  * Interactive UI prompt result (Pool -> Worker).
  */
-export interface UIPromptResultMessage extends BaseWorkerMessage {
+export type UIPromptResultMessage = BaseWorkerMessage & ({
   type: 'uiPromptResult';
   promptId: string;
   value: unknown;
-  error?: SerializedCataloguedError;
-}
+  error?: never;
+  serializedError?: never;
+} | {
+  type: 'uiPromptResult';
+  promptId: string;
+  value: undefined;
+  error: ErrorEnvelope;
+  serializedError: SerializedError;
+});
 
 /**
  * Adapter middleware declarations (Pool -> Worker).

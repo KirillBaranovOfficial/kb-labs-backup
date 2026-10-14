@@ -14,5 +14,5 @@ Live log data stays in the platform logging adapters:
 
 Transport between processes is implemented by `core/ipc`. Remote plugin
 execution uses the `IExecutionTransport` contract from
-`core/contracts/src/execution-transport.ts`, with gateway dispatch wiring in
+`core/platform/src/error-envelope/execution-transport.ts`, with gateway dispatch wiring in
 `core/plugin-execution-factory`.

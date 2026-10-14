@@ -1,5 +1,5 @@
 /**
- * @module @kb-labs/core-contracts
+ * @module @kb-labs/core-platform/error-envelope
  *
  * Host resolution abstraction for execution routing.
  *

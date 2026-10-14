@@ -25,6 +25,7 @@ import { noopUI } from '@kb-labs/plugin-contracts';
 import { WorkerPool } from './pool.js';
 import type { WorkerPoolConfig } from './types.js';
 import { resolveExecutionTarget } from '../../target-resolver.js';
+import { normalizeExecutionFailure } from '../../utils.js';
 
 // When bundled by tsup into dist/index.js, import.meta.url points to dist/index.js.
 // worker-script.ts is emitted as a separate entry at dist/backends/worker-pool/worker-script.js.
@@ -226,10 +227,7 @@ export class WorkerPoolBackend implements RawExecutionBackend {
 
       return {
         ok: false,
-        error: {
-          message: error instanceof Error ? error.message : String(error),
-          code: 'UNKNOWN_ERROR',
-        },
+        ...normalizeExecutionFailure(error, request),
         executionTimeMs,
         metadata: {
           backend: 'worker-pool',

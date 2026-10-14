@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdapterUnavailableError, resolveCliGatewayTarget } from '@kb-labs/core-platform';
+import type { ILogger } from '@kb-labs/core-platform';
 import * as pluginContracts from '@kb-labs/plugin-contracts';
+import { registry, registerBuiltinCommands, resolveCliHandlerPath } from '@kb-labs/cli-commands';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
+import { fileURLToPath } from 'node:url';
 
 const { executeCommandV3, resolveActiveGateway } = vi.hoisted(() => ({ executeCommandV3: vi.fn(), resolveActiveGateway: vi.fn() }));
 vi.mock('@kb-labs/cli-runtime/v3', () => ({ executeCommandV3 }));
@@ -173,4 +176,69 @@ describe('plugin executor adapter errors', () => {
       executeCommandV3.mockReset();
     }
   });
+
+  it('routes every registered bundled V3 handler through the execution runtime entry point', async () => {
+    executeCommandV3.mockResolvedValue(0);
+    const workspaceRoot = fileURLToPath(new URL('../../../..', import.meta.url));
+    await registerBuiltinCommands({
+      cwd: workspaceRoot,
+      platformRoot: workspaceRoot,
+      projectRoot: workspaceRoot,
+      logger: {
+        trace() {},
+        debug() {},
+        info() {},
+        warn() {},
+        error() {},
+        fatal() {},
+        child: () => noopLogger,
+      } satisfies ILogger,
+    });
+
+    const handlers = registry.listCommands().flatMap((registered) => {
+      const manifest = registered.manifest.v3Manifest;
+      const commandPath = registered.manifest.segments.join(' ');
+      const handler = manifest?.cli?.commands?.find((command) => command.path === commandPath);
+      return handler ? [{ registered, commandPath, handler }] : [];
+    });
+    expect(handlers.length).toBeGreaterThan(0);
+
+    const platform = {
+      getSocketPath: () => '/tmp/plugin-execution-registry.sock',
+      getAdapter: () => undefined,
+    } as unknown as Parameters<typeof executePlugin>[0]['platform'];
+    const context = {
+      cwd: workspaceRoot,
+      presenter: {},
+    } as Parameters<typeof executePlugin>[0]['context'];
+
+    for (const { registered, commandPath, handler } of handlers) {
+      const exitCode = await executePlugin({
+        context,
+        commandId: commandPath.replaceAll(' ', ':'),
+        argv: [],
+        flags: {},
+        manifestCmd: registered,
+        platformRoot: workspaceRoot,
+        platform,
+      });
+      expect(exitCode, `${registered.packageName} ${commandPath}`).toBe(0);
+      expect(executeCommandV3).toHaveBeenLastCalledWith(expect.objectContaining({
+        pluginRoot: registered.pkgRoot,
+        handlerPath: resolveCliHandlerPath(registered.pkgRoot!, handler.handler),
+      }));
+    }
+
+    expect(executeCommandV3).toHaveBeenCalledTimes(handlers.length);
+  });
 });
+
+const noopLogger: ILogger = {
+  trace() {},
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+  fatal() {},
+  child: () => noopLogger,
+};

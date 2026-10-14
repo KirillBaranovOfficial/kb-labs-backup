@@ -7,7 +7,7 @@
 import type { QueuedRequest, UIPromptMessage, WorkerPoolConfig } from './types.js';
 import type { ExecutionRequest, ExecutionResult } from '../../types.js';
 import type { Worker } from './worker.js';
-import { AcquireTimeoutError } from '../../errors.js';
+import { AbortError, AcquireTimeoutError } from '../../errors.js';
 import { normalizeExecutionFailure } from '../../utils.js';
 
 /**
@@ -117,7 +117,7 @@ export class PoolQueueManager {
         }
         resolve({
           ok: false,
-          error: { message: 'Request aborted', code: 'ABORTED' },
+          ...normalizeExecutionFailure(new AbortError('Request aborted')),
           executionTimeMs: performance.now() - startTime,
         });
       };
@@ -127,7 +127,7 @@ export class PoolQueueManager {
           clearTimeout(acquireTimeout);
           resolve({
             ok: false,
-            error: { message: 'Request aborted', code: 'ABORTED' },
+            ...normalizeExecutionFailure(new AbortError('Request aborted')),
             executionTimeMs: performance.now() - startTime,
           });
           return;
@@ -186,7 +186,7 @@ export class PoolQueueManager {
       if (queued.signal?.aborted) {
         queued.resolve({
           ok: false,
-          error: { message: 'Request aborted', code: 'ABORTED' },
+          ...normalizeExecutionFailure(new AbortError('Request aborted')),
           executionTimeMs: 0,
         });
         continue;

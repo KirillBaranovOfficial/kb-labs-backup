@@ -63,7 +63,7 @@ import type {
 } from '../types.js';
 import type { PlatformServices, UIFacade } from '@kb-labs/plugin-contracts';
 import { noopUI } from '@kb-labs/plugin-contracts';
-import type { ISubprocessRunner } from '@kb-labs/core-contracts';
+import type { ISubprocessRunner } from '@kb-labs/core-platform';
 import type { UnixSocketServerConfig } from '@kb-labs/core-ipc';
 import { localWorkspaceManager } from '../workspace/local.js';
 import type { WorkspaceLease } from '../workspace/types.js';
@@ -401,7 +401,7 @@ export class SubprocessBackend implements RawExecutionBackend {
 
       return {
         ok: false,
-        ...normalizeExecutionFailure(error),
+        ...normalizeExecutionFailure(error, request),
         executionTimeMs,
         metadata: {
           backend: 'subprocess',

@@ -137,7 +137,11 @@ describe('normalizePluginHandlerFailure', () => {
     const serialized = JSON.stringify(records[0]);
     expect(serialized).not.toContain(secret);
     expect((records[0]!.error as Error).message).toContain('[REDACTED]');
-    expect(((records[0]!.error as Error).cause as { token: string }).token).toBe('[REDACTED]');
+    expect(records[0]!.serializedError).toMatchObject({
+      name: 'Error',
+      message: `provider rejected [REDACTED]`,
+      cause: { name: 'NonErrorThrown', message: '[object Object]' },
+    });
   });
 
   it('redacts process secrets from a typed envelope returned to the caller', () => {

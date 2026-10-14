@@ -23,8 +23,8 @@ import type {
   UIPromptResultMessage,
   SerializedCataloguedError,
 } from './types.js';
-import { ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
-import { serializeCataloguedError, rebuildCataloguedError } from './error-codec.js';
+import { ErrorEnvelopeError, serializeError, SerializedErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
+import { serializeCataloguedError } from './error-codec.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
 import type { ITransport } from '@kb-labs/core-ipc';
@@ -64,7 +64,7 @@ async function ipcPrompt(
     pendingPrompts.set(promptId, (result) => {
       clearTimeout(timer);
       if (result.error) {
-        reject(rebuildCataloguedError(result.error));
+        reject(new SerializedErrorEnvelopeError(result.error, result.serializedError));
         return;
       }
       resolve(result.value);
@@ -193,6 +193,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
       sendError(requestId, {
         message: `Handler not found: ${handlerPath}`,
         code: 'HANDLER_NOT_FOUND',
+        serializedError: serializeError(new Error(`Handler not found: ${handlerPath}`)),
       });
       return;
     }
@@ -326,7 +327,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
       cause: cataloguedError.cause,
       details: cataloguedError.details,
       cataloguedError,
-      stack: error instanceof Error ? error.stack : undefined,
+      serializedError: serializeError(error),
     });
   }
 }
@@ -346,7 +347,7 @@ function handleMiddlewares(message: MiddlewaresInitMessage): void {
  */
 function sendError(
   requestId: string,
-  error: { message: string; code?: string; hint?: string; cause?: string; details?: Record<string, string>; cataloguedError?: SerializedCataloguedError; stack?: string }
+  error: { message: string; code?: string; hint?: string; cause?: string; details?: Record<string, string>; cataloguedError?: SerializedCataloguedError; serializedError: import('@kb-labs/core-platform').SerializedError }
 ): void {
   process.send!({ type: 'error', requestId, error } as ErrorMessage);
 }

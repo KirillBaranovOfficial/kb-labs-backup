@@ -33,6 +33,7 @@ process.on('message', (message) => {
         cause: message.error.cause,
         details: message.error.details,
         cataloguedError: message.error,
+        serializedError: message.serializedError,
       },
     });
     return;

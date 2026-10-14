@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createIsolatedExecutionBackend } from '../isolated-backend.js';
-import type { IHostResolver, HostResolution, IExecutionTransport } from '@kb-labs/core-contracts';
+import type { IHostResolver, HostResolution, IExecutionTransport } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '../types.js';
 
 function makeLocalBackend() {

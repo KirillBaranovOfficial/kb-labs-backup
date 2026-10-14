@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { RemoteBackend } from '../backends/remote.js';
-import type { IExecutionTransport, TransportExecutionResult } from '@kb-labs/core-contracts';
+import type { IExecutionTransport, TransportExecutionResult } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '../types.js';
 
 // Minimal valid ExecutionRequest for testing

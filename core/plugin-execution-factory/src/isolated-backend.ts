@@ -12,17 +12,18 @@
  * All provisioning (workspace, environment, cleanup) is handled here.
  *
  * Layer discipline:
- *   core-contracts  ← IExecutionTransport (interface)
+ *   core-platform   ← IExecutionTransport (interface)
  *   this file       ← StrictIsolationOptions + createIsolatedExecutionBackend()
  *   gateway-core    ← GatewayDispatchTransport (implements IExecutionTransport)
  *   loader.ts       ← wires transport + provisionEnvironment into StrictIsolationOptions
  */
 
-import type { IExecutionTransport, IHostResolver } from '@kb-labs/core-contracts';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import type { IExecutionTransport, IHostResolver } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { BackendOptions, ExecutionBackend, ExecutionRequest, ExecuteOptions, ExecutionResult, RawExecutionBackend } from './types.js';
 import { RemoteBackend } from './backends/remote.js';
 import { createExecutionBackend, createNormalizedExecutionBackend } from './factory.js';
+import { normalizeExecutionFailure } from './utils.js';
 
 /**
  * Per-job context for both container provisioning and transport creation.
@@ -182,7 +183,7 @@ function buildRoutingBackend(
           });
           const result: ExecutionResult = {
             ok: false,
-            error: envelope,
+            error: normalizeExecutionFailure(new ErrorEnvelopeError(envelope)).error,
             executionTimeMs: 0,
           };
           return result;

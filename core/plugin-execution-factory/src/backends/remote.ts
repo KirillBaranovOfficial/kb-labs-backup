@@ -22,7 +22,7 @@ import type {
   HealthStatus,
   ExecutionStats,
 } from '../types.js';
-import type { IExecutionTransport } from '@kb-labs/core-contracts';
+import type { IExecutionTransport } from '@kb-labs/core-platform';
 import { normalizeExecutionFailure } from '../utils.js';
 
 export interface RemoteBackendOptions {

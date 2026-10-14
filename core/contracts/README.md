@@ -28,7 +28,7 @@ const result = await gateway.call({
 Contract for spawning and managing subprocess workers:
 
 ```typescript
-import type { ISubprocessRunner } from '@kb-labs/core-contracts';
+import type { ISubprocessRunner } from '@kb-labs/core-platform';
 
 const runner: ISubprocessRunner = {
   spawn(options): ChildProcess { ... },
@@ -119,14 +119,13 @@ Onboarding rule:
 
 | Type | Description |
 |------|-------------|
-| `ExecutionRequest` | What gets sent to a backend (pluginId, handlerId, input, context) |
 | `ExecutionRequestMeta` | Metadata attached to a request (traceId, tenantId, priority) |
-| `ExecutionResponse` | What backends return (output, duration, error) |
-| `ExecutionError` | Structured error with code, message, retryable flag |
 | `HealthStatus` | Backend health check response |
 | `ExecutionStats` | Runtime metrics (queue depth, active requests) |
 | `VectorQuery` / `VectorSearchResult` | Vector store RPC shapes |
 | `LLMOptions` / `LLMResponse` | LLM adapter RPC shapes |
+
+Execution request/response, subprocess runner, host resolver, and transport contracts are owned by `@kb-labs/core-platform`; import them from that package.
 
 ## License
 

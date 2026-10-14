@@ -1,3 +1,5 @@
+import type { SerializedPluginError } from './errors.js';
+
 /**
  * Execution metadata and results for plugin execution.
  */
@@ -42,12 +44,7 @@ export interface RunResult<T> {
   data?: T;
 
   /** Error (if failed) */
-  error?: {
-    name: string;
-    message: string;
-    code?: string;
-    stack?: string;
-  };
+  error?: SerializedPluginError;
 
   /** Execution metadata */
   executionMeta: ExecutionMeta;

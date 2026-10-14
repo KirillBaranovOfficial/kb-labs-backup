@@ -297,7 +297,7 @@ interface RemoteExecutionStream {
 
 ### Текущая реализация
 
-Локальное выполнение использует `LocalBackend` и не требует транспортного адаптера. Удалённое выполнение принимает `IExecutionTransport` через параметры фабрики `core/plugin-execution-factory`; production-путь строит `GatewayDispatchTransport` в gateway. Контракт находится в `core/contracts/src/execution-transport.ts`. Поддерживаемого `executionTransport` ключа в конфигурации платформы нет.
+Локальное выполнение использует `LocalBackend` и не требует транспортного адаптера. Удалённое выполнение принимает `IExecutionTransport` через параметры фабрики `core/plugin-execution-factory`; production-путь строит `GatewayDispatchTransport` в gateway. Контракт находится в `core/platform/src/error-envelope/execution-transport.ts`. Поддерживаемого `executionTransport` ключа в конфигурации платформы нет.
 
 ---
 

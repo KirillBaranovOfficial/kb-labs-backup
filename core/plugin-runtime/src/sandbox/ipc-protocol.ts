@@ -4,7 +4,7 @@
  * Defines message types between parent and child process.
  */
 
-import type { PluginContextDescriptor, SerializedError } from '@kb-labs/plugin-contracts';
+import type { PluginContextDescriptor, SerializedPluginError } from '@kb-labs/plugin-contracts';
 
 /**
  * Message from parent to child: Execute handler
@@ -47,7 +47,7 @@ export interface ResultMessage {
  */
 export interface ErrorMessage {
   type: 'error';
-  error: SerializedError;
+  error: SerializedPluginError;
 }
 
 /**

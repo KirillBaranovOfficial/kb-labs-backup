@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
-import { createErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, serializeError, type ILogger } from '@kb-labs/core-platform';
 import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory';
 import { mountRoutes } from '../route-mounter.js';
 import type { ExecutionBackend, ExecutionResult } from '../../types.js';
@@ -47,7 +47,7 @@ it('returns a shared safe error envelope for plugin REST failures', async () => 
   });
   await mountRoutes(server, manifest, { ...options, backend: backendReturning({
     ok: false,
-    error: envelope,
+    error: { ...envelope, error: serializeError(new Error('The request is invalid.')) },
     executionTimeMs: 1,
   }) });
 

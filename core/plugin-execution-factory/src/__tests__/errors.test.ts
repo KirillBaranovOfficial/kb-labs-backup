@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AdapterCredentialsMissingError } from '@kb-labs/core-platform';
+import { AdapterCredentialsMissingError, serializeError } from '@kb-labs/core-platform';
 import { normalizeError } from '../utils.js';
 import {
   ExecutionLayerError,
@@ -68,13 +68,13 @@ describe('ExecutionLayerError', () => {
     expect(err.details).toEqual({ field: 'name' });
   });
 
-  it('toJSON() returns ExecutionError shape', () => {
+  it('uses the platform serialized error contract', () => {
     const err = new ExecutionLayerError('fail', 'TIMEOUT', { ms: 5000 });
-    const json = err.toJSON();
-    expect(json.message).toBe('fail');
-    expect(json.code).toBe('TIMEOUT');
-    expect(json.details).toEqual({ ms: 5000 });
-    expect(json).not.toHaveProperty('stack');
+    expect(serializeError(err)).toMatchObject({
+      name: 'ExecutionLayerError',
+      message: 'fail',
+      stack: expect.any(String),
+    });
   });
 });
 

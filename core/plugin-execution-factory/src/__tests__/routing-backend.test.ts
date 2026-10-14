@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createExecutionBackend } from '../factory.js';
-import type { IExecutionTransport } from '@kb-labs/core-contracts';
+import type { IExecutionTransport } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '../types.js';
 
 const platform = {

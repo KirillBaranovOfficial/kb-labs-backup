@@ -1,5 +1,5 @@
 /**
- * @module @kb-labs/core-contracts
+ * @module @kb-labs/core-platform/error-envelope
  *
  * IExecutionTransport — abstraction for sending plugin execution requests
  * to a remote runtime server.
