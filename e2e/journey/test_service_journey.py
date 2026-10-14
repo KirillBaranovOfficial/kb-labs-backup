@@ -1460,8 +1460,8 @@ raise SystemExit(1)
             root = Path(directory)
             crashing_runner = root / "crashing_runner.py"
             crashing_runner.write_text('def main():\n    raise RuntimeError("simulated run crash")\n')
-            stderr = io.StringIO()
-            with patch.dict(os.environ, {"HOME": str(root)}), redirect_stderr(stderr):
+            stdout = io.StringIO()
+            with patch.dict(os.environ, {"HOME": str(root)}), redirect_stdout(stdout):
                 status = run_runner(crashing_runner, root / "journey-summary.md", "local")
             result = load_results(root)[0]
             self.assertEqual(status, 1)
@@ -1470,7 +1470,7 @@ raise SystemExit(1)
             diagnostics = (root / "journey-diagnostics.log").read_text()
             self.assertIn("Traceback (most recent call last)", diagnostics)
             self.assertIn("RuntimeError: simulated run crash", diagnostics)
-            self.assertIn("Journey runner crashed: RuntimeError: simulated run crash", stderr.getvalue())
+            self.assertIn("Journey runner crashed: RuntimeError: simulated run crash", stdout.getvalue())
 
     def test_secured_release_admin_signs_in_without_unneeded_platform_config(self):
         with tempfile.TemporaryDirectory() as directory:

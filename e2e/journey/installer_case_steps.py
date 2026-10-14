@@ -326,6 +326,17 @@ def _payload(result: CompletedProcess, label: str) -> tuple[dict, dict]:
     return envelope, data if isinstance(data, dict) else {}
 
 
+def _fixture_contains_secret_material(root: Path) -> bool:
+    markers = ("fixture-secret-value", "fixture.required=value")
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        with path.open("r", encoding="utf-8", errors="replace") as source:
+            if any(marker in line for line in source for marker in markers):
+                return True
+    return False
+
+
 def _diagnostic(result: CompletedProcess, label: str) -> tuple[dict, dict]:
     envelope, error = _payload(result, label)
     if result.returncode == 0 or not isinstance(error, dict):
@@ -1989,9 +2000,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             if not isinstance(payload.get("installation"), dict):
                 raise RuntimeError("doctor unhealthy result omitted its structured installation report")
             if secret:
-                fixture_text = result.stdout + "".join(
-                    path.read_text(errors="replace") for path in root.rglob("*") if path.is_file())
-                if any(value in fixture_text for value in ("fixture-secret-value", "fixture.required=value")):
+                if _fixture_contains_secret_material(root) or any(
+                        value in result.stdout for value in ("fixture-secret-value", "fixture.required=value")):
                     raise RuntimeError("doctor output or isolated files serialized secret material or its value assignment")
 
     journey.step("diagnose a missing required non-secret config value", "platform.install", lambda: doctor_finding(), cases=["S-025.1"])
