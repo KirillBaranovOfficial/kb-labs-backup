@@ -927,32 +927,9 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 					}
 					stages++
 					stage := filepath.Join(root, "versions", entry.Name())
-					for _, projection := range contracts.SharedRuntimeProjections() {
-						path := filepath.Join(stage, filepath.FromSlash(projection.PlatformPath))
-						info, statErr := os.Lstat(path)
-						if os.IsNotExist(statErr) {
-							continue
-						}
-						if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-							stageLayout, layoutErr := versionroot.New(root)
-							if layoutErr == nil {
-								sharedPath, sharedErr := stageLayout.SharedRuntimePath(projection.PlatformPath)
-								sharedTarget, targetErr := filepath.EvalSymlinks(sharedPath)
-								projectionTarget, projectionErr := filepath.EvalSymlinks(path)
-								if sharedErr == nil && targetErr == nil && projectionErr == nil && projectionTarget == sharedTarget {
-									continue
-								}
-							}
-						}
-						{
-							mode := ""
-							if info != nil {
-								mode = info.Mode().String()
-							}
-							stageProjectionFailure = fmt.Sprintf("download %s: %s exists in staged version %s (mode=%s lstat=%v)",
-								name, projection.PlatformPath, stage, mode, statErr)
-							break
-						}
+					if err := versionroot.ValidateNoSharedRuntimeProjectionEntries(stage); err != nil {
+						stageProjectionFailure = fmt.Sprintf("download %s: %v in %s", name, err, stage)
+						break
 					}
 				}
 				if stages == 0 {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import fnmatch
 import subprocess
 import shlex
 import tempfile
@@ -106,22 +107,48 @@ def layout_owned_path_literals(source: str, layout: dict) -> list[str]:
     return violations
 
 
+def journey_layout_path_violations(journey_root: Path, layout: dict, owner_module: Path) -> list[str]:
+    """Scan every non-test journey module outside the installed-fixture owner."""
+    owner = owner_module.resolve()
+    violations = []
+    for source_path in sorted(Path(journey_root).rglob("*.py")):
+        if not source_path.is_file() or source_path.resolve() == owner:
+            continue
+        if fnmatch.fnmatchcase(source_path.name, "test_*.py"):
+            continue
+        relative = source_path.relative_to(journey_root)
+        for violation in layout_owned_path_literals(source_path.read_text(), layout):
+            violations.append(f"{relative}:{violation}")
+    return violations
+
+
 class InstallerCaseStepsTest(unittest.TestCase):
     def test_journey_steps_resolve_layout_paths_by_identity(self):
         journey_root = Path(__file__).parents[2]
         layout = json.loads((journey_root / "tools/kb-create/v2/contracts/platform-layout.json").read_text())
-        violations = []
-        for source_path in sorted((journey_root / "e2e/journey").glob("*.py")):
-            if source_path.name.startswith("test_") or source_path.name == "installed_fixture.py":
-                continue
-            for violation in layout_owned_path_literals(source_path.read_text(), layout):
-                violations.append(f"{source_path.name}:{violation}")
+        journey_modules = journey_root / "e2e/journey"
+        violations = journey_layout_path_violations(
+            journey_modules, layout, journey_modules / "installed_fixture.py")
         self.assertEqual(violations, [])
 
-        owned_literal = layout["sharedRuntimePaths"][0]["statePath"]
-        mutation = f"def step(root):\n    return root / {owned_literal!r}\n"
-        self.assertTrue(layout_owned_path_literals(mutation, layout),
-                        "a layout-owned relative path literal in an ordinary step module must make the rail red")
+        owned_literals = sorted({projection["statePath"] for projection in layout["sharedRuntimePaths"]})
+        with tempfile.TemporaryDirectory(prefix="journey-layout-rail-") as temp:
+            module_root = Path(temp) / "journey"
+            nested_steps = module_root / "steps"
+            nested_steps.mkdir(parents=True)
+            owner_module = module_root / "installed_fixture.py"
+            mutation_source = "\n".join(f"OWNED_PATH = {value!r}" for value in owned_literals) + "\n"
+            owner_module.write_text(mutation_source)
+            (module_root / "test_probe.py").write_text(mutation_source)
+            clean_step = nested_steps / "clean.py"
+            clean_step.write_text("def step(root):\n    return root\n")
+            self.assertEqual(journey_layout_path_violations(module_root, layout, owner_module), [])
+            mutated_step = nested_steps / "new_layout_probe.py"
+            mutated_step.write_text(mutation_source)
+            nested_violations = journey_layout_path_violations(module_root, layout, owner_module)
+            self.assertEqual(len(nested_violations), len(owned_literals))
+            self.assertIn("steps/new_layout_probe.py", nested_violations[0])
+
         joined_mutation = "def step(root):\n    return root / \"state\" / \"cache\"\n"
         self.assertTrue(layout_owned_path_literals(joined_mutation, layout),
                         "slash-joined Path segments that form a layout path must make the rail red")
