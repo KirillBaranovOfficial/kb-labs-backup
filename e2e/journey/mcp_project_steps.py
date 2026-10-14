@@ -16,6 +16,12 @@ from service_steps import Journey
 
 def _request(*args, **kwargs):
     # Import lazily because service_runner also registers these step functions.
+    from service_runner import request_mcp
+    return request_mcp(*args, **kwargs)
+
+
+def _ux_request(*args, **kwargs):
+    # Agent-session REST routes use the platform UX envelope, unlike MCP RPC.
     from service_runner import request
     return request(*args, **kwargs)
 
@@ -172,12 +178,6 @@ def mcp_call(project_id: str, request_id: int, name: str, arguments: dict, token
             "params": {"name": name, "arguments": arguments},
         },
     )
-    if isinstance(body, str) and any(line.startswith("data:") for line in body.splitlines()):
-        data = "\n".join(line[5:].strip() for line in body.splitlines() if line.startswith("data:"))
-        try:
-            body = json.loads(data)
-        except json.JSONDecodeError:
-            return status, None
     return status, body
 
 
@@ -461,7 +461,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
     def create() -> str | None:
         nonlocal session_id
         with invocation_context(step_id="S-141.1"):
-            status, body, _ = _request(
+            status, body, _ = _ux_request(
                 base, method="POST", token=token,
                 payload={"agentId": agent_id, "task": "Summarize the project"},
             )
@@ -485,7 +485,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
         if not session_id:
             return "agent session list cannot run because session creation failed"
         with invocation_context(step_id="S-141.2"):
-            status, body, _ = _request(base, token=token)
+            status, body, _ = _ux_request(base, token=token)
         data = body.get("data", body) if isinstance(body, dict) else {}
         rows = data.get("sessions", []) if isinstance(data, dict) else []
         total = data.get("total", 0) if isinstance(data, dict) else 0
@@ -504,7 +504,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
             return "agent session inspection cannot run because session creation failed"
         for suffix, description in (("", "detail"), ("/turns", "turn history"), ("/plan", "plan")):
             with invocation_context(step_id="S-141.3"):
-                status, body, _ = _request(f"{base}/{session_id}{suffix}", token=token)
+                status, body, _ = _ux_request(f"{base}/{session_id}{suffix}", token=token)
             data = body.get("data", body) if isinstance(body, dict) else {}
             if status != 200 or not isinstance(data, dict):
                 return f"agent session {description} returned HTTP {status} or no object"
@@ -525,7 +525,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
     def unknown_session() -> str | None:
         missing_id = "session-does-not-exist"
         with invocation_context(step_id="S-141.4"):
-            status, body, _ = _request(f"{base}/{missing_id}", token=token)
+            status, body, _ = _ux_request(f"{base}/{missing_id}", token=token)
         rendered = json.dumps(body, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
         if status != 404 or missing_id not in rendered:
             return "unknown agent session response did not return not found naming the session ID"
@@ -537,7 +537,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
 
     def unknown_agent() -> str | None:
         with invocation_context(step_id="S-141.5"):
-            status, body, _ = _request(
+            status, body, _ = _ux_request(
                 base, method="POST", token=token,
                 payload={"agentId": "agent-does-not-exist", "task": "Summarize the project"},
             )
@@ -553,7 +553,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
     def unknown_route() -> str | None:
         path = project_service_path(project_id, "rest", "plugins/agents/unknown-route")
         with invocation_context(step_id="S-141.6"):
-            status, body, _ = _request(path, token=token)
+            status, body, _ = _ux_request(path, token=token)
         error = body.get("error") if isinstance(body, dict) else None
         if (status != 404 or not isinstance(error, dict)
                 or error.get("code") != "KB_RUNTIME_RESOURCE_NOT_FOUND"

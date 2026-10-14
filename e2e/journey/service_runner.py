@@ -378,6 +378,37 @@ def request(path: str, *, method="GET", payload=None, token="", accept="applicat
     return status, parsed, response_headers
 
 
+def request_mcp(path: str, *, method="POST", payload=None, token="",
+                accept="application/json, text/event-stream") -> tuple[int, object, dict[str, str]]:
+    """Read MCP Streamable HTTP JSON or event-stream data without UX decoding."""
+    body = json.dumps(payload).encode() if payload is not None else None
+    headers = {"Accept": accept}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(BASE_URL + path, data=body, headers=headers, method=method)
+    try:
+        status, raw, response_headers = open_http(HTTP.open, req, timeout=15, env=os.environ)
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
+    content_type = response_headers.get("Content-Type", response_headers.get("content-type", ""))
+    try:
+        if content_type.lower().startswith("text/event-stream"):
+            data = "\n".join(
+                line[5:].strip() for line in raw.decode("utf-8").splitlines()
+                if line.startswith("data:")
+            )
+            parsed = json.loads(data)
+        else:
+            parsed = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise RuntimeError(f"HTTP {method} {path} returned an invalid MCP or UX JSON response") from error
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"HTTP {method} {path} returned a non-object MCP or UX JSON response")
+    return status, parsed, response_headers
+
+
 def request_raw(path: str, *, accept="application/json") -> tuple[int, bytes, dict[str, str]]:
     req = urllib.request.Request(BASE_URL + path, headers={"Accept": accept})
     try:
@@ -1141,9 +1172,7 @@ def main() -> int:
         diagnostics_path=Path(args.output).resolve().with_name("journey-diagnostics.log"),
         states=inherited_states, state_producers=STATE_PRODUCERS, groups=service_groups,
     )
-    export_project_state_to_child_environment(graph)
     try:
-        declared_steps = list(checks(args.mode, graph))
         configure_installed_cli_path()
         if args.mode == "secured":
             graph.probe_state("session", "auth", "fresh secured CLI login",
@@ -1218,6 +1247,8 @@ def main() -> int:
         graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
                    marketplace_lifecycle,
                    record_empty_success=False)
+        export_project_state_to_child_environment(graph)
+        declared_steps = list(checks(args.mode, graph))
         run_service_steps(journey, declared_steps, args.mode, graph=graph)
         def install_project_agent_plugin() -> str | None:
             if not project_root:

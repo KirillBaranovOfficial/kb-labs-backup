@@ -113,7 +113,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
     # case: S-199.3
     def test_project_catalog_isolation_rejects_fake_failure_then_proves_project_scoped_tool(self):
         journey = Journey("local", "project-catalog-isolation")
-        with patch("service_runner.request", side_effect=[
+        with patch("service_runner.request_mcp", side_effect=[
             (500, {}, {}), (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
         ]):
             journey.step("project catalog isolation", "mcp",
@@ -128,7 +128,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
             (200, {"result": {"tools": [{"name": "kb-labs-workflow__workflow_run"}]}}, {}),
         ]
-        with patch("service_runner.request", side_effect=responses):
+        with patch("service_runner.request_mcp", side_effect=responses):
             journey.step("project catalog isolation", "mcp",
                          lambda: project_plugin_catalog_isolation("prj_a", "prj_b", "token"),
                          cases=["S-199.3"])
@@ -137,7 +137,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
     # case: S-199.5
     def test_secured_project_catalog_claim_rejects_fake_failure_then_checks_auth_and_scope(self):
         failure = Journey("secured", "project-catalog-auth")
-        with patch("service_runner.request", side_effect=[
+        with patch("service_runner.request_mcp", side_effect=[
             (500, {}, {}),
         ]):
             failure.step("secured project MCP catalog selection", "mcp",
@@ -159,7 +159,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
         ]
         green = Journey("secured", "project-catalog-auth")
-        with patch("service_runner.request", side_effect=responses) as request:
+        with patch("service_runner.request_mcp", side_effect=responses) as request:
             green.step("secured project MCP catalog selection", "mcp",
                        lambda: secured_project_catalog_isolation("prj_a", "prj_b", "token"),
                        cases=["S-199.5"])
@@ -169,7 +169,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
     # case: S-199.4
     def test_readonly_agents_tool_isolation_rejects_fake_failure_then_checks_a_and_b(self):
         failed = Journey("local", "readonly-tool-isolation")
-        with patch("service_runner.request", side_effect=[(500, {}, {})]):
+        with patch("service_runner.request_mcp", side_effect=[(500, {}, {})]):
             failed.step("project MCP read-only tool isolation", "mcp",
                         lambda: project_readonly_tool_isolation("prj_a", "prj_b", "token"),
                         cases=["S-199.4"])
@@ -178,7 +178,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         success = {"result": {"isError": False, "structuredContent": {"hasPlan": True}, "content": []}}
         unknown = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown tool.", "Use tools/list.")
         green = Journey("local", "readonly-tool-isolation")
-        with patch("service_runner.request", side_effect=[(200, success, {}), (200, unknown, {})]):
+        with patch("service_runner.request_mcp", side_effect=[(200, success, {}), (200, unknown, {})]):
             green.step("project MCP read-only tool isolation", "mcp",
                        lambda: project_readonly_tool_isolation("prj_a", "prj_b", "token"),
                        cases=["S-199.4"])
@@ -276,6 +276,29 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         self.assertNotIn("missingStateKey", blocked.details)
         expect_health.assert_not_called()
 
+    def test_project_b_checks_are_declared_with_the_registered_fixture_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_b_root = str(Path(directory).resolve())
+            journey = Journey("local", "mcp-project-b-fixture-order")
+            graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in service_runner.SERVICE_GROUPS.items()},
+                              groups=service_runner.SERVICE_GROUPS, states={
+                                  "host-running": {"passed": True, "evidence": "host ready"},
+                              })
+            graph.probe_state("project-registered", "project", "project fixture",
+                              lambda: None, value=lambda: {"id": "prj_a", "root": directory})
+            graph.probe_state("marketplace-available", "marketplace-fixture-producer", "marketplace fixture",
+                              lambda: None, value=lambda: {"available": True})
+            service_runner.prepare_service_api_session(graph, "local")
+            graph.probe_state("fixtures-installed", "marketplace-fixtures", "project B fixture",
+                              lambda: None, value=lambda: {
+                                  "projectBId": "prj_b", "projectBRoot": project_b_root,
+                              })
+            declarations = {name: check for name, _, check, _, _, _ in checks("local", graph)}
+            check = declarations["project MCP cross-project isolation"]
+            with patch("service_runner.project_isolation", return_value=None) as isolation:
+                self.assertIsNone(check())
+            isolation.assert_called_once_with("prj_a", "prj_b", project_b_root, None)
+
     def test_registered_runtime_identity_checks_canonical_registry_path(self):
         project_root = "/tmp/journey-project"
         canonical_root = str(Path(project_root).resolve())
@@ -328,7 +351,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 return 200, {"result": {"tools": tools}}, {}
             return 200, failure, {}
 
-        with patch("service_runner.request", side_effect=fake_request):
+        with patch("service_runner.request_mcp", side_effect=fake_request):
             self.assertIsNone(mcp_ux_result_contract("prj_a", "token"))
         self.assertEqual([call[1] for call in calls[1:]], [tool["name"] for tool in tools])
         self.assertEqual(calls[1][2], {})
@@ -357,7 +380,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 return 200, failure, {}
             return 401, unauthorized, {}
 
-        with patch("service_runner.request", side_effect=fake_request):
+        with patch("service_runner.request_mcp", side_effect=fake_request):
             self.assertIsNone(mcp_ux_result_contract("prj_a", "token", secured=True))
         self.assertEqual(calls[2], ("tools/call", "kb-labs__mcp_diagnostics", ""))
         self.assertEqual(calls[3], ("tools/list", None, ""))
@@ -366,7 +389,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         tools = [{"name": "plugin__read", "inputSchema": {"type": "object", "required": ["id"]}}]
         failure = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Invalid arguments", "Pass valid arguments.")
         failure["result"]["content"][0]["text"] += "\nTraceback (most recent call last):"
-        with patch("service_runner.request", side_effect=[
+        with patch("service_runner.request_mcp", side_effect=[
             (200, {"result": {"tools": tools}}, {}),
             (200, failure, {}),
         ]):
@@ -376,7 +399,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         tools = [{"name": "plugin__read", "inputSchema": {"type": "object", "required": ["id"]}}]
         failure = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Invalid arguments", "Pass valid arguments.")
         del failure["result"]["structuredContent"]["error"]["correlationId"]
-        with patch("service_runner.request", side_effect=[
+        with patch("service_runner.request_mcp", side_effect=[
             (200, {"result": {"tools": tools}}, {}),
             (200, failure, {}),
         ]):
@@ -384,23 +407,23 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def test_unknown_tool_requires_typed_result_and_discovery_hint(self):
         response = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown MCP tool", "Call tools/list to discover tools.")
-        with patch("service_runner.request", return_value=(200, response, {})):
+        with patch("service_runner.request_mcp", return_value=(200, response, {})):
             self.assertIsNone(unknown_tool("prj_a", "token"))
 
     def test_unknown_tool_rejects_plain_text_error(self):
         response = {"result": {"isError": True, "content": [{"text": "Unknown tool: absent"}]}}
-        with patch("service_runner.request", return_value=(200, response, {})):
+        with patch("service_runner.request_mcp", return_value=(200, response, {})):
             self.assertIn("structuredContent", unknown_tool("prj_a", "token"))
 
     def test_invalid_arguments_sends_bad_type_and_checks_field_in_envelope(self):
         response = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Argument force must be boolean", "Pass a boolean value.")
-        with patch("service_runner.request", return_value=(200, response, {})) as request:
+        with patch("service_runner.request_mcp", return_value=(200, response, {})) as request:
             self.assertIsNone(invalid_arguments("prj_a", "token"))
         self.assertEqual(request.call_args.kwargs["payload"]["params"]["arguments"], {"force": "yes"})
 
     def test_invalid_arguments_rejects_missing_argument_name(self):
         response = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Argument has the wrong type", "Pass a valid value.")
-        with patch("service_runner.request", return_value=(200, response, {})):
+        with patch("service_runner.request_mcp", return_value=(200, response, {})):
             self.assertIn("did not identify argument", invalid_arguments("prj_a", "token"))
 
     def test_secured_auth_claim_checks_missing_and_invalid_tokens(self):
@@ -414,12 +437,12 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 "hint": 'Run "kb auth login --gateway-url <url> --email <email>".', "correlationId": "corr-auth",
             }}, {})
 
-        with patch("service_runner.request", side_effect=fake_request):
+        with patch("service_runner.request_mcp", side_effect=fake_request):
             self.assertIsNone(secured_auth("prj_a"))
         self.assertEqual(calls, ["", "not-a-real-token"])
 
     def test_secured_auth_rejects_http_401_without_the_catalog_envelope(self):
-        with patch("service_runner.request", return_value=(401, {"ok": False, "error": "unauthorized"}, {})):
+        with patch("service_runner.request_mcp", return_value=(401, {"ok": False, "error": "unauthorized"}, {})):
             self.assertIn("no KB_AUTH_REQUIRED envelope", secured_auth("prj_a"))
 
     def test_secured_auth_fails_if_either_request_authenticates(self):
@@ -431,7 +454,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             }}, {}),
             (200, {"result": {"tools": []}}, {}),
         ])
-        with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(responses)):
+        with patch("service_runner.request_mcp", side_effect=lambda *_args, **_kwargs: next(responses)):
             self.assertIn("invalid token returned HTTP 200", secured_auth("prj_a"))
 
     def test_local_auth_lists_tools_without_a_token(self):
@@ -443,31 +466,31 @@ class ProjectMcpJourneyTests(unittest.TestCase):
                 "kb-labs__mcp_diagnostics",
             )
         ]
-        with patch("service_runner.request", return_value=(200, {"result": {"tools": tools}}, {})) as request:
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})) as request:
             self.assertIsNone(local_auth("prj_a"))
         self.assertEqual(request.call_args.kwargs["token"], "")
 
     def test_local_auth_rejects_a_catalog_from_another_project(self):
         tools = [{"name": "kb-labs__mcp_diagnostics"}]
-        with patch("service_runner.request", return_value=(200, {"result": {"tools": tools}}, {})):
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             self.assertIn("omitted selected project tools", local_auth("prj_a"))
 
     def test_commit_tool_schema_checks_the_manifest_argument_type(self):
         tools = [{"name": "kb-labs-commit__commit_apply", "inputSchema": {
             "type": "object", "properties": {"force": {"type": "boolean"}, "json": {"type": "boolean"}},
         }}]
-        with patch("service_runner.request", return_value=(200, {"result": {"tools": tools}}, {})):
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             self.assertIsNone(commit_tool_schema("prj_a", "token"))
 
     def test_commit_tool_schema_reports_a_missing_or_wrong_schema(self):
         tools = [{"name": "kb-labs-commit__commit_apply", "inputSchema": {"type": "object", "properties": {}}}]
-        with patch("service_runner.request", return_value=(200, {"result": {"tools": tools}}, {})):
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             self.assertIn("force and json", commit_tool_schema("prj_a", "token"))
 
     def test_mutating_step_calls_commit_apply_without_push_and_checks_sha(self):
         response = {"result": {"isError": False, "content": [{"text": "Created commit a1b2c3d4"}]}}
         history = subprocess.CompletedProcess(args=[], returncode=0, stdout="a1b2c3d4\n", stderr="")
-        with patch("service_runner.request", return_value=(200, response, {})) as request, \
+        with patch("service_runner.request_mcp", return_value=(200, response, {})) as request, \
              patch("mcp_project_steps.run_command", return_value=history) as git_log:
             self.assertIsNone(apply_commit_plan("prj_a", "token", "/tmp/project-a"))
         payload = request.call_args.kwargs["payload"]
@@ -477,7 +500,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def test_project_isolation_checks_catalog_then_typed_unknown_call(self):
         response = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown MCP tool", "Call tools/list to discover tools.")
-        with tempfile.TemporaryDirectory() as directory, patch("service_runner.request", side_effect=[
+        with tempfile.TemporaryDirectory() as directory, patch("service_runner.request_mcp", side_effect=[
             (200, {"result": {"tools": [{"name": "workflow__workflow_run"}]}}, {}),
             (200, response, {}),
         ]) as request:
@@ -490,14 +513,25 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             failure = project_isolation("prj_a", "prj_b", alias, "token")
         self.assertEqual(failure, "project B registry root must be an existing canonical directory")
 
-    def test_sse_error_response_is_parsed(self):
+    def test_mcp_call_preserves_parsed_error_response(self):
         from mcp_project_steps import mcp_call
         payload = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown MCP tool", "Call tools/list.")
-        event = "event: message\ndata: " + json.dumps(payload) + "\n\n"
-        with patch("service_runner.request", return_value=(200, event, {})):
+        with patch("service_runner.request_mcp", return_value=(200, payload, {})):
             status, body = mcp_call("prj_a", 4, "missing", {})
         self.assertEqual(status, 200)
         self.assertEqual(body, payload)
+
+    def test_mcp_http_reader_accepts_protocol_json_and_event_stream_without_ux_wrapper(self):
+        from service_runner import request_mcp
+
+        response = {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-03-26"}}
+        with patch("service_runner.open_http", return_value=(200, json.dumps(response).encode(), {
+                "Content-Type": "application/json"})):
+            self.assertEqual(request_mcp("/mcp", payload={"method": "initialize"})[:2], (200, response))
+        event = "event: message\ndata: " + json.dumps(response) + "\n\n"
+        with patch("service_runner.open_http", return_value=(200, event.encode(), {
+                "Content-Type": "text/event-stream"})):
+            self.assertEqual(request_mcp("/mcp", payload={"method": "initialize"})[:2], (200, response))
 
 
 if __name__ == "__main__":

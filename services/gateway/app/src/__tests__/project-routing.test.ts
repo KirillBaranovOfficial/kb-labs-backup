@@ -136,16 +136,64 @@ describe("registerProjectRoutes", () => {
     expect(acquired).toBe(false);
   });
 
-  it("answers 502 and releases when the runtime is unreachable", async () => {
+  // case: S-045.1
+  it("returns an actionable MCP service envelope and releases when the runtime is unreachable", async () => {
     let released = 0;
     await setup(() => ({
-      resolveProjectService: async () => ({ baseUrl: "http://127.0.0.1:1", pathPrefix: "/rest", headers: {}, release: () => { released += 1; } }),
-    }));
+      resolveProjectService: async () => ({ baseUrl: "http://127.0.0.1:1", pathPrefix: "/mcp", headers: {}, release: () => { released += 1; } }),
+    }), undefined, [{ serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" }]);
 
-    const res = await app!.inject({ method: "GET", url: "/api/v1/projects/p/rest/x" });
+    const res = await app!.inject({ method: "POST", url: "/api/v1/projects/p/mcp", payload: '{"jsonrpc":"2.0","id":1,"method":"initialize"}' });
 
     expect(res.statusCode).toBe(502);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_PROJECT_RUNTIME_START_FAILED",
+        message: 'Project service "mcp" for project "p" is unavailable.',
+        hint: 'Run "kb logs query --source mcp --level error --limit 20" to inspect its errors, then retry the request.',
+        correlationId: expect.any(String),
+      },
+    });
     expect(released).toBe(1);
+  });
+
+  // case: S-045.1
+  it("returns the same route envelope when project runtime resolution fails", async () => {
+    await setup(() => ({
+      resolveProjectService: async () => { throw new Error("private resolver detail"); },
+    }), undefined, [{ serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" }]);
+
+    const response = await app!.inject({ method: "POST", url: "/api/v1/projects/p/mcp", payload: "{}" });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_PROJECT_RUNTIME_START_FAILED",
+        message: 'Project service "mcp" for project "p" could not be reached.',
+        hint: 'Run "kb logs query --source mcp --level error --limit 20" to inspect its errors, then retry the request.',
+        correlationId: expect.any(String),
+      },
+    });
+    expect(response.body).not.toContain("private resolver detail");
+  });
+
+  // case: S-045.1
+  it("keeps catalogued project transport errors in the shared UX envelope", async () => {
+    await setup(() => ({ resolveProjectService: async () => undefined }));
+
+    const response = await app!.inject({
+      method: "POST",
+      url: "/api/v1/projects/p/rest/resource",
+      payload: "{}",
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: { code: "KB_HOST_SERVICE_ADDRESS_MISSING" },
+    });
   });
 
   // case: PC-002.3, PC-002.8, S-124.11, S-124.13

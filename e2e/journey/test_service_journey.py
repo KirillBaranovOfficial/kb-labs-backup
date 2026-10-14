@@ -705,6 +705,13 @@ raise SystemExit(1)
                                     "KB_JOURNEY_SELECTED_CAPABILITIES": "analytics"})
                     executed: list[str] = []
                     fixture_project_ids: list[str] = []
+                    fixture_state_at_check_declaration: list[bool] = []
+
+                    def declare_checks(step_mode, graph):
+                        fixture_state_at_check_declaration.append(
+                            graph.states.get("fixtures-installed", {}).get("passed") is True
+                        )
+                        return iter(declared)
 
                     def execute_declared_steps(journey, steps, step_mode, *, graph):
                         for state, producer in STATE_PRODUCERS.items():
@@ -735,7 +742,7 @@ raise SystemExit(1)
                         return {"name": "@kb-labs/commit", "package": "@kb-labs/commit-entry",
                                 "version": "2.120.1"}
 
-                    with patch("service_runner.checks", return_value=iter(declared)), \
+                    with patch("service_runner.checks", side_effect=declare_checks), \
                             patch("service_runner.run_service_steps", side_effect=execute_declared_steps), \
                             patch("service_runner.prepare_service_api_session",
                                   side_effect=lambda graph, _mode: graph.probe_state(
@@ -763,6 +770,7 @@ raise SystemExit(1)
                     self.assertEqual(set(executed), expected)
                     self.assertEqual(len(executed), len(expected))
                     self.assertEqual(fixture_project_ids, ["prj_fixture"])
+                    self.assertEqual(fixture_state_at_check_declaration, [True])
                     status_by_name = {step["name"]: (step["status"], step["message"]) for step in result["steps"]}
                     if selected:
                         self.assertEqual(status_by_name["unselected mcp check"][0], "SKIPPED")

@@ -24,7 +24,7 @@ An agent client connects to the selected project's MCP endpoint, discovers that 
 
 | # | Action | Expected |
 |---|---|---|
-| S-045.1 | Send JSON-RPC `initialize` to `POST /api/v1/projects/$PROJECT_ID/mcp` with protocol version `2025-03-26`, empty capabilities, and client info | HTTP 200 JSON-RPC response contains `result.protocolVersion: "2025-03-26"`. |
+| S-045.1 | Send JSON-RPC `initialize` to `POST /api/v1/projects/$PROJECT_ID/mcp` with protocol version `2025-03-26`, empty capabilities, and client info | When the project runtime is reachable, HTTP 200 returns the JSON-RPC result (as JSON or a Streamable HTTP event stream) with `result.protocolVersion: "2025-03-26"`. If the project runtime cannot be reached, HTTP 502 returns the shared `{ok:false,error}` envelope with `KB_PROJECT_RUNTIME_START_FAILED`, a correlation ID, and a `kb logs query --source mcp --level error --limit 20` hint. |
 | S-045.2 | Send JSON-RPC `tools/list` to the same project endpoint | The result includes tools named `kb-labs-commit__commit`, `kb-labs-workflow__workflow_run`, and `kb-labs__mcp_diagnostics`; every listed tool has an object `inputSchema`. Plugin tool names use the sanitized manifest plugin id, followed by `__` and the command path with spaces replaced by underscores. |
 | S-045.3 | Call `kb-labs__mcp_diagnostics` with empty arguments | The JSON-RPC result is not marked `isError` and its text content includes `loaded cleanly`. |
 | S-045.4 | In local mode, repeat initialize and `tools/list` without `Authorization` | Requests succeed through the loopback host and return the selected project's tool catalog. |
