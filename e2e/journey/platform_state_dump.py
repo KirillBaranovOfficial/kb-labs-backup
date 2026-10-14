@@ -111,14 +111,18 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
         return 0
 
 
-def _write_secret_fingerprints(source: Path, target: Path) -> int:
-    """Record a one-way fingerprint without parsing the private secret state."""
+def _write_state_fingerprints(source: Path, target: Path) -> int:
+    """Record one-way fingerprints for every opaque shared-state file."""
     try:
-        data = source.read_bytes()
-        if not data:
+        fingerprints = {}
+        for path in sorted(source.rglob("*")):
+            if path.is_file():
+                relative = path.relative_to(source).as_posix()
+                fingerprints[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        if not fingerprints:
             return 0
         target.parent.mkdir(parents=True, exist_ok=True)
-        _write_evidence_json(target, {"sha256": hashlib.sha256(data).hexdigest()})
+        _write_evidence_json(target, fingerprints)
         return target.stat().st_size
     except OSError:
         return 0
@@ -310,14 +314,14 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         for relative in (Path(".kb/marketplace.lock"), Path(".kb/kb.config.jsonc"),
                          Path(".kb/v2/receipt.json")):
             add(active / relative, relative)
-        fingerprint_bytes = _write_secret_fingerprints(
-            active / ".kb/v2/secret-state.json", destination / "installation-secret-fingerprints.json"
+        fingerprint_bytes = _write_state_fingerprints(
+            root / "state", destination / "shared-state-fingerprints.json"
         )
         if fingerprint_bytes and used + fingerprint_bytes <= CONTENT_BUDGET:
             used += fingerprint_bytes
-            entries.append(f"- `installation-secret-fingerprints.json` ({fingerprint_bytes} bytes)")
+            entries.append(f"- `shared-state-fingerprints.json` ({fingerprint_bytes} bytes)")
         elif fingerprint_bytes:
-            (destination / "installation-secret-fingerprints.json").unlink(missing_ok=True)
+            (destination / "shared-state-fingerprints.json").unlink(missing_ok=True)
         auth_probe_bytes = _write_auth_state_probe(root, destination / "auth-state-probe.json")
         if auth_probe_bytes and used + auth_probe_bytes <= CONTENT_BUDGET:
             used += auth_probe_bytes

@@ -52,6 +52,7 @@ const (
 	CodeWizardInputInvalid        = "KB_INSTALL_WIZARD_INPUT_INVALID"
 	CodeSecretInputInvalid        = "KB_INSTALL_SECRET_INPUT_INVALID"
 	CodeSecretStoreUnsupported    = "KB_INSTALL_SECRET_STORE_UNSUPPORTED"
+	CodeSecretStateChanged        = "KB_INSTALL_SECRET_STATE_CHANGED"
 	CodeBootstrapCredentialLocked = "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED"
 	CodeReleaseIndexInvalid       = "KB_INSTALL_RELEASE_INDEX_INVALID"
 	CodeReleaseIndexSealFailed    = "KB_RELEASE_INDEX_SEAL_FAILED"

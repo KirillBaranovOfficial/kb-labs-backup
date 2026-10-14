@@ -54,7 +54,7 @@ def _component_version(payload: dict) -> str | None:
 
 
 def _file_fingerprints(root: Path, projects: tuple[Path, ...]) -> dict[str, str]:
-    names = {"current/.kb/kb.config.jsonc", "current/.kb/v2/secret-state.json"}
+    names = {"current/.kb/kb.config.jsonc"}
     result = {}
     paths = [root / name for name in names]
     paths.extend(project / ".kb" / name for project in projects
@@ -63,6 +63,9 @@ def _file_fingerprints(root: Path, projects: tuple[Path, ...]) -> dict[str, str]
         if path.is_file():
             result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     for path in (root / "state" / "data").rglob("*.sqlite"):
+        if path.is_file():
+            result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    for path in sorted((root / "state").rglob("*")):
         if path.is_file():
             result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result
@@ -207,7 +210,6 @@ def run_platform_update_variant_steps(
         _request_for(request_file, target, request)
         before_receipt = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
         before_config = hashlib.sha256((platform_root / "current/.kb/kb.config.jsonc").read_bytes()).hexdigest()
-        before_secrets = hashlib.sha256((platform_root / "current/.kb/v2/secret-state.json").read_bytes()).hexdigest()
         shared_before = capture_shared_update_state()
         error = _error(cli([launcher, "update", "--platform-root", root, "--json", "--index",
                             str(bad_checksum_index), "--input", str(request)]), "bad-checksum update")
@@ -217,8 +219,6 @@ def run_platform_update_variant_steps(
             raise RuntimeError("checksum failure changed the active receipt")
         if hashlib.sha256((platform_root / "current/.kb/kb.config.jsonc").read_bytes()).hexdigest() != before_config:
             raise RuntimeError("checksum failure changed generated config")
-        if hashlib.sha256((platform_root / "current/.kb/v2/secret-state.json").read_bytes()).hexdigest() != before_secrets:
-            raise RuntimeError("checksum failure changed installation secrets")
         assert_shared_update_state_unchanged("checksum failure", shared_before)
         status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]), "status after checksum failure")
         if status.get("runningVersion") != baseline_version or status.get("installedVersion") != baseline_version:
@@ -236,9 +236,7 @@ def run_platform_update_variant_steps(
             _request_for(request_file, target, request)
             receipt_hash = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
             config_path = platform_root / "current/.kb/kb.config.jsonc"
-            secret_path = platform_root / "current/.kb/v2/secret-state.json"
             config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
-            secret_hash = hashlib.sha256(secret_path.read_bytes()).hexdigest()
             shared_before = capture_shared_update_state()
             error = _error(cli([launcher, "update", "--platform-root", root, "--index", str(index),
                                 "--input", str(request), "--json"]), f"staged {label} verification")
@@ -248,8 +246,6 @@ def run_platform_update_variant_steps(
                 raise RuntimeError(f"staged {label} failure changed the active receipt")
             if hashlib.sha256(config_path.read_bytes()).hexdigest() != config_hash:
                 raise RuntimeError(f"staged {label} failure changed generated config")
-            if hashlib.sha256(secret_path.read_bytes()).hexdigest() != secret_hash:
-                raise RuntimeError(f"staged {label} failure changed installation secrets")
             assert_shared_update_state_unchanged(f"staged {label} failure", shared_before)
             status = _payload(cli([launcher, "status", "--platform-root", root, "--json"]),
                               f"status after staged {label} failure")

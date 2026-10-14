@@ -158,17 +158,12 @@ class PlatformStateDumpTests(unittest.TestCase):
             reports = root / "reports"
             binaries = root / "bin"
             binaries.mkdir()
-            (platform / ".kb/v2").mkdir(parents=True)
-            (platform / ".kb/v2/secret-state.json").write_text(json.dumps({
-                "schema": 1,
-                "requirements": {"gateway.jwtSecret": "signing-value", "GATEWAY_JWT_SECRET": "signing-value"},
-                "bootstrap": {},
-            }))
             (platform / ".kb/logs").mkdir(parents=True)
             (platform / ".kb/diagnostics").mkdir(parents=True)
             (platform / "node_modules/@kb-labs/sample").mkdir(parents=True)
             (platform / ".kb/marketplace.lock").write_text('{"commit":"abc","token":"lock-secret"}')
             (platform / ".kb/kb.config.jsonc").write_text('{\n  "apiKey": "config-secret",\n  // retained comment\n}\n')
+            (platform / ".kb/v2").mkdir(parents=True, exist_ok=True)
             (platform / ".kb/v2/receipt.json").write_text(json.dumps({
                 "password": "receipt-secret",
                 "plan": {"artifacts": [
@@ -206,6 +201,9 @@ class PlatformStateDumpTests(unittest.TestCase):
             )
             launcher.chmod(0o755)
             move_test_platform_into_container(platform)
+            opaque_state = platform / "state" / "nested" / "runtime-state.bin"
+            opaque_state.parent.mkdir(parents=True)
+            opaque_state.write_bytes(b"\x00opaque-state\xff")
             snapshots = installer_record_path(platform, "snapshots")
             snapshots.mkdir(parents=True)
             (snapshots / "snapshot-good.json").write_text(
@@ -223,11 +221,11 @@ class PlatformStateDumpTests(unittest.TestCase):
 
             self.assertTrue((destination / ".kb/marketplace.lock").is_file())
             self.assertTrue((destination / ".kb/v2/receipt.json").is_file())
-            fingerprints_path = destination / "installation-secret-fingerprints.json"
+            fingerprints_path = destination / "shared-state-fingerprints.json"
             self.assertTrue(fingerprints_path.is_file())
             fingerprints = json.loads(fingerprints_path.read_text())
-            self.assertRegex(fingerprints["sha256"], r"^[0-9a-f]{64}$")
-            self.assertNotIn("signing-value", fingerprints_path.read_text())
+            self.assertEqual(set(fingerprints), {"nested/runtime-state.bin"})
+            self.assertRegex(fingerprints["nested/runtime-state.bin"], r"^[0-9a-f]{64}$")
             snapshot = destination / "installer/snapshots/snapshot-good.json"
             self.assertTrue(snapshot.is_file())
             self.assertNotIn("snapshot-secret", snapshot.read_text())

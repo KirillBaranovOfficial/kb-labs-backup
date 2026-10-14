@@ -153,12 +153,21 @@ func TestUpdateAndRollbackCannotRestoreDisclosedBootstrapPassword(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			secretPath, err := layout.SharedRuntimePath(".kb/v2/secret-state.json")
-			if err != nil {
+			foundSharedLifecycle := false
+			if err := filepath.WalkDir(layout.SharedStateDir(), func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil || entry.IsDir() {
+					return walkErr
+				}
+				data, err := os.ReadFile(path)
+				if err == nil && strings.Contains(string(data), "provisioned") {
+					foundSharedLifecycle = true
+				}
+				return err
+			}); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.HasPrefix(secretPath, layout.SharedStateDir()+string(os.PathSeparator)) {
-				t.Fatalf("secret store path %q is not owned by shared state %q", secretPath, layout.SharedStateDir())
+			if !foundSharedLifecycle {
+				t.Fatal("bootstrap lifecycle state was not stored in the install-owned shared state directory")
 			}
 			updated, snapshot, err := Update(context.Background(), planIn(root, "bootstrap-after-update"), Dependencies{Artifacts: &fakeInstaller{}, Secrets: &store})
 			if err != nil {

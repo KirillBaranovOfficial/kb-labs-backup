@@ -39,6 +39,7 @@ type layoutDirectory struct {
 }
 
 type SharedRuntimePath struct {
+	ID           string `json:"id,omitempty"`
 	PlatformPath string `json:"platformPath"`
 	StatePath    string `json:"statePath"`
 	Kind         string `json:"kind"`
@@ -200,6 +201,16 @@ func OwnedInstallEntryKinds() map[string]string {
 	return kinds
 }
 
+// SharedRecordPath resolves the private runtime record from the platform
+// layout-owned projection set so callers never repeat its storage path.
+func SharedRecordPath() string {
+	for _, entry := range SharedRuntimeProjections() {
+		if entry.ID == "secretState" {
+			return entry.PlatformPath
+		}
+	}
+	panic("embedded platform layout has no secret-state record")
+}
 func PlatformDataRootPath() PlatformDataRoot {
 	var layout platformLayout
 	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil ||

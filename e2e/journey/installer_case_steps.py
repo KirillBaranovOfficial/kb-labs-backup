@@ -1666,9 +1666,6 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         "apply": platform_root.parent / "s181-secret-input-apply",
     }
 
-    def snapshot_paths(paths: list[Path]) -> dict[str, bytes | None]:
-        return {str(path): path.read_bytes() if path.is_file() else None for path in paths}
-
     def reject_undeclared_secret_inputs() -> None:
         if not secret_value:
             raise RuntimeError("isolated journey secret is unavailable for S-181.6")
@@ -1681,9 +1678,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 raise RuntimeError("S-181.6 expected an empty isolated install root")
         empty_before = {name: snapshot_tree(root) for name, root in refusal_roots.items()}
         active = active_platform_root(platform_root)
-        installed_paths = [active / ".kb/v2/receipt.json", active / ".kb/kb.config.jsonc",
-                           active / ".kb/v2/secret-state.json"]
-        installed_before = snapshot_paths(installed_paths)
+        installed_before = snapshot_tree(active)
         commands = (
             ("install", [launcher, "install", "--json", "--index", str(stable_index),
                           "--platform-channel", "stable", "--platform-root", str(refusal_roots["install"]),
@@ -1706,7 +1701,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 raise RuntimeError(f"S-181.6 {operation} did not refuse the undeclared secret input safely")
         if any(snapshot_tree(root) != empty_before[name] for name, root in refusal_roots.items()):
             raise RuntimeError("S-181.6 refusal wrote files under an empty install root")
-        if snapshot_paths(installed_paths) != installed_before:
+        if snapshot_tree(active) != installed_before:
             raise RuntimeError("S-181.6 update refusal changed the installed receipt, config, or secret state")
 
     journey.step("refuse undeclared secret environment inputs before writing state", "platform.install",

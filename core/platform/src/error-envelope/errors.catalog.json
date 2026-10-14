@@ -838,7 +838,7 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Another launcher operation is already running (process {pid}).",
-      "hint": "Wait for it to finish; if no launcher is running, remove the stale lock file {path}."
+      "hint": "Wait for it to finish, then rerun the command."
     },
     {
       "code": "KB_INSTALL_PACKAGE_MANAGER_KILLED",
@@ -1019,6 +1019,16 @@
       "processExitClass": "input-refusal",
       "message": "A secret input could not be stored.",
       "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable."
+    },
+    {
+      "code": "KB_INSTALL_SECRET_STATE_CHANGED",
+      "area": "install",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "The installation secret state changed underneath this operation.",
+      "hint": "Rerun `kb-create apply --platform-root <platform-root>` to apply changes to the current state."
     },
     {
       "code": "KB_INSTALL_SECRET_STORE_UNSUPPORTED",

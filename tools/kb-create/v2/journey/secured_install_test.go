@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kb-labs/clikit/secretstate"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
@@ -211,8 +210,9 @@ func sealedGatewayCatalog(t *testing.T) catalog.Catalog {
 }
 
 type journeyResult struct {
-	root   string
-	config map[string]any
+	root        string
+	installRoot string
+	config      map[string]any
 	// secrets is the private store as written; environment is what the host
 	// process receives from it (variables only).
 	secrets     map[string]string
@@ -259,12 +259,12 @@ func install(t *testing.T, answers string) journeyResult {
 		t.Fatalf("apply: %v", err)
 	}
 	installed = finishFreshContainer(t, layout, stage, installed)
-	return readInstall(t, layout.PlatformRoot(), installed.Plan)
+	return readInstall(t, layout.PlatformRoot(), layout.InstallRoot(), installed.Plan)
 }
 
-func readInstall(t *testing.T, root string, plan contracts.ResolvedInstallPlan) journeyResult {
+func readInstall(t *testing.T, root, installRoot string, plan contracts.ResolvedInstallPlan) journeyResult {
 	t.Helper()
-	result := journeyResult{root: root, plan: plan, secrets: map[string]string{}}
+	result := journeyResult{root: root, installRoot: installRoot, plan: plan, secrets: map[string]string{}}
 	config, err := os.ReadFile(filepath.Join(root, ".kb", "kb.config.jsonc"))
 	if err != nil {
 		t.Fatal(err)
@@ -275,17 +275,26 @@ func readInstall(t *testing.T, root string, plan contracts.ResolvedInstallPlan) 
 	if _, err := os.Stat(filepath.Join(root, ".kb", "devservices.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("an installation must not render devservices.yaml: %v", err)
 	}
-	environment, err := secrets.Store{PlatformRoot: root}.Environment()
+	store := secrets.Store{PlatformRoot: root}
+	environment, err := store.Environment()
 	if err != nil {
 		t.Fatal(err)
 	}
 	result.environment = environment.Values
-	if data, err := os.ReadFile(filepath.Join(root, ".kb", "v2", "secret-state.json")); err == nil {
-		record, err := secretstate.Decode(data)
-		if err != nil {
-			t.Fatal("decode private secret state")
+	for _, artifact := range plan.Artifacts {
+		for _, requirement := range artifact.Config {
+			if !requirement.Secret {
+				continue
+			}
+			if value, present, err := store.Get(requirement.ID); err != nil {
+				t.Fatal(err)
+			} else if present {
+				result.secrets[requirement.ID] = value
+			}
 		}
-		result.secrets = record.Requirements()
+	}
+	for name, value := range environment.Values {
+		result.secrets[name] = value
 	}
 	return result
 }
@@ -299,13 +308,12 @@ func gatewaySection(t *testing.T, result journeyResult) map[string]any {
 	return gateway
 }
 
-// everywhereExcept returns the files under root that contain value, other than
-// the private secret store.
-func everywhereExcept(t *testing.T, root, value string) []string {
+// filesContaining scans every file without opening a product-owned path by name.
+func filesContaining(t *testing.T, root, value string) []string {
 	t.Helper()
 	var hits []string
 	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || strings.HasSuffix(path, filepath.Join(".kb", "v2", "secret-state.json")) {
+		if err != nil || entry.IsDir() || entry.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if data, readErr := os.ReadFile(path); readErr == nil && bytes.Contains(data, []byte(value)) {
@@ -314,6 +322,19 @@ func everywhereExcept(t *testing.T, root, value string) []string {
 		return nil
 	})
 	return hits
+}
+
+func relativeFiles(t *testing.T, root string, paths []string) []string {
+	t.Helper()
+	relative := make([]string, 0, len(paths))
+	for _, path := range paths {
+		name, err := filepath.Rel(root, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		relative = append(relative, name)
+	}
+	return relative
 }
 
 // case: S-038.4
@@ -373,11 +394,12 @@ func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) 
 
 	// Secret values live in exactly one file.
 	for _, value := range []string{adminPassword, result.secrets["GATEWAY_JWT_SECRET"], result.secrets["GATEWAY_INTERNAL_SECRET"]} {
-		if hits := everywhereExcept(t, result.root, value); len(hits) != 0 {
-			t.Fatalf("a secret leaked outside the private store: %v", hits)
+		if hits := filesContaining(t, result.installRoot, value); len(hits) != 1 {
+			t.Fatalf("a secret appeared in %d install files; want one owner file; locations=%v", len(hits), relativeFiles(t, result.installRoot, hits))
 		}
 	}
-	info, err := os.Stat(filepath.Join(result.root, ".kb", "v2", "secret-state.json"))
+	passwordFiles := filesContaining(t, result.installRoot, adminPassword)
+	info, err := os.Stat(passwordFiles[0])
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("secret store must be private: %v / %v", info, err)
 	}
@@ -415,8 +437,8 @@ func TestSecuredInstallWithoutAnAdminPasswordGeneratesTheFirstAdmin(t *testing.T
 	if result.environment["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"] == "" {
 		t.Fatalf("a generated bootstrap password must reach the host: %v", keysOf(result.environment))
 	}
-	if hits := everywhereExcept(t, result.root, result.environment["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"]); len(hits) != 0 {
-		t.Fatalf("generated password leaked outside the private secret store: %v", hits)
+	if hits := filesContaining(t, result.installRoot, result.environment["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"]); len(hits) != 1 {
+		t.Fatalf("generated password appeared in %d install files; want one owner file; locations=%v", len(hits), relativeFiles(t, result.installRoot, hits))
 	}
 	auth, present := gatewaySection(t, result)["auth"].(map[string]any)
 	if !present || auth["bootstrap"].(map[string]any)["adminEmail"] != "admin@example.com" {
@@ -504,7 +526,7 @@ func TestMachineRequestSecuredInstallDeliversSecretsThroughTheSameStore(t *testi
 		t.Fatal(err)
 	}
 	installed = finishFreshContainer(t, layout, stage, installed)
-	result := readInstall(t, layout.PlatformRoot(), installed.Plan)
+	result := readInstall(t, layout.PlatformRoot(), layout.InstallRoot(), installed.Plan)
 	if result.secrets["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"] != adminPassword || result.secrets["GATEWAY_JWT_SECRET"] != strings.Repeat("k", 64) {
 		t.Fatalf("secrets not deliverable by variable name: %v", keysOf(result.secrets))
 	}

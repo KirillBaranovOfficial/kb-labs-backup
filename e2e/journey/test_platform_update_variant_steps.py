@@ -18,13 +18,12 @@ def _versioned_platform(root: Path, version: str) -> Path:
     (version_root / ".kb/v2").mkdir(parents=True)
     (version_root / ".kb/kb.config.jsonc").write_text("{}\n")
     (version_root / ".kb/marketplace.lock").write_text('{"plugins":[]}\n')
-    (version_root / ".kb/v2/secret-state.json").write_text(
-        json.dumps({"schema": 1, "requirements": {"secret": "sentinel"}, "bootstrap": {}}) + "\n")
     (version_root / ".kb/v2/receipt.json").write_text(json.dumps({
         "plan": {"serviceGraph": {"platformVersion": version}},
     }))
     platform.mkdir(exist_ok=True)
     (platform / "state").mkdir()
+    (platform / "state" / "opaque-runtime-state.bin").write_bytes(b"fixture state")
     (platform / "current").symlink_to(Path("versions/v1"), target_is_directory=True)
     return platform
 

@@ -50,8 +50,15 @@ func TestRollbackRestoresSnapshotFilesAfterCommandPackageRestore(t *testing.T) {
 	if err := os.WriteFile(config, []byte("original config bytes\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	secretStore := secrets.Store{PlatformRoot: root}
+	if err := secretStore.Put("GATEWAY_INTERNAL_SECRET", "generated-value"); err != nil {
+		t.Fatal(err)
+	}
 	snapshot, err := receipt.CreateSnapshot(root, filepath.Join(root, "snapshots"), time.Unix(4, 0))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := secretStore.Put("GATEWAY_INTERNAL_SECRET", "updated-value"); err != nil {
 		t.Fatal(err)
 	}
 	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "after", InstallationID: "installation-stable"}); err != nil {
@@ -73,6 +80,14 @@ func TestRollbackRestoresSnapshotFilesAfterCommandPackageRestore(t *testing.T) {
 	}
 	if string(got) != "original config bytes\n" {
 		t.Fatalf("config after rollback = %q, want original snapshot bytes", got)
+	}
+	for _, data := range snapshot.Files {
+		if bytes.Contains(data, []byte("generated-value")) || bytes.Contains(data, []byte("updated-value")) {
+			t.Fatal("recovery snapshot captured private installation secret bytes")
+		}
+	}
+	if value, present, err := secretStore.Get("GATEWAY_INTERNAL_SECRET"); err != nil || !present || value != "updated-value" {
+		t.Fatal("rollback restored a stale shared secret-state record")
 	}
 	restored, err := receipt.Read(root)
 	if err != nil || restored.ID != "before" {

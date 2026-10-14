@@ -33,6 +33,7 @@ import (
 	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -255,15 +256,6 @@ func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
 					t.Fatalf("start installed host: %s", output)
 				}
 			}
-			layout, err := versionroot.New(inst.root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			activeRoot, err := layout.Active()
-			if err != nil {
-				t.Fatal(err)
-			}
-
 			if scenario.targetHasReq {
 				requestBytes, err := os.ReadFile(requestPath)
 				if err != nil {
@@ -284,14 +276,11 @@ func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
 				}
 			}
 			stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
-			secretsPath := filepath.Join(activeRoot, ".kb", "v2", "secret-state.json")
-			secretBefore, readErr := os.ReadFile(secretsPath)
-			if os.IsNotExist(readErr) {
-				secretBefore = nil
-			} else if readErr != nil {
-				t.Fatal(readErr)
+			secretStore := secrets.Store{PlatformRoot: inst.root}
+			secretBefore, secretPresentBefore, err := secretStore.Get("gateway.token")
+			if err != nil {
+				t.Fatal(err)
 			}
-			secretFingerprintBefore := sha256.Sum256(secretBefore)
 			updateArgs := []string{"update", "--index", updateIndex, "--input", requestPath, "--platform-root", inst.root, "--json"}
 			updateEnv := []string{"OPERATOR_ENV_SOURCE_SENTINEL=changed-after-install", "ENV_VAR=provided-after-refusal"}
 			if scenario.updateMapping != "" {
@@ -335,15 +324,11 @@ func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
 					}
 				}
 			}
-			secretAfter, err := os.ReadFile(secretsPath)
-			if err != nil {
-				t.Fatal(err)
+			secretAfter, secretPresentAfter, err := secretStore.Get("gateway.token")
+			if err != nil || !secretPresentAfter || (secretPresentBefore && secretAfter == secretBefore) {
+				t.Fatal("suggested apply did not store the intended secret through the Store API")
 			}
-			secretFingerprintAfter := sha256.Sum256(secretAfter)
-			if secretFingerprintAfter == secretFingerprintBefore {
-				t.Fatal("suggested apply did not change the secrets file fingerprint")
-			}
-			layout, err = versionroot.New(inst.root)
+			layout, err := versionroot.New(inst.root)
 			if err != nil {
 				t.Fatalf("suggested apply left an invalid installation layout: %v", err)
 			}

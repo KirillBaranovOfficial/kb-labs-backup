@@ -1,6 +1,7 @@
 """Resolve repository-layout resources shared by tests and the runner image."""
 from __future__ import annotations
 
+import hashlib
 import json
 import shlex
 from pathlib import Path
@@ -61,6 +62,29 @@ def _platform_layout() -> dict:
     if not isinstance(value, dict):
         raise ValueError("platform layout contract is not an object")
     return value
+
+
+def shared_runtime_file_fingerprints(install_root: Path) -> tuple[str | None, ...]:
+    """Return opaque fingerprints for every file projection in the layout contract."""
+    projections = _platform_layout().get("sharedRuntimePaths")
+    if not isinstance(projections, list):
+        raise ValueError("platform layout contract omits shared runtime projections")
+    fingerprints = []
+    for projection in projections:
+        if not isinstance(projection, dict):
+            raise ValueError("platform layout contains an invalid shared runtime projection")
+        if projection.get("kind") != "file":
+            continue
+        state_path = projection.get("statePath")
+        if not isinstance(state_path, str) or not state_path:
+            raise ValueError("platform layout file projection omits its state path")
+        try:
+            contents = (Path(install_root) / state_path).read_bytes()
+        except FileNotFoundError:
+            fingerprints.append(None)
+        else:
+            fingerprints.append(hashlib.sha256(contents).hexdigest())
+    return tuple(fingerprints)
 
 
 def current_link_path(install_root: Path) -> Path:
