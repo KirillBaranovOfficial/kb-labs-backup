@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 import shlex
@@ -392,6 +393,85 @@ def _selection_owner_violations(root: Path) -> list[str]:
     return sorted(violations)
 
 
+def _studio_command_path_sites(root: Path) -> tuple[dict[str, list[str]], list[str]]:
+    """Read runKbCommand calls with TypeScript's parser and fail closed on dynamic paths."""
+    sources = []
+    for source_path in sorted((root / "e2e/studio").rglob("*.ts")):
+        if "node_modules" in source_path.parts or source_path.name.endswith(".test.ts"):
+            continue
+        sources.append({
+            "file": source_path.relative_to(root).as_posix(),
+            "source": source_path.read_text(encoding="utf-8", errors="replace"),
+        })
+
+    parser = r"""
+const fs = require('node:fs')
+const ts = require('typescript')
+const sources = JSON.parse(fs.readFileSync(0, 'utf8'))
+const calls = []
+const violations = []
+const reason = 'command path must be literal so the rail can check it against product declarations'
+for (const { file, source } of sources) {
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  for (const diagnostic of tree.parseDiagnostics) {
+    const position = tree.getLineAndCharacterOfPosition(diagnostic.start ?? 0)
+    violations.push(`${file}:${position.line + 1}: ${reason} (TypeScript parse error)`)
+  }
+  function visit(node) {
+    if (ts.isCallExpression(node)) {
+      const expression = node.expression
+      const name = ts.isIdentifier(expression) ? expression.text
+        : ts.isPropertyAccessExpression(expression) ? expression.name.text : ''
+      if (name === 'runKbCommand') {
+        const location = tree.getLineAndCharacterOfPosition(node.getStart(tree))
+        const site = `${file}:${location.line + 1}`
+        const argument = node.arguments[0]
+        if (!argument || !ts.isArrayLiteralExpression(argument)
+            || argument.elements.some(element => !ts.isStringLiteral(element))) {
+          violations.push(`${site}: ${reason}`)
+        } else {
+          calls.push({ file, line: location.line + 1, values: argument.elements.map(element => element.text) })
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+}
+process.stdout.write(JSON.stringify({ calls, violations }))
+"""
+    repository_root = Path(__file__).resolve().parents[2]
+    parsed = subprocess.run(
+        ["node", "-e", parser],
+        cwd=repository_root,
+        input=json.dumps(sources),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if parsed.returncode != 0:
+        raise RuntimeError(f"TypeScript command rail parser failed: {parsed.stderr.strip()}")
+    result = json.loads(parsed.stdout)
+    paths: dict[str, list[str]] = {}
+    for call in result["calls"]:
+        command = []
+        for value in call["values"]:
+            if value.startswith("-"):
+                break
+            command.append(value)
+        if "--help" in call["values"]:
+            command.append("--help")
+        if command:
+            paths.setdefault(" ".join(command), []).append(
+                f"{call['file']}:{call['line']} (TypeScript owner call)"
+            )
+        else:
+            result["violations"].append(
+                f"{call['file']}:{call['line']}: command path must be literal so the rail can check it against product declarations"
+            )
+    return paths, result["violations"]
+
+
 def _studio_process_creation_violations(root: Path) -> list[str]:
     """Require every TypeScript process sink to live in the generic owner."""
     owner = "e2e/studio/kb-command.ts"
@@ -522,6 +602,44 @@ class DispatchRegistryTests(unittest.TestCase):
             self.assertEqual(_studio_process_creation_violations(fixture), [
                 "e2e/studio/scenario.ts:1: child_process sink outside e2e/studio/kb-command.ts"
             ])
+
+    def test_studio_command_path_rail_rejects_every_nonliteral_shape(self):
+        rejected = {
+            "spread": "runKbCommand([...prefix, 'commit', 'open'])",
+            "identifier": "runKbCommand(commandPath)",
+            "template": "runKbCommand([`commit ${verb}`])",
+            "variable_call": "const path = getPath(); runKbCommand(path)",
+        }
+        reason = "command path must be literal so the rail can check it against product declarations"
+        for name, call in rejected.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory(prefix="studio-command-shape-") as temporary:
+                fixture = Path(temporary)
+                source = fixture / "e2e/studio/scenario.ts"
+                source.parent.mkdir(parents=True)
+                source.write_text(f"{call}\n", encoding="utf-8")
+                _, violations = _studio_command_path_sites(fixture)
+                self.assertEqual(len(violations), 1)
+                self.assertIn("e2e/studio/scenario.ts:1:", violations[0])
+                self.assertIn(reason, violations[0])
+
+    def test_studio_command_path_rail_accepts_only_literal_array_elements(self):
+        with tempfile.TemporaryDirectory(prefix="studio-command-literal-") as temporary:
+            fixture = Path(temporary)
+            source = fixture / "e2e/studio/scenario.ts"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "runKbCommand(['commit', 'open', '--help'])\n"
+                "runKbCommand(['marketplace', 'install', '@kb-labs/commit-entry', '--json'])\n",
+                encoding="utf-8",
+            )
+            paths, violations = _studio_command_path_sites(fixture)
+            self.assertEqual(violations, [])
+            self.assertEqual(paths, {
+                "commit open --help": ["e2e/studio/scenario.ts:1 (TypeScript owner call)"],
+                "marketplace install @kb-labs/commit-entry": [
+                    "e2e/studio/scenario.ts:2 (TypeScript owner call)"
+                ],
+            })
 
     def test_command_path_rail_rejects_raw_kb_argv_outside_owner(self):
         with tempfile.TemporaryDirectory(prefix="journey-command-owner-") as temporary:
@@ -662,28 +780,16 @@ class DispatchRegistryTests(unittest.TestCase):
         owner_sites, owner_violations, owner_shapes = _owner_command_sites(root)
         paths.update(owner_sites)
         self.assertEqual(owner_violations, [], "\n".join(owner_violations))
+        typescript_sites, typescript_violations = _studio_command_path_sites(root)
+        paths.update(typescript_sites)
+        owner_violations.extend(typescript_violations)
         for source_path in (root / "e2e").rglob("*.ts"):
             if "node_modules" in source_path.parts or source_path.name.endswith(".test.ts"):
                 continue
             relative = source_path.relative_to(root).as_posix()
-            text = source_path.read_text(encoding="utf-8", errors="replace")
             if relative == "e2e/studio/kb-command.ts":
                 continue
-            for match in re.finditer(r"runKbCommand\s*\(\s*\[([^\]]*)\]", text):
-                raw_args = re.findall(r"['\"]([^'\"]+)['\"]", match.group(1))
-                command = []
-                for value in raw_args:
-                    if value.startswith("-"):
-                        break
-                    command.append(value)
-                if "--help" in raw_args:
-                    command.append("--help")
-                if command:
-                    line = text.count("\n", 0, match.start()) + 1
-                    paths.setdefault(" ".join(command), []).append(f"{relative}:{line} (TypeScript owner call)")
-                else:
-                    line = text.count("\n", 0, match.start()) + 1
-                    owner_violations.append(f"{relative}:{line}: TypeScript command path must be literal")
+            text = source_path.read_text(encoding="utf-8", errors="replace")
             for match in re.finditer(r"runProcessSync\s*\(\s*([^,]+)", text):
                 executable = match.group(1).strip()
                 line = text.count("\n", 0, match.start()) + 1

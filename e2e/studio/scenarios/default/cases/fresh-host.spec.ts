@@ -402,11 +402,11 @@ test('Studio schedules @S-055.2 toggles a project cron', async ({ page }) => {
 test('Studio schedules @S-055.3 reflects a CLI disable', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the fresh-install journey hook')
   await openCrons(page)
-  runKbCommand(['workflow', 'crons', 'disable', process.env.KB_STUDIO_CRON_ID!], {
+  runKbCommand(['workflow', 'crons', 'disable'], {
     cwd: process.env.KB_STUDIO_CRON_PROJECT_ROOT,
     env: process.env,
     stdio: 'pipe',
-  })
+  }, 'kb', [process.env.KB_STUDIO_CRON_ID!])
   await page.reload()
   const row = page.getByRole('row').filter({ hasText: process.env.KB_STUDIO_CRON_ID! })
   await expect(row.getByText('Disabled', { exact: true })).toBeVisible()
