@@ -945,7 +945,7 @@ func (l Layout) validateSealedVersionRoot(stage string) error {
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
 		return fmt.Errorf("staged version root is outside the declared version roots")
 	}
-	for _, shared := range contracts.SharedRuntimePaths() {
+	for _, shared := range contracts.SharedRuntimeProjections() {
 		path := filepath.Join(absolute, filepath.FromSlash(shared.PlatformPath))
 		if _, err := os.Lstat(path); err == nil {
 			return fmt.Errorf("staged version root contains shared runtime state at %s", shared.PlatformPath)
@@ -1346,11 +1346,7 @@ func (l Layout) validateContractStatePaths() error {
 		}
 		return nil
 	}
-	dataRoot := contracts.PlatformDataRootPath()
-	if err := check(dataRoot.StatePath, "directory"); err != nil {
-		return err
-	}
-	for _, shared := range contracts.SharedRuntimePaths() {
+	for _, shared := range contracts.SharedRuntimeProjections() {
 		if err := check(shared.StatePath, shared.Kind); err != nil {
 			return err
 		}

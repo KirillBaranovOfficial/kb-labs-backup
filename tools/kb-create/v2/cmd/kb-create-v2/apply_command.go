@@ -16,7 +16,6 @@ import (
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/stream"
-	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
 	"github.com/kb-labs/create/v2/gateway"
@@ -238,7 +237,12 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	applyCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	offline := planned.Request.Source == contracts.SourceOffline
-	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: operationRoot, Registry: input.Registry, Offline: offline, Log: transcript, Runner: deps.ArtifactRunner}, Binaries: artifacts.Binaries{Root: operationRoot, CacheRoot: filepath.Join(operationRoot, ".kb", "v2", "cache"), Offline: offline}}
+	artifactExecutor, err := newArtifactExecutor(layout, operationRoot, input.Registry, offline, transcript, deps.ArtifactRunner)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
+			"the shared artifact cache path could not be resolved",
+			"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the install", err)
+	}
 	prober := host.Prober{PlatformRoot: installRoot, Operation: "apply"}
 	runtimeDeps := runtime.Dependencies{Artifacts: artifactExecutor, CorrelationID: correlationID, Secrets: &store, Progress: input.Progress}
 	if deps.Runtime != nil {

@@ -200,14 +200,6 @@ func OwnedInstallEntryKinds() map[string]string {
 	return kinds
 }
 
-func SharedRuntimePaths() []SharedRuntimePath {
-	var layout platformLayout
-	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil {
-		panic("invalid embedded platform layout contract: " + err.Error())
-	}
-	return append([]SharedRuntimePath(nil), layout.SharedRuntimePaths...)
-}
-
 func PlatformDataRootPath() PlatformDataRoot {
 	var layout platformLayout
 	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil ||
@@ -220,13 +212,17 @@ func PlatformDataRootPath() PlatformDataRoot {
 // SharedRuntimeProjections returns the layout-owned mutable paths linked into
 // each version root, including the single first-class platform data root.
 func SharedRuntimeProjections() []SharedRuntimePath {
+	var layout platformLayout
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil {
+		panic("invalid embedded platform layout contract: " + err.Error())
+	}
 	dataRoot := PlatformDataRootPath()
 	projections := []SharedRuntimePath{{
 		PlatformPath: dataRoot.PlatformPath,
 		StatePath:    dataRoot.StatePath,
 		Kind:         "directory",
 	}}
-	return append(projections, SharedRuntimePaths()...)
+	return append(projections, layout.SharedRuntimePaths...)
 }
 
 func PlatformLayoutDocument() []byte {

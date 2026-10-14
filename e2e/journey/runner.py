@@ -1538,7 +1538,7 @@ def main(*, update_variant_runner=None):
 
             fixture_actions = {
                 DOCTOR_ROOT_ISOLATION_GROUP: lambda: run_doctor_root_isolation_step(
-                    mode=mode, launcher=launcher, platform_root=PLATFORM,
+                    mode=mode, launcher=launcher, stable_index=stable_index, platform_root=PLATFORM,
                     run_command=root_isolation_command),
                 INSTALLER_CASE_GROUP: run_installer_case_group,
                 APPLY_SCENARIO_GROUP: lambda: run_apply_scenario_step(
