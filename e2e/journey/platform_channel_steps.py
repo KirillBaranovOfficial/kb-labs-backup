@@ -2,21 +2,24 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Callable
 
 from platform_update_steps import _json_command
-from invocations import (decode_ux_error_result, decode_ux_success_result,
-                         read_kb_create_cli_result)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    read_kb_create_cli_result,
+)
 from journey_resources import active_platform_root
 from service_steps import Journey
 
 
-CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
+CommandRunner = Callable[[list[str]], CompletedProcess]
 
 
-def decode_canary_apply_result(command: subprocess.CompletedProcess) -> dict:
+def decode_canary_apply_result(command: CompletedProcess) -> dict:
     """Decode the result frame from apply's command-registered JSON stream."""
     envelope = read_kb_create_cli_result("apply", command)
     return (decode_ux_success_result(envelope) if command.returncode == 0

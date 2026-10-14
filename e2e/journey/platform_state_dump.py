@@ -1,13 +1,13 @@
 """Bounded, secret-redacted snapshot of an installed journey platform."""
 from __future__ import annotations
 
+from invocations import CompletedProcess, TimeoutExpired
 import hashlib
 import json
 import os
 import re
 import shutil
 import sqlite3
-import subprocess
 import time
 from pathlib import Path
 from typing import Mapping
@@ -252,14 +252,14 @@ def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platfo
 
 def _command(output: Path, label: str, args: list[str], *, env: Mapping[str, str], cwd: Path,
              admin_password: str, timeout: int = 30, budget: int = MAX_DUMP_BYTES,
-             result_sink: list[subprocess.CompletedProcess[str]] | None = None) -> int:
+             result_sink: list[CompletedProcess[str]] | None = None) -> int:
     try:
         from invocations import run_command
         result = run_command(args, cwd=cwd, env=env, timeout=timeout)
         if result_sink is not None:
             result_sink.append(result)
         body = f"exit_code: {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, TimeoutExpired) as error:
         body = f"error: {error.__class__.__name__}: {error}"
     encoded = f"{label}\n{body}\n".encode()
     if len(encoded) > budget:
@@ -446,7 +446,7 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         if not launcher and (root.parent / ".local" / "bin" / "kb-create").is_file():
             launcher = str(root.parent / ".local" / "bin" / "kb-create")
         launcher = launcher or "kb-create"
-        doctor_results: list[subprocess.CompletedProcess[str]] = []
+        doctor_results: list[CompletedProcess[str]] = []
         for name in ("status", "doctor"):
             if used >= CONTENT_BUDGET:
                 break

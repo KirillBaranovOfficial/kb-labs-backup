@@ -12,14 +12,19 @@ from journey_values import journey_value
 import json
 import os
 import ast
-import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
 
 from hermetic_cli import run_hermetic_cli
-from invocations import (decode_ux_success_result, describe_cli_failure, invocation_context,
-                         print_report_text, read_ux_cli_result)
+from invocations import (
+    CompletedProcess,
+    decode_ux_success_result,
+    describe_cli_failure,
+    invocation_context,
+    print_report_text,
+    read_ux_cli_result,
+)
 from dispatch_registry import RUNNERS, RUNNER_GROUPS, runners_for_source
 from journey_dependencies import Dependency
 
@@ -815,7 +820,7 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
             "stepSources": sorted(sources), "capabilities": sorted(capabilities)}
 
 
-def read_coverage_result(result: subprocess.CompletedProcess[str]) -> dict:
+def read_coverage_result(result: CompletedProcess[str]) -> dict:
     payload = decode_ux_success_result(read_ux_cli_result(result))
     if not isinstance(payload, dict):
         raise ValueError("QA coverage result data is not an object")

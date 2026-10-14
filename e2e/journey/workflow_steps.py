@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 import time
 import threading
@@ -12,8 +11,15 @@ from typing import Callable
 
 from service_steps import Journey
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
-from invocations import (decode_ux_error_result, invocation_context, read_ux_cli_result,
-                         run_command, run_pty_command, write_report_json)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    invocation_context,
+    read_ux_cli_result,
+    run_command,
+    run_pty_command,
+    write_report_json,
+)
 
 
 def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120,
@@ -24,7 +30,7 @@ def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 1
     else:
         command = ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"', "kb", *args]
     result = run_command(command, env=env, cwd=cwd, timeout=timeout, input=input_text)
-    return subprocess.CompletedProcess(command, result.returncode,
+    return CompletedProcess(command, result.returncode,
                                         stdout=result.stdout or "",
                                         stderr=result.stderr)
 

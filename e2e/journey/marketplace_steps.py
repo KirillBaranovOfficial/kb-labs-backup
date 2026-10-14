@@ -6,7 +6,6 @@ from project_service_path import project_service_path
 import json
 import hashlib
 import os
-import subprocess
 import time
 import urllib.request
 from pathlib import Path
@@ -14,22 +13,30 @@ from typing import Callable
 
 from journey_resources import active_platform_root
 from service_steps import Journey
-from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
-                         read_ux_cli_result, read_ux_http_result,
-                         export_project_identity_to_child_environment,
-                         open_http, run_command, run_with_runner)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    export_project_identity_to_child_environment,
+    invocation_context,
+    open_http,
+    read_ux_cli_result,
+    read_ux_http_result,
+    run_command,
+    run_with_runner,
+)
 from plugin_author_steps import run_commit_case_steps
 
 
-CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+CommandRunner = Callable[..., CompletedProcess[str]]
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner,
-         input: str | None = None) -> subprocess.CompletedProcess[str]:
+         input: str | None = None) -> CompletedProcess[str]:
     return run_with_runner(runner, command, cwd=cwd, env=env, timeout=300, input=input)
 
 
-def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str:
+def _output(result: CompletedProcess[str], command: list[str]) -> str:
     if result.returncode != 0:
         detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
         try:
@@ -49,7 +56,7 @@ def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str
     return result.stdout
 
 
-def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
+def _json(result: CompletedProcess[str], command: list[str]) -> dict:
     _output(result, command)
     try:
         value = read_ux_cli_result(result)
@@ -205,7 +212,7 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
                      "marketplace", verify, cases=["S-203.25"])
 
 
-def validate_shared_failure(result: subprocess.CompletedProcess[str], *, json_mode: bool,
+def validate_shared_failure(result: CompletedProcess[str], *, json_mode: bool,
                             code: str, message: str, hint: str) -> None:
     """Validate the common human or machine failure contract used by S-051."""
     if result.returncode == 0:
@@ -339,7 +346,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     base_env = dict(os.environ if env is None else env)
     export_project_identity_to_child_environment(base_env, project_root=str(project))
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
-    def cli(args: list[str], cwd: Path = project) -> subprocess.CompletedProcess[str]:
+    def cli(args: list[str], cwd: Path = project) -> CompletedProcess[str]:
         return _run(["kb", *args], cwd=cwd, env=base_env, runner=runner)
 
     commit_package = "@kb-labs/commit"

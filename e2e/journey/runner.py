@@ -7,7 +7,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -41,11 +40,24 @@ from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps,
                             run_last_admin_guard_steps, run_password_and_session_steps)
 from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
 from scoreboard import release_claims_for_case, write_scoreboards
-from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
-                         invocation_context, open_http, print_report_text, read_kb_create_cli_result,
-                         read_kb_create_cli_stream, read_ux_cli_result,
-                         store_report_secret, run_command, run_pty_command,
-                         start_background_command, write_report_text)
+from invocations import (
+    CompletedProcess,
+    TimeoutExpired,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    describe_cli_failure,
+    invocation_context,
+    open_http,
+    print_report_text,
+    read_kb_create_cli_result,
+    read_kb_create_cli_stream,
+    read_ux_cli_result,
+    run_command,
+    run_pty_command,
+    start_background_command,
+    store_report_secret,
+    write_report_text,
+)
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = journey_value("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -286,7 +298,7 @@ def record_case(name: str, passed: bool, message: str, *, cases: list[str],
                       runners=runners)
 
 
-def handle_json_install_failure(operation: str, result: subprocess.CompletedProcess) -> bool:
+def handle_json_install_failure(operation: str, result: CompletedProcess) -> bool:
     if operation != "install" or result.returncode == 0:
         return False
     refusal = parse_install_refusal(result)
@@ -312,7 +324,7 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
                          input=input_text,
                          monitor_process=lambda pid: _sample_pnpm_rss_for_run(pid))
     duration = time.monotonic() - started
-    return subprocess.CompletedProcess(args, result.returncode,
+    return CompletedProcess(args, result.returncode,
                                        stdout=result.stdout or "",
                                        stderr=result.stderr or ""), duration
 
@@ -369,7 +381,7 @@ def log_group_exception(group: str) -> None:
 
 def configure_secured_platform(
     env: dict[str, str], launcher: str, *, configure_oidc: bool = False, run_command=run,
-) -> tuple[str, subprocess.CompletedProcess] | None:
+) -> tuple[str, CompletedProcess] | None:
     """Apply secured journey config through the authenticated CLI session."""
     home = Path(env["HOME"])
     settings = []
@@ -406,7 +418,7 @@ def configure_secured_platform(
 
 def login_and_configure_secured_admin(
     env: dict[str, str], launcher: str, *, configure_oidc: bool = False, run_command=run,
-) -> tuple[str, subprocess.CompletedProcess] | None:
+) -> tuple[str, CompletedProcess] | None:
     """Sign in the bootstrap admin before making authenticated platform config changes."""
     project = PROJECT
     login, _ = run_command(
@@ -2031,7 +2043,7 @@ def main(*, update_variant_runner=None):
                     project_a=PROJECT,
                     project_b=project_b_root,
                 ))
-            except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+            except (RuntimeError, OSError, TimeoutExpired) as error:
                 fail(f"Studio fixture setup: {error}")
             if service_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID") and service_env.get("KB_STUDIO_HEALTHY_PROJECT_RUN_ID"):
                 studio_env["KB_STUDIO_DIAGNOSTIC_PROJECT"] = project_name

@@ -8,22 +8,26 @@ import json
 import os
 from contextlib import closing
 import sqlite3
-import subprocess
 from pathlib import Path
 from typing import Callable
 from urllib.request import Request, urlopen
 
-from invocations import (decode_ux_error_result, decode_ux_success_result,
-                         read_kb_create_cli_result, start_background_command)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    read_kb_create_cli_result,
+    start_background_command,
+)
 from service_steps import Journey
 from journey_resources import active_platform_root, snapshot_state_tree
 
 
-Run = Callable[[list[str], Path], subprocess.CompletedProcess]
-InteractiveRun = Callable[[list[str], Path], subprocess.CompletedProcess]
+Run = Callable[[list[str], Path], CompletedProcess]
+InteractiveRun = Callable[[list[str], Path], CompletedProcess]
 
 
-def _payload(result: subprocess.CompletedProcess, label: str) -> dict:
+def _payload(result: CompletedProcess, label: str) -> dict:
     value = read_kb_create_cli_result(result.args[1], result)
     if result.returncode:
         error = decode_ux_error_result(value)
@@ -89,7 +93,7 @@ def _retains_rows(before: dict[str, dict[str, int]], after: dict[str, dict[str, 
                for path, tables in before.items())
 
 
-def _error(result: subprocess.CompletedProcess, label: str) -> dict:
+def _error(result: CompletedProcess, label: str) -> dict:
     value = read_kb_create_cli_result(result.args[1], result)
     if result.returncode == 0:
         raise RuntimeError(f"{label}: expected a typed failure but command succeeded")
@@ -136,7 +140,7 @@ def run_platform_update_variant_steps(
     workflow_job_id = ""
     workflow_marker = project_a / ".kb/workflows/update-variant.marker"
     workflow_file = project_a / ".kb/workflows/update-variant.yml"
-    def cli(args: list[str], cwd: Path = project_a) -> subprocess.CompletedProcess:
+    def cli(args: list[str], cwd: Path = project_a) -> CompletedProcess:
         return run(args, cwd)
 
     def save_preservation_fixture() -> None:

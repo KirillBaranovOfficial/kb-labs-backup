@@ -3,13 +3,18 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
 from service_steps import Journey
-from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
-                         read_ux_cli_result, run_command)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    invocation_context,
+    read_ux_cli_result,
+    run_command,
+)
 
 
 def workspace_checkout_problem(repo_root: Path) -> str | None:
@@ -74,7 +79,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
         env.pop("KB_NET_OFFSET", None)
         env["GATEWAY_PORT"] = "1"
 
-        def run(*args: str) -> subprocess.CompletedProcess[str]:
+        def run(*args: str) -> CompletedProcess[str]:
             return run_command(["node", str(cli), *args], cwd=repo_root, env=env, timeout=120)
 
         def register_checkout() -> str | None:

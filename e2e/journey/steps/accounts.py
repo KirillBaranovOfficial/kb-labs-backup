@@ -7,12 +7,19 @@ import http.cookiejar
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-import subprocess
 import os
 
 from .auth import _login, _request
-from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
-                         read_ux_cli_result, read_ux_http_result, store_report_secret, run_command)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    open_http,
+    read_ux_cli_result,
+    read_ux_http_result,
+    run_command,
+    store_report_secret,
+)
 
 
 def _browser_call(base_url: str, jar: http.cookiejar.CookieJar, path: str, *, method: str = "GET",
@@ -83,7 +90,7 @@ def run_password_and_session_steps(base_url: str, email: str, password: str) -> 
 
 
 def run_cli_logout_steps(cli_path: str, env: dict[str, str]) -> None:
-    def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def invoke(args: list[str]) -> CompletedProcess[str]:
         return run_command([cli_path, *args], env=env)
 
     email = env["KB_JOURNEY_ADMIN_EMAIL"]

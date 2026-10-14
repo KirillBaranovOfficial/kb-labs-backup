@@ -13,20 +13,31 @@ const (
 // ExitStatus is a process status selected by the diagnostic contract. Its
 // value can only be constructed in this package from a catalogue class or a
 // declared non-error command outcome.
-type ExitStatus struct{ code int }
+type ExitStatus struct {
+	code     int
+	selected bool
+}
 
 // Code returns the OS status for the single launcher boundary.
-func (s ExitStatus) Code() int { return s.code }
+func (s ExitStatus) Code() int {
+	if !s.selected {
+		return exitError
+	}
+	return s.code
+}
 
-func SuccessStatus() ExitStatus          { return ExitStatus{code: exitOK} }
-func operationFailureStatus() ExitStatus { return ExitStatus{code: exitError} }
-func inputRefusalStatus() ExitStatus     { return ExitStatus{code: exitInput} }
+// IsSelected reports whether diag explicitly constructed this process outcome.
+func (s ExitStatus) IsSelected() bool { return s.selected }
+
+func SuccessStatus() ExitStatus          { return ExitStatus{code: exitOK, selected: true} }
+func operationFailureStatus() ExitStatus { return ExitStatus{code: exitError, selected: true} }
+func inputRefusalStatus() ExitStatus     { return ExitStatus{code: exitInput, selected: true} }
 
 // PlanChangesStatus and PlanDriftStatus are the non-error outcomes declared
 // by the kb-deploy plan command's documented result contract.
-func PlanChangesStatus() ExitStatus          { return ExitStatus{code: 2} }
-func PlanDriftStatus() ExitStatus            { return ExitStatus{code: 4} }
-func DeployChangesAppliedStatus() ExitStatus { return ExitStatus{code: 1} }
+func PlanChangesStatus() ExitStatus          { return ExitStatus{code: 2, selected: true} }
+func PlanDriftStatus() ExitStatus            { return ExitStatus{code: 4, selected: true} }
+func DeployChangesAppliedStatus() ExitStatus { return ExitStatus{code: 1, selected: true} }
 
 // ChildProcessStatus preserves the explicit child-process pass-through
 // contract without allowing callers to construct a status from an integer.
@@ -34,7 +45,7 @@ func ChildProcessStatus(child *exec.ExitError) ExitStatus {
 	if child == nil || child.ExitCode() < 0 {
 		return operationFailureStatus()
 	}
-	return ExitStatus{code: child.ExitCode()}
+	return ExitStatus{code: child.ExitCode(), selected: true}
 }
 
 // ExitCode maps the shared CLI error categories to the shared process table.

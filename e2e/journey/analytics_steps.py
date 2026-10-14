@@ -6,13 +6,21 @@ from project_service_path import project_service_path
 
 import json
 import os
-import subprocess
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
-                         open_http, read_ux_cli_result, read_ux_http_result, run_command, run_with_runner)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    invocation_context,
+    open_http,
+    read_ux_cli_result,
+    read_ux_http_result,
+    run_command,
+    run_with_runner,
+)
 from service_steps import Journey
 from gateway_steps import run_gateway_steps
 
@@ -44,7 +52,7 @@ def _event_list(body: object) -> list[dict]:
     return [event for event in events if isinstance(event, dict)]
 
 
-def _run_fixture_command(command: list[str], *, step_id: str, runner, cwd: str) -> subprocess.CompletedProcess[str]:
+def _run_fixture_command(command: list[str], *, step_id: str, runner, cwd: str) -> CompletedProcess[str]:
     with invocation_context(step_id=step_id):
         return run_with_runner(runner, command, cwd=cwd, env=os.environ.copy(), timeout=180,
                                capture_output=True, text=True, check=False)
@@ -58,7 +66,7 @@ def _marker_event(events: list[dict], marker: str) -> dict | None:
     return None
 
 
-def _emission_succeeded(result: subprocess.CompletedProcess[str] | None, marker: str) -> bool:
+def _emission_succeeded(result: CompletedProcess[str] | None, marker: str) -> bool:
     if result is None or result.returncode != 0:
         return False
     payload = read_ux_cli_result(result)

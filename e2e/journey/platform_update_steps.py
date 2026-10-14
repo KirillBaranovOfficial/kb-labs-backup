@@ -4,20 +4,25 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
 from journey_resources import (active_platform_root, current_link_path,
                                parse_shell_commands, snapshot_state_tree)
-from invocations import (decode_ux_error_result, decode_ux_success_result,
-                         read_kb_create_cli_result, read_ux_cli_result,
-                         run_command as invoke_command, run_with_runner)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    read_kb_create_cli_result,
+    read_ux_cli_result,
+    run_command as invoke_command,
+    run_with_runner,
+)
 from service_port_assertions import assert_service_ports_preserved
 
 
-CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
+CommandRunner = Callable[[list[str]], CompletedProcess]
 
 
 def _json_command(run_command: CommandRunner, args: list[str], label: str) -> dict:
@@ -35,7 +40,7 @@ def _json_command(run_command: CommandRunner, args: list[str], label: str) -> di
     return payload
 
 
-def _log_tail(command: str, result: subprocess.CompletedProcess[str]) -> str:
+def _log_tail(command: str, result: CompletedProcess[str]) -> str:
     """The end of the operation log named by a failed launcher result, so the journey report shows the cause."""
     try:
         envelope = read_kb_create_cli_result(command, result)
@@ -106,15 +111,15 @@ def run_platform_update_steps(
     base_version: str,
     updated_version: str,
     run_command: CommandRunner = invoke_command,
-    verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
+    verify_user: Callable[[], CompletedProcess] | None = None,
     expire_user_session: Callable[[], None] | None = None,
     parent_journey: Journey | None = None,
     allowed_outside_roots: tuple[Path, ...] = (),
 ) -> Journey:
     command_runner = run_command
-    def run_command(args: list[str]) -> subprocess.CompletedProcess:
+    def run_command(args: list[str]) -> CompletedProcess:
         result = run_with_runner(command_runner, args)
-        return subprocess.CompletedProcess(args, result.returncode,
+        return CompletedProcess(args, result.returncode,
                                             stdout=(result.stdout or "") + (result.stderr or ""),
                                             stderr=result.stderr)
     """Update the running installation, exercise a project command, and roll back."""

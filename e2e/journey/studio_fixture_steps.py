@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 
-from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context, read_ux_cli_result,
-                         run_command, run_with_runner)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    invocation_context,
+    read_ux_cli_result,
+    run_command,
+    run_with_runner,
+)
 
 
 GREET_WORKFLOW = """name: greet
@@ -30,7 +36,7 @@ jobs:
 """
 
 
-def _cli(command: list[str], *, cwd: Path, env: dict[str, str], runner) -> subprocess.CompletedProcess[str]:
+def _cli(command: list[str], *, cwd: Path, env: dict[str, str], runner) -> CompletedProcess[str]:
     with invocation_context(step_id="journey.setup"):
         return run_with_runner(runner, command, cwd=cwd, env=env, timeout=180,
                                capture_output=True, text=True, check=False)

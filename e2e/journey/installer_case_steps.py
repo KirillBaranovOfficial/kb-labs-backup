@@ -10,7 +10,6 @@ import re
 import shutil
 import shlex
 import socket
-import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -19,9 +18,15 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from platform_update_steps import _json_command
-from invocations import (decode_ux_error_result, decode_ux_success_result, read_kb_create_cli_result,
-                         read_ux_cli_result, read_kb_create_cli_stream,
-                         run_command as evidence_run_command)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    read_kb_create_cli_result,
+    read_kb_create_cli_stream,
+    read_ux_cli_result,
+    run_command as evidence_run_command,
+)
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
                                active_platform_root, create_fixture_install_container,
                                snapshot_tree, workspace_resource)
@@ -29,10 +34,10 @@ from service_port_assertions import (assert_root_offset, service_ports,
                                      service_transport_ports)
 from service_steps import Journey
 
-CommandRunner = Callable[..., subprocess.CompletedProcess]
+CommandRunner = Callable[..., CompletedProcess]
 
 
-def parse_install_refusal(result: subprocess.CompletedProcess[str]) -> dict | None:
+def parse_install_refusal(result: CompletedProcess[str]) -> dict | None:
     """Return the typed product envelope from a failed JSON install stream."""
     try:
         envelope = read_kb_create_cli_stream("install", result)
@@ -207,7 +212,7 @@ def assert_gateway_index_diagnosis(data: dict, path: Path, root: Path) -> None:
         raise RuntimeError(f"Gateway index diagnostic lacks path, reason, or ordered recovery commands: {data}")
 
 
-def read_gateway_index_refusal(result: subprocess.CompletedProcess, label: str,
+def read_gateway_index_refusal(result: CompletedProcess, label: str,
                                path: Path, root: Path) -> dict:
     envelope = read_kb_create_cli_result(result.args[1], result)
     error = decode_ux_error_result(envelope)
@@ -264,14 +269,14 @@ class InstallerHostLifecycle:
             raise action_error
 
 
-def _data(result: subprocess.CompletedProcess, label: str) -> dict:
+def _data(result: CompletedProcess, label: str) -> dict:
     _, payload = _payload(result, label)
     if result.returncode == 0 and isinstance(payload, dict):
         return payload
     raise RuntimeError(f"{label}: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
 
 
-def _assert_repeat_install_applied(result: subprocess.CompletedProcess, *, launcher: str, root: Path,
+def _assert_repeat_install_applied(result: CompletedProcess, *, launcher: str, root: Path,
                                    run_command: CommandRunner, expected_identity: dict, label: str) -> None:
     data = _data(result, label)
     if data.get("operation") != "apply":
@@ -290,7 +295,7 @@ def _assert_repeat_install_applied(result: subprocess.CompletedProcess, *, launc
         raise RuntimeError(f"{label}: host is not running and reachable after apply")
 
 
-def _payload(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dict]:
+def _payload(result: CompletedProcess, label: str) -> tuple[dict, dict]:
     command = result.args[1]
     if result.returncode != 0:
         try:
@@ -308,7 +313,7 @@ def _payload(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dic
     return envelope, data if isinstance(data, dict) else {}
 
 
-def _diagnostic(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dict]:
+def _diagnostic(result: CompletedProcess, label: str) -> tuple[dict, dict]:
     envelope, error = _payload(result, label)
     if result.returncode == 0 or not isinstance(error, dict):
         raise RuntimeError(f"{label}: expected a structured error")
@@ -353,7 +358,7 @@ def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
     return journey
 
 
-def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandRunner) -> subprocess.CompletedProcess:
+def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandRunner) -> CompletedProcess:
     """Run the CLI installed for the requested root, independent of PATH shim ownership."""
     executable = active_platform_root(platform_root) / ".kb/v2/bin/kb"
     if not executable.is_file():
@@ -567,7 +572,7 @@ def _seed_update_fixture(target_root: Path, *, kind: str, component: str) -> Pat
 
 
 def run_uninstall_decline_step(*, mode: str, args: list[str], receipt_path: Path,
-                               run_pty: Callable[..., tuple[subprocess.CompletedProcess, float]]) -> Journey:
+                               run_pty: Callable[..., tuple[CompletedProcess, float]]) -> Journey:
     """Confirm terminal uninstall cancellation preserves the active receipt."""
     journey = Journey(mode, f"uninstall-decline-{mode}")
 

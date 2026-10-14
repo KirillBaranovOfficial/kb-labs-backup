@@ -12,7 +12,6 @@ import http.cookiejar
 import json
 import os
 from pathlib import Path
-import subprocess
 import shutil
 import tempfile
 import traceback
@@ -24,10 +23,22 @@ from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import FlowGraph, Journey, JourneyResult
 from journey_dependencies import Dependency
-from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
-                         print_report_text, read_ux_cli_result, read_ux_http_result, run_command,
-                         export_project_identity_to_child_environment, store_report_secret,
-                         run_with_runner, write_report_json, write_report_text)
+from invocations import (
+    CalledProcessError,
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    export_project_identity_to_child_environment,
+    open_http,
+    print_report_text,
+    read_ux_cli_result,
+    read_ux_http_result,
+    run_command,
+    run_with_runner,
+    store_report_secret,
+    write_report_json,
+    write_report_text,
+)
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import prepare_commit_project_fixture, run_marketplace_steps
 from marketplace_steps import _registry_version, _output
@@ -111,13 +122,13 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
     if not cli or not Path(cli).is_file():
         return "BLOCKED: provide KB_JOURNEY_CLI_PATH for project settings checks"
 
-    def run_cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    def run_cli(cwd: Path, *args: str) -> CompletedProcess[str]:
         return run_command(
             [cli, *args], cwd=cwd, env=os.environ.copy(), capture_output=True,
             text=True, check=False, timeout=90,
         )
 
-    def project_id(result: subprocess.CompletedProcess[str]) -> str:
+    def project_id(result: CompletedProcess[str]) -> str:
         try:
             payload = decode_ux_success_result(read_ux_cli_result(result))
         except (json.JSONDecodeError, ValueError):
@@ -956,11 +967,11 @@ def _find_project_registration(payload: object) -> tuple[str, str]:
 
 def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
     """Prepare the staged note commit required by S-140.2 in the isolated KB state."""
-    def git(*args: str) -> subprocess.CompletedProcess[str]:
+    def git(*args: str) -> CompletedProcess[str]:
         command = ["git", "-C", str(project_root), *args]
         result = run_command(command, cwd=project_root, env=env, timeout=30)
         if result.returncode != 0:
-            raise subprocess.CalledProcessError(result.returncode, command,
+            raise CalledProcessError(result.returncode, command,
                                                 output=result.stdout, stderr=result.stderr)
         return result
 
@@ -1031,7 +1042,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     result = run_command(["git", "init", "-q", str(project_b)], cwd=project_b.parent,
                          env=env, timeout=30)
     if result.returncode != 0:
-        raise subprocess.CalledProcessError(result.returncode,
+        raise CalledProcessError(result.returncode,
                                             ["git", "init", "-q", str(project_b)],
                                             output=result.stdout, stderr=result.stderr)
     register = ["kb", "project", "add", str(project_b), "--json"]

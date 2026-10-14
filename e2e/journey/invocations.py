@@ -14,6 +14,7 @@ import shlex
 import select
 import signal
 import subprocess
+from subprocess import CalledProcessError, CompletedProcess, PIPE, STDOUT, TimeoutExpired
 import sys
 import tempfile
 import threading

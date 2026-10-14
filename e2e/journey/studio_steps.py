@@ -5,16 +5,25 @@ from collections import deque
 import json
 import os
 import re
-import subprocess
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_link,
-                         open_http, print_report_text, read_ux_http_result, record_invocation,
-                         store_report_secret,
-                         run_streaming_command, write_report_json, write_report_text)
+from invocations import (
+    TimeoutExpired,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    invocation_link,
+    open_http,
+    print_report_text,
+    read_ux_http_result,
+    record_invocation,
+    run_streaming_command,
+    store_report_secret,
+    write_report_json,
+    write_report_text,
+)
 
 PLAYWRIGHT_HEADLESS_SHELL = Path("chromium_headless_shell-1217/chrome-linux/headless_shell")
 PLAYWRIGHT_IMAGE_REBUILD_COMMAND = "e2e/journey/run.sh --no-build"
@@ -164,7 +173,7 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
                 command, env=env, timeout=timeout, on_output_line=copy_output,
                 start_new_session=True)
             return_code = result.returncode
-        except subprocess.TimeoutExpired as error:
+        except TimeoutExpired as error:
             return_code = -1
             raise error
         elapsed = time.monotonic() - started
@@ -172,7 +181,7 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
         message = "Studio browser journey passed"
         if not passed:
             message = f"Playwright exited {return_code}" + _output_excerpt(output_lines)
-    except subprocess.TimeoutExpired:
+    except TimeoutExpired:
         elapsed = time.monotonic() - started
         message = f"Playwright timed out after {timeout}s"
         message += _output_excerpt(output_lines)

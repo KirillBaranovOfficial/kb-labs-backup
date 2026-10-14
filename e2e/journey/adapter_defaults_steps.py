@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import sqlite3
-import subprocess
 import tempfile
 import urllib.request
 from contextlib import closing
@@ -17,15 +16,23 @@ from journey_resources import active_platform_root
 from service_steps import Journey
 from marketplace_steps import _platform_snapshot
 from platform_update_steps import _changed_paths
-from invocations import (decode_ux_error_result, decode_ux_success_result,
-                         export_project_identity_to_child_environment, open_http,
-                         read_kb_create_cli_result, read_ux_cli_result,
-                         read_ux_http_result, run_command, run_with_runner)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    export_project_identity_to_child_environment,
+    open_http,
+    read_kb_create_cli_result,
+    read_ux_cli_result,
+    read_ux_http_result,
+    run_command,
+    run_with_runner,
+)
 
-CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+CommandRunner = Callable[..., CompletedProcess[str]]
 
 
-def _run(runner: CommandRunner, command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run(runner: CommandRunner, command: list[str], cwd: Path, env: dict[str, str]) -> CompletedProcess[str]:
     result = run_with_runner(runner, command, cwd=str(cwd), env=env, timeout=300)
     if result.returncode != 0:
         detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())[-400:]
@@ -33,7 +40,7 @@ def _run(runner: CommandRunner, command: list[str], cwd: Path, env: dict[str, st
     return result
 
 
-def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
+def _json(result: CompletedProcess[str], command: list[str]) -> dict:
     try:
         if command[0] == "kb-create":
             value = read_kb_create_cli_result(command[1], result)
@@ -119,7 +126,7 @@ def _run_from_registered_project(
     cwd: Path,
     env: dict[str, str],
     **kwargs,
-) -> subprocess.CompletedProcess[str]:
+) -> CompletedProcess[str]:
     baseline = _repository_tree(cwd)
     result = run_with_runner(runner, command, cwd=str(cwd), env=env, **kwargs)
     if _repository_tree(cwd) != baseline:
@@ -211,7 +218,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             stderr = stderr.encode() if isinstance(stderr, str) else stderr
         elif isinstance(stderr, str):
             stderr = stderr.encode()
-        return subprocess.CompletedProcess(command, result.returncode,
+        return CompletedProcess(command, result.returncode,
                                             stdout=stdout, stderr=stderr)
     export_project_identity_to_child_environment(base_env, project_root=str(project_a))
     project_state = _project_state_dir(project_a, base_env)
@@ -227,7 +234,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         snapshot["path"] = platform_config_path
         snapshot["contents"] = original_platform_config
 
-    def cli(args: list[str], cwd: Path = project_a) -> subprocess.CompletedProcess[str]:
+    def cli(args: list[str], cwd: Path = project_a) -> CompletedProcess[str]:
         return _run(runner, ["kb", *args], cwd, base_env)
 
     def list_adapters(cwd: Path = project_a) -> dict:

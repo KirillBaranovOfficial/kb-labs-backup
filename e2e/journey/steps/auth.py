@@ -9,15 +9,22 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
-from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
-                         read_ux_cli_result, read_ux_http_result, store_report_secret,
-                         run_command, run_pty_command)
+from invocations import (
+    CompletedProcess,
+    decode_ux_error_result,
+    decode_ux_success_result,
+    open_http,
+    read_ux_cli_result,
+    read_ux_http_result,
+    run_command,
+    run_pty_command,
+    store_report_secret,
+)
 
 
 def _request(base_url: str, path: str, *, method: str = "GET", token: str | None = None,
@@ -75,7 +82,7 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
                         email: str | None = None, base_url: str | None = None,
                         password: str | None = None) -> None:
     """Prove the CLI status surface in local and secured mode."""
-    def invoke(args: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+    def invoke(args: list[str], **kwargs) -> CompletedProcess[str]:
         return run_command([cli_path, *args], env=env, **kwargs)
 
     if authenticated:
@@ -155,12 +162,12 @@ def run_cli_auth_forbidden(cli_path: str, env: dict[str, str], *, user_id: str =
         raise AssertionError(f"member auth reset-link returned an unexpected result: {payload!r}")
 
 
-def _combined(result: subprocess.CompletedProcess[str]) -> str:
+def _combined(result: CompletedProcess[str]) -> str:
     """Output of a command whose stderr may already be merged into stdout (stderr is None)."""
     return (result.stdout or "") + (result.stderr or "")
 
 
-def assert_platform_auth_required(result: subprocess.CompletedProcess[str], command: list[str],
+def assert_platform_auth_required(result: CompletedProcess[str], command: list[str],
                                   gateway: str = "<url>") -> None:
     """Require the exact anonymous CLI auth envelope promised by S-041.7."""
     try:
@@ -175,7 +182,7 @@ def assert_platform_auth_required(result: subprocess.CompletedProcess[str], comm
         raise AssertionError(f"unauthenticated {' '.join(command)} returned an unexpected result: {payload!r}")
 
 
-def assert_cli_session_absent(result: subprocess.CompletedProcess[str]) -> None:
+def assert_cli_session_absent(result: CompletedProcess[str]) -> None:
     """Confirm the CLI product reports no authenticated human session."""
     try:
         payload = decode_ux_success_result(read_ux_cli_result(result))
@@ -220,7 +227,7 @@ def run_cli_corrupt_session_file(cli_path: str, env: dict[str, str]) -> None:
 
 def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
                                  old_password: str, new_password: str, env: dict[str, str],
-                                 invoke: Callable[..., tuple[subprocess.CompletedProcess[str], float]],
+                                 invoke: Callable[..., tuple[CompletedProcess[str], float]],
                                  *, on_valid_password: Callable[[str], None]) -> None:
     """Exercise stopped-host recovery, recovered login, and the running-host guard."""
     login = _request("http://127.0.0.1:4000", "/auth/login/cli", method="POST",
@@ -238,7 +245,7 @@ def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
         raise AssertionError(f"kb-create stop failed: {_combined(stopped)[-400:]}")
     recover_args = [launcher, "doctor", "--platform-root", platform_root, "--recover", "--email", email,
                     "--tenant", tenant, "--password-stdin", "--yes"]
-    recovered: subprocess.CompletedProcess[str] | None = None
+    recovered: CompletedProcess[str] | None = None
     recovery_error: Exception | None = None
     try:
         recovered, _ = invoke(recover_args, env=env, input_text=new_password + "\n")
