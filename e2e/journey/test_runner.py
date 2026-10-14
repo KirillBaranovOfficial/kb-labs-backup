@@ -1248,3 +1248,33 @@ thread.join()
         self.assertIn(envelope["cause"], report.first_failure["message"])
         self.assertIn(envelope["hint"], report.first_failure["message"])
         self.assertEqual(first_failure, f"kb-create install --json: {envelope['code']}: {envelope['message']}; cause={envelope['cause']}; hint={envelope['hint']}")
+
+class ProjectRegistrationContractTests(unittest.TestCase):
+    def test_project_registration_accessor_returns_a_typed_value_or_state_failure(self):
+        runner = importlib.import_module("runner")
+
+        valid_graph = FlowGraph(Journey("secured", "typed-project-state"), {}, states={
+            "project-registered": {"passed": True, "value": {
+                "id": "prj_123", "root": "/workspace/project", "name": "Project"}},
+        })
+        project = runner.project_registration_from_state(
+            valid_graph.state_value_if_passed("project-registered"))
+        self.assertEqual((project.project_id, project.root, project.name),
+                         ("prj_123", "/workspace/project", "Project"))
+
+        failed_graph = FlowGraph(Journey("secured", "failed-project-state"), {
+            "studio": ("project-registered",),
+        }, states={
+            "project-registered": {"passed": False, "evidence": "kb project show exited 7",
+                                   "group": "project", "step": "registration probe", "claim": "no case claim"},
+        })
+        self.assertEqual(failed_graph.flow(
+            "Studio browser journey", "studio", "studio",
+            lambda: runner.project_registration_from_state(None)), "BLOCKED")
+        blocked = failed_graph.journey.steps[-1]
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertIn("project-registered", blocked.message)
+        self.assertIn("kb project show exited 7", blocked.message)
+        with self.assertRaisesRegex(RuntimeError, "valid project result"):
+            runner.project_registration_from_state(
+                failed_graph.state_value_if_passed("project-registered"))

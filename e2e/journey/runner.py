@@ -16,6 +16,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
@@ -35,7 +36,7 @@ from installer_case_steps import parse_install_refusal
 from journey_resources import case_catalog_root, journey_module, resource_root, workspace_resource
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
-from service_steps import (FlowGraph, Journey, record_candidate_provenance, record_runner_failure,
+from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
                            record_runner_exception, replay_steps)
 from journey_dependencies import FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import (JourneySelectionError, active_journey_selection,
@@ -218,14 +219,21 @@ def export_graph_state_to_child_environment(graph: FlowGraph, env: dict[str, str
     env["KB_JOURNEY_STATES"] = json.dumps(graph.states)
 
 
-def project_registration_from_state(graph: FlowGraph) -> dict[str, str] | None:
-    project = graph.state_value_if_passed("project-registered")
-    if project is None:
-        return None
+@dataclass(frozen=True)
+class ProjectRegistration:
+    project_id: str
+    root: str
+    name: str
+
+
+def project_registration_from_state(value: object) -> ProjectRegistration:
+    """Parse a passed state value into the non-optional project contract."""
+    project = value
     if (not isinstance(project, dict) or not isinstance(project.get("id"), str) or not project["id"]
-            or not isinstance(project.get("root"), str) or not project["root"]):
-        return None
-    return project
+            or not isinstance(project.get("root"), str) or not project["root"]
+            or not isinstance(project.get("name"), str)):
+        raise JourneyContractError("project-registered state passed without a valid project result")
+    return ProjectRegistration(project_id=project["id"], root=project["root"], name=project["name"])
 
 
 def project_b_fixture_from_state(graph: FlowGraph) -> dict[str, str] | None:
@@ -1801,8 +1809,6 @@ def _main(*, update_variant_runner=None):
         if outer_graph.states.get("project-registered") is None:
             establish_project_registration(outer_graph, PROJECT, env)
         capture_case_failure()
-        project_result = project_registration_from_state(outer_graph)
-        project_id = project_result["id"] if project_result is not None else ""
         def lint_workflow_fixture() -> str | None:
             lint, _ = run(kb_login_shell(["workflow", "lint", "--json"]),
                           env=service_env, cwd=PROJECT, timeout=120)
@@ -2170,161 +2176,164 @@ def _main(*, update_variant_runner=None):
 
         run_studio_browser_group = reject_unprepared_studio_flow
         if not outer_graph.selection_active or "studio" in outer_graph.selected_groups:
-            project_name = project_result.get("name", "")
-            studio_env = create_studio_environment(
-                service_env,
-                mode=mode,
-                project_id=project_id,
-                project_name=project_name,
-                project_root=str(PROJECT),
-                kb_bin=str(BIN / "kb"),
-            )
-            for key in ("KB_STUDIO_OAUTH_JOURNEY", "KB_STUDIO_OIDC_PROVIDER_ID",
-                        "KB_STUDIO_OIDC_PROVIDER_NAME", "KB_STUDIO_OIDC_EMAIL"):
-                studio_env.pop(key, None)
-            if mode == "secured":
-                if oauth_claims:
-                    studio_env["KB_STUDIO_OAUTH_JOURNEY"] = "1"
-                    studio_env["KB_STUDIO_OIDC_PROVIDER_ID"] = "corp"
-                    studio_env["KB_STUDIO_OIDC_PROVIDER_NAME"] = "corp"
-                    studio_env["KB_STUDIO_OIDC_EMAIL"] = service_env["KB_JOURNEY_ADMIN_EMAIL"]
-            cron_id = "studio-a"
-            (PROJECT / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
-            (PROJECT / ".kb" / "crons" / f"{cron_id}.yml").write_text(
-                "schedule: '0 0 * * *'\nworkflow: journey-hello\ninput:\n  message: studio-a\nenabled: true\n",
-                encoding="utf-8")
-            project_a_plugin_cron_ids = []
-            project_a_user_cron_ids = []
-            project_a_cron_error = "project A cron list did not contain the fixture user and plugin crons"
-            cron_list_deadline = time.monotonic() + 30
-            while time.monotonic() < cron_list_deadline:
-                project_a_cron_list, _ = run(
-                    kb_login_shell(["workflow", "crons", "list", "--json"]),
-                    env=studio_env, cwd=PROJECT, timeout=120)
-                try:
-                    cron_payload = decode_ux_success_result(
-                        read_ux_cli_result(project_a_cron_list))
-                    project_a_crons = cron_payload["crons"]
-                    project_a_plugin_cron_ids = [str(cron["id"]) for cron in project_a_crons
-                                                 if isinstance(cron, dict) and cron.get("source") == "plugin"]
-                    project_a_user_cron_ids = [str(cron["id"]) for cron in project_a_crons
-                                               if isinstance(cron, dict) and cron.get("source") == "user"]
-                    if (project_a_cron_list.returncode == 0 and project_a_plugin_cron_ids
-                            and cron_id in project_a_user_cron_ids):
-                        break
-                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-                    project_a_cron_error = str(error)
-                time.sleep(1)
-            else:
-                fail(f"Studio schedule journey could not list project A crons: {project_a_cron_error}")
-            if not project_b_root_value or not project_b_id:
-                fail("installed Studio fixture requires the fixtures-installed project B state")
-            project_b_root = Path(project_b_root_value)
-            (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
-            (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
-            (project_b_root / ".kb" / "workflows" / "studio-b-workflow.yml").write_text(
-                "name: studio-b-workflow\nversion: 1.0.0\non:\n  manual: true\njobs:\n  smoke:\n    runsOn: local\n    steps:\n"
-                "      - name: Log B\n        id: log-b\n        uses: builtin:shell\n        with:\n          command: 'echo studio-b'\n",
-                encoding="utf-8")
-            (project_b_root / ".kb" / "crons" / "studio-b.yml").write_text(
-                "schedule: '0 0 * * *'\nworkflow: studio-b-workflow\nenabled: true\n", encoding="utf-8")
-            studio_env.update({
-                "KB_STUDIO_CRON_PROJECT_ROOT": str(PROJECT),
-                "KB_STUDIO_CRON_ID": cron_id,
-                "KB_STUDIO_PROJECT_A_PLUGIN_CRON_IDS": ",".join(project_a_plugin_cron_ids),
-                "KB_STUDIO_PROJECT_A_USER_CRON_IDS": ",".join(project_a_user_cron_ids),
-                "KB_STUDIO_PROJECT_B_ID": project_b_id,
-                "KB_STUDIO_PROJECT_B_CRON_ID": "studio-b",
-                "KB_STUDIO_PLAYWRIGHT_JSON": str(service_report.with_name(f"studio-playwright-{mode}.json")),
-                "KB_STUDIO_PROJECT_A_NAME": project_name,
-                "KB_STUDIO_PROJECT_B_NAME": project_b_root.name,
-            })
-            try:
-                studio_env.update(prepare_studio_fixtures(
+            project_state = outer_graph.states.get("project-registered")
+            if project_state is not None and project_state.get("passed") is True:
+                project_result = project_registration_from_state(
+                    outer_graph.state_value_if_passed("project-registered"))
+                project_id = project_result.project_id
+                project_name = project_result.name
+                studio_env = create_studio_environment(
                     service_env,
-                    project_b_id=project_b_id,
-                    project_a=PROJECT,
-                    project_b=project_b_root,
-                ))
-            except (RuntimeError, OSError, TimeoutExpired) as error:
-                fail(f"Studio fixture setup: {error}")
-            if service_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID") and service_env.get("KB_STUDIO_HEALTHY_PROJECT_RUN_ID"):
-                studio_env["KB_STUDIO_DIAGNOSTIC_PROJECT"] = project_name
-                studio_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = service_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"]
-                studio_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"]
-            if studio_fixture_file.is_file():
-                analytics_fixture = json.loads(studio_fixture_file.read_text())
-                analytics_fields = {
-                    "eventType": "KB_STUDIO_ANALYTICS_EVENT_TYPE",
-                    "source": "KB_STUDIO_ANALYTICS_SOURCE",
-                    "model": "KB_STUDIO_ANALYTICS_MODEL",
-                    "eventId": "KB_STUDIO_ANALYTICS_EVENT_ID",
-                }
-                if all(isinstance(analytics_fixture.get(key), str) and analytics_fixture[key]
-                       for key in analytics_fields):
-                    studio_env.update({target: analytics_fixture[key]
-                                       for key, target in analytics_fields.items()})
-                project_event_fields = {
-                    "projectAEvent": "KB_STUDIO_PROJECT_A_EVENT",
-                    "projectBEvent": "KB_STUDIO_PROJECT_B_EVENT",
-                }
-                if all(isinstance(analytics_fixture.get(key), str) and analytics_fixture[key]
-                       for key in project_event_fields):
-                    studio_env.update({target: analytics_fixture[key]
-                                       for key, target in project_event_fields.items()})
-            try:
-                recorded_service_result = json.loads(service_report.read_text())
-                studio_shell = next((step for step in recorded_service_result.get("steps", [])
-                                     if step.get("capability") == "studio" and step.get("name") == "Studio shell"), None)
-                studio_shell_passed = studio_shell is not None and studio_shell.get("status") == "PASS"
-            except (OSError, json.JSONDecodeError):
-                studio_shell_passed = False
-            if mode == "secured":
+                    mode=mode,
+                    project_id=project_id,
+                    project_name=project_name,
+                    project_root=str(PROJECT),
+                    kb_bin=str(BIN / "kb"),
+                )
+                for key in ("KB_STUDIO_OAUTH_JOURNEY", "KB_STUDIO_OIDC_PROVIDER_ID",
+                            "KB_STUDIO_OIDC_PROVIDER_NAME", "KB_STUDIO_OIDC_EMAIL"):
+                    studio_env.pop(key, None)
+                if mode == "secured":
+                    if oauth_claims:
+                        studio_env["KB_STUDIO_OAUTH_JOURNEY"] = "1"
+                        studio_env["KB_STUDIO_OIDC_PROVIDER_ID"] = "corp"
+                        studio_env["KB_STUDIO_OIDC_PROVIDER_NAME"] = "corp"
+                        studio_env["KB_STUDIO_OIDC_EMAIL"] = service_env["KB_JOURNEY_ADMIN_EMAIL"]
+                cron_id = "studio-a"
+                (PROJECT / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
+                (PROJECT / ".kb" / "crons" / f"{cron_id}.yml").write_text(
+                    "schedule: '0 0 * * *'\nworkflow: journey-hello\ninput:\n  message: studio-a\nenabled: true\n",
+                    encoding="utf-8")
+                project_a_plugin_cron_ids = []
+                project_a_user_cron_ids = []
+                project_a_cron_error = "project A cron list did not contain the fixture user and plugin crons"
+                cron_list_deadline = time.monotonic() + 30
+                while time.monotonic() < cron_list_deadline:
+                    project_a_cron_list, _ = run(
+                        kb_login_shell(["workflow", "crons", "list", "--json"]),
+                        env=studio_env, cwd=PROJECT, timeout=120)
+                    try:
+                        cron_payload = decode_ux_success_result(
+                            read_ux_cli_result(project_a_cron_list))
+                        project_a_crons = cron_payload["crons"]
+                        project_a_plugin_cron_ids = [str(cron["id"]) for cron in project_a_crons
+                                                     if isinstance(cron, dict) and cron.get("source") == "plugin"]
+                        project_a_user_cron_ids = [str(cron["id"]) for cron in project_a_crons
+                                                   if isinstance(cron, dict) and cron.get("source") == "user"]
+                        if (project_a_cron_list.returncode == 0 and project_a_plugin_cron_ids
+                                and cron_id in project_a_user_cron_ids):
+                            break
+                    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                        project_a_cron_error = str(error)
+                    time.sleep(1)
+                else:
+                    fail(f"Studio schedule journey could not list project A crons: {project_a_cron_error}")
+                if not project_b_root_value or not project_b_id:
+                    fail("installed Studio fixture requires the fixtures-installed project B state")
+                project_b_root = Path(project_b_root_value)
+                (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
+                (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
+                (project_b_root / ".kb" / "workflows" / "studio-b-workflow.yml").write_text(
+                    "name: studio-b-workflow\nversion: 1.0.0\non:\n  manual: true\njobs:\n  smoke:\n    runsOn: local\n    steps:\n"
+                    "      - name: Log B\n        id: log-b\n        uses: builtin:shell\n        with:\n          command: 'echo studio-b'\n",
+                    encoding="utf-8")
+                (project_b_root / ".kb" / "crons" / "studio-b.yml").write_text(
+                    "schedule: '0 0 * * *'\nworkflow: studio-b-workflow\nenabled: true\n", encoding="utf-8")
+                studio_env.update({
+                    "KB_STUDIO_CRON_PROJECT_ROOT": str(PROJECT),
+                    "KB_STUDIO_CRON_ID": cron_id,
+                    "KB_STUDIO_PROJECT_A_PLUGIN_CRON_IDS": ",".join(project_a_plugin_cron_ids),
+                    "KB_STUDIO_PROJECT_A_USER_CRON_IDS": ",".join(project_a_user_cron_ids),
+                    "KB_STUDIO_PROJECT_B_ID": project_b_id,
+                    "KB_STUDIO_PROJECT_B_CRON_ID": "studio-b",
+                    "KB_STUDIO_PLAYWRIGHT_JSON": str(service_report.with_name(f"studio-playwright-{mode}.json")),
+                    "KB_STUDIO_PROJECT_A_NAME": project_name,
+                    "KB_STUDIO_PROJECT_B_NAME": project_b_root.name,
+                })
                 try:
-                    with invocation_context(step_id="journey.setup"):
-                        member_email, member_password = create_studio_member(
-                            "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
-                            service_env["KB_JOURNEY_ADMIN_PASSWORD"])
-                    studio_env["KB_STUDIO_MEMBER_EMAIL"] = member_email
-                    store_report_secret(studio_env, "KB_STUDIO_MEMBER_PASSWORD", member_password,
-                                        "Studio member password")
-                    with invocation_context(step_id="journey.setup"):
-                        admin_token, member_token = create_studio_access_tokens(
-                            "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
-                            service_env["KB_JOURNEY_ADMIN_PASSWORD"], member_email, member_password,
-                            env=service_env)
-                    store_report_secret(studio_env, "KB_STUDIO_ADMIN_TOKEN", admin_token,
-                                        "Studio admin access token")
-                    store_report_secret(studio_env, "KB_STUDIO_MEMBER_TOKEN", member_token,
-                                        "Studio member access token")
-                    required_studio_credentials = (
-                        "KB_STUDIO_ADMIN_EMAIL", "KB_STUDIO_ADMIN_PASSWORD",
-                        "KB_STUDIO_MEMBER_EMAIL", "KB_STUDIO_MEMBER_PASSWORD",
-                    )
-                    missing_studio_credentials = [key for key in required_studio_credentials
-                                                  if not studio_env.get(key)]
-                    if missing_studio_credentials:
-                        raise RuntimeError(
-                            "secured Studio test setup did not export "
-                            + ", ".join(missing_studio_credentials)
-                            + "; provide journey admin credentials and rerun the secured journey"
+                    studio_env.update(prepare_studio_fixtures(
+                        service_env,
+                        project_b_id=project_b_id,
+                        project_a=PROJECT,
+                        project_b=project_b_root,
+                    ))
+                except (RuntimeError, OSError, TimeoutExpired) as error:
+                    fail(f"Studio fixture setup: {error}")
+                if service_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID") and service_env.get("KB_STUDIO_HEALTHY_PROJECT_RUN_ID"):
+                    studio_env["KB_STUDIO_DIAGNOSTIC_PROJECT"] = project_name
+                    studio_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = service_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"]
+                    studio_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"]
+                if studio_fixture_file.is_file():
+                    analytics_fixture = json.loads(studio_fixture_file.read_text())
+                    analytics_fields = {
+                        "eventType": "KB_STUDIO_ANALYTICS_EVENT_TYPE",
+                        "source": "KB_STUDIO_ANALYTICS_SOURCE",
+                        "model": "KB_STUDIO_ANALYTICS_MODEL",
+                        "eventId": "KB_STUDIO_ANALYTICS_EVENT_ID",
+                    }
+                    if all(isinstance(analytics_fixture.get(key), str) and analytics_fixture[key]
+                           for key in analytics_fields):
+                        studio_env.update({target: analytics_fixture[key]
+                                           for key, target in analytics_fields.items()})
+                    project_event_fields = {
+                        "projectAEvent": "KB_STUDIO_PROJECT_A_EVENT",
+                        "projectBEvent": "KB_STUDIO_PROJECT_B_EVENT",
+                    }
+                    if all(isinstance(analytics_fixture.get(key), str) and analytics_fixture[key]
+                           for key in project_event_fields):
+                        studio_env.update({target: analytics_fixture[key]
+                                           for key, target in project_event_fields.items()})
+                try:
+                    recorded_service_result = json.loads(service_report.read_text())
+                    studio_shell = next((step for step in recorded_service_result.get("steps", [])
+                                         if step.get("capability") == "studio" and step.get("name") == "Studio shell"), None)
+                    studio_shell_passed = studio_shell is not None and studio_shell.get("status") == "PASS"
+                except (OSError, json.JSONDecodeError):
+                    studio_shell_passed = False
+                if mode == "secured":
+                    try:
+                        with invocation_context(step_id="journey.setup"):
+                            member_email, member_password = create_studio_member(
+                                "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                                service_env["KB_JOURNEY_ADMIN_PASSWORD"])
+                        studio_env["KB_STUDIO_MEMBER_EMAIL"] = member_email
+                        store_report_secret(studio_env, "KB_STUDIO_MEMBER_PASSWORD", member_password,
+                                            "Studio member password")
+                        with invocation_context(step_id="journey.setup"):
+                            admin_token, member_token = create_studio_access_tokens(
+                                "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                                service_env["KB_JOURNEY_ADMIN_PASSWORD"], member_email, member_password,
+                                env=service_env)
+                        store_report_secret(studio_env, "KB_STUDIO_ADMIN_TOKEN", admin_token,
+                                            "Studio admin access token")
+                        store_report_secret(studio_env, "KB_STUDIO_MEMBER_TOKEN", member_token,
+                                            "Studio member access token")
+                        required_studio_credentials = (
+                            "KB_STUDIO_ADMIN_EMAIL", "KB_STUDIO_ADMIN_PASSWORD",
+                            "KB_STUDIO_MEMBER_EMAIL", "KB_STUDIO_MEMBER_PASSWORD",
                         )
-                except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
-                    fail(f"Studio secured member setup: {error}")
-            def run_studio_browser_group() -> str | None:
-                with invocation_context(step_id=studio_claims):
-                    studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
-                        "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
-                        "--config=/opt/kb-studio-playwright/playwright.config.mjs",
-                    ], studio_env, service_report, mode, studio_shell_passed, timeout=660)
-                TIMES["Studio browser journey"] = studio_elapsed
-                return None if studio_passed else studio_message
-
+                        missing_studio_credentials = [key for key in required_studio_credentials
+                                                      if not studio_env.get(key)]
+                        if missing_studio_credentials:
+                            raise RuntimeError(
+                                "secured Studio test setup did not export "
+                                + ", ".join(missing_studio_credentials)
+                                + "; provide journey admin credentials and rerun the secured journey"
+                            )
+                    except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
+                        fail(f"Studio secured member setup: {error}")
+                def run_studio_browser_group() -> str | None:
+                    with invocation_context(step_id=studio_claims):
+                        studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
+                            "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
+                            "--config=/opt/kb-studio-playwright/playwright.config.mjs",
+                        ], studio_env, service_report, mode, studio_shell_passed, timeout=660)
+                    TIMES["Studio browser journey"] = studio_elapsed
+                    return None if studio_passed else studio_message
         outer_graph.flow("Studio browser journey", "studio", "studio",
                          run_studio_browser_group, cases=studio_claims.split(","),
                          runners=("service-local:explore", "service-secured:explore"))
         capture_case_failure()
-
     update_variants_selected = outer_graph.group_selected("update-variants")
     if update_variants_selected:
         variant_gate = outer_graph.flow(
