@@ -1,14 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
 import type { CronListResponse } from '@kb-labs/workflow-contracts';
+import { getCatalogEntry } from '@kb-labs/core-platform/error-envelope';
 import { makeClient } from '../helpers/defaults.js';
-import { WorkflowDaemonClient } from '../../http-client.js';
+import { WorkflowDaemonClient, WorkflowDaemonError } from '../../http-client.js';
 import cronListCommand from '../../commands/crons-list.js';
 import enableCommand from '../../commands/crons-enable.js';
 import { manifest } from '../../manifest.js';
 
-vi.mock('../../http-client.js', () => ({ WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}) }));
+vi.mock('../../http-client.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../http-client.js')>(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
+}));
 const MockedClient = vi.mocked(WorkflowDaemonClient);
+const pluginCronHint = getCatalogEntry('KB_RUNTIME_CRON_PLUGIN_READ_ONLY')?.hint;
 beforeEach(() => MockedClient.mockReset());
 
 describe('workflow crons CLI', () => {
@@ -38,12 +43,25 @@ describe('workflow crons CLI', () => {
   });
 
   it('gives a typed next action when a plugin cron cannot be enabled', async () => {
+    expect(pluginCronHint).toBeTruthy();
     MockedClient.mockImplementation(function MockedClientImplementation() {
-      return makeClient({ setCronEnabled: async () => { throw new Error('KB_RUNTIME_CRON_PLUGIN_READ_ONLY: Plugin cron plugin:qa:cleanup is read-only'); } });
+      return makeClient({ setCronEnabled: async () => { throw new WorkflowDaemonError('KB_RUNTIME_CRON_PLUGIN_READ_ONLY', 'Plugin cron plugin:qa:cleanup is read-only', pluginCronHint); } });
     });
     const { ui, captured } = createCapturedUI();
     const result = await enableCommand.execute(createMockContext({ ui }), mockCLIInput({ argv: ['plugin:qa:cleanup'], flags: { json: true } }));
     expect(result).toHaveProperty('ok', false);
-    expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', hint: expect.any(String) } });
+    expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY', message: 'Plugin cron plugin:qa:cleanup is read-only', hint: pluginCronHint } });
+  });
+
+  it('prints the plugin cron refusal without a misleading retry command', async () => {
+    expect(pluginCronHint).toBeTruthy();
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ setCronEnabled: async () => { throw new WorkflowDaemonError('KB_RUNTIME_CRON_PLUGIN_READ_ONLY', 'Plugin cron plugin:qa:cleanup is read-only', pluginCronHint); } });
+    });
+    const { ui, captured } = createCapturedUI();
+    const result = await enableCommand.execute(createMockContext({ ui }), mockCLIInput({ argv: ['plugin:qa:cleanup'], flags: {} }));
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY', message: 'Plugin cron plugin:qa:cleanup is read-only', hint: pluginCronHint } });
+    expect(captured.warnings).toHaveLength(0);
   });
 });

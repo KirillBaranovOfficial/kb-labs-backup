@@ -33,7 +33,8 @@ if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and
     entry.mkdir(parents=True)
     (entry / "src/commands").mkdir(parents=True)
     core.parent.mkdir(parents=True, exist_ok=True)
-    (entry / "package.json").write_text('{"name":"demo-entry","version":"0.1.0"}')
+    (entry / "package.json").write_text('{"name":"demo-entry","version":"0.1.0","kb":{"manifest":"manifest.json"}}')
+    (entry / "manifest.json").write_text(json.dumps({"id": "@kb-labs/demo"}))
     (entry / "src/commands/hello.ts").write_text(
         "const { greeting } = hello({ who: input.flags.who ?? 'World' });\n")
     core.write_text('return { greeting: `Hello, ${who} from demo!` };\n')
@@ -44,7 +45,9 @@ elif args[:3] == ["marketplace", "plugins", "add"]:
     link_path = args[args.index("--link") + 1]
     if not (root / link_path / "package.json").is_file():
         raise SystemExit("entry package is missing")
-    lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {"demo": {
+    manifest = json.loads((root / link_path / "manifest.json").read_text())
+    plugin_id = manifest["id"]
+    lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {plugin_id: {
         "source": "local", "link": link_path, "enabled": True
     }}}))
 elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
@@ -52,8 +55,10 @@ elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
     entries = [{"id": key, "source": value["source"], "scope": "project"}
                for key, value in plugins.items()]
     print(json.dumps({"ok": True, "data": {"entries": entries, "total": len(entries)}}))
-elif args[:3] == ["marketplace", "plugins", "remove"] and args[3] == "demo":
-    lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {}}))
+elif args[:3] == ["marketplace", "plugins", "remove"]:
+    lock = json.loads(lock_path.read_text())
+    lock["plugins"].pop(args[3], None)
+    lock_path.write_text(json.dumps(lock))
 elif args[:2] == ["marketplace", "install"]:
     print(json.dumps({"ok": True, "data": {"scope": "project"}}))
 elif args[:2] == ["marketplace", "uninstall"]:
@@ -247,7 +252,9 @@ class PluginAuthorJourneyTests(unittest.TestCase):
              for step in range(1, 7)] +
             [{"claimId": "S-210.1", "kind": "journey", "status": "PASS"}],
         )
-        self.assertEqual(self.log.read_text().splitlines(), [
+        self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
+        commands = self.log.read_text().splitlines()
+        self.assertEqual(commands[:9], [
             "kb scaffold run plugin demo --mode standalone --yes",
             "pnpm install",
             "pnpm -w build",
@@ -257,9 +264,9 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             "kb demo hello",
             "pnpm -w build",
             "kb demo hello",
-            "kb marketplace plugins remove demo",
-            "kb marketplace plugins list --json",
         ])
+        self.assertTrue(commands[9].startswith("kb marketplace plugins remove "))
+        self.assertEqual(commands[10:], ["kb marketplace plugins list --json"])
         self.assertFalse((self.project / ".kb/plugins/demo").exists())
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
 

@@ -37,6 +37,24 @@ describe('workflow:runs-logs', () => {
     expect(captured.logs[0]?.message).toContain('Step started');
   });
 
+  // case: S-029.3
+  it('renders persisted command output tails with the failed workflow log message', async () => {
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ getRunLogs: async () => [{
+        level: 'warn',
+        message: 'Shell command failed',
+        timestamp: new Date().toISOString(),
+        context: { stdoutTail: 'journey-failure-diagnostic', stderrTail: 'command detail' },
+      }] });
+    });
+
+    const { ui, captured } = createCapturedUI();
+    await runsLogsCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: {}, argv: ['failed-run'] }));
+
+    expect(captured.logs.map((entry) => entry.message).join('\n')).toContain('journey-failure-diagnostic');
+    expect(captured.logs.map((entry) => entry.message).join('\n')).toContain('command detail');
+  });
+
   it('RLG-02: --run-id flag form renders log lines', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({

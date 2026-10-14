@@ -451,6 +451,99 @@ describe('WorkflowEngine', () => {
   });
 
   describe('Job failure: run status and downstream (B-029, B-030)', () => {
+    const expectTerminalFailureHistory = async (diagnostic: string) => {
+      const spec: WorkflowSpec = {
+        name: 'Resolution Failure',
+        version: '1.0.0',
+        on: { manual: true },
+        jobs: {
+          main: {
+            runsOn: 'local',
+            retries: { max: 0, backoff: 'exp', initialIntervalMs: 100 },
+            steps: [{ name: 'Failing step', uses: 'plugin:failure/handler' }],
+          },
+        },
+      };
+      const run = await engine.createRun({ spec, trigger: { type: 'manual' } });
+      const jobId = run.jobs[0]!.id;
+      const stepId = run.jobs[0]!.steps[0]!.id;
+
+      await engine.markJobStarted(run.id, jobId);
+      await engine.markStepStarted(run.id, jobId, stepId);
+      await engine.markStepFailed(run.id, jobId, stepId, new Error(diagnostic));
+      await engine.markJobFailed(run.id, jobId, new Error(diagnostic));
+
+      expect(await engine.getRun(run.id)).toMatchObject({
+        status: 'failed',
+        result: { status: 'failed', error: { message: diagnostic } },
+        jobs: [{ status: 'failed', error: { message: diagnostic }, steps: [{ status: 'failed', error: { message: diagnostic } }] }],
+      });
+      const historyEntry = (await engine.getAllRuns()).find((entry) => entry.id === run.id);
+      expect(historyEntry).toMatchObject({
+        status: 'failed',
+        result: { status: 'failed', error: { message: diagnostic } },
+      });
+    };
+
+    // case: S-029.2
+    it('persists terminal history and diagnostics when a handler throws', async () => {
+      await expectTerminalFailureHistory('Step handler threw: handler failure diagnostic');
+    });
+
+    // case: S-029.2
+    it('persists terminal history and diagnostics when a plugin is missing', async () => {
+      await expectTerminalFailureHistory('Plugin @kb-labs/missing was not found');
+    });
+
+    // case: S-029.2
+    it('persists terminal history and diagnostics when a command is unknown', async () => {
+      await expectTerminalFailureHistory('Command workflow.unknown is not registered');
+    });
+
+    // case: S-029.2
+    it('finalizes a run after the worker dies between persisting job failure and run completion', async () => {
+      const spec: WorkflowSpec = {
+        name: 'Interrupted Failure Finalization',
+        version: '1.0.0',
+        on: { manual: true },
+        jobs: {
+          main: {
+            runsOn: 'local',
+            steps: [{ name: 'Missing handler', uses: 'plugin:missing/handler' }],
+          },
+        },
+      };
+      const run = await engine.createRun({ spec, trigger: { type: 'manual' } });
+      const job = run.jobs[0]!;
+      const step = job.steps[0]!;
+      const diagnostic = 'Plugin missing handler could not be resolved';
+
+      await engine.markJobStarted(run.id, job.id);
+      await engine.markStepStarted(run.id, job.id, step.id);
+      await engine.getStateStore().transitionStep(run.id, job.id, step.id, 'failed', (draft) => {
+        draft.error = { message: diagnostic };
+        draft.finishedAt = new Date().toISOString();
+      });
+      await engine.getStateStore().transitionJob(run.id, job.id, 'failed', (draft) => {
+        draft.error = { message: diagnostic };
+        draft.finishedAt = new Date().toISOString();
+      });
+
+      await engine.cleanupStaleRuns();
+
+      const finalized = await engine.getRun(run.id);
+      expect(finalized).toMatchObject({
+        status: 'failed',
+        result: { status: 'failed', error: { message: diagnostic } },
+        jobs: [{ status: 'failed', error: { message: diagnostic }, steps: [{ status: 'failed', error: { message: diagnostic } }] }],
+      });
+      const historyEntry = (await engine.getAllRuns()).find((entry) => entry.id === run.id);
+      expect(historyEntry).toMatchObject({
+        status: 'failed',
+        result: { status: 'failed', error: { message: diagnostic } },
+      });
+    });
+
     it('B-029: terminal job failure sets run status to "failed", not "dlq"', async () => {
       const spec: WorkflowSpec = {
         name: 'Fail Test',
