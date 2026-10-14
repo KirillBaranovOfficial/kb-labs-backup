@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AdapterUnavailableError,
   createProductErrorEnvelope,
   toErrorEnvelope,
   validateErrorEnvelope,
@@ -14,7 +13,6 @@ import {
   RateLimitError,
   TimeoutError,
   ValidationError,
-  wrapError,
 } from './errors.js';
 describe('core toErrorEnvelope for plugin errors', () => {
   const cases: Array<[string, PluginError, string]> = [
@@ -61,19 +59,6 @@ describe('core toErrorEnvelope for plugin errors', () => {
     expect(toErrorEnvelope(new Error('boom')).code).toBe('KB_RUNTIME_UNEXPECTED');
   });
 
-  it('preserves a catalogued platform code when wrapping an adapter error for subprocess IPC', () => {
-    const source = new AdapterUnavailableError('llm', 'not-configured', 'fixture adapter unavailable');
-    source.stack = 'AdapterUnavailableError: fixture adapter unavailable\n    at plugin (fixture.js:1:1)';
-
-    const wrapped = wrapError(source);
-
-    expect(wrapped.code).toBe('KB_ADAPTER_NOT_CONFIGURED');
-    expect(wrapped.hint).toBe(toErrorEnvelope(source).hint);
-    expect(wrapped.details).toEqual({ service: 'llm', adapter: 'platform.adapters.llm', command: expect.any(String) });
-    expect(wrapped.stack).toBe(source.stack);
-    expect(validateErrorEnvelope(toErrorEnvelope(wrapped))).toEqual([]);
-  });
-
   it('keeps a validated product plugin code and rejects a missing hint', () => {
     const productError = createProductErrorEnvelope({
       code: 'COMMIT_NOTHING_STAGED',
@@ -87,9 +72,7 @@ describe('core toErrorEnvelope for plugin errors', () => {
       undefined,
       'Stage the intended changes, then retry.',
     );
-    const restored = PluginError.fromJSON(error.toJSON());
-
-    expect(toErrorEnvelope(restored)).toMatchObject({
+    expect(toErrorEnvelope(error)).toMatchObject({
       code: 'COMMIT_NOTHING_STAGED',
       message: 'Nothing is staged.',
       hint: 'Stage the intended changes, then retry.',

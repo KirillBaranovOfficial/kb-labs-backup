@@ -7,7 +7,8 @@
 
 import type { ParentMessage, ChildMessage, ExecuteMessage, LogMessage } from './ipc-protocol.js';
 import type { UIFacade } from '@kb-labs/plugin-contracts';
-import { PluginError, wrapError } from '@kb-labs/plugin-contracts';
+import { PluginError } from '@kb-labs/plugin-contracts';
+import { serializeError, toErrorEnvelope } from '@kb-labs/core-platform';
 import { createBaseStdoutUI, NOOP_PROMPTS, setJsonMode } from '@kb-labs/shared-cli-ui';
 import { createPluginContextV3 } from '../context/index.js';
 import { executeCleanup, type EventEmitterFn } from '../api/index.js';
@@ -153,10 +154,9 @@ process.on('message', async (msg: ParentMessage) => {
     process.send?.(resultMsg);
   } catch (error) {
     // Send error to parent
-    const pluginError = wrapError(error);
     const errorMsg: ChildMessage = {
       type: 'error',
-      error: pluginError.toJSON(),
+      error: { ...toErrorEnvelope(error), error: serializeError(error) },
     };
     process.send?.(errorMsg);
   } finally {

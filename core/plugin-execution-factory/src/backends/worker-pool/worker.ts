@@ -20,7 +20,6 @@ import type {
   MiddlewaresInitMessage,
   UIPromptMessage,
   UIPromptResultMessage,
-  SerializedCataloguedError,
 } from './types.js';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
 interface WithMiddlewareDecls {
@@ -29,8 +28,8 @@ interface WithMiddlewareDecls {
 import type { ExecutionRequest, ExecutionResult, PlatformTransportFactory, PlatformTransportServer } from '../../types.js';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { InteractiveInputRequiredError } from '@kb-labs/plugin-contracts';
-import { serializeError, SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
-import { serializeCataloguedError } from './error-codec.js';
+import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { normalizeExecutionFailure } from '../../utils.js';
 import { WorkerCrashedError, TimeoutError } from '../../errors.js';
 
 /**
@@ -616,14 +615,8 @@ export class Worker extends EventEmitter<WorkerEvents> {
         const msg = message as ErrorMessage;
         const pending = this.pendingRequests.get(msg.requestId);
         if (pending) {
-          if (msg.error.cataloguedError) {
-            pending.reject(new SerializedErrorEnvelopeError(
-              msg.error.cataloguedError,
-              msg.error.serializedError,
-            ));
-            break;
-          }
-          pending.reject(msg.error.serializedError);
+          const { error: serializedError, ...envelope } = msg.error;
+          pending.reject(new SerializedErrorEnvelopeError(envelope, serializedError));
         }
         break;
       }
@@ -663,13 +656,11 @@ export class Worker extends EventEmitter<WorkerEvents> {
             const result: UIPromptResultMessage = { type: 'uiPromptResult', promptId: msg.promptId, value };
             proc.send(result);
           }).catch((error: unknown) => {
-            const serializedError = serializeCataloguedError(error);
             const result: UIPromptResultMessage = {
               type: 'uiPromptResult',
               promptId: msg.promptId,
               value: undefined,
-              error: serializedError,
-              serializedError: serializeError(error),
+              failure: normalizeExecutionFailure(error).error,
             };
             proc.send(result);
           });
@@ -682,8 +673,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
             type: 'uiPromptResult',
             promptId: msg.promptId,
             value: undefined,
-            error: serializeCataloguedError(error),
-            serializedError: serializeError(error),
+            failure: normalizeExecutionFailure(error).error,
           };
           this.process.send(result);
         }

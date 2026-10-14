@@ -16,6 +16,14 @@ import { describe, it, expect } from 'vitest';
 import { runInSubprocess } from '../sandbox/runner.js';
 import { wrapCliResult } from '../host/cli-wrapper.js';
 import type { PluginContextDescriptor, CommandResult } from '@kb-labs/plugin-contracts';
+import {
+  AdapterUnavailableError,
+  createProductErrorEnvelope,
+  ErrorEnvelopeError,
+  SerializedErrorEnvelopeError,
+  toErrorEnvelope,
+  validateErrorEnvelope,
+} from '@kb-labs/core-platform';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -23,6 +31,98 @@ import { createServer } from 'node:net';
 import { rmSync } from 'node:fs';
 
 describe('Subprocess Integration Tests', () => {
+  it('preserves canonical envelopes across real sandbox IPC', async () => {
+    const testDir = join(tmpdir(), `sandbox-error-ipc-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const socketPath = join(testDir, 'sandbox-error.sock');
+    const server = createServer((socket) => {
+      socket.on('data', (data) => {
+        const request = JSON.parse(data.toString()) as { id: string };
+        socket.end(JSON.stringify({ id: request.id, result: null }) + '\n');
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+
+    const descriptor: PluginContextDescriptor = {
+      hostType: 'cli',
+      pluginId: '@kb-labs/test-sandbox-error',
+      pluginVersion: '1.0.0',
+      requestId: 'sandbox-error-ipc',
+      handlerId: 'test:sandbox-error',
+      permissions: {},
+      hostContext: { host: 'cli', argv: [], flags: {} },
+    };
+    const handlerPath = new URL('./fixtures/sandbox-error-handler.mjs', import.meta.url).pathname;
+
+    try {
+      const cases = [
+        {
+          kind: 'adapter',
+          original: () => {
+            const error = new AdapterUnavailableError(
+              'llm', 'load-failed', 'fixture adapter failed to load', undefined, {
+                hint: 'Inspect the fixture adapter and retry.',
+                userMessage: 'The fixture adapter is unavailable.',
+                action: {
+                  id: 'inspect-fixture-adapter',
+                  label: 'Inspect fixture adapter',
+                  command: 'kb adapter bind llm @kb-labs/adapters-openai',
+                },
+              },
+            );
+            error.stack = 'AdapterUnavailableError: fixture adapter failed to load\n    at fixture (sandbox-error-handler.mjs:1:1)';
+            return error;
+          },
+        },
+        {
+          kind: 'product',
+          original: () => {
+            const error = new ErrorEnvelopeError(createProductErrorEnvelope({
+              code: 'SANDBOX_FIXTURE_FAILED',
+              message: 'Fixture product failure.',
+              hint: 'Repair the fixture product failure and retry.',
+              retryable: false,
+              details: { fixture: 'sandbox-error-handler' },
+              actions: [{
+                id: 'repair-fixture',
+                label: 'Repair fixture',
+                command: 'kb plugin repair sandbox-fixture',
+              }],
+            }));
+            error.stack = 'ProductFailure: Fixture product failure.\n    at fixture (sandbox-error-handler.mjs:2:1)';
+            return error;
+          },
+        },
+      ];
+
+      for (const testCase of cases) {
+        const original = testCase.original();
+        let failure: unknown;
+        try {
+          await runInSubprocess({
+            descriptor,
+            socketPath,
+            handlerPath,
+            input: { kind: testCase.kind },
+            timeoutMs: 5000,
+            cwd: testDir,
+          });
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toBeInstanceOf(SerializedErrorEnvelopeError);
+        const transported = failure as SerializedErrorEnvelopeError;
+        expect(transported.envelope).toEqual(toErrorEnvelope(original));
+        expect(validateErrorEnvelope(transported.envelope)).toEqual([]);
+        expect(transported.envelope).not.toHaveProperty('stack');
+        expect(transported.serializedError.stack).toBe(original.stack);
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it('should execute handler in real subprocess and inject metadata', async () => {
     // This test requires:
     // 1. Built bootstrap.js

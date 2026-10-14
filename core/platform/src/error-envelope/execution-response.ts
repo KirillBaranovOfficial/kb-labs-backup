@@ -71,7 +71,7 @@ export interface ExecutionMeta {
 export interface RunResult<T = unknown> {
   ok: boolean;
   data?: T;
-  error?: SerializedError;
+  error?: ExecutionError;
   executionMeta: ExecutionMeta;
 }
 
@@ -93,6 +93,7 @@ export type ExecutionErrorCode =
   | 'WORKER_UNHEALTHY'
   | 'NO_HOST_AVAILABLE';
 
+/** Wire failure shared by subprocess and worker IPC: canonical user envelope plus private diagnostics. */
 export type ExecutionError = ErrorEnvelope & { error: SerializedError };
 
 /** Private execution diagnostics travel beside the user-facing failure envelope. */

@@ -5,11 +5,6 @@
  */
 
 import type { ErrorCode } from '@kb-labs/core-platform/error-envelope';
-import {
-  serializeError,
-  toErrorEnvelope,
-  type SerializedError,
-} from '@kb-labs/core-platform';
 
 /**
  * Base plugin error class
@@ -42,29 +37,6 @@ export class PluginError extends Error {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 
-  /**
-   * Convert to JSON-serializable object (for IPC)
-   */
-  toJSON(): SerializedPluginError {
-    return {
-      ...serializeError(this),
-      name: this.name,
-      message: this.message,
-      code: this.code,
-      details: this.details,
-      hint: this.hint,
-    };
-  }
-
-  /**
-   * Create from serialized error (from IPC)
-   */
-  static fromJSON(data: SerializedPluginError): PluginError {
-    const error = new PluginError(data.message, data.code, data.details, data.hint);
-    error.name = data.name;
-    error.stack = data.stack;
-    return error;
-  }
 }
 
 /**
@@ -155,43 +127,8 @@ export class PlatformError extends PluginError {
 }
 
 /**
- * Serialized error for IPC transport
- */
-export type SerializedPluginError = SerializedError & {
-  code: ErrorCode;
-  details?: Record<string, string>;
-  hint?: string;
-};
-
-/**
  * Check if an error is a PluginError
  */
 export function isPluginError(error: unknown): error is PluginError {
   return error instanceof PluginError;
-}
-
-/**
- * Wrap any error as a PluginError
- */
-export function wrapError(error: unknown, defaultCode: ErrorCode = 'KB_RUNTIME_UNEXPECTED'): PluginError {
-  if (error instanceof PluginError) {
-    return error;
-  }
-
-  if (error instanceof Error) {
-    const envelope = toErrorEnvelope(error);
-    const typedEnvelope = envelope.code !== 'KB_RUNTIME_UNEXPECTED';
-    const wrapped = new PluginError(
-      error.message,
-      typedEnvelope ? envelope.code : defaultCode,
-      typedEnvelope ? envelope.details : { originalName: error.name },
-      typedEnvelope ? envelope.hint : undefined,
-    );
-    wrapped.name = error.name;
-    wrapped.stack = error.stack;
-    Object.defineProperty(wrapped, 'cause', { value: error, configurable: true });
-    return wrapped;
-  }
-
-  return new PluginError(String(error), defaultCode);
 }

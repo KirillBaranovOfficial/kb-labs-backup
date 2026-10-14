@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import {
   isChildMessage,
   isParentMessage,
@@ -85,7 +86,13 @@ describe('IPC Protocol — LogMessage', () => {
     const messages: ChildMessage[] = [
       { type: 'ready' },
       { type: 'result', data: {} },
-      { type: 'error', error: { name: 'Error', message: 'test', code: 'KB_RUNTIME_UNEXPECTED' } },
+      {
+        type: 'error',
+        error: {
+          ...createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { message: 'test' }),
+          error: { name: 'Error', message: 'test' },
+        },
+      },
       {
         type: 'log',
         entry: {

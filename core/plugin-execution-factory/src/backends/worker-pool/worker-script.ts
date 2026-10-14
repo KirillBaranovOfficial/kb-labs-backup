@@ -21,11 +21,10 @@ import type {
   ShutdownMessage,
   UIPromptMessage,
   UIPromptResultMessage,
-  SerializedCataloguedError,
 } from './types.js';
-import { serializeError, SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import type { ExecutionError } from '@kb-labs/core-platform';
 import { normalizeExecutionFailure } from '../../utils.js';
-import { serializeCataloguedError } from './error-codec.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
 import type { ITransport } from '@kb-labs/core-ipc';
@@ -64,8 +63,9 @@ async function ipcPrompt(
 
     pendingPrompts.set(promptId, (result) => {
       clearTimeout(timer);
-      if (result.error) {
-        reject(new SerializedErrorEnvelopeError(result.error, result.serializedError));
+      if (result.failure) {
+        const { error: serializedError, ...envelope } = result.failure;
+        reject(new SerializedErrorEnvelopeError(envelope, serializedError));
         return;
       }
       resolve(result.value);
@@ -191,11 +191,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
     }
 
     if (!fs.existsSync(handlerPath)) {
-      sendError(requestId, {
-        message: `Handler not found: ${handlerPath}`,
-        code: 'HANDLER_NOT_FOUND',
-        serializedError: serializeError(new Error(`Handler not found: ${handlerPath}`)),
-      });
+      sendError(requestId, normalizeExecutionFailure(new Error(`Handler not found: ${handlerPath}`), request).error);
       return;
     }
 
@@ -319,17 +315,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     process.send!(resultMessage);
   } catch (error) {
-    const { error: serializedError, ...errorEnvelope } = normalizeExecutionFailure(error, request).error;
-    const cataloguedError = serializeCataloguedError(errorEnvelope);
-    sendError(requestId, {
-      message: cataloguedError.message,
-      code: cataloguedError.code,
-      hint: cataloguedError.hint,
-      cause: cataloguedError.cause,
-      details: cataloguedError.details,
-      cataloguedError,
-      serializedError,
-    });
+    sendError(requestId, normalizeExecutionFailure(error, request).error);
   }
 }
 
@@ -346,10 +332,7 @@ function handleMiddlewares(message: MiddlewaresInitMessage): void {
 /**
  * Send error message to parent.
  */
-function sendError(
-  requestId: string,
-  error: { message: string; code?: string; hint?: string; cause?: string; details?: Record<string, string>; cataloguedError?: SerializedCataloguedError; serializedError: import('@kb-labs/core-platform').SerializedError }
-): void {
+function sendError(requestId: string, error: ExecutionError): void {
   process.send!({ type: 'error', requestId, error } as ErrorMessage);
 }
 

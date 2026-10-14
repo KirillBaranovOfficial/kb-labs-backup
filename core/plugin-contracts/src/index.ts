@@ -97,9 +97,7 @@ export {
   RateLimitError,
   PlatformError,
   isPluginError,
-  wrapError,
 } from "./errors.js";
-export type { SerializedPluginError } from "./errors.js";
 export { toErrorEnvelope } from "@kb-labs/core-platform/error-envelope";
 
 // Runtime
