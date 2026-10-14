@@ -14,12 +14,73 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from adapter_defaults_steps import (_assert_required_upstreams_ready, _json, _restore_platform_adapter_fixture,
                                     _run_from_registered_project, run_adapter_default_steps)
+from sdk_runtime_import_check import check_installed_runtime_imports
 from invocations import invocation_context
 from service_steps import Journey
 from test_install_layout import create_test_install_container
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
+    # case: S-054.16
+    def test_installed_runtime_import_check_names_missing_module_and_importer(self):
+        with tempfile.TemporaryDirectory(prefix="kb-installed-runtime-imports-") as directory:
+            root = Path(directory)
+            sdk = root / "node_modules" / "@kb-labs" / "sdk"
+            (sdk / "dist").mkdir(parents=True)
+            (sdk / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/sdk",
+                "exports": {".": {"import": "./dist/index.js"}},
+                "peerDependencies": {"@kb-labs/shared-testing": "^2.0.0"},
+                "peerDependenciesMeta": {"@kb-labs/shared-testing": {"optional": True}},
+            }))
+            (sdk / "dist" / "index.js").write_text('import "@kb-labs/shared-command-kit";\n')
+            plugin = root / "node_modules" / "@kb-labs" / "workflow-entry"
+            (plugin / "dist").mkdir(parents=True)
+            (plugin / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/workflow-entry",
+                "type": "module",
+                "exports": {".": {"import": "./dist/index.js"}},
+            }))
+            (plugin / "dist" / "manifest.json").write_text(json.dumps({"schema": "kb.plugin/3"}))
+            (plugin / "dist" / "index.js").write_text('import "@kb-labs/shared-command-kit";\n')
+            receipt = root / ".kb" / "v2" / "receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"plan": {"artifacts": [
+                {"kind": "plugin", "package": "@kb-labs/workflow-entry"},
+            ]}}))
+
+            result = check_installed_runtime_imports(root)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("@kb-labs/shared-command-kit", result.stdout + result.stderr)
+            self.assertIn("@kb-labs/sdk", result.stdout + result.stderr)
+            self.assertIn("@kb-labs/workflow-entry", result.stdout + result.stderr)
+
+            plugin_manifest = plugin / "dist" / "manifest.json"
+            plugin_manifest.unlink()
+            result = check_installed_runtime_imports(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("bundled plugin @kb-labs/workflow-entry is missing dist/manifest.json", result.stderr)
+            plugin_manifest.write_text(json.dumps({"schema": "kb.plugin/3"}))
+
+            helper = root / "node_modules" / "@kb-labs" / "shared-command-kit"
+            (helper / "dist").mkdir(parents=True)
+            (helper / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/shared-command-kit",
+                "type": "module",
+                "exports": {".": {"import": "./dist/index.js"}},
+            }))
+            (helper / "dist" / "index.js").write_text("export {};\n")
+
+            self.assertEqual(check_installed_runtime_imports(root).returncode, 0)
+
+            optional_helper = root / "node_modules" / "@kb-labs" / "shared-testing"
+            optional_helper.mkdir(parents=True)
+            (optional_helper / "package.json").write_text(json.dumps({"name": "@kb-labs/shared-testing"}))
+            result = check_installed_runtime_imports(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("optional SDK peers: @kb-labs/shared-testing", result.stderr)
+
     def test_kb_create_install_json_uses_registered_stream_reader(self):
         result_payload = {"operation": "install", "receipt": {"id": "receipt-1"}}
         stdout = "\n".join((
@@ -124,6 +185,23 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             host_running = True
             install_root = (home / "kb-platform").resolve()
             platform_root = create_test_install_container(install_root)
+            sdk_root = platform_root / "node_modules" / "@kb-labs" / "sdk"
+            (sdk_root / "dist").mkdir(parents=True)
+            (sdk_root / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/sdk",
+                "exports": {".": {"import": "./dist/index.js"}},
+                "peerDependencies": {"@kb-labs/shared-testing": "^2.0.0"},
+                "peerDependenciesMeta": {"@kb-labs/shared-testing": {"optional": True}},
+            }))
+            (sdk_root / "dist" / "index.js").write_text("export {};\n")
+            workflow_entry = platform_root / "node_modules" / "@kb-labs" / "workflow-entry"
+            (workflow_entry / "dist").mkdir(parents=True)
+            (workflow_entry / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/workflow-entry",
+                "exports": {".": {"import": "./dist/index.js"}},
+            }))
+            (workflow_entry / "dist" / "index.js").write_text("export {};\n")
+            (workflow_entry / "dist" / "manifest.json").write_text(json.dumps({"schema": "kb.plugin/3"}))
             shared_data = install_root / "state" / "data"
             shared_data.mkdir(parents=True)
             (platform_root / ".kb").mkdir(parents=True, exist_ok=True)
@@ -136,6 +214,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 {"id": "openai", "kind": "adapter", "package": "@kb-labs/adapters-openai", "config": [
                     {"id": "openai.apiKey", "optional": True, "severity": "warning",
                      "action": "set OPENAI_API_KEY to enable LLM features"}]},
+                {"id": "workflow", "kind": "plugin", "package": "@kb-labs/workflow-entry"},
             ]}}) + "\n")
             sealed_package = platform_root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
             sealed_package.parent.mkdir(parents=True)
@@ -143,13 +222,6 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             openai_package = platform_root / "node_modules" / "@kb-labs" / "adapters-openai" / "package.json"
             openai_package.parent.mkdir(parents=True)
             openai_package.write_text('{"name":"@kb-labs/adapters-openai","version":"2.120.1"}\n')
-            for package_name in (
-                "core-platform", "core-runtime", "core-sys", "perm-presets",
-                "shared-cli-ui", "shared-command-kit", "shared-tool-kit",
-            ):
-                package_path = platform_root / "node_modules" / "@kb-labs" / package_name / "package.json"
-                package_path.parent.mkdir(parents=True)
-                package_path.write_text(json.dumps({"name": f"@kb-labs/{package_name}", "version": "2.120.1"}) + "\n")
             (platform_root / "package.json").write_text(json.dumps({
                 "name": "kb-platform",
                 "dependencies": {},
