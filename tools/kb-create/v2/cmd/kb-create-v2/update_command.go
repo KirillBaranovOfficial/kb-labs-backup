@@ -40,7 +40,7 @@ type updateCommandResult struct {
 type updateCommandInput struct {
 	Index, RequestFile, ScenarioID, Answers string
 	Direct                                  directRequest
-	PlatformRootExplicit                    bool
+	RetryCommand                            string
 	Resume                                  bool
 	Executable, SecretEnv, Registry         string
 	ArtifactRunner                          artifacts.Runner
@@ -49,11 +49,7 @@ type updateCommandInput struct {
 }
 
 func updateActivationRetryHint(input updateCommandInput) string {
-	command := []string{"kb-create", "update"}
-	if input.PlatformRootExplicit {
-		command = append(command, "--platform-root", input.Direct.PlatformRoot)
-	}
-	return "the installed version is unchanged; inspect permissions and rerun `" + contracts.ShellCommand(command...) + "`"
+	return "the installed version is unchanged; inspect permissions and rerun `" + input.RetryCommand + "`"
 }
 
 func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps commandDependencies) (updateCommandResult, *diag.Diag) {
@@ -296,14 +292,12 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the update operation log is outside the installation container", "inspect the staged update and rerun `kb-create update`", err)
 	}
-	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: snapshot.ID, LogPath: logRelative}); err != nil {
-		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the update recovery record could not be written", "check staged-root permissions, then rerun `kb-create update`", err)
-	}
 	runningRoot := ""
 	if priorHost.PID > 0 {
 		runningRoot = priorHost.TreeRoot
 	}
-	_, err = layout.Activate(stage, updated.Plan.ServiceGraph.PlatformVersion, updated.Plan.PlanHash, runningRoot)
+	_, err = layout.ActivateUpdate(stage, updated.Plan.ServiceGraph.PlatformVersion, updated.Plan.PlanHash, runningRoot,
+		versionroot.UpdateMetadata{SnapshotID: snapshot.ID, LogPath: logRelative})
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update could not be atomically activated", updateActivationRetryHint(input), err)
 	}

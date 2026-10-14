@@ -799,7 +799,11 @@ func (l Layout) prepareVersionRoot(root string, linkSharedState bool) error {
 }
 
 func (l Layout) Activate(stage, version, planHash, runningRoot string) (string, error) {
-	return l.activate(stage, version, planHash, runningRoot, nil)
+	return l.activate(stage, version, planHash, runningRoot, nil, nil)
+}
+
+func (l Layout) ActivateUpdate(stage, version, planHash, runningRoot string, metadata UpdateMetadata) (string, error) {
+	return l.activate(stage, version, planHash, runningRoot, &metadata, nil)
 }
 
 type HandoffPoint string
@@ -846,12 +850,38 @@ func notifyHandoff(after func(HandoffPoint) error, point HandoffPoint) error {
 	return after(point)
 }
 
-func (l Layout) activate(stage, version, planHash, runningRoot string, after func(HandoffPoint) error) (string, error) {
+func (l Layout) activate(stage, version, planHash, runningRoot string, updateMetadata *UpdateMetadata,
+	after func(HandoffPoint) error) (activeRecoveryRoot string, returnErr error) {
 	if err := l.Validate(); err != nil {
 		return "", err
 	}
 	if err := l.validateSealedVersionRoot(stage); err != nil {
 		return "", err
+	}
+	var previousUpdateMetadata []byte
+	updateMetadataExists := false
+	updateMetadataWritten := false
+	if updateMetadata != nil {
+		previousUpdateMetadata, returnErr = os.ReadFile(l.updateMetadataPath())
+		if returnErr == nil {
+			updateMetadataExists = true
+		} else if !os.IsNotExist(returnErr) {
+			return "", fmt.Errorf("read previous update recovery record: %w", returnErr)
+		}
+		defer func() {
+			if returnErr == nil || !updateMetadataWritten {
+				return
+			}
+			var restoreErr error
+			if updateMetadataExists {
+				restoreErr = l.writeUpdateMetadataBytes(previousUpdateMetadata)
+			} else if err := os.Remove(l.updateMetadataPath()); err != nil && !os.IsNotExist(err) {
+				restoreErr = err
+			}
+			if restoreErr != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("restore previous update recovery record: %w", restoreErr))
+			}
+		}()
 	}
 	previous, err := l.Active()
 	if err != nil {
@@ -929,6 +959,12 @@ func (l Layout) activate(stage, version, planHash, runningRoot string, after fun
 		if err := after(HandoffLinkSwitched); err != nil {
 			return recovery, err
 		}
+	}
+	if updateMetadata != nil {
+		if err := l.writeUpdateMetadata(*updateMetadata); err != nil {
+			return recovery, fmt.Errorf("write update recovery record during activation: %w", err)
+		}
+		updateMetadataWritten = true
 	}
 	if err := l.Retain(runningRoot); err != nil {
 		return recovery, fmt.Errorf("prune obsolete version roots: %w", err)
@@ -1592,7 +1628,7 @@ func (l Layout) RecordHealthy() error {
 	return l.Retain(active)
 }
 
-func (l Layout) WriteUpdateMetadata(_ string, metadata UpdateMetadata) error {
+func (l Layout) writeUpdateMetadata(metadata UpdateMetadata) error {
 	if err := os.MkdirAll(filepath.Dir(l.updateMetadataPath()), 0o700); err != nil {
 		return err
 	}
@@ -1601,6 +1637,13 @@ func (l Layout) WriteUpdateMetadata(_ string, metadata UpdateMetadata) error {
 		return err
 	}
 	data = append(data, '\n')
+	return l.writeUpdateMetadataBytes(data)
+}
+
+func (l Layout) writeUpdateMetadataBytes(data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(l.updateMetadataPath()), 0o700); err != nil {
+		return err
+	}
 	temporary := l.updateMetadataPath() + ".tmp"
 	if err := os.WriteFile(temporary, data, 0o600); err != nil {
 		return err
