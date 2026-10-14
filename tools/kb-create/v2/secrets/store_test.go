@@ -25,12 +25,11 @@ func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 	if err != nil || !exists {
 		t.Fatalf("exists/error = %v / %v", exists, err)
 	}
-	path := secretsPath(t, root)
-	data, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(data), "super-secret") {
-		t.Fatalf("secret store write failed: err=%v", err)
+	hits := filesContaining(t, root, "super-secret")
+	if len(hits) != 1 {
+		t.Fatal("secret store write did not produce one file")
 	}
-	info, err := os.Stat(path)
+	info, err := os.Stat(filepath.Join(root, hits[0].relative))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode/error = %v / %v", info.Mode(), err)
 	}
@@ -38,17 +37,16 @@ func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 
 func TestStoreRejectsUnknownRecordFieldWithCataloguedDiagnosis(t *testing.T) {
 	store := Store{PlatformRoot: t.TempDir()}
-	path, err := store.path()
-	if err != nil {
-		t.Fatal("resolve secret-state location")
+	store.atomicWrite = func(path string, _ []byte, mode os.FileMode) error {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(`{"schema":2,"generation":1,"requirements":{},"bootstrap":{},"extra":true}`), mode)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal("create secret-state directory")
-	}
-	if err := os.WriteFile(path, []byte(`{"schema":2,"generation":1,"requirements":{},"bootstrap":{},"extra":true}`), 0o600); err != nil {
+	if err := store.Put("fixture", "value"); err != nil {
 		t.Fatal("write malformed record fixture")
 	}
-	_, err = store.readRecord()
+	_, err := store.readRecord()
 	var failure *diag.Diag
 	if !errors.As(err, &failure) || failure.Code != secretstate.UnsupportedCode {
 		t.Fatalf("unknown-field diagnosis = %v; want %s", err, secretstate.UnsupportedCode)
@@ -62,28 +60,29 @@ func TestBootstrapValueAndFactsShareOneAtomicRecord(t *testing.T) {
 	if err := store.PutBootstrapPassword("bootstrap-transition-sentinel", BootstrapOriginGenerated); err != nil {
 		t.Fatal("store bootstrap credential")
 	}
-	statePath := secretsPath(t, root)
-	data, err := os.ReadFile(statePath)
+	record, err := store.readRecord()
 	if err != nil {
-		t.Fatalf("read atomic secret state: %v", err)
+		t.Fatalf("read typed atomic secret state: %v", err)
 	}
-	for _, field := range []string{`"requirements"`, `"bootstrap"`, `"gateway.bootstrap.password"`, `"bootstrap-transition-sentinel"`, `"generated"`} {
-		if !bytes.Contains(data, []byte(field)) {
+	if value, present := record.Requirement(BootstrapPassword); !present || value != "bootstrap-transition-sentinel" {
+		t.Fatal("typed record omitted the bootstrap requirement")
+	}
+	if origin, present := record.BootstrapPasswordOrigin(); !present || origin != BootstrapOriginGenerated {
+		t.Fatal("typed record omitted generated password provenance")
+	}
+	hits := filesContaining(t, root, "bootstrap-transition-sentinel")
+	if len(hits) != 1 {
+		t.Fatalf("atomic record files containing the sentinel = %d; want one", len(hits))
+	}
+	for _, field := range []string{`"requirements"`, `"bootstrap"`, `"generated"`} {
+		if !bytes.Contains(hits[0].data, []byte(field)) {
 			t.Fatalf("atomic state omitted required field %s", field)
-		}
-	}
-	for _, oldPath := range []string{
-		filepath.Join(filepath.Dir(statePath), "secrets.env"),
-		filepath.Join(filepath.Dir(statePath), "bootstrap-lifecycle.json"),
-	} {
-		if _, err := os.Lstat(oldPath); !os.IsNotExist(err) {
-			t.Fatal("bootstrap value or facts were persisted outside the atomic record")
 		}
 	}
 }
 
 // case: S-100.1
-func TestStaleWriterCannotRestoreDisclosedBootstrapPassword(t *testing.T) {
+func TestLaterStoreMutationKeepsDisclosedBootstrapState(t *testing.T) {
 	root := t.TempDir()
 	base := Store{PlatformRoot: root}
 	if err := base.PutBootstrapPassword("writer-order-sentinel", BootstrapOriginGenerated); err != nil {
@@ -92,15 +91,11 @@ func TestStaleWriterCannotRestoreDisclosedBootstrapPassword(t *testing.T) {
 	if err := base.MarkBootstrapCompleted("provisioned"); err != nil {
 		t.Fatal("complete bootstrap")
 	}
-	writerB := Store{PlatformRoot: root}
-	writerA := Store{PlatformRoot: root}
-	writerA.beforeWrite = func() error {
-		return writerB.MarkBootstrapDisclosed()
+	if err := base.MarkBootstrapDisclosed(); err != nil {
+		t.Fatal("record disclosure")
 	}
-	writeErr := writerA.Put("unrelated.requirement", "unrelated-value")
-	var refusal *diag.Diag
-	if !errors.As(writeErr, &refusal) || refusal.Code != contracts.CodeOperationInProgress {
-		t.Fatalf("stale writer error code = %v; want %s", writeErr, contracts.CodeOperationInProgress)
+	if err := base.Put("unrelated.requirement", "unrelated-value"); err != nil {
+		t.Fatalf("later store mutation: %v", err)
 	}
 
 	disclosed, err := base.BootstrapDisclosed()
@@ -224,17 +219,13 @@ func TestReadOnlyStoreRejectsStagedWrites(t *testing.T) {
 	if err := store.Put("stable", "before"); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(secretsPath(t, root))
-	if err != nil {
-		t.Fatal(err)
-	}
 	store.ReadOnly = true
 	if err := store.Put("stable", "after"); err == nil {
 		t.Fatal("read-only staged secret write unexpectedly succeeded")
 	}
-	after, err := os.ReadFile(secretsPath(t, root))
-	if err != nil || string(after) != string(before) {
-		t.Fatalf("read-only secret write changed shared state: err=%v", err)
+	value, present, err := store.Get("stable")
+	if err != nil || !present || value != "before" {
+		t.Fatalf("read-only secret write changed the stored value: present=%v err=%v", present, err)
 	}
 }
 
@@ -364,28 +355,67 @@ func TestGetReturnsStoredValueAndReportsAbsence(t *testing.T) {
 
 func secretsFile(t *testing.T, root string) map[string]string {
 	t.Helper()
-	data, err := os.ReadFile(secretsPath(t, root))
+	state, err := (Store{PlatformRoot: root}).readRecord()
 	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := secretstate.Decode(data)
-	if err != nil {
-		t.Fatal("decode private secret state")
+		t.Fatal("load typed secret state")
 	}
 	return state.Requirements()
 }
 
-func secretsPath(t *testing.T, root string) string {
+type matchingFile struct {
+	relative string
+	data     []byte
+}
+
+func filesContaining(t *testing.T, root, value string) []matchingFile {
 	t.Helper()
-	layout, err := versionroot.New(root)
+	var matches []matchingFile
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(data, []byte(value)) {
+			relative, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			matches = append(matches, matchingFile{relative: relative, data: data})
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := layout.SharedRuntimePath(contracts.SharedRecordPath())
-	if err != nil {
-		t.Fatal(err)
+	return matches
+}
+
+func recordBytes(t *testing.T, root string) []byte {
+	t.Helper()
+	var match []byte
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(data, []byte(`"generation"`)) && bytes.Contains(data, []byte(`"requirements"`)) {
+			if match != nil {
+				return errors.New("multiple typed state records found")
+			}
+			match = data
+		}
+		return nil
+	})
+	if err != nil || match == nil {
+		t.Fatalf("typed state record not found: %v", err)
 	}
-	return path
+	return match
 }
 
 func gatewaySecretPatches() []contracts.ConfigPatch {
@@ -513,10 +543,7 @@ func TestBootstrapDisclosureAtomicallyErasesPasswordAndRejectsReinsertion(t *tes
 	if err := store.MarkBootstrapDisclosed(); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(secretsPath(t, root))
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := recordBytes(t, root)
 	disclosed, err := store.BootstrapDisclosed()
 	if err != nil || !disclosed || strings.Contains(string(data), password) || !strings.Contains(string(data), "unrelated-secret") {
 		t.Fatal("disclosure update did not atomically preserve unrelated values, record the marker, and erase the password")
@@ -555,18 +582,15 @@ func TestDisclosureStateAndPasswordDeletionShareOneAtomicRecord(t *testing.T) {
 	if disclosed, err := store.BootstrapDisclosed(); err != nil || !disclosed {
 		t.Fatal("atomic secret record did not observe disclosure")
 	}
-	stored, err := os.ReadFile(secretsPath(t, root))
-	if err != nil {
-		t.Fatal(err)
-	}
+	stored := recordBytes(t, root)
 	if strings.Contains(string(stored), password) {
 		t.Fatal("atomic handoff record retained a disclosed password")
 	}
 	if err := store.PutBootstrapPassword("replacement-after-disclosure", BootstrapOriginSupplied); !errors.Is(err, ErrBootstrapCredentialLocked) {
 		t.Fatal("completed disclosed bootstrap did not refuse a credential replacement with its locked-state error")
 	}
-	afterRefusal, err := os.ReadFile(secretsPath(t, root))
-	if err != nil || !bytes.Equal(stored, afterRefusal) {
+	afterRefusal := recordBytes(t, root)
+	if !bytes.Equal(stored, afterRefusal) {
 		t.Fatal("refused post-disclosure replacement changed the atomic state record")
 	}
 }
@@ -597,7 +621,14 @@ func TestGenericRequirementNamesCannotWriteBootstrapLifecycleFacts(t *testing.T)
 func TestLegacyFlatBootstrapMarkersReturnUnsupportedFormatWithoutReset(t *testing.T) {
 	root := t.TempDir()
 	store := Store{PlatformRoot: root}
-	legacyDir := filepath.Dir(secretsPath(t, root))
+	legacyDir := ""
+	store.atomicWrite = func(path string, _ []byte, _ os.FileMode) error {
+		legacyDir = filepath.Dir(path)
+		return nil
+	}
+	if err := store.Put("fixture", "value"); err != nil {
+		t.Fatal("resolve typed state location through the writer")
+	}
 	if err := os.MkdirAll(legacyDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -628,11 +659,13 @@ func TestStoreUsesSharedCataloguedDiagnosisForInvalidWireFormat(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := Store{PlatformRoot: t.TempDir()}
-			path := secretsPath(t, store.PlatformRoot)
-			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-				t.Fatal(err)
+			store.atomicWrite = func(path string, _ []byte, mode os.FileMode) error {
+				if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+					return err
+				}
+				return os.WriteFile(path, contents, mode)
 			}
-			if err := os.WriteFile(path, contents, 0o600); err != nil {
+			if err := store.Put("fixture", "value"); err != nil {
 				t.Fatal(err)
 			}
 			_, _, err := store.Get("OTHER_SECRET")

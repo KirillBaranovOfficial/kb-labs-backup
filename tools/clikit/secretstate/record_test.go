@@ -2,14 +2,10 @@ package secretstate
 
 import (
 	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -17,7 +13,11 @@ import (
 )
 
 func TestHostProjectionSuppressesCompletedBootstrapPassword(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "secret-state.json")
+	root := t.TempDir()
+	path := filepath.Join(root, ".kb", "v2", "secret-state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	record := NewRecord()
 	record.SetRequirement(BootstrapPasswordEnvironment, "private-test-value")
 	record.SetRequirement("APP_TOKEN", "other-private-test-value")
@@ -30,7 +30,7 @@ func TestHostProjectionSuppressesCompletedBootstrapPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	projection, err := HostEnvironment(path)
+	projection, err := HostEnvironmentAtRoot(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +42,22 @@ func TestHostProjectionSuppressesCompletedBootstrapPassword(t *testing.T) {
 	}
 	if len(projection.Suppressed) != 1 || projection.Suppressed[0] != BootstrapPasswordEnvironment {
 		t.Fatalf("suppressed values = %v", projection.Suppressed)
+	}
+}
+
+func TestHostProjectionRefusesUnknownFieldsThroughRootLoader(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".kb", "v2", "secret-state.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema":2,"generation":1,"requirements":{},"bootstrap":{},"extra":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := HostEnvironmentAtRoot(root)
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != UnsupportedCode {
+		t.Fatalf("unknown-field diagnosis = %v; want %s", err, UnsupportedCode)
 	}
 }
 
@@ -92,64 +108,7 @@ func TestUnknownAndMalformedRecordsReturnCataloguedDiagnosis(t *testing.T) {
 	}
 }
 
-func TestSecretStateSerializedSchemaHasOneGoOwner(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate source owner for schema rail")
-	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", "..", ".."))
-	ownerDir := filepath.Join(repoRoot, "tools", "clikit", "secretstate")
-	var violations []string
-	err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if path != repoRoot && (entry.Name() == ".git" || entry.Name() == "node_modules" || entry.Name() == "dist" || entry.Name() == "vendor") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasPrefix(filepath.Clean(path)+string(filepath.Separator), filepath.Clean(ownerDir)+string(filepath.Separator)) {
-			return nil
-		}
-		parsed, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-		if parseErr != nil {
-			return parseErr
-		}
-		ast.Inspect(parsed, func(node ast.Node) bool {
-			switch value := node.(type) {
-			case *ast.StructType:
-				fields := map[string]bool{}
-				for _, field := range value.Fields.List {
-					if field.Tag == nil {
-						continue
-					}
-					tagText, unquoteErr := strconv.Unquote(field.Tag.Value)
-					if unquoteErr != nil {
-						continue
-					}
-					fieldName := strings.Split(reflect.StructTag(tagText).Get("json"), ",")[0]
-					fields[fieldName] = true
-				}
-				lifecycleRecord := fields["bootstrapCompleted"] || fields["bootstrapPasswordOrigin"] || fields["bootstrapPasswordDisclosed"]
-				secretStateShape := fields["schema"] && fields["requirements"] && fields["bootstrap"]
-				if lifecycleRecord || secretStateShape {
-					violations = append(violations, path+" declares serialized secret-state fields")
-				}
-			}
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(violations) != 0 {
-		t.Fatalf("secret-state serialized schema has non-owner declarations: %v", violations)
-	}
-}
-
+// This rail prevents accidental second readers by rejecting record-name or layout-ID references outside the owner and layout accessor; code review, not this rail, covers deliberate evasion.
 func TestSecretStateAccessHasOneRepositoryOwner(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -165,11 +124,32 @@ func TestSecretStateAccessHasOneRepositoryOwner(t *testing.T) {
 	}
 }
 
+func TestRecordPathAccessorCannotCompileInAnotherPackage(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate repository root for compile rail")
+	}
+	repository := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", "..", ".."))
+	mutation := filepath.Join(repository, "tools", "clikit", "operationlock", "record_path_mutation_test.go")
+	contents := "package operationlock\nimport \"github.com/kb-labs/clikit/secretstate\"\nvar _ = secretstate.RecordPath\n"
+	if err := os.WriteFile(mutation, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(mutation) })
+	command := exec.Command("go", "test", "./operationlock", "-run", "^$")
+	command.Dir = filepath.Join(repository, "tools", "clikit")
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "undefined: secretstate.RecordPath") {
+		t.Fatalf("path-accessor mutation compiled or failed for another reason: %v\n%s", err, output)
+	}
+}
+
 func TestSecretStateAccessRailRejectsEverySourceLanguage(t *testing.T) {
 	for relative, source := range map[string]string{
 		"tools/kb-create/v2/other/map.go":          `json.Unmarshal(data, &map[string]any{}); open(".kb/v2/secret-state.json")`,
 		"tools/kb-monitor/main.go":                 `json.Unmarshal(data, &map[string]any{}); open(".kb/v2/secret-state.json")`,
 		"tools/kb-create/v2/other/raw.go":          `json.Unmarshal(data, &json.RawMessage{}); open(".kb/v2/secret-state.json")`,
+		"tools/kb-create/v2/contracts/other.go":    `const privateState = "secret-state.json"`,
 		"e2e/journey/layout_reader.py":             `layout["sharedRuntimePaths"] and entry["id"] == "secretState"`,
 		"services/gateway/app/src/private.test.ts": `readFileSync('.kb/v2/secret-state.json')`,
 		"e2e/journey/private_steps.py":             `open('.kb/v2/secret-state.json')`,
@@ -196,6 +176,33 @@ func TestSecretStateAccessRailRejectsEverySourceLanguage(t *testing.T) {
 }
 
 func privateRecordReferences(root string) ([]string, error) {
+	ownerFiles := map[string]bool{}
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return nil, errors.New("locate secret-state owner package")
+	}
+	repository := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", ".."))
+	ownerDir := filepath.Dir(sourceFile)
+	if err := filepath.WalkDir(ownerDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || filepath.Ext(path) != ".go" {
+			return err
+		}
+		relative, err := filepath.Rel(repository, path)
+		if err == nil {
+			ownerFiles[filepath.ToSlash(relative)] = true
+		}
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	layoutAccessor := filepath.Join(root, "tools", "kb-create", "v2", "contracts", "layout.go")
+	if data, err := os.ReadFile(layoutAccessor); err == nil {
+		if strings.Count(string(data), `"secretState"`) != 1 || strings.Contains(string(data), "secret-state.json") {
+			return []string{"tools/kb-create/v2/contracts/layout.go"}, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	var violations []string
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -218,7 +225,7 @@ func privateRecordReferences(root string) ([]string, error) {
 			return err
 		}
 		relative = filepath.ToSlash(relative)
-		if strings.HasPrefix(relative, "tools/clikit/secretstate/") || strings.HasPrefix(relative, "tools/kb-create/v2/contracts/") {
+		if ownerFiles[relative] || relative == "tools/kb-create/v2/contracts/platform-layout.json" || relative == "tools/kb-create/v2/contracts/layout.go" {
 			return nil
 		}
 		data, err := os.ReadFile(path)

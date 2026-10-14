@@ -9,23 +9,21 @@ from pathlib import Path
 from unittest.mock import patch
 
 from platform_update_variant_steps import run_platform_update_variant_steps
-from platform_layout import secret_state_relative_path
 from service_steps import Journey
 
 
 def _versioned_platform(root: Path, version: str) -> Path:
     platform = root / "platform"
     version_root = platform / "versions" / "v1"
-    (version_root / secret_state_relative_path().parent).mkdir(parents=True)
+    (version_root / ".kb/v2").mkdir(parents=True)
     (version_root / ".kb/kb.config.jsonc").write_text("{}\n")
     (version_root / ".kb/marketplace.lock").write_text('{"plugins":[]}\n')
-    (version_root / secret_state_relative_path()).write_text(
-        json.dumps({"schema": 2, "generation": 1, "requirements": {"secret": "sentinel"}, "bootstrap": {}}) + "\n")
     (version_root / ".kb/v2/receipt.json").write_text(json.dumps({
         "plan": {"serviceGraph": {"platformVersion": version}},
     }))
     platform.mkdir(exist_ok=True)
     (platform / "state").mkdir()
+    (platform / "state" / "opaque-runtime-state.bin").write_bytes(b"fixture state")
     (platform / "current").symlink_to(Path("versions/v1"), target_is_directory=True)
     return platform
 

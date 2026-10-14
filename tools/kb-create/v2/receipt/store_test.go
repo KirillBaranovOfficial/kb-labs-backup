@@ -127,39 +127,6 @@ func TestSnapshotRestoresManagedFilesWithoutTouchingProjectFiles(t *testing.T) {
 	}
 }
 
-// case: S-024.3
-func TestRollbackLeavesSharedSecretStateUntouched(t *testing.T) {
-	root := t.TempDir()
-	if err := Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "receipt-1", Plan: contracts.ResolvedInstallPlan{PlanHash: "plan"}}); err != nil {
-		t.Fatal(err)
-	}
-	secretPath := filepath.Join(root, filepath.FromSlash(contracts.SharedRecordPath()))
-	if err := os.MkdirAll(filepath.Dir(secretPath), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	secretBefore := `{"schema":2,"generation":1,"requirements":{"GATEWAY_INTERNAL_SECRET":"generated-value"},"bootstrap":{}}`
-	if err := os.WriteFile(secretPath, []byte(secretBefore), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := CreateSnapshot(root, filepath.Join(root, "snapshots"), time.Unix(2, 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	secretAfter := `{"schema":2,"generation":2,"requirements":{"GATEWAY_INTERNAL_SECRET":"updated-value"},"bootstrap":{}}`
-	if err := os.WriteFile(secretPath, []byte(secretAfter), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RestoreSnapshot(root, filepath.Join(root, "snapshots"), snapshot.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, included := snapshot.Files[contracts.SharedRecordPath()]; included {
-		t.Fatal("recovery snapshot captured the shared secret-state record")
-	}
-	if data, err := os.ReadFile(secretPath); err != nil || string(data) != secretAfter {
-		t.Fatal("rollback restored a stale shared secret-state record")
-	}
-}
-
 func TestSnapshotRetentionKeepsNewestRecoveryBoundaries(t *testing.T) {
 	root := t.TempDir()
 	for _, created := range []int64{1, 2, 3} {

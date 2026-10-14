@@ -1,17 +1,31 @@
 package contracts
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/kb-labs/clikit/secretstate"
 )
 
-func TestSharedSecretRecordPathMatchesSharedLoader(t *testing.T) {
+func TestSharedRecordPathMatchesOwnerRootLoader(t *testing.T) {
 	root := t.TempDir()
-	want := filepath.Join(root, filepath.FromSlash(SharedRecordPath()))
-	if got := secretstate.RecordPath(root); got != want {
-		t.Fatalf("shared secret record path = %q; layout contract resolves %q", got, want)
+	path := filepath.Join(root, filepath.FromSlash(SharedRecordPath()))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := secretstate.NewRecord()
+	record.SetRequirement("LAYOUT_OWNER_PROBE", "present")
+	data, err := secretstate.Encode(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := secretstate.HostEnvironmentAtRoot(root)
+	if err != nil || projection.Values["LAYOUT_OWNER_PROBE"] != "present" {
+		t.Fatalf("shared root loader projection = %#v, error=%v", projection, err)
 	}
 }
 

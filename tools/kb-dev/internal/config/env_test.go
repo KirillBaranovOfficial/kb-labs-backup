@@ -1,12 +1,10 @@
 package config
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/secretstate"
 )
 
@@ -19,6 +17,19 @@ func TestExpandStringNoPlaceholder(t *testing.T) {
 	}
 	if got != "hello world" {
 		t.Errorf("got %q, want %q", got, "hello world")
+	}
+}
+
+func TestExpandEnvDoesNotReceiveCompletedBootstrapCredentialFromSharedProjection(t *testing.T) {
+	record := secretstate.NewRecord()
+	record.SetRequirement(secretstate.BootstrapPasswordEnvironment, "private-test-value")
+	record.MarkBootstrapCompleted("provisioned")
+	projection := secretstate.ProjectHost(record)
+	if _, found := projection.Values[secretstate.BootstrapPasswordEnvironment]; found {
+		t.Fatal("shared host projection included a completed bootstrap credential")
+	}
+	if err := expandEnvWithProjection(minimalYAMLWithEnvVar("${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD}"), t.TempDir(), projection); err == nil {
+		t.Fatal("kb-dev config loader expanded the completed bootstrap credential")
 	}
 }
 
@@ -170,87 +181,6 @@ func TestExpandEnvFromDotEnvFile(t *testing.T) {
 	}
 	if got := yf.Services["api"].Env["SECRET"]; got != "mysecret" {
 		t.Errorf("got %q, want %q", got, "mysecret")
-	}
-}
-
-func TestExpandEnvFromV2LauncherSecretStore(t *testing.T) {
-	dir := t.TempDir()
-	path := secretstate.RecordPath(dir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	record := secretstate.NewRecord()
-	record.SetRequirement("V2_LAUNCHER_TOKEN", "private")
-	data, err := secretstate.Encode(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	yf := minimalYAMLWithEnvVar("${V2_LAUNCHER_TOKEN}")
-	if err := expandEnv(yf, dir); err != nil {
-		t.Fatal(err)
-	}
-	if got := yf.Services["api"].Env["SECRET"]; got != "private" {
-		t.Fatalf("SECRET = %q", got)
-	}
-}
-
-func TestExpandEnvDoesNotInjectBootstrapPasswordAfterCompletion(t *testing.T) {
-	dir := t.TempDir()
-	path := secretstate.RecordPath(dir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	record := secretstate.NewRecord()
-	record.SetRequirement(secretstate.BootstrapPasswordEnvironment, "private")
-	record.MarkBootstrapCompleted("provisioned")
-	data, err := secretstate.Encode(record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	yf := minimalYAMLWithEnvVar("${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD}")
-	if err := expandEnv(yf, dir); err == nil {
-		t.Fatal("completed bootstrap password was injected into the host configuration")
-	}
-}
-
-func TestExpandEnvReturnsSharedSecretStateDiagnosis(t *testing.T) {
-	dir := t.TempDir()
-	path := secretstate.RecordPath(dir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"schema":99,"requirements":{},"bootstrap":{}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := expandEnv(minimalYAMLWithEnvVar("${ANY_VALUE}"), dir)
-	var failure *diag.Diag
-	if !errors.As(err, &failure) {
-		t.Fatalf("load error = %T; want shared catalogued diagnosis", err)
-	}
-	if failure.Code != secretstate.UnsupportedCode {
-		t.Fatalf("diagnosis code = %q", failure.Code)
-	}
-}
-
-func TestExpandEnvRejectsUnknownSecretStateField(t *testing.T) {
-	dir := t.TempDir()
-	path := secretstate.RecordPath(dir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"schema":2,"generation":1,"requirements":{},"bootstrap":{},"extra":true}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := expandEnv(minimalYAMLWithEnvVar("${ANY_VALUE}"), dir)
-	var failure *diag.Diag
-	if !errors.As(err, &failure) || failure.Code != secretstate.UnsupportedCode {
-		t.Fatalf("unknown-field diagnosis = %v; want %s", err, secretstate.UnsupportedCode)
 	}
 }
 

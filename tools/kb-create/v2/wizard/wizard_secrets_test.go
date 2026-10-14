@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -14,7 +13,6 @@ import (
 	"github.com/kb-labs/create/v2/flow"
 	"github.com/kb-labs/create/v2/scenario"
 	"github.com/kb-labs/create/v2/secrets"
-	"github.com/kb-labs/create/v2/versionroot"
 )
 
 func gatewaySource(t *testing.T) catalog.Catalog {
@@ -31,34 +29,17 @@ func gatewaySource(t *testing.T) catalog.Catalog {
 
 func storedSecrets(t *testing.T, root string) map[string]string {
 	t.Helper()
-	path := wizardSecretsPath(t, root)
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return map[string]string{}
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := secrets.Store{PlatformRoot: root}
 	values := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if key, value, ok := strings.Cut(line, "="); ok {
-			values[key] = value
+	for _, id := range []string{"gateway.bootstrap.password", "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
+		"gateway.jwtSecret", "GATEWAY_JWT_SECRET", "gateway.internalSecret", "GATEWAY_INTERNAL_SECRET"} {
+		if _, present, err := store.Get(id); err != nil {
+			t.Fatal(err)
+		} else if present {
+			values[id] = "present"
 		}
 	}
 	return values
-}
-
-func wizardSecretsPath(t *testing.T, root string) string {
-	t.Helper()
-	layout, err := versionroot.New(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path, err := layout.SharedRuntimePath(contracts.SharedRecordPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return path
 }
 
 // custom: project path, channel, profile, Studio access, then (secured only) email, password + confirmation, signing secret.
@@ -103,7 +84,7 @@ func TestSecuredJourneyKeepsPromptSecretsPendingUntilPlanValidation(t *testing.T
 			t.Fatalf("%s leaked into the request", name)
 		}
 	}
-	if _, err := os.Stat(wizardSecretsPath(t, root)); !os.IsNotExist(err) {
+	if got := storedSecrets(t, root); len(got) != 0 {
 		t.Fatal("wizard persisted secrets before the resolved plan accepted them")
 	}
 	if !strings.Contains(output, "generated a random value (not shown)") {
@@ -129,7 +110,7 @@ func TestSecuredJourneyWithBlankPasswordGeneratesFirstAdminCredential(t *testing
 	if strings.Contains(output, pending["gateway.bootstrap.password"].Value) {
 		t.Fatal("wizard disclosed the generated password before installation succeeded")
 	}
-	if _, err := os.Stat(wizardSecretsPath(t, root)); !os.IsNotExist(err) {
+	if got := storedSecrets(t, root); len(got) != 0 {
 		t.Fatal("wizard persisted its generated password before apply")
 	}
 }
@@ -149,8 +130,8 @@ func TestLocalJourneyAsksForNoAdminAndStoresNothing(t *testing.T) {
 	if strings.Contains(output, "Admin") || strings.Contains(output, "signing") {
 		t.Fatalf("admin questions must not appear for local access:\n%s", output)
 	}
-	if _, err := os.Stat(wizardSecretsPath(t, root)); !os.IsNotExist(err) {
-		t.Fatalf("no secret store is created for a local install: %v", err)
+	if got := storedSecrets(t, root); len(got) != 0 {
+		t.Fatalf("local install stored secrets: %v", got)
 	}
 }
 

@@ -752,18 +752,6 @@ func TestSecuredProjectRegistrationUsesTransientGatewayLogin(t *testing.T) {
 	if err := (secrets.Store{PlatformRoot: root}).Put("gateway.bootstrap.password", password); err != nil {
 		t.Fatal(err)
 	}
-	layout, err := versionroot.New(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secretStorePath, err := layout.SharedRuntimePath(contracts.SharedRecordPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	secretStoreBefore, err := os.ReadFile(secretStorePath)
-	if err != nil {
-		t.Fatal(err)
-	}
 	homeBefore := snapshotFilesystem(t, home)
 	rootBefore := snapshotFilesystem(t, root)
 	registered, err := registerProject(root, projectAlias)
@@ -787,10 +775,6 @@ func TestSecuredProjectRegistrationUsesTransientGatewayLogin(t *testing.T) {
 	}
 	if stored, present, err := (secrets.Store{PlatformRoot: root}).Get("gateway.bootstrap.password"); err != nil || !present || stored != password {
 		t.Fatalf("bootstrap password state changed: present=%v err=%v", present, err)
-	}
-	secretStoreAfter, err := os.ReadFile(secretStorePath)
-	if err != nil || !bytes.Equal(secretStoreBefore, secretStoreAfter) {
-		t.Fatalf("project registration changed the existing bootstrap secret store: %v", err)
 	}
 	homeChanges := changedFilesystemPaths(homeBefore, snapshotFilesystem(t, home))
 	rootChanges := changedFilesystemPaths(rootBefore, snapshotFilesystem(t, root))
@@ -1102,22 +1086,7 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 			if err := (secrets.Store{PlatformRoot: root}).Put("gateway.bootstrap.password", password); err != nil {
 				t.Fatal(err)
 			}
-			layout, err := versionroot.New(root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			secretStorePath, err := layout.SharedRuntimePath(contracts.SharedRecordPath())
-			if err != nil {
-				t.Fatal(err)
-			}
-			secretStoreBefore, err := os.ReadFile(secretStorePath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			canonicalSecretStorePath, err := filepath.EvalSymlinks(secretStorePath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			secretStore := secrets.Store{PlatformRoot: root}
 			_, cause := registerProject(root, project)
 			if cause == nil {
 				t.Fatal("registration failure unexpectedly succeeded")
@@ -1169,6 +1138,7 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 					t.Fatalf("remote secret %q reached a diagnostic or renderer", secret)
 				}
 			}
+			passwordFiles := 0
 			for _, path := range []string{root, home} {
 				err := filepath.WalkDir(path, func(file string, entry os.DirEntry, walkErr error) error {
 					if walkErr != nil || entry.IsDir() {
@@ -1182,10 +1152,7 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 						return fmt.Errorf("file %s contains a remote token", file)
 					}
 					if bytes.Contains(data, []byte(password)) {
-						canonicalFile, err := filepath.EvalSymlinks(file)
-						if err != nil || filepath.Clean(canonicalFile) != filepath.Clean(canonicalSecretStorePath) {
-							return fmt.Errorf("file %s contains the bootstrap password outside its unchanged secret store", file)
-						}
+						passwordFiles++
 					}
 					return nil
 				})
@@ -1193,9 +1160,11 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			secretStoreAfter, err := os.ReadFile(secretStorePath)
-			if err != nil || !bytes.Equal(secretStoreBefore, secretStoreAfter) {
-				t.Fatalf("registration failure changed the existing bootstrap secret store: %v", err)
+			if passwordFiles != 1 {
+				t.Fatalf("registration failure left the password in %d files, want only its owner record", passwordFiles)
+			}
+			if stored, present, err := secretStore.Get("gateway.bootstrap.password"); err != nil || !present || stored != password {
+				t.Fatal("registration failure changed the bootstrap password state")
 			}
 		})
 	}

@@ -126,9 +126,9 @@ func TestOperationLockAdmitsOneLauncherAtATime(t *testing.T) {
 	again()
 }
 
-func TestOperationLockIsTakenOverWhenItsHolderIsGone(t *testing.T) {
+func TestOperationLockIgnoresUnownedFileContentsAndKeepsPath(t *testing.T) {
 	state := State{Dir: t.TempDir()}
-	if err := os.WriteFile(state.OperationLock(), []byte("2147483646 update\n"), 0o600); err != nil {
+	if err := os.WriteFile(state.OperationLock(), []byte("garbage from a dead process"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	release, err := state.AcquireOperation("update")
@@ -136,7 +136,7 @@ func TestOperationLockIsTakenOverWhenItsHolderIsGone(t *testing.T) {
 		t.Fatalf("a stale lock must be replaced: %v", err)
 	}
 	release()
-	if _, err := os.Stat(state.OperationLock()); !os.IsNotExist(err) {
-		t.Fatalf("the lock must be removed on release: %v", err)
+	if _, err := os.Stat(state.OperationLock()); err != nil {
+		t.Fatalf("the stable lock path must remain after release: %v", err)
 	}
 }
