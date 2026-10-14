@@ -219,9 +219,10 @@ describe('structured error diagnostics', () => {
 
   it.each(['{"findings":[]}', '[{"message":"bad"}]'])('rejects serialized structured details during envelope validation: %s', (value) => {
     const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED');
-    expect(validateErrorEnvelope({ ...envelope, details: { report: value } })).toContain(
-      'details.report must not contain serialized JSON; use data or diagnostics',
-    );
+    expect(validateErrorEnvelope({ ...envelope, details: { report: value } })).toContainEqual({
+      field: 'details.report',
+      reason: 'must not contain serialized JSON; use data or diagnostics',
+    });
   });
 
   it('rejects non-string details in the builder with a catalogued contract violation', () => {
