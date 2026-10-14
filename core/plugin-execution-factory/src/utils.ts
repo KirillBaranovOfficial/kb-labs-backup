@@ -5,7 +5,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { createErrorEnvelope, errorEnvelopeFrom, ErrorEnvelopeError, serializeError, toErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope } from '@kb-labs/core-platform';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import type { ExecutionDiagnostics, ExecutionError, ExecutionRequest } from './types.js';
 import { TimeoutError, AbortError, WorkerCrashedError, isExecutionLayerError } from './errors.js';
@@ -135,8 +135,12 @@ export function normalizeExecutionFailure(error: unknown, request?: ExecutionReq
     : error instanceof WorkerCrashedError
       ? 'execution process crashed'
       : undefined;
-  const pluginFailure = request && !errorEnvelopeFrom(error) &&
-    (error instanceof Error || isExecutionLayerError(error));
+  const canonicalEnvelope = normalizeErrorEnvelope(error);
+  const isUncataloguedHandlerFailure = canonicalEnvelope.code === 'KB_RUNTIME_UNEXPECTED' && (
+    (error instanceof Error && !(error instanceof ErrorEnvelopeError)) ||
+    error instanceof SerializedErrorEnvelopeError
+  );
+  const pluginFailure = request && isUncataloguedHandlerFailure;
   const normalizedError: ExecutionError = pluginFailure
     ? {
         ...createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
@@ -150,7 +154,7 @@ export function normalizeExecutionFailure(error: unknown, request?: ExecutionReq
         }),
         error: serializedError,
       }
-    : { ...normalizeErrorEnvelope(error), error: serializedError };
+    : { ...canonicalEnvelope, error: serializedError };
   const diagnostics = executionDiagnostics(normalizedError);
   return {
     error: normalizedError,

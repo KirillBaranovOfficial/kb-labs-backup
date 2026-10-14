@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ILogger } from '@kb-labs/core-platform';
+import { validateErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { createExecutionBackend, createNormalizedExecutionBackend } from '../factory.js';
 import { WorkerPoolBackend } from '../backends/worker-pool/backend.js';
@@ -36,7 +36,55 @@ class MemoryLoggerSink implements ILogger {
 
 const returnedStack = 'Error: serialized returned failure\n    at registeredHandler (handler.js:7:3)';
 const thrownMessage = 'FIXTURE_THROW_STACK';
+const productStack = 'PluginError: typed plugin failure\n    at registeredHandler (bundled-plugin.js:31:5)';
+const platformStack = 'AdapterUnavailableError: fixture adapter unavailable\n    at registeredHandler (adapter-plugin.js:19:7)';
 const backends = ['in-process', 'worker-pool', 'subprocess'] as const;
+interface FailureCase {
+  label: string;
+  handler: string;
+  expectedCode: string;
+  name: string;
+  message: string;
+  stack?: string;
+  stackIncludes?: string;
+}
+
+const failures: FailureCase[] = [
+  {
+    label: 'returned serialized failure',
+    handler: 'returned-serialized-failure-handler.js',
+    expectedCode: 'KB_PLUGIN_CONTRACT_VIOLATION',
+    name: 'Error',
+    message: 'returned handler failure',
+    stack: returnedStack,
+  },
+  {
+    label: 'plain thrown Error',
+    handler: 'thrown-failure-handler.js',
+    expectedCode: 'KB_PLUGIN_COMMAND_FAILED',
+    name: 'Error',
+    message: thrownMessage,
+    stackIncludes: thrownMessage,
+  },
+  {
+    label: 'typed plugin error with a catalogued code',
+    handler: 'typed-product-failure-handler.js',
+    expectedCode: 'KB_PLUGIN_PERMISSION_DENIED',
+    name: 'PluginError',
+    message: 'typed plugin failure',
+    stack: productStack,
+  },
+  {
+    label: 'catalogued platform adapter error',
+    handler: 'platform-adapter-failure-handler.js',
+    expectedCode: 'KB_ADAPTER_NOT_CONFIGURED',
+    name: 'AdapterUnavailableError',
+    message: 'fixture adapter unavailable',
+    stack: platformStack,
+  },
+];
+
+type FailureFixture = FailureCase['handler'];
 
 function makeBackend(mode: (typeof backends)[number], platform: PlatformServices, logger: ILogger): ExecutionBackend {
   if (mode !== 'worker-pool') {
@@ -57,10 +105,7 @@ function makeBackend(mode: (typeof backends)[number], platform: PlatformServices
   return createNormalizedExecutionBackend(rawBackend, logger);
 }
 
-function makeRequest(
-  handler: 'returned-serialized-failure-handler.js' | 'thrown-failure-handler.js',
-  correlationId: string,
-): ExecutionRequest {
+function makeRequest(handler: FailureFixture, correlationId: string): ExecutionRequest {
   const fixturePath = fileURLToPath(new URL(`./fixtures/${handler}`, import.meta.url));
   return {
     executionId: `${correlationId}-execution`,
@@ -81,60 +126,39 @@ function makeRequest(
 }
 
 describe.each(backends)('%s real failure dispatch', (mode) => {
-  it('retains a returned serialized failure stack only in its correlated log', async () => {
+  it.each(failures)('validates the $label envelope and retains its stack in the correlated log', async (failure) => {
     const logger = new MemoryLoggerSink();
     const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
     const backend = makeBackend(mode, platform, logger);
-    const correlationId = `${mode}-returned-stack`;
+    const correlationId = `${mode}-${failure.handler}`;
 
     try {
-      const result = await backend.execute(makeRequest('returned-serialized-failure-handler.js', correlationId));
+      const result = await backend.execute(makeRequest(failure.handler, correlationId));
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
+      expect(result.error.code, `${mode} ${failure.handler} returned ${result.error.error.name}: ${result.error.error.message}`).toBe(failure.expectedCode);
+      expect(result.error.envelope.code).toBe(failure.expectedCode);
+      expect(result.error).not.toHaveProperty('stack');
       expect(result.error.envelope).not.toHaveProperty('stack');
-      expect(logger.queryByCorrelationId(correlationId)).toEqual([
-        expect.objectContaining({
-          event: 'plugin.handler.failed',
-          correlationId,
-          serializedError: expect.objectContaining({
-            name: 'Error',
-            message: 'returned handler failure',
-            stack: returnedStack,
-          }),
+      expect(validateErrorEnvelope(result.error.envelope)).toEqual([]);
+
+      const [record] = logger.queryByCorrelationId(correlationId);
+      expect(record).toEqual(expect.objectContaining({
+        event: 'plugin.handler.failed',
+        correlationId,
+        serializedError: expect.objectContaining({
+          name: failure.name,
+          message: failure.message,
+          ...(failure.stack ? { stack: failure.stack } : {}),
+          ...(failure.stackIncludes ? { stack: expect.stringContaining(failure.stackIncludes) } : {}),
         }),
-      ]);
+      }));
+      expect((record?.serializedError as { stack?: string } | undefined)?.stack).toContain(
+        failure.stackIncludes ?? failure.stack,
+      );
     } finally {
       await backend.shutdown();
     }
   });
-
-  it('serializes a thrown handler error and logs its source stack by correlation id', async () => {
-    const logger = new MemoryLoggerSink();
-    const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
-    const backend = makeBackend(mode, platform, logger);
-    const correlationId = `${mode}-thrown-stack`;
-
-    try {
-      const result = await backend.execute(makeRequest('thrown-failure-handler.js', correlationId));
-
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.error.envelope).not.toHaveProperty('stack');
-      expect(logger.queryByCorrelationId(correlationId)).toEqual([
-        expect.objectContaining({
-          event: 'plugin.handler.failed',
-          correlationId,
-          serializedError: expect.objectContaining({
-            name: 'Error',
-            message: thrownMessage,
-            stack: expect.stringContaining(thrownMessage),
-          }),
-        }),
-      ]);
-    } finally {
-      await backend.shutdown();
-    }
-  });
-
 });

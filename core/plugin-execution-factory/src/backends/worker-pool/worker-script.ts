@@ -23,7 +23,8 @@ import type {
   UIPromptResultMessage,
   SerializedCataloguedError,
 } from './types.js';
-import { ErrorEnvelopeError, serializeError, SerializedErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
+import { serializeError, SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { normalizeExecutionFailure } from '../../utils.js';
 import { serializeCataloguedError } from './error-codec.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
@@ -318,7 +319,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     process.send!(resultMessage);
   } catch (error) {
-    const errorEnvelope = error instanceof ErrorEnvelopeError ? error.envelope : toErrorEnvelope(error);
+    const { error: serializedError, ...errorEnvelope } = normalizeExecutionFailure(error, request).error;
     const cataloguedError = serializeCataloguedError(errorEnvelope);
     sendError(requestId, {
       message: cataloguedError.message,
@@ -327,7 +328,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
       cause: cataloguedError.cause,
       details: cataloguedError.details,
       cataloguedError,
-      serializedError: serializeError(error),
+      serializedError,
     });
   }
 }

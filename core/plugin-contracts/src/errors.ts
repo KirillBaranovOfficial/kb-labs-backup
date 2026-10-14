@@ -4,9 +4,10 @@
  * Standardized errors with codes for proper handling across IPC boundaries.
  */
 
-import type { ErrorCode as PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
+import type { ErrorCode } from '@kb-labs/core-platform/error-envelope';
 import {
   serializeError,
+  toErrorEnvelope,
   type SerializedError,
 } from '@kb-labs/core-platform';
 
@@ -178,7 +179,14 @@ export function wrapError(error: unknown, defaultCode: ErrorCode = 'KB_RUNTIME_U
   }
 
   if (error instanceof Error) {
-    const wrapped = new PluginError(error.message, defaultCode, { originalName: error.name });
+    const envelope = toErrorEnvelope(error);
+    const typedEnvelope = envelope.code !== 'KB_RUNTIME_UNEXPECTED';
+    const wrapped = new PluginError(
+      error.message,
+      typedEnvelope ? envelope.code : defaultCode,
+      typedEnvelope ? envelope.details : { originalName: error.name },
+      typedEnvelope ? envelope.hint : undefined,
+    );
     wrapped.name = error.name;
     wrapped.stack = error.stack;
     Object.defineProperty(wrapped, 'cause', { value: error, configurable: true });
@@ -187,4 +195,3 @@ export function wrapError(error: unknown, defaultCode: ErrorCode = 'KB_RUNTIME_U
 
   return new PluginError(String(error), defaultCode);
 }
-type ErrorCode = PlatformErrorCode;
