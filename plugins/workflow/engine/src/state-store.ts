@@ -2,6 +2,7 @@ import type { JobRun, StepRun, WorkflowRun } from '@kb-labs/workflow-contracts'
 import type { ICache, IStorage } from '@kb-labs/core-platform'
 import {
   assertTransition,
+  isTerminal,
   type AssertTransitionOptions,
 } from '@kb-labs/workflow-constants'
 import type { EngineLogger } from './types'
@@ -205,6 +206,14 @@ export class StateStore {
     runId: string,
     mutator: (draft: WorkflowRun) => WorkflowRun | void,
   ): Promise<WorkflowRun | null> {
+    return this.updateRunRecord(runId, mutator, false)
+  }
+
+  private async updateRunRecord(
+    runId: string,
+    mutator: (draft: WorkflowRun) => WorkflowRun | void,
+    terminalTransitionOwner: boolean,
+  ): Promise<WorkflowRun | null> {
     return withLock(this.cache, `kb:lock:run:${runId}`, async () => {
       const run = await this.getRun(runId)
       if (!run) {
@@ -214,6 +223,9 @@ export class StateStore {
       const draft = clone(run)
       const result = mutator(draft)
       const next = (result ?? draft) as WorkflowRun
+      if (!terminalTransitionOwner && run.status !== next.status && isTerminal(next.status, 'run')) {
+        throw new Error(`Workflow run status "${next.status}" can only be written by the terminal transition owner`)
+      }
       await this.saveRun(next)
       return next
     })
@@ -296,11 +308,11 @@ export class StateStore {
     mutate: (draft: WorkflowRun) => void = () => {},
     options?: AssertTransitionOptions,
   ): Promise<WorkflowRun | null> {
-    return this.updateRun(runId, (draft) => {
+    return this.updateRunRecord(runId, (draft) => {
       assertTransition('run', draft.status, to, options)
       draft.status = to
       mutate(draft)
-    })
+    }, isTerminal(to, 'run'))
   }
 
   /** Job-level counterpart of `transitionRun` — see its docblock. */
@@ -334,52 +346,49 @@ export class StateStore {
     })
   }
 
-  async releaseBlockedJobs(
+  async resolveBlockedJobs(
     runId: string,
-    completedJobName: string,
+    upstreamJobName: string,
+    resolution: { outcome: 'success' } | { outcome: 'failure'; reason: string },
   ): Promise<JobRun[]> {
-    // `released` is reset at the top of the mutator rather than declared
-    // once outside it. `updateRun` now holds an exclusive lock for the whole
-    // call, so in the current design this mutator only ever runs once per
-    // call — but keeping the reset here is cheap, correct defense-in-depth
-    // against ever accumulating into a variable captured from an outer
-    // scope, which is exactly what caused a real bug when `updateRun`'s
-    // internals worked differently (a retry-on-conflict scheme, prior to the
-    // locking approach): a re-run mutator pushed into the same array again,
-    // so callers double-processed the same released job.
-    let released: JobRun[] = []
+    let resolved: JobRun[] = []
 
     await this.updateRun(runId, (run) => {
-      released = []
-      for (const job of run.jobs) {
-        if (job.status !== 'queued' || !job.blocked) {
-          continue
+      resolved = []
+      if (resolution.outcome === 'success') {
+        for (const job of run.jobs) {
+          if (job.status !== 'queued' || !job.blocked || !job.needs?.includes(upstreamJobName)) { continue }
+          const pending = job.pendingDependencies ?? []
+          const remaining = pending.filter((dependency) => dependency !== upstreamJobName)
+          if (remaining.length === pending.length) { continue }
+          job.pendingDependencies = remaining
+          if (remaining.length === 0) {
+            job.blocked = false
+            resolved.push(clone(job))
+          }
         }
-        if (!job.pendingDependencies || job.pendingDependencies.length === 0) {
-          continue
-        }
-        if (!job.needs?.includes(completedJobName)) {
-          continue
-        }
+        return
+      }
 
-        const remaining = job.pendingDependencies.filter(
-          (dependency) => dependency !== completedJobName,
-        )
-
-        if (remaining.length === job.pendingDependencies.length) {
-          continue
-        }
-
-        job.pendingDependencies = remaining
-
-        if (remaining.length === 0) {
+      const failedNames = new Set([upstreamJobName])
+      let changed = true
+      const finishedAt = new Date().toISOString()
+      while (changed) {
+        changed = false
+        for (const job of run.jobs) {
+          if (job.status !== 'queued' || !job.blocked || !job.needs?.some((name) => failedNames.has(name))) { continue }
+          job.status = 'cancelled'
           job.blocked = false
-          released.push(clone(job))
+          job.finishedAt = finishedAt
+          job.error = { message: resolution.reason, timestamp: finishedAt }
+          failedNames.add(job.jobName)
+          resolved.push(clone(job))
+          changed = true
         }
       }
     })
 
-    return released
+    return resolved
   }
 }
 

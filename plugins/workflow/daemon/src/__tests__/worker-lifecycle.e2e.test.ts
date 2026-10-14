@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockLogger } from '@kb-labs/shared-testing';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
-import type { StateStore, WorkflowEngine } from '@kb-labs/workflow-engine';
+import type { StateStore, WorkflowEngine, WorkflowOperationResult } from '@kb-labs/workflow-engine';
 import type { JobRun, StepRun, StepSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
 import { EnvSecretProvider } from '@kb-labs/workflow-engine';
 import { createWorkflowExecutionBackendFixture } from './execution-backend-fixture.js';
@@ -110,12 +110,14 @@ describe('workflow worker lifecycle', () => {
       async markJobStarted() {
         run.jobs[0]!.status = 'running';
       },
-      async markJobCompleted() {
+      async markJobCompleted(): Promise<WorkflowOperationResult> {
         run.jobs[0]!.status = 'success';
         completion.resolve();
+        return { ancillaryFailures: [] };
       },
-      async markJobFailed(_r: string, _j: string, error: Error) {
+      async markJobFailed(_r: string, _j: string, error: Error): Promise<WorkflowOperationResult> {
         completion.reject(error);
+        return { ancillaryFailures: [] };
       },
       async markStepStarted() {},
       async markStepCompleted() {},
@@ -226,8 +228,8 @@ describe('workflow worker lifecycle', () => {
       },
       async getRun(id: string) { return id === runId ? run : null; },
       async markJobStarted() {},
-      async markJobCompleted() { completion.resolve(); },
-      async markJobFailed(_runId: string, _jobId: string, error: Error) { completion.reject(error); },
+      async markJobCompleted(): Promise<WorkflowOperationResult> { completion.resolve(); return { ancillaryFailures: [] }; },
+      async markJobFailed(_runId: string, _jobId: string, error: Error): Promise<WorkflowOperationResult> { completion.reject(error); return { ancillaryFailures: [] }; },
       async markStepStarted() {},
       async markStepCompleted() {},
       async markStepFailed() {},

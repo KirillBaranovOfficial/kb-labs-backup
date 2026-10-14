@@ -23,7 +23,7 @@ export {
   assertTransition,
   IllegalStateTransitionError,
 } from './state-machine'
-export type { EntityKind, AssertTransitionOptions } from './state-machine'
+export type { EntityKind, AssertTransitionOptions, TerminalRunState } from './state-machine'
 
 export const EVENT_NAMES = {
   run: {

@@ -218,9 +218,10 @@ describe('StateStore', () => {
     await store.saveRun(makeRun());
 
     await store.updateRun('run-1', (draft) => { draft.status = 'running'; });
-    const second = await store.updateRun('run-1', (draft) => { draft.status = 'success'; });
+    const second = await store.updateRun('run-1', (draft) => { draft.env = { ready: 'true' }; });
 
-    expect(second!.status).toBe('success');
+    expect(second!.status).toBe('running');
+    expect(second!.env).toEqual({ ready: 'true' });
   });
 
   // ── transitionRun / transitionJob / transitionStep ─────────────────────
@@ -320,7 +321,7 @@ describe('StateStore', () => {
     expect(result).toBeNull();
   });
 
-  // ── releaseBlockedJobs ───────────────────────────────────────────────
+  // ── resolveBlockedJobs ───────────────────────────────────────────────
 
   it('releases blocked jobs when dependency completes', async () => {
     const run = makeRun({
@@ -344,7 +345,7 @@ describe('StateStore', () => {
     });
     await store.saveRun(run);
 
-    const released = await store.releaseBlockedJobs('run-1', 'setup');
+    const released = await store.resolveBlockedJobs('run-1', 'setup', { outcome: 'success' });
 
     expect(released).toHaveLength(1);
     expect(released[0]!.jobName).toBe('test');
@@ -385,7 +386,7 @@ describe('StateStore', () => {
       return originalUpdateRun(runId, mutator);
     });
 
-    const released = await store.releaseBlockedJobs('run-1', 'setup');
+    const released = await store.resolveBlockedJobs('run-1', 'setup', { outcome: 'success' });
     updateRunSpy.mockRestore();
 
     expect(released).toHaveLength(1);
@@ -408,7 +409,7 @@ describe('StateStore', () => {
     });
     await store.saveRun(run);
 
-    const released = await store.releaseBlockedJobs('run-1', 'build');
+    const released = await store.resolveBlockedJobs('run-1', 'build', { outcome: 'success' });
 
     // Still blocked because 'test' is pending
     expect(released).toHaveLength(0);
@@ -416,5 +417,24 @@ describe('StateStore', () => {
     // But pendingDependencies should be reduced
     const reloaded = await store.getRun('run-1');
     expect(reloaded!.jobs[0]!.pendingDependencies).toEqual(['test']);
+  });
+
+  it('cancels the full blocked descendant chain in one persisted resolution', async () => {
+    const run = makeRun({ jobs: [
+      { id: 'run-1:compile', jobName: 'compile', status: 'failed', steps: [] } as unknown as JobRun,
+      { id: 'run-1:test', jobName: 'test', status: 'queued', blocked: true, needs: ['compile'], pendingDependencies: ['compile'], steps: [] } as unknown as JobRun,
+      { id: 'run-1:release', jobName: 'release', status: 'queued', blocked: true, needs: ['test'], pendingDependencies: ['test'], steps: [] } as unknown as JobRun,
+    ] });
+    await store.saveRun(run);
+
+    const cancelled = await store.resolveBlockedJobs('run-1', 'compile', { outcome: 'failure', reason: 'upstream failed' });
+
+    expect(cancelled.map((job) => job.jobName)).toEqual(['test', 'release']);
+    const persisted = await store.getRun('run-1');
+    expect(persisted?.jobs.map((job) => ({ status: job.status, blocked: job.blocked }))).toEqual([
+      { status: 'failed', blocked: undefined },
+      { status: 'cancelled', blocked: false },
+      { status: 'cancelled', blocked: false },
+    ]);
   });
 });

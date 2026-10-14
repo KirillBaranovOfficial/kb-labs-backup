@@ -18,7 +18,7 @@ export type EntityKind = 'run' | 'job' | 'step'
 // Transition tables
 // ═══════════════════════════════════════════════════════════════════════
 
-export const RUN_TRANSITIONS: Record<RunState, readonly RunState[]> = {
+export const RUN_TRANSITIONS = {
   // 'success'/'failed': a run can finish without ever visiting 'running' —
   // e.g. a run whose only job is skipped via `if:` (`skipJob` marks the job
   // success directly and never calls `markJobStarted`, so `run.status` can
@@ -30,7 +30,17 @@ export const RUN_TRANSITIONS: Record<RunState, readonly RunState[]> = {
   cancelled: [],
   skipped: [],
   dlq: [],
-}
+} as const satisfies Record<RunState, readonly RunState[]>
+
+type RunSourcesFor<Target extends RunState> = {
+  [Source in RunState]: Target extends (typeof RUN_TRANSITIONS)[Source][number] ? Source : never
+}[RunState]
+
+export type TerminalRunState = {
+  [Status in RunState]: typeof RUN_TRANSITIONS[Status] extends readonly []
+    ? [RunSourcesFor<Status>] extends [never] ? never : Status
+    : never
+}[RunState]
 
 export const JOB_TRANSITIONS: Record<JobState, readonly JobState[]> = {
   // 'success': `skipJob` treats an `if:`-skipped job as success directly,
@@ -95,8 +105,12 @@ const TRANSITIONS: Record<EntityKind, Record<string, readonly string[]>> = {
  * Terminal: no legal outgoing transition. The entity is done, one way or
  * another, and nothing should ever flip it again.
  */
+function terminalStates(transitions: Record<string, readonly string[]>): ReadonlySet<string> {
+  return new Set(Object.entries(transitions).flatMap(([state, next]) => next.length === 0 ? [state] : []))
+}
+
 const TERMINAL_STATES: Record<EntityKind, ReadonlySet<string>> = {
-  run: new Set(['success', 'failed', 'cancelled', 'skipped', 'dlq']),
+  run: terminalStates(RUN_TRANSITIONS),
   job: new Set(['success', 'failed', 'cancelled', 'skipped']),
   step: new Set(['success', 'failed', 'cancelled', 'skipped', 'dlq']),
 }

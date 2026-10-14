@@ -1,5 +1,4 @@
-import type { ICache } from '../../adapters/cache.js';
-import type { IEventBus } from '../../adapters/event-bus.js';
+import type { ICache, IEventBus } from '@kb-labs/core-platform';
 
 export type CacheOperation =
   | { name: 'get'; key: string }
