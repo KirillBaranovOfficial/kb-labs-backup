@@ -282,7 +282,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 			t.Fatalf("repeat install for %q made forbidden registration calls: registrar %d, Gateway login %d, registration %d", projectPath, registrarCalls-registrarCallsBefore, loginCalls, registrationCalls)
 		}
 		if code.Code() != 0 {
-			t.Fatalf("secured repeat install for %q exit=%d output:\n%s", projectPath, code, output)
+			t.Fatalf("secured repeat install for %q exit=%d output:\n%s", projectPath, code.Code(), output)
 		}
 		if strings.Contains(output, `"password":`) || strings.Contains(output, `"Password":`) {
 			t.Fatalf("secured repeat install disclosed a password: %s", output)
@@ -426,7 +426,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 			value = strings.ReplaceAll(value, password, "[redacted]")
 			return strings.ReplaceAll(value, humanJWTSecret, "[redacted]")
 		}
-		t.Fatalf("human secured repeat install exit=%d; stdout=%s stderr=%s", humanCode, redact(humanStdout.String()), redact(humanStderr.String()))
+		t.Fatalf("human secured repeat install exit=%d; stdout=%s stderr=%s", humanCode.Code(), redact(humanStdout.String()), redact(humanStderr.String()))
 	}
 	if registrarCalls != humanRegistrarCallsBefore || requestCounts["login"] != 0 || requestCounts["register"] != 0 {
 		t.Fatalf("human repeat install made registration calls: registrar %d, Gateway login %d, registration %d",

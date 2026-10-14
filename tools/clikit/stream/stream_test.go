@@ -13,6 +13,9 @@ import (
 func TestFinishUsesCataloguedFailureStatus(t *testing.T) {
 	var output bytes.Buffer
 	writer := New(&output)
+	if !writer.ExitStatus().IsSelected() || writer.ExitStatus().Code() != 0 {
+		t.Fatalf("new stream writer status = %#v, want explicitly selected success", writer.ExitStatus())
+	}
 	failure := diag.New("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE", "index unavailable")
 	if err := writer.Fail(failure); err != nil {
 		t.Fatal(err)
@@ -21,7 +24,18 @@ func TestFinishUsesCataloguedFailureStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	if writer.ExitStatus() != diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "failed")) {
-		t.Fatalf("stream exit = %d, want catalogued status %d", writer.ExitStatus(), diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "failed")))
+		t.Fatalf("stream exit = %d, want catalogued status %d", writer.ExitStatus().Code(), diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "failed")).Code())
+	}
+}
+
+func TestFinishRejectsUnselectedStatus(t *testing.T) {
+	var output bytes.Buffer
+	writer := New(&output)
+	if err := writer.Finish(diag.ExitStatus{}); err == nil {
+		t.Fatal("Finish accepted an unselected zero-value status")
+	}
+	if output.Len() != 0 {
+		t.Fatalf("Finish wrote a terminal record for an unselected status: %s", output.String())
 	}
 }
 

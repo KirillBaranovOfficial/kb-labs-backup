@@ -98,7 +98,7 @@ func TestRenderDiag_NilIsSafe(t *testing.T) {
 	for _, mode := range []Mode{ModeHuman, ModeJSON, ModeAgent} {
 		var out, herr bytes.Buffer
 		if code := RenderDiag(&out, &herr, nil, mode); code != diag.SuccessStatus() {
-			t.Errorf("mode %d: nil diag exit = %d, want %d", mode, code, diag.SuccessStatus())
+			t.Errorf("mode %d: nil diag exit = %d, want %d", mode, code.Code(), diag.SuccessStatus().Code())
 		}
 	}
 }

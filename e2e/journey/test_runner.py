@@ -4,6 +4,7 @@ import importlib
 import io
 import json
 import os
+import subprocess
 import ast
 import tempfile
 import unittest
@@ -189,7 +190,7 @@ class RunnerInstallFailureTests(unittest.TestCase):
                 output = json.dumps(result_record) + "\n" + json.dumps(terminal)
             else:
                 output = json.dumps({"ok": True, "data": {}})
-            return runner.subprocess.CompletedProcess(command, 0, output, ""), 0.0
+            return subprocess.CompletedProcess(command, 0, output, ""), 0.0
 
         def fake_http(_opener, request, **_kwargs):
             url = request.full_url
@@ -448,7 +449,7 @@ class RunnerInstallFailureTests(unittest.TestCase):
                     runner = importlib.import_module("runner")
 
             selection = "S-042.1,S-042.2"
-            completed = runner.subprocess.CompletedProcess(
+            completed = subprocess.CompletedProcess(
                 ["install.sh", "--version"], 0,
                 stdout="KB_INSTALL_NODE_VERSION Node.js 24", stderr="",
             )
@@ -591,7 +592,7 @@ class RunnerInstallFailureTests(unittest.TestCase):
         }
         process_status = 1
         self.assertEqual(process_status, catalogued_exit(envelope["code"]))
-        result = runner.subprocess.CompletedProcess(
+        result = subprocess.CompletedProcess(
             ["kb-create", "install", "--json"], process_status,
             stdout="\n".join((
                 json.dumps({"ok": False, "error": envelope}),

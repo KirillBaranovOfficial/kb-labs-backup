@@ -90,7 +90,7 @@ func TestVersionJSONIncludesBuildCommit(t *testing.T) {
 	SetVersionInfo("2.3.4", "abc1234", "2026-10-06")
 	var stdout, stderr bytes.Buffer
 	if code := clikitcommand.Execute(newRootCommand(), []string{"version", "--json"}, &stdout, &stderr); code.Code() != 0 {
-		t.Fatalf("version command exit = %d: %s", code, stderr.String())
+		t.Fatalf("version command exit = %d: %s", code.Code(), stderr.String())
 	}
 	var payload struct {
 		OK   bool              `json:"ok"`
@@ -133,7 +133,7 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	if busyCode != diag.ExitCode(diag.New(contracts.CodeGatewayIndexUnavailable, "unavailable")) || errorCode(busyPayload) != contracts.CodePortInUse {
-		t.Fatalf("occupied Gateway plan = code %d, error %s: %s", busyCode, errorCode(busyPayload), busyOutput.String())
+		t.Fatalf("occupied Gateway plan = code %d, error %s: %s", busyCode.Code(), errorCode(busyPayload), busyOutput.String())
 	}
 	errorEnvelope := busyPayload["error"].(map[string]any)
 	if !strings.Contains(errorEnvelope["hint"].(string), "--gateway-url") {
@@ -145,7 +145,7 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := clikitcommand.Execute(newRootCommand(), args, &stdout, &stderr)
 	if code.Code() != 0 {
-		t.Fatalf("plan exit = %d: %s", code, stdout.String()+stderr.String())
+		t.Fatalf("plan exit = %d: %s", code.Code(), stdout.String()+stderr.String())
 	}
 	var payload struct {
 		Data struct {
@@ -213,13 +213,13 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		state, _ := host.StateForRoot(root)
 		hostLog, _ := os.ReadFile(state.HostLog())
 		supervisorLog, _ := os.ReadFile(state.SupervisorLog())
-		t.Fatalf("install argv exit=%d: stdout=%s stderr=%s hostLog=%s supervisorLog=%s", installCode, installOutput.String(), installError.String(), hostLog, supervisorLog)
+		t.Fatalf("install argv exit=%d: stdout=%s stderr=%s hostLog=%s supervisorLog=%s", installCode.Code(), installOutput.String(), installError.String(), hostLog, supervisorLog)
 	}
 	t.Cleanup(func() {
 		var stdout, stderr bytes.Buffer
 		code := clikitcommand.Execute(newRootCommand(), []string{"stop", "--platform-root", root, "--json"}, &stdout, &stderr)
 		if code.Code() != 0 {
-			t.Errorf("stop installed test host: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			t.Errorf("stop installed test host: code=%d stdout=%s stderr=%s", code.Code(), stdout.String(), stderr.String())
 		}
 	})
 	layout, err := versionroot.New(root)
@@ -240,7 +240,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 			t.Fatalf("status for %q was not JSON: %v; stdout=%s stderr=%s", spelling, err, stdout.String(), stderr.String())
 		}
 		if code.Code() != 0 || response.Data["installed"] != true || response.Data["running"] != true || response.Data["reachable"] != true {
-			t.Fatalf("status for %q after Execute install: code=%d data=%#v stdout=%s stderr=%s", spelling, code, response.Data, stdout.String(), stderr.String())
+			t.Fatalf("status for %q after Execute install: code=%d data=%#v stdout=%s stderr=%s", spelling, code.Code(), response.Data, stdout.String(), stderr.String())
 		}
 		shimState, ok := response.Data["shim"].(map[string]any)
 		if !ok || shimState["linked"] != true || shimState["owner"] != layout.InstallRoot() {
@@ -271,7 +271,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := clikitcommand.Execute(newRootCommandWithDependencyFactory(commandFactory), args, &stdout, &stderr)
 		if code != diag.ExitCode(diag.New(contracts.CodeGatewayIndexUnavailable, "unavailable")) {
-			t.Fatalf("schema-1 %s exit=%d, want %d: stdout=%s stderr=%s", operation, code, diag.ExitCode(diag.New(contracts.CodeGatewayIndexUnavailable, "unavailable")), stdout.String(), stderr.String())
+			t.Fatalf("schema-1 %s exit=%d, want %d: stdout=%s stderr=%s", operation, code.Code(), diag.ExitCode(diag.New(contracts.CodeGatewayIndexUnavailable, "unavailable")).Code(), stdout.String(), stderr.String())
 		}
 		var failureRecord struct {
 			Error struct {
@@ -317,7 +317,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(planOut.Bytes(), &failedPlan); err != nil || planCode != diag.ExitCode(diag.New(contracts.CodeGatewayIndexUnavailable, "unavailable")) || failedPlan.Error.Code != contracts.CodeGatewayIndexUnavailable {
-		t.Fatalf("schema-1 plan result code=%d output=%s stderr=%s decode=%v", planCode, planOut.String(), planErr.String(), err)
+		t.Fatalf("schema-1 plan result code=%d output=%s stderr=%s decode=%v", planCode.Code(), planOut.String(), planErr.String(), err)
 	}
 	removeCommand := contracts.ShellCommand("rm", "--", registryPath)
 	repairCommand := contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root)
@@ -332,7 +332,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	var humanOut, humanErr bytes.Buffer
 	if code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--index", indexPath, "--platform-root", root}, &humanOut, &humanErr); code != diag.ExitCode(diag.New(contracts.CodeGatewayIndexUnavailable, "unavailable")) ||
 		!strings.Contains(humanOut.String()+humanErr.String(), registryPath) || !strings.Contains(humanOut.String()+humanErr.String(), "unsupported schema 1") || !strings.Contains(humanOut.String()+humanErr.String(), repairCommand) {
-		t.Fatalf("human schema-1 plan code/output/stderr = %d / %s / %s", code, humanOut.String(), humanErr.String())
+		t.Fatalf("human schema-1 plan code/output/stderr = %d / %s / %s", code.Code(), humanOut.String(), humanErr.String())
 	}
 	after, err := os.ReadFile(registryPath)
 	if err != nil || !bytes.Equal(before, after) {
@@ -344,7 +344,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	var repairOut, repairErr bytes.Buffer
 	repairArgs := []string{"doctor", "--fix", "--platform-root", root, "--json"}
 	if code := clikitcommand.Execute(newRootCommand(), repairArgs, &repairOut, &repairErr); code.Code() != 0 {
-		t.Fatalf("execute rendered recovery command %q: exit=%d output=%s stderr=%s", repairCommand, code, repairOut.String(), repairErr.String())
+		t.Fatalf("execute rendered recovery command %q: exit=%d output=%s stderr=%s", repairCommand, code.Code(), repairOut.String(), repairErr.String())
 	}
 	roots, err := (gateway.Registry{Path: registryPath}).Read()
 	active, receiptErr := receipt.Read(physicalRoot)
@@ -387,7 +387,7 @@ func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
 	code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath,
 		"--platform-root", rootB}, &stdout, &stderr)
 	if code.Code() != 0 {
-		t.Fatalf("automatic Gateway plan exit=%d: %s", code, stdout.String()+stderr.String())
+		t.Fatalf("automatic Gateway plan exit=%d: %s", code.Code(), stdout.String()+stderr.String())
 	}
 	var payload struct {
 		Data struct {
@@ -1066,7 +1066,7 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := clikitcommand.Execute(newRootCommandWithDependencyFactory(depsFactory), args, &stdout, &stderr)
 		if code.Code() != 0 {
-			t.Fatalf("Execute %q exited %d: stdout=%s stderr=%s", args, code, stdout.String(), stderr.String())
+			t.Fatalf("Execute %q exited %d: stdout=%s stderr=%s", args, code.Code(), stdout.String(), stderr.String())
 		}
 		if root == rootA && args[0] == "uninstall" {
 			if _, readErr := os.Readlink(linkPath); !os.IsNotExist(readErr) {
