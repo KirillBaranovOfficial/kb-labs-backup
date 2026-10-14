@@ -430,23 +430,33 @@ def select_session_protection_representatives(registry_listing: dict) -> dict[st
 
 
 def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
-    """Check deny-by-default plugin dispatch, then restore the admin CLI session."""
+    """Authenticate setup, then prove registry-declared session commands are gated."""
     def verify_unregistered_project_auth() -> None:
-        with tempfile.TemporaryDirectory(prefix="kb-secured-cli-projects-") as anonymous_home:
-            unregistered_project = Path(anonymous_home) / "fresh-project"
+        email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
+        password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+        if not email or not password:
+            raise AssertionError("secured workflow journey requires KB_JOURNEY_ADMIN_EMAIL and KB_JOURNEY_ADMIN_PASSWORD")
+        gateway = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
+        with tempfile.TemporaryDirectory(prefix="kb-secured-cli-projects-") as setup_home:
+            unregistered_project = Path(setup_home) / "fresh-project"
             unregistered_project.mkdir()
-            anonymous_env = env.copy()
-            anonymous_env["HOME"] = anonymous_home
-            anonymous_env["KB_JOURNEY_HOME_LABEL"] = "anonymous-secured-projects"
-            anonymous_env["KB_PLATFORM_ROOT"] = env["KB_JOURNEY_PLATFORM_ROOT"]
-            anonymous_env["KB_DIAGNOSTICS"] = "agent"
-            anonymous_env["KB_LOG_LEVEL"] = "warn"
-            anonymous_env.pop("KB_PROJECT_ROOT", None)
+            setup_env = env.copy()
+            setup_env["HOME"] = setup_home
+            setup_env["KB_JOURNEY_HOME_LABEL"] = "authenticated-secured-project-setup"
+            setup_env["KB_PLATFORM_ROOT"] = env["KB_JOURNEY_PLATFORM_ROOT"]
+            setup_env["KB_DIAGNOSTICS"] = "agent"
+            setup_env["KB_LOG_LEVEL"] = "warn"
+            setup_env.pop("KB_PROJECT_ROOT", None)
+            login = run_cli(["auth", "login", "--gateway-url", gateway, "--email", email,
+                             "--password-stdin"], env=setup_env, cwd=project,
+                            input_text=password + "\n")
+            if login.returncode != 0:
+                raise AssertionError(f"admin CLI login failed: {' '.join((login.stdout or login.stderr).split())[-400:]}")
             registration = run_cli(["project", "add", str(project), "--json"],
-                                   env=anonymous_env, cwd=project)
+                                   env=setup_env, cwd=project)
             if registration.returncode != 0:
                 raise AssertionError(f"kb project add failed for secured auth evidence: {(registration.stderr or registration.stdout).strip()}")
-            listed = run_cli(["project", "list", "--json"], env=anonymous_env, cwd=project)
+            listed = run_cli(["project", "list", "--json"], env=setup_env, cwd=project)
             if listed.returncode != 0:
                 raise AssertionError(f"kb project list failed for secured auth evidence: {(listed.stderr or listed.stdout).strip()}")
             registry_payload = read_ux_cli_result(listed)
@@ -460,18 +470,27 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
             if report_root:
                 write_report_json(Path(report_root) / "project-registries.jsonl", {
                     "mode": "secured", "projects": projects,
-                }, env=anonymous_env, append=True, indent=None)
+                }, env=setup_env, append=True, indent=None)
             with invocation_context(step_id="S-041.17"):
-                command_listing = run_cli(["registry", "commands", "--json"], env=anonymous_env, cwd=project)
+                command_listing = run_cli(["registry", "commands", "--json"], env=setup_env, cwd=project)
                 if command_listing.returncode != 0:
                     raise AssertionError(f"kb registry commands failed for secured auth evidence: {(command_listing.stderr or command_listing.stdout).strip()}")
                 representatives = select_session_protection_representatives(read_ux_cli_result(command_listing))
+                logout = run_cli(["auth", "logout", "--json"], env=setup_env, cwd=project)
+                if logout.returncode != 0:
+                    raise AssertionError(f"kb auth logout failed for secured auth evidence: {(logout.stderr or logout.stdout).strip()}")
+                anonymous_env = setup_env.copy()
+                anonymous_env["KB_JOURNEY_HOME_LABEL"] = "anonymous-secured-project-probes"
+                assert_platform_auth_required(
+                    run_cli(["project", "add", str(unregistered_project), "--json"], env=anonymous_env,
+                            cwd=unregistered_project),
+                    ["project", "add", str(unregistered_project), "--json"], gateway, require_context=True)
                 for cwd in (project, unregistered_project):
                     for command_path in representatives.values():
                         command = [*command_path, "--json"]
                         result = run_cli(command, env=anonymous_env, cwd=cwd)
                         assert_platform_auth_required(
-                            result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"),
+                            result, command, gateway,
                             require_context=True)
 
     journey.step("secured auth precedes unregistered project resolution", "workflow",

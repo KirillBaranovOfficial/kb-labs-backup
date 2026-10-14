@@ -277,6 +277,17 @@ def catalogued_error_hint(code: str, **values: str) -> str:
         _invalid_ux_result(f"catalogued error {code} hint needs template value {error.args[0]}")
 
 
+def catalogued_error_message(code: str) -> str:
+    """Read a catalogued error message from its authoritative entry."""
+    entry = _error_catalog_entries().get(code)
+    if entry is None:
+        _invalid_ux_result(f"error code {code} is missing from the shared error catalog")
+    message = entry.get("message")
+    if not isinstance(message, str):
+        _invalid_ux_result(f"catalogued error {code} has no message")
+    return message
+
+
 @lru_cache(maxsize=None)
 def _catalog_exit_status(code: str) -> tuple[str, int] | None:
     entry = _error_catalog_entries().get(code)

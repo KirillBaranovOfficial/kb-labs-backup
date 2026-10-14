@@ -12,7 +12,6 @@ type RegistryCommandsResult = CommandResult & {
 export const registryCommands = defineSystemCommand<RegistryCommandsFlags, RegistryCommandsResult>({
   name: 'commands',
   scope: 'platform',
-  authProtection: 'public',
   jsonTest: { safeArgs: [] },
   description: 'List command paths and their authentication protection classes',
   category: 'registry',

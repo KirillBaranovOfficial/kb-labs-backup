@@ -8,6 +8,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
+import { SessionManager } from '@kb-labs/cli-runtime/gateway';
 
 const CLI_CHILD_PROCESS_TIMEOUT_MS = 60_000;
 
@@ -26,13 +27,14 @@ describe('installed platform adapter defaults', () => {
   });
 
   // case: S-041.17, S-007.4
-  it('returns the secured auth refusal before project lookup in real registered and unregistered roots', async () => {
+  it('requires a session for secured setup, then gates anonymous commands before project lookup', async () => {
     const workspaceRoot = path.resolve(process.cwd(), '../..');
     tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-secured-auth-order-'));
     const platformRoot = path.join(tempRoot, 'platform');
     const home = path.join(tempRoot, 'home');
     const registeredProject = path.join(tempRoot, 'registered-project');
     const unregisteredProject = path.join(tempRoot, 'unregistered-project');
+    const authRequests: string[] = [];
     await Promise.all([
       mkdir(path.join(platformRoot, '.kb'), { recursive: true }),
       mkdir(home, { recursive: true }),
@@ -43,21 +45,69 @@ describe('installed platform adapter defaults', () => {
       gateway: { access: { mode: 'secured' } },
       platform: { adapters: {} },
     }));
-    await createProjectRegistry({ root: path.join(home, '.kb') }).add(registeredProject);
+    const session = createServer((request, response) => {
+      authRequests.push(`${request.method} ${request.url}`);
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/auth/me' && request.method === 'GET') {
+        response.end(JSON.stringify({ ok: true, data: { email: 'admin@example.test', tenantId: 'test' } }));
+        return;
+      }
+      if (request.url === '/auth/logout/cli' && request.method === 'POST') {
+        response.end(JSON.stringify({ ok: true, data: {} }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end(JSON.stringify({ ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: 'not found' } }));
+    });
+    gatewayServer = session;
+    await new Promise<void>((resolve) => session.listen(0, '127.0.0.1', resolve));
+    const gatewayUrl = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
+    const expectedAuthFailure = createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl } });
 
     const cliPath = path.join(workspaceRoot, 'cli/bin/dist/bin.js');
     const env: NodeJS.ProcessEnv = {
-      ...process.env, HOME: home, KB_PLATFORM_ROOT: platformRoot,
+      ...process.env, HOME: home, KB_PLATFORM_ROOT: platformRoot, KB_GATEWAY_URL: gatewayUrl,
       KB_DIAGNOSTICS: 'agent', KB_LOG_LEVEL: 'warn',
     };
     delete env.KB_HOME;
     delete env.KB_NET_OFFSET;
     delete env.KB_PROJECT_ROOT;
     delete env.KB_PROJECT_ID;
-    const listingResult = spawnSync(process.execPath, [cliPath, 'registry', 'commands', '--json'], {
-      cwd: unregisteredProject, env, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
+    const run = (args: string[], cwd: string) => new Promise<{
+      status: number | null; stdout: string; stderr: string; error?: Error;
+    }>((resolve) => {
+      const child = spawn(process.execPath, [cliPath, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, CLI_CHILD_PROCESS_TIMEOUT_MS);
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+      child.once('error', (error) => {
+        clearTimeout(timer);
+        resolve({ status: null, stdout, stderr, error });
+      });
+      child.once('close', (status) => {
+        clearTimeout(timer);
+        resolve({ status, stdout, stderr, ...(timedOut ? { error: new Error('CLI child timed out') } : {}) });
+      });
+      child.stdin.end();
     });
-    expect(listingResult.error?.message, listingResult.stderr || listingResult.stdout).toBeUndefined();
+    await new SessionManager(path.join(home, '.kb', 'session.json')).save({
+      gatewayUrl, accessToken: 'fixture-access', refreshToken: 'fixture-refresh',
+      expiresAt: Date.now() + 900_000, email: 'admin@example.test', tenantId: 'test',
+    });
+    const projectAdd = await run(['project', 'add', registeredProject, '--json'], registeredProject);
+    expect(projectAdd.status, JSON.stringify({ error: projectAdd.error?.message, stdout: projectAdd.stdout, stderr: projectAdd.stderr, authRequests })).toBe(0);
+    const projectList = await run(['project', 'list', '--json'], registeredProject);
+    expect(projectList.status, projectList.stderr || projectList.stdout).toBe(0);
+    const registeredPaths: string[] = JSON.parse(projectList.stdout).data.projects.map((entry: { path: string }) => entry.path);
+    expect(registeredPaths).toContain(await realpath(registeredProject));
+    expect(registeredPaths).not.toContain(await realpath(unregisteredProject));
+    const listingResult = await run(['registry', 'commands', '--json'], registeredProject);
     expect(listingResult.status, listingResult.stderr || listingResult.stdout).toBe(0);
     const listing = JSON.parse(listingResult.stdout) as {
       data: { commands: Array<{ path: string[]; protectionClass: string; requiresSession: boolean; available: boolean }> };
@@ -67,36 +117,50 @@ describe('installed platform adapter defaults', () => {
     for (const command of listing.data.commands) {
       if (!command.requiresSession) continue;
       registeredClasses.add(command.protectionClass);
-      if (command.available && !representatives.has(command.protectionClass)) {
-        representatives.set(command.protectionClass, command.path);
-      }
+      if (command.available && !representatives.has(command.protectionClass)) representatives.set(command.protectionClass, command.path);
     }
     expect([...registeredClasses].sort()).toEqual([...representatives.keys()].sort());
+    expect(listing.data.commands.find((command) => command.path.join(' ') === 'registry commands')).toMatchObject({
+      protectionClass: 'session:system', requiresSession: true,
+    });
+    const logout = await run(['auth', 'logout', '--json'], registeredProject);
+    expect(logout.status, logout.stderr || logout.stdout).toBe(0);
+    expect(authRequests.filter((entry) => entry === 'GET /auth/me')).toHaveLength(3);
+    expect(authRequests).toContain('POST /auth/logout/cli');
+
+    const anonymousProject = path.join(tempRoot, 'new-project');
+    const anonymousProjectAdd = await run(['project', 'add', anonymousProject, '--json'], unregisteredProject);
+    expect(anonymousProjectAdd.status, anonymousProjectAdd.stderr || anonymousProjectAdd.stdout).toBe(1);
+    expect(JSON.parse(anonymousProjectAdd.stdout)).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_REQUIRED',
+      message: expectedAuthFailure.message,
+      hint: expectedAuthFailure.hint,
+    } });
+    const projectAddContext = JSON.parse(anonymousProjectAdd.stderr.slice(anonymousProjectAdd.stderr.indexOf('{'))) as { correlationId: string };
+    expect(anonymousProjectAdd.stderr.match(/CLI resolved invocation context/g)).toHaveLength(1);
+    expect((JSON.parse(anonymousProjectAdd.stdout) as { error: { correlationId: string } }).error.correlationId)
+      .toBe(projectAddContext.correlationId);
+    await expect(access(anonymousProject)).rejects.toThrow();
 
     for (const cwd of [registeredProject, unregisteredProject]) {
       for (const command of representatives.values()) {
-        const result = spawnSync(process.execPath, [cliPath, ...command, '--json'], {
-          cwd, env, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
-        });
+        const args = [...command, '--json'];
+        const result = await run(args, cwd);
         expect(result.error?.message, result.stderr || result.stdout).toBeUndefined();
         expect(result.status, result.stderr || result.stdout).toBe(1);
-        const payload: unknown = JSON.parse(result.stdout);
+        const payload = JSON.parse(result.stdout);
         expect(payload).toMatchObject({ ok: false, error: {
           code: 'KB_AUTH_REQUIRED',
-          message: 'Authentication is required.',
-          hint: createErrorEnvelope('KB_AUTH_REQUIRED', {
-            details: { gatewayUrl: 'http://127.0.0.1:4000' },
-          }).hint,
+          message: expectedAuthFailure.message,
+          hint: expectedAuthFailure.hint,
         } });
         expect(result.stderr).toContain('CLI resolved invocation context');
+        expect(result.stderr.match(/CLI resolved invocation context/g)).toHaveLength(1);
         expect(result.stderr).toContain('"accessMode":"secured"');
         expect(result.stderr).toContain(`"platformConfigSource":"${path.join(platformRoot, '.kb', 'kb.config.jsonc')}"`);
-        const logRecord = JSON.parse(result.stderr.slice(result.stderr.indexOf('{'))) as {
-          correlationId: string;
-        };
-        expect(logRecord.correlationId).toBeTypeOf('string');
-        expect(logRecord.correlationId.length).toBeGreaterThan(0);
-        expect((payload as { error: { correlationId: string } }).error.correlationId).toBe(logRecord.correlationId);
+        const contextRecord = JSON.parse(result.stderr.slice(result.stderr.indexOf('{'))) as { correlationId: string };
+        expect(contextRecord.correlationId).toBeTypeOf('string');
+        expect((payload as { error: { correlationId: string } }).error.correlationId).toBe(contextRecord.correlationId);
       }
     }
   }, CLI_CHILD_PROCESS_TIMEOUT_MS * 2);
