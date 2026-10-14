@@ -357,7 +357,51 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
     return None
 
 
-def request(path: str, *, method="GET", payload=None, token="", accept="application/json") -> tuple[int, object, dict[str, str]]:
+class JourneyResponseError(ValueError):
+    def __init__(self, call_kind: str, media_type: str, step: str, reason: str):
+        self.call_kind = call_kind
+        self.media_type = media_type
+        self.journey_step = step
+        self.reason = reason
+        shown_media_type = media_type or "<missing>"
+        super().__init__(
+            f"journey step {step!r} received media type {shown_media_type!r}, "
+            f"which is invalid for {call_kind}: {reason}"
+        )
+
+
+HTTP_RESPONSE_MEDIA_TYPES: dict[str, frozenset[str] | None] = {
+    "ux": frozenset({"application/json"}),
+    "mcp": frozenset({"application/json", "text/event-stream"}),
+    "raw": None,
+}
+
+
+def _decode_mcp_response(raw: bytes, content_type: str, *, step: str) -> dict:
+    try:
+        if content_type == "application/json":
+            parsed = json.loads(raw)
+        else:
+            data = "\n".join(
+                line[5:].strip() for line in raw.decode("utf-8").splitlines()
+                if line.startswith("data:")
+            )
+            parsed = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise JourneyResponseError("mcp", content_type, step, "body is not valid MCP JSON") from error
+    if not isinstance(parsed, dict):
+        raise JourneyResponseError("mcp", content_type, step, "body is not an MCP object")
+    return parsed
+
+
+def request(path: str, *, method="GET", payload=None, token="", accept=None,
+            response_kind="ux", step: str | None = None) -> tuple[int, object, dict[str, str]]:
+    """Build, send, and decode one HTTP exchange at its declared response boundary."""
+    if response_kind not in HTTP_RESPONSE_MEDIA_TYPES:
+        raise ValueError(f"unsupported HTTP response kind: {response_kind}")
+    step = step or f"{method} {path}"
+    if accept is None:
+        accept = "application/json, text/event-stream" if response_kind == "mcp" else "application/json"
     body = json.dumps(payload).encode() if payload is not None else None
     headers = {"Accept": accept}
     if body is not None:
@@ -369,22 +413,42 @@ def request(path: str, *, method="GET", payload=None, token="", accept="applicat
         status, raw, response_headers = open_http(HTTP.open, req, timeout=15, env=os.environ)
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
+    if response_kind == "raw":
+        return status, raw, response_headers
+    content_type_header = response_headers.get("Content-Type", response_headers.get("content-type", ""))
+    media_type = content_type_header.split(";", 1)[0].strip().lower()
+    allowed_media_types = HTTP_RESPONSE_MEDIA_TYPES[response_kind]
+    if allowed_media_types is not None and media_type not in allowed_media_types:
+        raise JourneyResponseError(
+            response_kind,
+            media_type,
+            step,
+            f"allowed media types are {', '.join(sorted(allowed_media_types))}",
+        )
+    if response_kind == "ux":
+        try:
+            envelope = read_ux_http_result(raw, status)
+            parsed = (decode_ux_success_result(envelope) if 200 <= status < 300
+                      else decode_ux_error_result(envelope))
+        except ValueError as error:
+            raise JourneyResponseError("ux", media_type, step, f"body is not a UX JSON envelope: {error}") from error
+        return status, parsed, response_headers
     try:
-        envelope = read_ux_http_result(raw, status)
-        parsed = (decode_ux_success_result(envelope) if 200 <= status < 300
-                  else decode_ux_error_result(envelope))
-    except ValueError as error:
-        raise RuntimeError(f"HTTP {method} {path} did not return a UX JSON envelope: {error}") from error
+        parsed = _decode_mcp_response(raw, media_type, step=step)
+    except JourneyResponseError:
+        raise
     return status, parsed, response_headers
 
 
+def request_mcp(path: str, *, step: str, method="POST", payload=None, token="",
+                accept="application/json, text/event-stream") -> tuple[int, object, dict[str, str]]:
+    return request(path, method=method, payload=payload, token=token,
+                   accept=accept, response_kind="mcp", step=step)
+
+
 def request_raw(path: str, *, accept="application/json") -> tuple[int, bytes, dict[str, str]]:
-    req = urllib.request.Request(BASE_URL + path, headers={"Accept": accept})
-    try:
-        status, raw, response_headers = open_http(HTTP.open, req, timeout=15, env=os.environ)
-    except (urllib.error.URLError, TimeoutError) as error:
-        raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
-    return status, raw, response_headers
+    status, body, headers = request(path, accept=accept, response_kind="raw")
+    return status, body, headers
 
 
 def expect_html(path: str, capability: str) -> str | None:
@@ -719,21 +783,10 @@ def discover_workflow(project_id: str, token: str) -> str | None:
     return None
 
 
-def _mcp_response(project_id: str, token: str, payload: dict) -> tuple[int, object]:
-    status, body, _ = request(project_service_path(project_id, "mcp"), method="POST", token=token,
-                              accept="application/json, text/event-stream", payload=payload)
-    if isinstance(body, str) and any(line.startswith("data:") for line in body.splitlines()):
-        data = "\n".join(line[5:].strip() for line in body.splitlines() if line.startswith("data:"))
-        try:
-            body = json.loads(data)
-        except json.JSONDecodeError:
-            return status, None
-    return status, body
-
-
 def mcp_initialize(project_id: str, token: str) -> str | None:
     route = project_service_path(project_id, "mcp")
-    status, body = _mcp_response(project_id, token, {
+    status, body, _ = request_mcp(route, token=token, step="project-scoped MCP initialize",
+                                  accept="application/json, text/event-stream", payload={
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": "2025-03-26", "capabilities": {},
                    "clientInfo": {"name": "kb-labs-journey", "version": "1.0.0"}},
@@ -748,7 +801,8 @@ def mcp_initialize(project_id: str, token: str) -> str | None:
 
 def mcp_probe(project_id: str, token: str) -> str | None:
     route = project_service_path(project_id, "mcp")
-    status, body = _mcp_response(project_id, token, {
+    status, body, _ = request_mcp(route, token=token, step="project-scoped MCP tools/list",
+                                  accept="application/json, text/event-stream", payload={
         "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {},
     })
     if status != 200:
@@ -769,7 +823,9 @@ def mcp_probe(project_id: str, token: str) -> str | None:
 
 
 def mcp_diagnostics(project_id: str, token: str) -> str | None:
-    status, body = _mcp_response(project_id, token, {
+    status, body, _ = request_mcp(project_service_path(project_id, "mcp"), token=token,
+                                  step="project-scoped MCP diagnostics",
+                                  accept="application/json, text/event-stream", payload={
         "jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": {"name": "kb-labs__mcp_diagnostics", "arguments": {}},
     })
@@ -1141,9 +1197,7 @@ def main() -> int:
         diagnostics_path=Path(args.output).resolve().with_name("journey-diagnostics.log"),
         states=inherited_states, state_producers=STATE_PRODUCERS, groups=service_groups,
     )
-    export_project_state_to_child_environment(graph)
     try:
-        declared_steps = list(checks(args.mode, graph))
         configure_installed_cli_path()
         if args.mode == "secured":
             graph.probe_state("session", "auth", "fresh secured CLI login",
@@ -1218,6 +1272,8 @@ def main() -> int:
         graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
                    marketplace_lifecycle,
                    record_empty_success=False)
+        export_project_state_to_child_environment(graph)
+        declared_steps = list(checks(args.mode, graph))
         run_service_steps(journey, declared_steps, args.mode, graph=graph)
         def install_project_agent_plugin() -> str | None:
             if not project_root:

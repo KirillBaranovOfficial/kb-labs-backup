@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -727,6 +727,14 @@ raise SystemExit(1)
                                     "KB_JOURNEY_SELECTED_CAPABILITIES": "analytics"})
                     executed: list[str] = []
                     fixture_project_ids: list[str] = []
+                    fixture_state_at_check_declaration: list[bool] = []
+                    workspace_commands: list[list[str]] = []
+
+                    def declare_checks(step_mode, graph):
+                        fixture_state_at_check_declaration.append(
+                            graph.states.get("fixtures-installed", {}).get("passed") is True
+                        )
+                        return iter(declared)
 
                     def execute_declared_steps(journey, steps, step_mode, *, graph):
                         for state, producer in STATE_PRODUCERS.items():
@@ -757,27 +765,38 @@ raise SystemExit(1)
                         return {"name": "@kb-labs/commit", "package": "@kb-labs/commit-entry",
                                 "version": "2.120.1"}
 
-                    with patch("service_runner.checks", return_value=iter(declared)), \
-                            patch("service_runner.run_service_steps", side_effect=execute_declared_steps), \
+                    def capture_workspace_command(argv, **_kwargs):
+                        workspace_commands.append(argv)
+                        return subprocess.CompletedProcess(argv, 0, "", "")
+
+                    # One ExitStack: a single with-statement over this many patches exceeds Python's static block nesting limit.
+                    with ExitStack() as stack:
+                        workspace_cli_steps = stack.enter_context(patch("service_runner.run_workspace_cli_steps"))
+                        for manager in (
+                            patch("service_runner.checks", side_effect=declare_checks),
+                            patch("service_runner.run_service_steps", side_effect=execute_declared_steps),
                             patch("service_runner.prepare_service_api_session",
                                   side_effect=lambda graph, _mode: graph.probe_state(
                                       "service-api-session", "auth", "service API login", lambda: None,
-                                      value=lambda: None)), \
+                                      value=lambda: None)),
                             patch("service_runner.prepare_commit_project_fixture",
-                                  side_effect=produce_commit_fixture), \
+                                  side_effect=produce_commit_fixture),
                             patch("service_runner._prepare_mcp_projects",
-                                  side_effect=prepare_project_fixtures), \
-                            patch("service_runner.run_marketplace_steps"), \
-                            patch("service_runner.install_project_agents_plugin"), \
-                            patch("service_runner.configure_installed_cli_path"), \
-                            patch("service_runner.restore_secured_cli_login", return_value=None), \
-                            patch("service_runner.run_analytics_steps"), \
-                            patch("service_runner.run_gateway_steps"), \
-                            patch("service_runner.run_workspace_cli_steps") as workspace_cli_steps, \
-                            patch("service_runner.archive_service_logs"), \
-                            patch.dict(os.environ, env, clear=True), \
-                            patch("sys.argv", ["service_runner.py", "--mode", mode, "--output", str(output)]), \
-                            redirect_stdout(io.StringIO()):
+                                  side_effect=prepare_project_fixtures),
+                            patch("service_runner.run_marketplace_steps"),
+                            patch("service_runner.install_project_agents_plugin"),
+                            patch("service_runner.configure_installed_cli_path"),
+                            patch("service_runner.restore_secured_cli_login", return_value=None),
+                            patch("service_runner.run_analytics_steps"),
+                            patch("service_runner.run_gateway_steps"),
+                            patch("service_runner.run_project_identity_steps"),
+                            patch("workspace_steps.run_command", side_effect=capture_workspace_command),
+                            patch("service_runner.archive_service_logs"),
+                            patch.dict(os.environ, env, clear=True),
+                            patch("sys.argv", ["service_runner.py", "--mode", mode, "--output", str(output)]),
+                            redirect_stdout(io.StringIO()),
+                        ):
+                            stack.enter_context(manager)
                         service_main()
                         if selected:
                             workspace_cli_steps.assert_not_called()
@@ -792,6 +811,10 @@ raise SystemExit(1)
                     self.assertEqual(set(executed), expected)
                     self.assertEqual(len(executed), len(expected))
                     self.assertEqual(fixture_project_ids, ["prj_fixture"])
+                    self.assertEqual(fixture_state_at_check_declaration, [True])
+                    self.assertEqual(workspace_cli_steps.call_count, int(not selected))
+                    self.assertFalse(any(argv[-3:] == ["release", "plan", "--json"]
+                                         for argv in workspace_commands), workspace_commands)
                     status_by_name = {step["name"]: (step["status"], step["message"]) for step in result["steps"]}
                     if selected:
                         self.assertEqual(status_by_name["unselected mcp check"][0], "SKIPPED")
@@ -853,6 +876,8 @@ raise SystemExit(1)
             self.assertIn("HTML", expect_html("/", "Studio shell"))
 
     def test_studio_project_api_requires_the_shared_json_envelope(self):
+        from service_runner import JourneyResponseError
+
         headers = {"content-type": "application/json"}
         with patch("service_runner.open_http", return_value=(200, b'{"ok":true,"data":{"projects":[]}}', headers)):
             status, body, _ = request_result("/api/v1/projects")
@@ -860,7 +885,7 @@ raise SystemExit(1)
         self.assertEqual(body, {"projects": []})
 
         with patch("service_runner.open_http", return_value=(200, b'{"projects":[]}', headers)):
-            with self.assertRaisesRegex(RuntimeError, "UX JSON envelope"):
+            with self.assertRaisesRegex(JourneyResponseError, "UX JSON envelope"):
                 request_result("/api/v1/projects")
 
     def test_first_failure_and_json_result(self):
@@ -1576,20 +1601,19 @@ raise SystemExit(1)
         self.assertEqual(len(commands), 1)
         self.assertEqual(commands[0][3:6], ["kb", "auth", "login"])
 
-    def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
-        import json
+    def test_mcp_probe_uses_shared_mcp_reader(self):
         tools = [{"name": name, "inputSchema": {"type": "object"}}
                  for name in ("kb-labs-commit__commit", "kb-labs-workflow__workflow_run", "kb-labs__mcp_diagnostics")]
-        event = 'event: message\ndata: ' + json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}) + '\n\n'
-        with patch("service_runner.request", return_value=(200, event, {})) as request:
+        with patch("service_runner.request_mcp", return_value=(200, {"jsonrpc": "2.0", "result": {"tools": tools}}, {})) as request:
             failure = mcp_probe("prj_test", "token")
         self.assertIsNone(failure)
         self.assertEqual(request.call_args.kwargs["accept"], "application/json, text/event-stream")
+        self.assertEqual(request.call_args.kwargs["step"], "project-scoped MCP tools/list")
 
     def test_mcp_probe_uses_sanitized_platform_member_manifest_id(self):
         tools = [{"name": name, "inputSchema": {"type": "object"}}
                  for name in ("kb-labs-commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics")]
-        with patch("service_runner.request", return_value=(200, {"result": {"tools": tools}}, {})):
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             failure = mcp_probe("prj_test", "token")
         self.assertIn("kb-labs-workflow__workflow_run", failure)
 
@@ -1654,18 +1678,23 @@ raise SystemExit(1)
 
     def test_mcp_initialize_checks_protocol_response(self):
         response = {"result": {"protocolVersion": "2025-03-26"}}
-        with patch("service_runner.request", return_value=(200, response, {})) as request:
+        with patch("service_runner.request", return_value=(200, response, {})) as ux_request, \
+                patch("service_runner.request_mcp", return_value=(200, response, {})) as request:
             self.assertIsNone(mcp_initialize("prj_test", "token"))
+        request.assert_called_once()
+        ux_request.assert_not_called()
         self.assertEqual(request.call_args.kwargs["payload"]["method"], "initialize")
-        with patch("service_runner.request", return_value=(200, {"result": {}}, {})):
+        self.assertEqual(request.call_args.kwargs["step"], "project-scoped MCP initialize")
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {}}, {})):
             self.assertIn("no result", mcp_initialize("prj_test", "token"))
 
     def test_mcp_diagnostics_checks_clean_project_result(self):
         result = {"result": {"isError": False, "content": [{"text": "Project loaded cleanly"}]}}
-        with patch("service_runner.request", return_value=(200, result, {})) as request:
+        with patch("service_runner.request_mcp", return_value=(200, result, {})) as request:
             self.assertIsNone(mcp_diagnostics("prj_test", "token"))
         self.assertEqual(request.call_args.kwargs["payload"]["params"]["name"], "kb-labs__mcp_diagnostics")
-        with patch("service_runner.request", return_value=(200, {"result": {"isError": True, "content": []}}, {})):
+        self.assertEqual(request.call_args.kwargs["step"], "project-scoped MCP diagnostics")
+        with patch("service_runner.request_mcp", return_value=(200, {"result": {"isError": True, "content": []}}, {})):
             self.assertIn("did not report", mcp_diagnostics("prj_test", "token"))
 
     def test_health_claim_requires_json_object(self):
