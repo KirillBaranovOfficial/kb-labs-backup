@@ -47,7 +47,8 @@ test('seals required SDK peers and recursive platform-member dependencies', () =
   const index = JSON.parse(readFileSync(output, 'utf8'));
   const members = index.platforms[0].members.map(member => member.package);
   assert.ok(members.includes('@kb-labs/core-contracts'));
-  assert.ok(!members.includes('@kb-labs/shared-tool-kit'), 'SDK dependencies resolve through their installed dependency graph');
+  assert.ok(members.includes('@kb-labs/shared-tool-kit'), 'SDK runtime dependencies are sealed as platform members');
+  assert.ok(members.includes('@kb-labs/perm-presets'), 'SDK runtime dependencies are sealed as platform members');
 });
 
 // case: S-054.16
@@ -223,6 +224,7 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
   const sdkPackageJSON = JSON.parse(readFileSync(join(sdkWorkspace.path, 'package.json'), 'utf8'));
   const sdkRequiredPeers = Object.keys(sdkPackageJSON.peerDependencies ?? {}).filter(name =>
     sdkPackageJSON.peerDependenciesMeta?.[name]?.optional !== true);
+  const sdkRuntimeDependencies = Object.keys(sdkPackageJSON.dependencies ?? {}).filter(name => name.startsWith('@kb-labs/'));
   const releaseConfig = readPlatformReleaseConfig(join(workspaceRoot, '.kb/kb.config.jsonc'));
   const registryManifest = JSON.parse(readFileSync(join(workspaceRoot, 'e2e/platform/registry-manifest.json'), 'utf8'));
   const version = JSON.parse(readFileSync(join(workspaceRoot, 'core/runtime/package.json'), 'utf8')).version;
@@ -320,6 +322,7 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
   const sealedMembers = new Set([index.platforms[0].package,
     ...index.platforms[0].members.map(member => member.package)]);
   for (const peer of sdkRequiredPeers) assert.ok(sealedMembers.has(peer), `SDK required peer ${peer} must be available in the sealed platform`);
+  for (const dependency of sdkRuntimeDependencies) assert.ok(sealedMembers.has(dependency), `SDK runtime dependency ${dependency} must be sealed in the platform`);
 });
 
 test('filesystem adapter contributes the project storage directory default to the release index', () => {

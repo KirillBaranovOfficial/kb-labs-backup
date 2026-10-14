@@ -106,6 +106,16 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
   --prepare-script "$ROOT/tools/kb-create/scripts/prepare-release-index.mjs" \
   --output "$TARGET/release-index.json"
 
+# Install the real candidate graph through kb-create's staging and package
+# installer, then run the same built-entrypoint checker used by S-054.16.
+RUNTIME_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kb-candidate-runtime-root.XXXXXX")"
+trap 'rm -rf "$RUNTIME_ROOT"' EXIT
+RUNTIME_CONTENT_ROOT="$(cd "$ROOT/tools/kb-create" && go run ./cmd/candidate-runtime-root \
+  --index "$TARGET/release-index.json" \
+  --packages "$PACKAGES" \
+  --root "$RUNTIME_ROOT")"
+node "$ROOT/e2e/journey/sdk_runtime_import_check.mjs" "$RUNTIME_CONTENT_ROOT"
+
 (
   cd "$TARGET"
   if command -v sha256sum >/dev/null 2>&1; then

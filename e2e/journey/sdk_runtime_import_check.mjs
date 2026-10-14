@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const platformRoot = realpathSync(resolve(process.argv[2]));
@@ -21,6 +22,8 @@ const javascriptFiles = directory => {
 };
 
 const packageRoots = [];
+const pluginManifests = new Map();
+let resolvePluginHandlerPath;
 const sdkRoot = join(nodeModulesRoot, '@kb-labs', 'sdk');
 if (!existsSync(join(sdkRoot, 'package.json'))) throw new Error('installed platform is missing the SDK package manifest');
 const sdkPackageJSON = readPackage(sdkRoot);
@@ -62,6 +65,7 @@ for (const packageName of bundledPluginPackages) {
   if (manifest.schema !== 'kb.plugin/3') {
     throw new Error(`installed platform bundled plugin ${packageName} has manifest schema ${manifest.schema}`);
   }
+  pluginManifests.set(packageRoot, manifest);
   packageRoots.push(packageRoot);
 }
 
@@ -73,8 +77,10 @@ for (const packageRoot of packageRoots) {
     throw new Error(`${packageJSON.name} has no runtime exports map`);
   }
   const nonRuntime = packageJSON.kbLabs?.release?.nonRuntimeEntrypoints ?? [];
+  const isSdk = packageRoot === sdkRoot;
   for (const [exportName, value] of Object.entries(exportsMap)) {
     if (nonRuntime.includes(exportName)) continue;
+    if (!isSdk && exportName.includes('*')) continue;
     const target = targetFor(value);
     if (!target) throw new Error(`${packageJSON.name} runtime export ${exportName} has no import target`);
     if (!target.includes('*')) {
@@ -91,11 +97,41 @@ for (const packageRoot of packageRoots) {
       entrypoints.push({ packageName: packageJSON.name, exportName, file });
     }
   }
+  if (!isSdk) {
+    const manifest = pluginManifests.get(packageRoot);
+    const handlers = [
+      ...(manifest.setup ? [manifest.setup.handler] : []),
+      ...(manifest.lifecycle ? Object.values(manifest.lifecycle) : []),
+      ...(manifest.cli?.commands ?? []).map(command => command.handler),
+      ...(manifest.rest?.routes ?? []).map(route => route.handler),
+      ...(manifest.sse?.streams ?? []).map(stream => stream.handler),
+      ...(manifest.ws?.channels ?? []).map(channel => channel.handler),
+      ...(manifest.workflows?.handlers ?? []).map(handler => handler.handler),
+      ...(manifest.webhooks?.handlers ?? []).map(handler => handler.handler),
+      ...(manifest.jobs?.handlers ?? []).map(handler => handler.handler),
+    ];
+    for (const handler of new Set(handlers)) {
+      if (!resolvePluginHandlerPath) {
+        try {
+          const runtimePackage = join(nodeModulesRoot, '@kb-labs', 'core-runtime', 'package.json');
+          resolvePluginHandlerPath = createRequire(realpathSync(runtimePackage))('@kb-labs/core-discovery').resolveCliHandlerPath;
+        } catch (error) {
+          process.stderr.write(`installed runtime handler resolver @kb-labs/core-discovery failed to load from @kb-labs/core-runtime: ${error.message}\n`);
+          process.exit(1);
+        }
+      }
+      const file = resolvePluginHandlerPath(packageRoot, handler);
+      if (!file.startsWith(`${packageRoot}/`) || !existsSync(file)) {
+        throw new Error(`${packageJSON.name} manifest handler points to missing file ${handler}`);
+      }
+      entrypoints.push({ packageName: packageJSON.name, exportName: `manifest handler ${handler}`, file });
+    }
+  }
 }
 
 const failures = [];
 for (const entrypoint of entrypoints) {
-  const source = 'await import(new URL(process.argv[1], "file://"));';
+  const source = 'try { await import(new URL(process.argv[1], "file://")); } catch (error) { console.error(JSON.stringify({ name: error.name, code: error.code, message: error.message })); process.exitCode = 1; }';
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', source, entrypoint.file], {
     encoding: 'utf8',
     cwd: platformRoot,

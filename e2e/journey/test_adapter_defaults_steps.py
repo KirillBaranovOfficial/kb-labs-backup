@@ -35,14 +35,35 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             }))
             (sdk / "dist" / "index.js").write_text('import "@kb-labs/shared-command-kit";\n')
             plugin = root / "node_modules" / "@kb-labs" / "workflow-entry"
-            (plugin / "dist").mkdir(parents=True)
+            (plugin / "dist" / "commands").mkdir(parents=True)
+            (plugin / "dist" / "setup").mkdir(parents=True)
             (plugin / "package.json").write_text(json.dumps({
                 "name": "@kb-labs/workflow-entry",
                 "type": "module",
-                "exports": {".": {"import": "./dist/index.js"}},
+                "exports": {
+                    ".": {"import": "./dist/index.js"},
+                    "./dist/*": "./dist/*",
+                },
             }))
-            (plugin / "dist" / "manifest.json").write_text(json.dumps({"schema": "kb.plugin/3"}))
+            (plugin / "dist" / "manifest.json").write_text(json.dumps({
+                "schema": "kb.plugin/3",
+                "setup": {"handler": "./setup/handler.js"},
+                "cli": {"commands": [{"path": "workflow test", "handler": "./commands/handler.js"}]},
+            }))
             (plugin / "dist" / "index.js").write_text('import "@kb-labs/shared-command-kit";\n')
+            (plugin / "dist" / "commands" / "handler.js").write_text('import "@kb-labs/shared-command-kit";\n')
+            (plugin / "dist" / "setup" / "handler.js").write_text('import "@kb-labs/shared-command-kit";\n')
+            (plugin / "dist" / "widgets").mkdir()
+            (plugin / "dist" / "widgets" / "remoteEntry.js").write_text('throw new Error("browser-only remote entry");\n')
+            platform_runtime = root / "node_modules" / "@kb-labs" / "core-runtime"
+            resolver_parent = platform_runtime / "node_modules" / "@kb-labs"
+            resolver_parent.mkdir(parents=True)
+            (platform_runtime / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/core-runtime",
+                "dependencies": {"@kb-labs/core-discovery": "2.0.0"},
+            }))
+            workspace_discovery = Path(__file__).resolve().parents[2] / "core" / "discovery"
+            (resolver_parent / "core-discovery").symlink_to(workspace_discovery, target_is_directory=True)
             receipt = root / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text(json.dumps({"plan": {"artifacts": [
@@ -55,6 +76,9 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn("@kb-labs/shared-command-kit", result.stdout + result.stderr)
             self.assertIn("@kb-labs/sdk", result.stdout + result.stderr)
             self.assertIn("@kb-labs/workflow-entry", result.stdout + result.stderr)
+            self.assertIn("dist/commands/handler.js", result.stdout + result.stderr)
+            self.assertIn("dist/setup/handler.js", result.stdout + result.stderr)
+            self.assertNotIn("browser-only remote entry", result.stdout + result.stderr)
 
             plugin_manifest = plugin / "dist" / "manifest.json"
             plugin_manifest.unlink()
@@ -72,7 +96,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             }))
             (helper / "dist" / "index.js").write_text("export {};\n")
 
-            self.assertEqual(check_installed_runtime_imports(root).returncode, 0)
+            result = check_installed_runtime_imports(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
             optional_helper = root / "node_modules" / "@kb-labs" / "shared-testing"
             optional_helper.mkdir(parents=True)

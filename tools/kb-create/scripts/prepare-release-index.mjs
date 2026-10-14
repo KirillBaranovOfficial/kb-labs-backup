@@ -325,6 +325,12 @@ const dependencyClosureFor = packageName => {
   }
   return closure;
 };
+const sdkRuntimeDependencyPackages = [...dependencyClosureFor(sdk.name)]
+  .filter(packageName => packageName !== sdk.name && byName.has(packageName));
+const platformMemberArtifacts = new Set([
+  ...platformMemberRoots,
+  ...sdkRuntimeDependencyPackages,
+]);
 // Platform members and the SDK are installed into one platform node_modules
 // tree. Derive peer availability from that exact sealed package graph; mere
 // presence in the release stage does not make a peer available to consumers.
@@ -410,13 +416,7 @@ const exportValue = {
       client: { profile: 'client', platformVersion: platform.version, services: [] },
     },
     binaries,
-    members: [...new Set([
-      ...services.map(service => service.packageName),
-      hostPackage,
-      ...platformMemberPackages,
-      ...configuredPlatformAdapterPackages,
-      ...sdkRuntimePeerPackages,
-    ])].map(packageName => {
+    members: [...platformMemberArtifacts].filter(packageName => packageName !== sdk.name).map(packageName => {
       const item = byName.get(packageName);
       return item ? component(item, undefined,
         normalizedIdByPackage.get(packageName) ?? idFor(packageName),
