@@ -182,6 +182,11 @@ func runKeeper(cfg keeperConfig) int {
 	exitEvent.ExitCode = code
 	exitEvent.Signal = signal
 	exitEvent.Error = exitError
+	for _, leaf := range ProcessLeaves(rec.PID, rec.RunID) {
+		if leaf.Unverified {
+			exitEvent.Leaves = append(exitEvent.Leaves, leaf)
+		}
+	}
 	if outputError != nil {
 		if exitEvent.Error == "" {
 			exitEvent.Error = outputError.Error()

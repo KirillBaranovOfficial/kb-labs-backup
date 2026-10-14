@@ -14,6 +14,7 @@ typedef struct {
 	int ppid;
 	long long start_sec;
 	long long start_usec;
+	unsigned int uid;
 	char command[64];
 } kb_proc_info;
 
@@ -38,6 +39,7 @@ static kb_proc_info *kb_proc_snapshot(int *count) {
 		out[used].ppid = (int)info.pbi_ppid;
 		out[used].start_sec = info.pbi_start_tvsec;
 		out[used].start_usec = info.pbi_start_tvusec;
+		out[used].uid = info.pbi_uid;
 		strncpy(out[used].command, info.pbi_comm, sizeof(out[used].command) - 1);
 		used++;
 	}
@@ -50,6 +52,7 @@ import "C"
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"time"
 	"unsafe"
@@ -70,17 +73,61 @@ func darwinProcessSnapshot(runID string) []Process {
 		started := time.Unix(int64(info.start_sec), int64(info.start_usec)*1000)
 		pid := int(info.pid)
 		marker := false
+		unverified := false
 		if runID != "" {
-			args, err := unix.SysctlRaw("kern.procargs2", pid)
-			marker = err == nil && bytes.Contains(args, []byte(runEnv+"="+runID))
+			marker, unverified = inspectProcessMarker(pid, runID)
 		}
 		processes = append(processes, Process{
 			PID: pid, PPID: int(info.ppid), Command: C.GoString(&info.command[0]),
-			StartedAt: started, ElapsedMS: time.Since(started).Milliseconds(),
+			StartedAt: started, ElapsedMS: max(int64(0), time.Since(started).Milliseconds()),
 			Identity: timeIdentity(int64(info.start_sec), int64(info.start_usec)), runMarker: marker,
+			Unverified: unverified, uid: uint32(info.uid),
 		})
 	}
 	return processes
+}
+
+func inspectProcessMarker(pid int, runID string) (bool, bool) {
+	args, err := unix.SysctlRaw("kern.procargs2", pid)
+	if err != nil {
+		return false, true
+	}
+	if bytes.Contains(args, []byte(runEnv+"="+runID)) {
+		return true, false
+	}
+	return false, !procargs2HasEnvironment(args)
+}
+
+func procargs2HasEnvironment(data []byte) bool {
+	if len(data) < 5 {
+		return false
+	}
+	argc := int(int32(binary.NativeEndian.Uint32(data[:4])))
+	if argc < 0 || argc > 1<<16 {
+		return false
+	}
+	position := 4
+	end := bytes.IndexByte(data[position:], 0)
+	if end < 0 {
+		return false
+	}
+	position += end + 1
+	for range argc {
+		if position >= len(data) {
+			return false
+		}
+		end := bytes.IndexByte(data[position:], 0)
+		if end < 0 {
+			return false
+		}
+		position += end + 1
+	}
+	for _, item := range bytes.Split(data[position:], []byte{0}) {
+		if bytes.Contains(item, []byte{'='}) {
+			return true
+		}
+	}
+	return false
 }
 
 func timeIdentity(seconds, microseconds int64) string {

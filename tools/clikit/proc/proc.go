@@ -69,13 +69,15 @@ const (
 )
 
 type Process struct {
-	PID       int       `json:"pid"`
-	PPID      int       `json:"ppid"`
-	Command   string    `json:"command"`
-	StartedAt time.Time `json:"started_at"`
-	ElapsedMS int64     `json:"elapsed_ms"`
-	Identity  string    `json:"-"`
-	runMarker bool
+	PID        int       `json:"pid"`
+	PPID       int       `json:"ppid"`
+	Command    string    `json:"command"`
+	StartedAt  time.Time `json:"started_at"`
+	ElapsedMS  int64     `json:"elapsed_ms"`
+	Identity   string    `json:"identity"`
+	runMarker  bool
+	Unverified bool `json:"unverified,omitempty"`
+	uid        uint32
 }
 
 type RunInfo struct {
@@ -160,9 +162,36 @@ func Start(ctx context.Context, cfg Config) (*Run, error) {
 		waitErr := cmd.Wait()
 		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake: %w", err), killErr, waitErr, readReady.Close())
 	}
-	ready, err := decodeReady(readReady)
+	type readyResult struct {
+		record record
+		err    error
+	}
+	readyCh := make(chan readyResult, 1)
+	go func() {
+		rec, err := decodeReady(readReady)
+		readyCh <- readyResult{record: rec, err: err}
+	}()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	var ready record
+	select {
+	case result := <-readyCh:
+		ready, err = result.record, result.err
+	case <-ctx.Done():
+		killErr := cmd.Process.Kill()
+		closeErr := readReady.Close()
+		<-readyCh
+		waitErr := cmd.Wait()
+		return nil, errors.Join(fmt.Errorf("proc: keeper startup canceled: %w", ctx.Err()), killErr, closeErr, waitErr)
+	case <-timer.C:
+		killErr := cmd.Process.Kill()
+		closeErr := readReady.Close()
+		<-readyCh
+		waitErr := cmd.Wait()
+		return nil, errors.Join(errors.New("proc: keeper did not become ready within 2s; HelperPath must dispatch __keeper"), killErr, closeErr, waitErr)
+	}
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("proc: keeper did not become ready: %w", err), cmd.Process.Kill(), cmd.Wait(), readReady.Close())
+		return nil, errors.Join(fmt.Errorf("proc: keeper helper did not complete the __keeper handshake; HelperPath must dispatch __keeper: %w", err), cmd.Process.Kill(), cmd.Wait(), readReady.Close())
 	}
 	if err := readReady.Close(); err != nil {
 		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake reader: %w", err), cmd.Process.Kill(), cmd.Wait())
@@ -305,10 +334,6 @@ func writeRecord(rec record) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-func appendEvent(dir string, event Event) error {
-	return appendEventPlatform(dir, event)
 }
 
 func eventFor(rec record, kind string) Event {

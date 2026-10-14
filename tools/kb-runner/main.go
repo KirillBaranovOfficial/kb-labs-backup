@@ -121,7 +121,11 @@ func psCommand(args []string, output io.Writer) (int, error) {
 			return 1, fmt.Errorf("kb-runner ps: write output: %w", err)
 		}
 		for _, child := range run.Tree {
-			if _, err := fmt.Fprintf(output, "  └─ %d\t%s\t elapsed=%s\n", child.PID, child.Command, time.Duration(child.ElapsedMS)*time.Millisecond); err != nil {
+			status := ""
+			if child.Unverified {
+				status = "\tunverified"
+			}
+			if _, err := fmt.Fprintf(output, "  └─ %d\t%s\t elapsed=%s%s\n", child.PID, child.Command, time.Duration(child.ElapsedMS)*time.Millisecond, status); err != nil {
 				return 1, fmt.Errorf("kb-runner ps: write output: %w", err)
 			}
 		}

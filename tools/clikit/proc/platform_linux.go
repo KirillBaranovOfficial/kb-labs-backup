@@ -3,10 +3,9 @@
 package proc
 
 import (
-	"encoding/json"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -43,27 +42,11 @@ func monitorParent(_ int, _ string) (<-chan error, error) {
 	return dead, nil
 }
 
-func appendEventPlatform(dir string, event Event) error {
-	path := filepath.Join(dir, "events.jsonl")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return err
+func lockEventFile(file *os.File) (func() error, error) {
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+		return nil, err
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
-		return errors.Join(fmt.Errorf("lock event stream: %w", err), f.Close())
-	}
-	data, err := json.Marshal(event)
-	if err != nil {
-		return errors.Join(err, unix.Flock(int(f.Fd()), unix.LOCK_UN), f.Close())
-	}
-	data = append(data, '\n')
-	written, writeErr := f.Write(data)
-	if writeErr == nil && written != len(data) {
-		writeErr = io.ErrShortWrite
-	}
-	unlockErr := unix.Flock(int(f.Fd()), unix.LOCK_UN)
-	closeErr := f.Close()
-	return errors.Join(writeErr, unlockErr, closeErr)
+	return func() error { return unix.Flock(int(file.Fd()), unix.LOCK_UN) }, nil
 }
 
 func ProcessIdentity(pid int) (string, bool) {
@@ -71,18 +54,11 @@ func ProcessIdentity(pid int) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	close := strings.LastIndexByte(string(data), ')')
-	if close < 0 {
+	stat, err := parseProcStat(string(data))
+	if err != nil || stat.PID != pid || stat.State == 'Z' {
 		return "", false
 	}
-	fields := strings.Fields(string(data[close+2:]))
-	if len(fields) <= 19 {
-		return "", false
-	}
-	if fields[0] == "Z" {
-		return "", false
-	}
-	return fields[19], true
+	return stat.Identity, true
 }
 
 func ProcessExists(pid int) bool {
@@ -188,6 +164,12 @@ func reapAdopted() error {
 }
 
 func allProcesses() []Process {
+	bootData, bootErr := os.ReadFile("/proc/stat")
+	var boot time.Time
+	if bootErr == nil {
+		boot, bootErr = parseProcBootTime(string(bootData))
+	}
+	clockTicks, clockErr := procClockTicks()
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
@@ -202,51 +184,55 @@ func allProcesses() []Process {
 		if err != nil {
 			continue
 		}
-		close := strings.LastIndexByte(string(stat), ')')
-		if close < 0 {
-			continue
-		}
-		fields := strings.Fields(string(stat[close+2:]))
-		if len(fields) <= 19 {
-			continue
-		}
-		if fields[0] == "Z" {
-			continue
-		}
-		ppid, err := strconv.Atoi(fields[1])
-		if err != nil {
-			continue
-		}
-		startTicks, err := strconv.ParseInt(fields[19], 10, 64)
-		if err != nil {
+		parsed, err := parseProcStat(string(stat))
+		if err != nil || parsed.PID != pid || parsed.State == 'Z' {
 			continue
 		}
 		cmdline, _ := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
 		command := strings.ReplaceAll(strings.TrimRight(string(cmdline), "\x00"), "\x00", " ")
 		if command == "" {
-			command = strings.TrimSpace(string(stat[1:close]))
+			command = parsed.Comm
 		}
-		started := startTime(startTicks)
-		out = append(out, Process{PID: pid, PPID: ppid, Command: command, StartedAt: started, ElapsedMS: time.Since(started).Milliseconds(), Identity: strconv.FormatInt(startTicks, 10)})
+		started := time.Time{}
+		if bootErr == nil && clockErr == nil {
+			started = procStartTime(boot, parsed.StartTicks, clockTicks)
+		}
+		elapsed := int64(0)
+		if !started.IsZero() {
+			elapsed = time.Since(started).Milliseconds()
+			if elapsed < 0 {
+				elapsed = 0
+			}
+		}
+		out = append(out, Process{PID: pid, PPID: parsed.PPID, Command: command, StartedAt: started, ElapsedMS: elapsed, Identity: parsed.Identity})
 	}
 	return out
 }
 
-func startTime(ticks int64) time.Time {
-	data, err := os.ReadFile("/proc/uptime")
+func procClockTicks() (int64, error) {
+	data, err := os.ReadFile("/proc/self/auxv")
 	if err != nil {
-		return time.Now()
+		return 0, err
 	}
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return time.Now()
+	wordSize := strconv.IntSize / 8
+	entrySize := wordSize * 2
+	for offset := 0; offset+entrySize <= len(data); offset += entrySize {
+		var kind, value uint64
+		if wordSize == 8 {
+			kind = binary.NativeEndian.Uint64(data[offset : offset+wordSize])
+			value = binary.NativeEndian.Uint64(data[offset+wordSize : offset+entrySize])
+		} else {
+			kind = uint64(binary.NativeEndian.Uint32(data[offset : offset+wordSize]))
+			value = uint64(binary.NativeEndian.Uint32(data[offset+wordSize : offset+entrySize]))
+		}
+		if kind == 17 && value > 0 { // AT_CLKTCK, supplied by the Linux kernel.
+			return int64(value), nil
+		}
+		if kind == 0 {
+			break
+		}
 	}
-	uptime, err := strconv.ParseFloat(fields[0], 64)
-	if err != nil {
-		return time.Now()
-	}
-	seconds := float64(ticks)/100 - uptime
-	return time.Now().Add(-time.Duration(seconds * float64(time.Second)))
+	return 0, errors.New("Linux auxiliary vector has no AT_CLKTCK")
 }
 
 func platformExit(err error) (*int, string, string) {

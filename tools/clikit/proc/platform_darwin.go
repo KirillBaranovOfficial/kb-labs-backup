@@ -3,14 +3,11 @@
 package proc
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -67,27 +64,11 @@ func monitorParent(parentPID int, parentIdentity string) (<-chan error, error) {
 	return dead, nil
 }
 
-func appendEventPlatform(dir string, event Event) error {
-	path := filepath.Join(dir, "events.jsonl")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return err
+func lockEventFile(file *os.File) (func() error, error) {
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+		return nil, err
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
-		return errors.Join(fmt.Errorf("lock event stream: %w", err), f.Close())
-	}
-	data, err := json.Marshal(event)
-	if err != nil {
-		return errors.Join(err, unix.Flock(int(f.Fd()), unix.LOCK_UN), f.Close())
-	}
-	data = append(data, '\n')
-	written, writeErr := f.Write(data)
-	if writeErr == nil && written != len(data) {
-		writeErr = io.ErrShortWrite
-	}
-	unlockErr := unix.Flock(int(f.Fd()), unix.LOCK_UN)
-	closeErr := f.Close()
-	return errors.Join(writeErr, unlockErr, closeErr)
+	return func() error { return unix.Flock(int(file.Fd()), unix.LOCK_UN) }, nil
 }
 
 func ProcessIdentity(pid int) (string, bool) {
@@ -123,8 +104,21 @@ func ProcessTree(root int, runID string) []Process {
 			}
 		}
 	}
+	rootStart := time.Time{}
 	for _, p := range all {
+		if p.PID == root {
+			rootStart = p.StartedAt
+		}
 		if p.runMarker {
+			seen[p.PID] = true
+		}
+	}
+	verified := make(map[int]bool, len(seen))
+	for pid := range seen {
+		verified[pid] = true
+	}
+	for _, p := range all {
+		if !seen[p.PID] && p.Unverified && p.uid == uint32(os.Getuid()) && p.StartedAt.After(rootStart) {
 			seen[p.PID] = true
 		}
 	}
@@ -132,6 +126,9 @@ func ProcessTree(root int, runID string) []Process {
 	for pid := range seen {
 		if pid != root {
 			if p, ok := byPID[pid]; ok {
+				if verified[pid] {
+					p.Unverified = false
+				}
 				out = append(out, p)
 			}
 		}
@@ -158,6 +155,9 @@ func killTree(root int, runID string) error {
 	var failures []error
 	targets := ProcessTree(root, runID)
 	for _, p := range targets {
+		if p.Unverified {
+			continue
+		}
 		if current, ok := ProcessIdentity(p.PID); ok && current == p.Identity {
 			if err := syscall.Kill(p.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 				failures = append(failures, fmt.Errorf("send SIGTERM to process %d: %w", p.PID, err))
@@ -172,6 +172,9 @@ func killTree(root int, runID string) error {
 		return errors.Join(failures...)
 	}
 	for _, p := range targets {
+		if p.Unverified {
+			continue
+		}
 		if current, ok := ProcessIdentity(p.PID); ok && current == p.Identity {
 			if err := syscall.Kill(p.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 				failures = append(failures, fmt.Errorf("send SIGKILL to process %d: %w", p.PID, err))
@@ -190,6 +193,9 @@ func killTree(root int, runID string) error {
 
 func targetsAlive(targets []Process) bool {
 	for _, p := range targets {
+		if p.Unverified {
+			continue
+		}
 		if current, ok := ProcessIdentity(p.PID); ok && current == p.Identity {
 			return true
 		}
