@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ILogger } from '@kb-labs/core-platform';
-import { createProductErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createProductErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { ExecutionRequest, ExecutionResult } from '../types.js';
 import { createExecutionBackend, createNormalizedExecutionBackend } from '../factory.js';
 
@@ -54,6 +54,9 @@ describe('createExecutionBackend handler failure boundary', () => {
     ['typed product error', new ErrorEnvelopeError(createProductErrorEnvelope({
       code: 'MIND_NOT_FOUND', retryable: false, message: 'Mind result not found.', hint: 'Choose a known mind.',
     })), 'MIND_NOT_FOUND'],
+    ['typed platform error', new ErrorEnvelopeError(createErrorEnvelope('KB_ADAPTER_NOT_CONFIGURED', {
+      message: 'Adapter is not configured.', hint: 'Configure the adapter, then retry.',
+    })), 'KB_ADAPTER_NOT_CONFIGURED'],
     ['malformed product envelope', { code: 'MIND_NOT_FOUND', message: 'Mind result not found.', retryable: false }, 'KB_PLUGIN_CONTRACT_VIOLATION'],
   ] as const;
 
@@ -93,9 +96,12 @@ describe('createExecutionBackend handler failure boundary', () => {
         if (result.ok) continue;
         expect(result.error.envelope.code, `${mode} / ${failureName}: ${JSON.stringify(result.error.envelope)}`).toBe(expectedCode);
         expect(result.error.envelope.correlationId, `${mode} / ${failureName}`).toBe('correlation-1');
+        expect(result.error.envelope).not.toHaveProperty('stack');
+        expect(result).not.toHaveProperty('diagnostics');
         expect(logError, `${mode} / ${failureName}`).toHaveBeenCalledOnce();
         const loggedError = logError.mock.calls[0]?.[1];
         if (cause instanceof Error) expect(loggedError?.stack).toBe(cause.stack);
+        expect(logError.mock.calls[0]?.[2]).toMatchObject({ correlationId: 'correlation-1' });
       }
     },
   );

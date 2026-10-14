@@ -47,7 +47,7 @@ it('returns a shared safe error envelope for plugin REST failures', async () => 
   });
   await mountRoutes(server, manifest, { ...options, backend: backendReturning({
     ok: false,
-    error: { message: envelope.message, envelope },
+    error: envelope,
     executionTimeMs: 1,
   }) });
 
