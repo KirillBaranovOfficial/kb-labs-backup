@@ -241,16 +241,13 @@ describe('POST /api/v1/execute — error cases', () => {
 
     const errorEvent = events.find((e) => (e as { type: string }).type === 'execution:error');
     expect(errorEvent).toBeDefined();
-    expect((errorEvent as { code: string }).code).toBe('EXECUTION_FAILED');
-    expect(noopLogger.error).toHaveBeenCalledWith(
-      'Gateway execution dispatch failed',
-      expect.any(Error),
-      expect.objectContaining({
-        diagnosticEvent: 'gateway.execution.dispatch',
-        reasonCode: 'execution_dispatch_failed',
-        serviceId: 'gateway',
-      }),
-    );
+    const envelope = (errorEvent as { error: { code: string; correlationId: string; hint: string } }).error;
+    expect(envelope).toMatchObject({
+      code: 'KB_PLUGIN_COMMAND_FAILED',
+      correlationId: expect.any(String),
+      hint: expect.stringContaining('kb logs query --correlation-id'),
+    });
+    expect(noopLogger.error).toHaveBeenCalledTimes(1);
 
     const doneEvent = events.find((e) => (e as { type: string }).type === 'execution:done');
     expect((doneEvent as { exitCode: number }).exitCode).toBe(1);

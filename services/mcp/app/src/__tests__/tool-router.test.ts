@@ -24,7 +24,15 @@ const tool: McpTool = {
 
 // Minimal container — only the members callTool touches.
 const container = {
-  logger: { child: () => ({}) },
+  logger: {
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    child: () => container.logger,
+  },
   getSocketPath: () => '/tmp/sock',
 } as unknown as PlatformContainer;
 const resolvePlatform = vi.fn(() => container);

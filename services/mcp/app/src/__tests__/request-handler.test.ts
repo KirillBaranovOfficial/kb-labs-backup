@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ICache, ILogger } from '@kb-labs/core-platform';
+import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
@@ -443,8 +444,16 @@ describe('executeToolCall', () => {
   });
 
   // case: S-203.2
-  it('maps a non-zero exit code to a shared failure envelope', async () => {
-    executeCommandV3.mockResolvedValue(1);
+  it('preserves the execution envelope and correlation ID in the MCP error result', async () => {
+    const envelope: ErrorEnvelope = {
+      code: 'KB_PLUGIN_COMMAND_FAILED', area: 'plugin', stage: 'run', severity: 'error', retryable: false,
+      message: 'Plugin search failed unexpectedly.', hint: 'Run "kb logs query --correlation-id mcp-correlation".',
+      correlationId: 'mcp-correlation',
+    };
+    executeCommandV3.mockImplementation(async (options: { onError?: (error: ErrorEnvelope) => void }) => {
+      options.onError?.(envelope);
+      return 1;
+    });
     const result = await executeToolCall({
       name: tool.name,
       args: {},
@@ -456,7 +465,7 @@ describe('executeToolCall', () => {
     });
     expect(result.isError).toBe(true);
     expectSharedMachineResult(result.structuredContent);
-    expect(result.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_MCP_TOOL_FAILED' } });
+    expect(result.structuredContent).toMatchObject({ ok: false, error: envelope });
   });
 
   // case: S-203.3

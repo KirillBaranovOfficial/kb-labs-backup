@@ -333,7 +333,9 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"id": run_id, "status": "success"}}), "")
                 if args[:2] == ["commit", "generate"]:
                     error = {"code": "KB_ADAPTER_CREDENTIALS_MISSING", "message": "Adapter llm is missing OPENAI_API_KEY.",
-                             "hint": "Set OPENAI_API_KEY or run `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env`. No request was sent."}
+                             "hint": "Set OPENAI_API_KEY or run `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env`. No request was sent.",
+                             "retryable": False, "correlationId": "adapter-missing-credentials",
+                             "details": {"adapter": "llm", "credential": "OPENAI_API_KEY"}}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["commit", "reset"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
@@ -433,7 +435,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 with patch("adapter_defaults_steps.urllib.request.urlopen", side_effect=fake_urlopen):
                     run_adapter_default_steps(journey, project_a, env, fake_run)
 
-            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {"S-054.21", "S-054.22"} | {f"S-048.{number}" for number in range(1, 7)}
+            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {"S-054.21", "S-054.22", "S-051.5"} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             cleanup = next(step for step in journey.steps if step.name == "restore adapter journey fixture state")
@@ -451,7 +453,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 self.assertIn("[discover]", row["stderr"])
             self.assertIn(("kb", "adapter", "list", "--json"), calls)
             self.assertIn(("kb", "adapter", "unbind", "storage", "--json"), calls)
-            self.assertIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)
+            self.assertNotIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)
             self.assertIn(("kb", "commit", "generate", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind-entry", "--json"), calls)

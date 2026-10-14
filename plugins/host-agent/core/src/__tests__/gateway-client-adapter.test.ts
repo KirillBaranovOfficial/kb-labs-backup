@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GatewayClient } from '../ws/gateway-client.js';
 import { EventEmitter } from 'node:events';
+import { ErrorEnvelopeError, createErrorEnvelope } from '@kb-labs/core-platform';
 
 /**
  * Mock WebSocket that simulates Gateway WS connection.
@@ -225,6 +226,38 @@ describe('GatewayClient.sendAdapterCall', () => {
     expect(r1.result).toBe('first-result');
     expect(r2.result).toBe('second-result');
 
+    client.stop();
+  });
+});
+
+describe('GatewayClient capability handler errors', () => {
+  it('transports a plain handler exception so the execution boundary owns normalisation', async () => {
+    const { client, ws } = createConnectedClient();
+    const requestId = 'host-call-correlation';
+    client.registerHandler('llm', async () => { throw new Error('adapter failed'); });
+    await (client as unknown as { handleCall(call: { requestId: string; adapter: string }): Promise<void> })
+      .handleCall({ requestId, adapter: 'llm' });
+
+    const response = ws.lastSent();
+    expect(response).toMatchObject({
+      type: 'error', requestId,
+      error: { __type: 'Error', name: 'Error', message: 'adapter failed', stack: expect.any(String) },
+    });
+    expect(JSON.stringify(response)).not.toContain('HANDLER_ERROR');
+    client.stop();
+  });
+
+  it('preserves a typed platform envelope across the reverse host path', async () => {
+    const { client, ws } = createConnectedClient();
+    const failure = createErrorEnvelope('KB_ADAPTER_CREDENTIALS_MISSING', {
+      correlationId: 'host-call-correlation',
+      details: { adapter: 'llm', credential: 'OPENAI_API_KEY' },
+    });
+    client.registerHandler('llm', async () => { throw new ErrorEnvelopeError(failure); });
+    await (client as unknown as { handleCall(call: { requestId: string; adapter: string }): Promise<void> })
+      .handleCall({ requestId: 'host-call-correlation', adapter: 'llm' });
+
+    expect(ws.lastSent()).toMatchObject({ type: 'error', error: failure });
     client.stop();
   });
 });

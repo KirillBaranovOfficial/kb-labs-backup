@@ -82,6 +82,13 @@ describe('executeCommandV3 plugin command result output', () => {
         correlationId: expect.any(String),
       });
       expect(JSON.stringify(envelope)).not.toContain('Unexpected');
+    } else if (_name === 'invalid details' || _name === 'non-string details') {
+      expect(envelope).toMatchObject({
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        message: 'Plugin @kb-labs/test-plugin returned malformed error field "hint".',
+        details: { plugin: '@kb-labs/test-plugin', command: 'test run', field: 'hint' },
+        correlationId: expect.any(String),
+      });
     } else {
       expect(envelope).toEqual(toErrorEnvelope(thrown, { correlationId: envelope.correlationId }));
     }
@@ -250,10 +257,17 @@ describe('executeCommandV3 plugin command result output', () => {
     expect(envelope.error.message).toContain('@kb-labs/test-plugin');
     expect(envelope.error.message).toContain('test run');
     expect(envelope.error.message).not.toContain('private worker cause');
-    expect(logError).toHaveBeenCalledWith('Plugin command failed unexpectedly', expect.any(Error), {
-      correlationId: envelope.error.correlationId,
-      requestId: expect.any(String),
-    });
+    expect(logError).toHaveBeenCalledOnce();
+    expect(logError).toHaveBeenCalledWith(
+      'Plugin command test run in @kb-labs/test-plugin failed unexpectedly.',
+      expect.any(Error),
+      expect.objectContaining({
+        code: 'KB_PLUGIN_COMMAND_FAILED',
+        command: 'test run',
+        correlationId: envelope.error.correlationId,
+        pluginId: '@kb-labs/test-plugin',
+      }),
+    );
   });
 
   // case: S-203.2
