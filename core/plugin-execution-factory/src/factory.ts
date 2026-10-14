@@ -157,6 +157,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         result = {
           ...result,
           ok: false,
+          diagnostics: executionDiagnostics(result.data),
           error: {
             message: 'Plugin handler returned a failure result.',
             error: 'error' in result.data ? result.data.error : undefined,

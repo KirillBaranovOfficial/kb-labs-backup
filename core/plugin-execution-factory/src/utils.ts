@@ -6,6 +6,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { createErrorEnvelope, ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
+import { isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import type { ExecutionDiagnostics, ExecutionError } from './types.js';
 import { TimeoutError, AbortError, isExecutionLayerError } from './errors.js';
 
@@ -115,8 +116,16 @@ export function normalizeError(error: unknown): ExecutionError {
 }
 
 /** Keeps private stack diagnostics beside, never inside, the serialized failure envelope. */
-export function executionDiagnostics(error: unknown): ExecutionDiagnostics | undefined {
-  return error instanceof Error && error.stack ? { errorStack: error.stack } : undefined;
+export function executionDiagnostics(failure: unknown): ExecutionDiagnostics | undefined {
+  const error = isUxResultCandidate(failure) && failure.ok === false && 'error' in failure
+    ? failure.error
+    : failure;
+  const stack = error instanceof Error
+    ? error.stack
+    : typeof error === 'object' && error !== null && 'stack' in error && typeof error.stack === 'string'
+      ? error.stack
+      : undefined;
+  return stack ? { errorStack: stack } : undefined;
 }
 
 export function normalizeExecutionFailure(error: unknown): {
