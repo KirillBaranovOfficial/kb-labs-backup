@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -51,35 +50,7 @@ type recordingInstaller struct {
 func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 	_, fakehost := binaries(t)
 	inst := newEmptyInstallation(t)
-	var primaryListener, secondaryListener net.Listener
-	for range 128 {
-		candidate, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		port := candidate.Addr().(*net.TCPAddr).Port
-		if port+100 > 65535 {
-			_ = candidate.Close()
-			continue
-		}
-		secondary, listenErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+100))
-		if listenErr != nil {
-			_ = candidate.Close()
-			continue
-		}
-		primaryListener, secondaryListener = candidate, secondary
-		inst.port = port
-		break
-	}
-	if primaryListener == nil || secondaryListener == nil {
-		t.Fatal("could not reserve a free Gateway port and its 100-port offset")
-	}
-	if err := primaryListener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := secondaryListener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	inst.port = freeLoopbackPortWithOffset(t, 100)
 
 	binary := []byte("built CLI fixture binary")
 	binaryDigest := sha256.Sum256(binary)
@@ -888,6 +859,7 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 	}
 }
 
+// case: S-223.6
 func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "install")
 	launcher, fakehost := binaries(t)
@@ -1043,7 +1015,59 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		}
 		plan.Request.PlatformRoot = layout.PlatformRoot()
 		operationName = name
-		result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: "kb-create", ArtifactRunner: packageRunner}, root, plan,
+		runner := packageRunner
+		input := updateCommandInput{Executable: "kb-create", ArtifactRunner: runner}
+		if name == "update2" {
+			indexPath := filepath.Join(t.TempDir(), "release index.json")
+			requestPath := filepath.Join(t.TempDir(), "request input.json")
+			input.RetryCommand = updateTestRetryInvocation(t, indexPath, requestPath, root)
+			priorRoot, priorErr := layout.Active()
+			if priorErr != nil {
+				t.Fatal(priorErr)
+			}
+			priorMetadata, readErr := os.ReadFile(filepath.Join(root, "installer", "layout.json"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			priorReceipt, readErr := os.ReadFile(receipt.Path(priorRoot))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			priorOperation, readErr := os.ReadFile(filepath.Join(root, "installer", "update-operation.json"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			input.ArtifactRunner = productionPackageFixtureRunner{packageName: "@kb-labs/fixture", version: "1.0.0", injectProjection: true}
+			_, refusal := runUpdateCommand(context.Background(), input, root, plan, state, launcherState, nil)
+			if refusal == nil || refusal.Code != contracts.CodeApplyFailed || !strings.Contains(refusal.Cause, ".kb/v2/cache") {
+				t.Fatalf("activation refusal = %#v; want shared-cache stage refusal", refusal)
+			}
+			if got, activeErr := layout.Active(); activeErr != nil || got != priorRoot {
+				t.Fatalf("refusal changed current root: before=%q after=%q error=%v", priorRoot, got, activeErr)
+			}
+			if got, readErr := os.ReadFile(filepath.Join(root, "installer", "layout.json")); readErr != nil || !bytes.Equal(got, priorMetadata) {
+				t.Fatalf("refusal changed layout metadata: %v", readErr)
+			}
+			if got, readErr := os.ReadFile(receipt.Path(priorRoot)); readErr != nil || !bytes.Equal(got, priorReceipt) {
+				t.Fatalf("refusal changed active receipt: %v", readErr)
+			}
+			if got, readErr := os.ReadFile(filepath.Join(root, "installer", "update-operation.json")); readErr != nil || !bytes.Equal(got, priorOperation) {
+				t.Fatalf("refusal changed durable update recovery record: %v", readErr)
+			}
+			commandText := quotedCommandFromHint(t, refusal.Hint)
+			process := exec.Command("sh", "-c", "set -- "+commandText+"; printf '%s\\0' \"$@\"")
+			output, processErr := process.Output()
+			if processErr != nil {
+				t.Fatalf("parse activation retry hint: %v", processErr)
+			}
+			gotArgv := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+			wantArgv := []string{"kb-create", "update", "--index", indexPath, "--input", requestPath, "--platform-root", root}
+			if !reflect.DeepEqual(gotArgv, wantArgv) {
+				t.Fatalf("retry command argv = %#v, want original invocation %#v", gotArgv, wantArgv)
+			}
+			input.ArtifactRunner = runner
+		}
+		result, failure := runUpdateCommand(context.Background(), input, root, plan,
 			state, launcherState, nil)
 		if stageProjectionFailure != "" {
 			t.Fatalf("shared projection existed in a staged tree during %s: %s", name, stageProjectionFailure)
@@ -1054,11 +1078,17 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		if name == "update1" {
 			rollbackSnapshot, _ = result.Snapshot["id"].(string)
 		}
+		if name == "update2" {
+			updatedMetadata, readErr := layout.UpdateMetadata()
+			if readErr != nil || updatedMetadata.SnapshotID != result.Snapshot["id"] {
+				t.Fatalf("successful retry did not publish recovery record: metadata=%#v error=%v", updatedMetadata, readErr)
+			}
+		}
 		assertBinaryCached(name)
 		assertActiveProjectionsAreLinks()
 	}
-	if requests != 4 || packageRequests != 1 {
-		t.Fatalf("production artifact downloads = %d (package tarball %d), want three binaries and one shared package tarball", requests, packageRequests)
+	if requests != 5 || packageRequests != 1 {
+		t.Fatalf("production artifact downloads = %d (package tarball %d), want install, update 1, refused update 2, retry update 2, and one shared package tarball", requests, packageRequests)
 	}
 	packageCache := filepath.Join(cacheRoot, "packages", digests["package"]+".tgz")
 	if cached, readErr := os.ReadFile(packageCache); readErr != nil || !bytes.Equal(cached, fixtures["package"]) {
@@ -1081,43 +1111,143 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 	}
 }
 
-func TestUpdateActivationRetryHintPreservesExplicitPlatformRoot(t *testing.T) {
-	for _, testCase := range []struct {
-		name     string
-		root     string
-		explicit bool
-	}{
-		{name: "default root"},
-		{name: "selected root", root: filepath.Join(t.TempDir(), "platform root"), explicit: true},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
+func updateTestRetryInvocation(t *testing.T, indexPath, requestPath, platformRoot string) string {
+	t.Helper()
+	root := &cobra.Command{Use: "kb-create"}
+	command := &cobra.Command{Use: "update"}
+	root.AddCommand(command)
+	descriptor, ok := lookupOperationDescriptor("update")
+	if !ok {
+		t.Fatal("update operation descriptor is missing")
+	}
+	values := make(map[string]any)
+	registerLocalFlags(command, descriptor.Flags, values)
+	if err := command.ParseFlags([]string{"--index", indexPath, "--input", requestPath, "--platform-root", platformRoot}); err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := newCommandFlagReader(command, values).Invocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return invocation
+}
+
+func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testing.T) {
+	installRoot := filepath.Join(t.TempDir(), "install")
+	stage := filepath.Join(t.TempDir(), "stage")
+	if err := os.MkdirAll(stage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := versionroot.New(installRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures := map[string][]byte{"binary": []byte("binary fixture"), "package": []byte("package fixture")}
+	digests := make(map[string]string, len(fixtures))
+	for name, data := range fixtures {
+		digest := sha256.Sum256(data)
+		digests[name] = hex.EncodeToString(digest[:])
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		name := strings.TrimPrefix(request.URL.Path, "/")
+		data, ok := fixtures[name]
+		if !ok {
+			http.NotFound(writer, request)
+			return
+		}
+		_, _ = writer.Write(data)
+	}))
+	defer server.Close()
+	executor, err := newArtifactExecutor(layout, stage, "", false, io.Discard,
+		productionPackageFixtureRunner{packageName: "@kb-labs/fixture", version: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := []contracts.Artifact{
+		{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/binary", SHA256: digests["binary"], Target: "bin/kb-create"},
+		{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"]},
+	}
+	if err := executor.InstallWithProgress(items, func(_ string, start bool) error {
+		if start {
+			return nil
+		}
+		return versionroot.ValidateNoSharedRuntimeProjectionEntries(stage)
+	}); err != nil {
+		t.Fatalf("production artifact executor install: %v", err)
+	}
+	if err := versionroot.ValidateNoSharedRuntimeProjectionEntries(stage); err != nil {
+		t.Fatalf("artifact executor created a shared projection in its unprojected stage: %v", err)
+	}
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, digest := range digests {
+		cachePath := filepath.Join(cacheRoot, map[string]string{"binary": "binaries/" + digest, "package": "packages/" + digest + ".tgz"}[name])
+		if _, err := os.Stat(cachePath); err != nil {
+			t.Errorf("%s artifact was not fetched into the install-root cache: %v", name, err)
+		}
+	}
+}
+
+func TestUpdateActivationRetryHintPreservesOriginalInvocation(t *testing.T) {
+	for _, includePlatformRoot := range []bool{false, true} {
+		name := "default root"
+		if includePlatformRoot {
+			name = "selected root"
+		}
+		t.Run(name, func(t *testing.T) {
+			selectedRoot := filepath.Join(t.TempDir(), "platform root")
+			index := filepath.Join(t.TempDir(), "release index.json")
+			request := filepath.Join(t.TempDir(), "install request.json")
+			secret := `{"adminPassword":"do-not-print"}`
+			root := &cobra.Command{Use: "kb-create"}
 			command := &cobra.Command{Use: "update"}
-			root := command.Flags().String("platform-root", "", "platform root")
-			if testCase.explicit {
-				if err := command.Flags().Set("platform-root", testCase.root); err != nil {
-					t.Fatal(err)
-				}
+			root.AddCommand(command)
+			registerPersistentFlags(root)
+			values := make(map[string]any)
+			descriptor, ok := lookupOperationDescriptor("update")
+			if !ok {
+				t.Fatal("update command descriptor is not registered")
 			}
-			flags := newCommandFlagReader(command, map[string]any{"platform-root": root})
-			input := updateCommandInput{
-				Direct:               directRequest{PlatformRoot: flags.String("platform-root")},
-				PlatformRootExplicit: flags.Changed("platform-root"),
+			registerLocalFlags(command, descriptor.Flags, values)
+			args := []string{"--index", index, "--input", request}
+			want := []string{"kb-create", "update", "--index", index, "--input", request}
+			if includePlatformRoot {
+				args = append(args, "--platform-root", selectedRoot)
+				want = append(want, "--platform-root", selectedRoot)
 			}
-			wantCommand := contracts.ShellCommand("kb-create", "update")
-			if testCase.explicit {
-				wantCommand = contracts.ShellCommand("kb-create", "update", "--platform-root", testCase.root)
+			args = append(args, "--scenario-answers", secret)
+			if err := command.ParseFlags(args); err != nil {
+				t.Fatal(err)
 			}
-			want := "the installed version is unchanged; inspect permissions and rerun `" + wantCommand + "`"
-			if got := updateActivationRetryHint(input); got != want {
-				t.Fatalf("retry hint = %q, want %q", got, want)
+			flags := newCommandFlagReader(command, values)
+			invocation, err := flags.Invocation()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hint := updateActivationRetryHint(updateCommandInput{RetryCommand: invocation})
+			commandText := quotedCommandFromHint(t, hint)
+			process := exec.Command("sh", "-c", "set -- "+commandText+"; printf '%s\\0' \"$@\"")
+			output, err := process.Output()
+			if err != nil {
+				t.Fatalf("parse retry command with sh: %v", err)
+			}
+			parsed := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+			if !reflect.DeepEqual(parsed, want) {
+				t.Fatalf("retry argv = %#v, want %#v", parsed, want)
+			}
+			if strings.Contains(invocation, secret) {
+				t.Fatal("retry invocation exposed a value declared secret")
 			}
 		})
 	}
 }
 
 type productionPackageFixtureRunner struct {
-	packageName string
-	version     string
+	packageName      string
+	version          string
+	injectProjection bool
 }
 
 func (r productionPackageFixtureRunner) Run(_ context.Context, output io.Writer, _ string, args ...string) error {
@@ -1141,6 +1271,15 @@ func (r productionPackageFixtureRunner) Run(_ context.Context, output io.Writer,
 	}
 	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), manifest, 0o644); err != nil {
 		return err
+	}
+	if r.injectProjection {
+		projection := filepath.Join(root, ".kb", "v2", "cache")
+		if err := os.MkdirAll(projection, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(projection, "injected"), []byte("fault"), 0o600); err != nil {
+			return err
+		}
 	}
 	_, err = io.WriteString(output, "local package fixture installed\n")
 	return err
@@ -1427,10 +1566,8 @@ func TestRestartFailureRestoresPreviousVersionAndReportsRecoveryDetails(t *testi
 	if err := os.WriteFile(filepath.Join(inst.root, logRelative), []byte("update completed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: "snapshot-before-v2", LogPath: logRelative}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layout.Activate(stage, "2.0.0", badPlan.PlanHash, ""); err != nil {
+	if _, err := layout.ActivateUpdate(stage, "2.0.0", badPlan.PlanHash, "",
+		versionroot.UpdateMetadata{SnapshotID: "snapshot-before-v2", LogPath: logRelative}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1483,10 +1620,8 @@ func TestRestartRecoveryDirectCallerReturnsSameCataloguedResult(t *testing.T) {
 	if err := receipt.Write(stage, installed); err != nil {
 		t.Fatal(err)
 	}
-	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: "snapshot-direct-v2"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layout.Activate(stage, "2.0.0", badPlan.PlanHash, ""); err != nil {
+	if _, err := layout.ActivateUpdate(stage, "2.0.0", badPlan.PlanHash, "",
+		versionroot.UpdateMetadata{SnapshotID: "snapshot-direct-v2"}); err != nil {
 		t.Fatal(err)
 	}
 	previous, err := host.NewRunner(inst.root)
@@ -1539,10 +1674,8 @@ func restartWithRecoveryFault(t *testing.T, fault string) (installation, string)
 	if err := receipt.Write(stage, installed); err != nil {
 		t.Fatal(err)
 	}
-	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: "snapshot-v2"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := layout.Activate(stage, "2.0.0", badPlan.PlanHash, ""); err != nil {
+	if _, err := layout.ActivateUpdate(stage, "2.0.0", badPlan.PlanHash, "",
+		versionroot.UpdateMetadata{SnapshotID: "snapshot-v2"}); err != nil {
 		t.Fatal(err)
 	}
 	recovery, err := layout.RecoveryRoot()

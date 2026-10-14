@@ -98,10 +98,11 @@ def layout_owned_path_literals(source: str, layout: dict) -> list[str]:
     paths.update(value for key, value in layout["installerRecords"].items() if key != "snapshotRetention")
 
     violations = []
-    for node in ast.walk(ast.parse(source)):
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
             continue
-        value = node.value.replace("\\", "/").strip("./")
+        value = node.value.replace("\\", "/")
         if any(value == path or value.startswith(path + "/") for path in paths):
             violations.append(f"line {node.lineno}: {node.value!r}")
     return violations
@@ -131,7 +132,25 @@ class InstallerCaseStepsTest(unittest.TestCase):
             journey_modules, layout, journey_modules / "installed_fixture.py")
         self.assertEqual(violations, [])
 
-        owned_literals = sorted({projection["statePath"] for projection in layout["sharedRuntimePaths"]})
+        platform_paths = sorted({
+            projection["platformPath"]
+            for projection in [layout["platformDataRoot"], *layout["sharedRuntimePaths"]]
+        })
+        self.assertTrue(platform_paths)
+        for platform_path in platform_paths:
+            write_routes = (
+                f"open(root / {platform_path!r}, 'w')",
+                f"Path(root / {platform_path!r}).write_text('')",
+                f"shutil.copy(source, root / {platform_path!r})",
+                f"os.replace(source, root / {platform_path!r})",
+                f"subprocess.run(['cp', source, root / {platform_path!r}])",
+            )
+            for route in write_routes:
+                violations_for_route = layout_owned_path_literals(f"def seed(root, source):\n    {route}\n", layout)
+                self.assertTrue(violations_for_route,
+                                f"write route {route!r} did not detect exact platform path {platform_path!r}")
+
+        owned_literals = platform_paths
         with tempfile.TemporaryDirectory(prefix="journey-layout-rail-") as temp:
             module_root = Path(temp) / "journey"
             nested_steps = module_root / "steps"

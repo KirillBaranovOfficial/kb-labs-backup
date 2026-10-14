@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"os"
 	"reflect"
 	"strings"
@@ -54,6 +56,35 @@ func assertEmptyOrMissing(t *testing.T, path string) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("directory %s contains entries after a read-only operation: %v, %v", path, entries, err)
 	}
+}
+
+func freeLoopbackPortWithOffset(t *testing.T, offset int) int {
+	t.Helper()
+	for range 128 {
+		primary, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := primary.Addr().(*net.TCPAddr).Port
+		if port+offset > 65535 {
+			_ = primary.Close()
+			continue
+		}
+		secondary, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+offset))
+		if err != nil {
+			_ = primary.Close()
+			continue
+		}
+		if err := primary.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := secondary.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return port
+	}
+	t.Fatalf("could not reserve a free Gateway port and its %d-port offset", offset)
+	return 0
 }
 
 func platformRootForTest(t *testing.T, installRoot string) string {
