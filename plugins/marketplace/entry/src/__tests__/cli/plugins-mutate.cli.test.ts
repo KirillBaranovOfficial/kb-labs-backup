@@ -101,6 +101,13 @@ describe('marketplace plugins add', () => {
     expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'json', type: 'boolean' }));
   });
 
+  it('declares the --link and --scope flags consumed by the add handler', () => {
+    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace plugins add');
+
+    expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'link', type: 'string' }));
+    expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'scope', type: 'string' }));
+  });
+
   it('registers add and remove under the existing plural plugins group', () => {
     const paths = manifest.cli.commands.map(({ path }) => path);
 
@@ -143,6 +150,12 @@ describe('marketplace plugins remove', () => {
 
     expect(command?.operationType).toBe('mutate');
     expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'json', type: 'boolean' }));
+  });
+
+  it('declares the --scope flag consumed by the remove handler', () => {
+    const command = manifest.cli.commands.find(({ path }) => path === 'marketplace plugins remove');
+
+    expect(command?.flags).toContainEqual(expect.objectContaining({ name: 'scope', type: 'string' }));
   });
 
   it('removes a project plugin registration', async () => {

@@ -52,12 +52,15 @@ export const manifest = {
       ], handler: './commands/sync.js#default' },
       // Subgroup: kb marketplace plugins <cmd>
       { path: 'marketplace plugins add', operationType: 'mutate' as const, describe: 'Register a local project plugin', flags: [
+        { name: 'link', type: 'string' as const, description: 'Project-relative path to the local plugin package' },
         { name: 'json', type: 'boolean' as const, description: 'Output JSON for automation' },
         { name: 'dry-run', type: 'boolean' as const, description: 'Preview without registering' },
+        scopeFlag,
       ], examples: ['kb marketplace plugins add --link .kb/plugins/my-plugin/packages/my-plugin-entry'], handler: './commands/plugins/add.js#default' },
       { path: 'marketplace plugins remove', operationType: 'mutate' as const, describe: 'Remove a local project plugin registration', flags: [
         { name: 'json', type: 'boolean' as const, description: 'Output JSON for automation' },
         { name: 'dry-run', type: 'boolean' as const, description: 'Preview without removing' },
+        scopeFlag,
       ], examples: ['kb marketplace plugins remove @kb-labs/my-plugin'], handler: './commands/plugins/remove.js#default' },
       { path: 'marketplace plugins list', operationType: 'read' as const, describe: 'List installed plugins', flags: [scopeFlag], handler: './commands/plugins/list.js#default' },
       { path: 'marketplace plugins enable', operationType: 'mutate' as const, describe: 'Enable a plugin', flags: [
