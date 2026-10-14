@@ -88,7 +88,6 @@ export type ExecutionResponse = ExecutionResult;
 /** Failure value produced by the execution factory after its sole normalization boundary. */
 export interface NormalizedExecutionFailure<TEnvelope = unknown> extends ExecutionError {
   envelope: TEnvelope;
-  normalized: true;
 }
 
 /** Result visible to runtime surfaces; failed results can only carry the shared envelope type. */

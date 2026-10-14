@@ -16,3 +16,11 @@ export function brandNormalizedExecutionResult(
   Object.defineProperty(branded, NORMALIZED_RESULT, { value: true });
   return branded as FactoryNormalizedExecutionResult;
 }
+
+/** Identify results created at this package's normalization boundary. */
+export function isFactoryNormalizedExecutionResult(
+  result: unknown,
+): result is FactoryNormalizedExecutionResult {
+  return typeof result === 'object' && result !== null && NORMALIZED_RESULT in result &&
+    (result as FactoryNormalizedExecutionResult)[NORMALIZED_RESULT] === true;
+}

@@ -17,7 +17,7 @@ import { isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import type { ILogger } from '@kb-labs/core-platform';
 import { normalizePluginHandlerFailure } from './plugin-handler-failure.js';
-import { brandNormalizedExecutionResult } from './normalized-result.js';
+import { brandNormalizedExecutionResult, isFactoryNormalizedExecutionResult } from './normalized-result.js';
 
 export function ensureHostProcessExecutor(platform: BackendOptions['platform']): void {
   const host = platform as BackendOptions['platform'] & IPlatformAdapters & {
@@ -140,6 +140,8 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         executionTimeMs: 0,
       };
     }
+    if (isFactoryNormalizedExecutionResult(result)) return result;
+
     let returnedFailure = false;
     if (result.ok) {
       if (isUxResultCandidate(result.data) && result.data.ok === false) {
@@ -155,10 +157,6 @@ class NormalizingExecutionBackend implements ExecutionBackend {
       } else {
         return brandNormalizedExecutionResult({ ...result, ok: true });
       }
-    }
-
-    if (isNormalizedExecutionFailure(result.error)) {
-      return brandNormalizedExecutionResult(result as NormalizedExecutionResult);
     }
 
     const descriptor = request.descriptor;
@@ -181,7 +179,6 @@ class NormalizingExecutionBackend implements ExecutionBackend {
       ...result,
       ok: false,
       error: {
-        normalized: true,
         envelope: error,
         code: error.code,
         message: error.message,
@@ -200,11 +197,6 @@ interface DispatchExecutionBackend {
   health(): ReturnType<RawExecutionBackend['health']>;
   stats(): ReturnType<RawExecutionBackend['stats']>;
   shutdown(): ReturnType<RawExecutionBackend['shutdown']>;
-}
-
-function isNormalizedExecutionFailure(error: unknown): error is NormalizedExecutionFailure {
-  return typeof error === 'object' && error !== null && 'normalized' in error && error.normalized === true &&
-    'envelope' in error && isErrorEnvelope(error.envelope);
 }
 
 /**
