@@ -1,6 +1,8 @@
 import type { CommandFailure } from '@kb-labs/sdk';
+import type { PlatformErrorCode } from '@kb-labs/core-platform';
 
-type WorkflowErrorCode = 'KB_RUNTIME_INPUT_INVALID' | 'KB_RUNTIME_COMMAND_FAILED';
+type WorkflowErrorCode = Extract<PlatformErrorCode,
+  'KB_RUNTIME_INPUT_INVALID' | 'KB_RUNTIME_COMMAND_FAILED' | 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY'>;
 
 export function workflowCommandError(
   code: WorkflowErrorCode,

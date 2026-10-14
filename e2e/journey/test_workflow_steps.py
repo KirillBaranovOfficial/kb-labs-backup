@@ -313,7 +313,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                     output = {"ok": True, "data": {"runId": run_id, "status": "queued"}}
                 elif args[:3] == ["workflow", "runs", "cancel"]:
                     if cancelled[0]:
-                        return CompletedProcess(args, 1, "Run is already finished")
+                        return CompletedProcess(args, 1, "", stderr="Run is already finished")
                     cancelled[0] = True
                     return CompletedProcess(args, 0, f"Cancellation requested for {args[3]}")
                 elif args[:3] == ["workflow", "runs", "view"]:
@@ -368,8 +368,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                         message = "healthy write-marker check-health"
                     if run_id == "cron-run":
                         message = "journey-cron-fired"
-                    output = {"ok": True, "data": {"logs": [{"level": "info", "message": message,
-                                                                    "timestamp": "2026-01-01T00:00:00Z"}]}}
+                    return CompletedProcess(args, 0, f"{message}\n")
                 elif args[:3] == ["workflow", "runs", "rerun"]:
                     if args[3] == "run-does-not-exist":
                         return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {

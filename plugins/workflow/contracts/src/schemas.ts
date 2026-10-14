@@ -398,4 +398,10 @@ export const RunSchema = z.object({
   artifacts: z.array(z.string()).optional(),
   metadata: RunMetadataSchema.optional(),
   result: ExecutionResultSchema.optional(),
+  diagnostics: z.array(z.object({
+    operation: z.string().min(1),
+    jobId: z.string().optional(),
+    message: z.string(),
+    recordedAt: z.string().datetime(),
+  })).optional(),
 })

@@ -356,8 +356,9 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
 
     def reject_repeat_cancel() -> None:
         result = _case_cli("S-008.4", ["workflow", "runs", "cancel", run_id[0]], env=env, cwd=project)
-        if result.returncode == 0 or "finished" not in result.stdout.lower():
-            raise AssertionError(f"repeat cancellation was not refused as already finished: {result.stdout!r}")
+        output = result.stdout + result.stderr
+        if result.returncode == 0 or "finished" not in output.lower():
+            raise AssertionError(f"repeat cancellation was not refused as already finished: {output!r}")
         detail = _case_json_cli("S-008.4", ["workflow", "runs", "view", run_id[0], "--json=status"],
                                 env=env, cwd=project)
         detail = _contract_object(detail, "kb workflow runs view --json=status")
@@ -557,9 +558,10 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
 
 
 def _logs(run_id: str, *, env: dict[str, str], cwd: Path) -> str:
-    result = _json_cli(["workflow", "runs", "logs", run_id, "--json"], env=env, cwd=cwd)
-    logs = _workflow_logs_data(result)
-    return "\n".join(item["message"] for item in logs)
+    result = run_cli(["workflow", "runs", "logs", run_id], env=env, cwd=cwd)
+    if result.returncode != 0:
+        raise AssertionError(f"workflow logs command failed: {((result.stdout or '') + (result.stderr or ''))!r}")
+    return (result.stdout or "") + (result.stderr or "")
 
 
 def _write_workflows(project: Path) -> None:

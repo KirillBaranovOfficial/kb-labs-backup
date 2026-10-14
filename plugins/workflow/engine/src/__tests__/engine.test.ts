@@ -182,14 +182,12 @@ describe('WorkflowEngine', () => {
 
     it('reopens workflow history and step output from storage with a fresh engine cache', async () => {
       const run = await engine.createRun({ spec: simpleSpec, trigger: { type: 'manual' } });
-      await engine.getStateStore().updateRun(run.id, (draft) => {
-        draft.status = 'success';
-        const step = draft.jobs[0]?.steps[0];
-        if (step) {
-          step.status = 'success';
-          step.outputs = { message: 'persisted-after-restart' };
-        }
-      });
+      const job = run.jobs[0]!;
+      const step = job.steps[0]!;
+      await engine.markJobStarted(run.id, job.id);
+      await engine.markStepStarted(run.id, job.id, step.id);
+      await engine.markStepCompleted(run.id, job.id, step.id, { message: 'persisted-after-restart' });
+      await engine.markJobCompleted(run.id, job.id);
 
       const stored = await storage.read(`workflows/${run.id}.json`);
       expect(stored).not.toBeNull();
@@ -357,27 +355,24 @@ describe('WorkflowEngine', () => {
 
     it('recovers parked parents after an engine restart and reconciles concurrent children', async () => {
       const pairs = await Promise.all(Array.from({ length: 4 }, async () => {
+        const child = await engine.createRun({
+          spec,
+          trigger: { type: 'manual' },
+        });
+        const childJob = child.jobs[0]!;
+        const childStep = childJob.steps[0]!;
+        await engine.markJobStarted(child.id, childJob.id);
+        await engine.markStepStarted(child.id, childJob.id, childStep.id);
+        await engine.markStepCompleted(child.id, childJob.id, childStep.id, { ok: true });
+        await engine.markJobCompleted(child.id, childJob.id);
+
+        // Persist a parent waiter only after the child is already terminal,
+        // modeling a process boundary where no child terminal event reached it.
         const parent = await engine.createRun({ spec, trigger: { type: 'manual' } });
         const parentJob = parent.jobs[0]!;
         const parentStep = parentJob.steps[0]!;
-        const child = await engine.createRun({
-          spec,
-          trigger: { type: 'workflow', parentRunId: parent.id },
-          metadata: { parentRunId: parent.id },
-        });
         await engine.markJobStarted(parent.id, parentJob.id);
         await engine.markStepWaitingChild(parent.id, parentJob.id, parentStep.id, child.id);
-        await engine.markStepCompleted(child.id, child.jobs[0]!.id, child.jobs[0]!.steps[0]!.id, { ok: true });
-        // Model a daemon dying after child state is persisted but before its
-        // terminal event is delivered to the parent coordinator.
-        await engine.getStateStore().updateJob(child.id, child.jobs[0]!.id, (job) => {
-          job.status = 'success';
-          job.finishedAt = new Date().toISOString();
-        });
-        await engine.getStateStore().updateRun(child.id, (run) => {
-          run.status = 'success';
-          run.finishedAt = new Date().toISOString();
-        });
         return { parent, parentJob };
       }));
 
@@ -451,6 +446,55 @@ describe('WorkflowEngine', () => {
   });
 
   describe('Job failure: run status and downstream (B-029, B-030)', () => {
+    const expectTerminalFailureHistory = async (diagnostic: string) => {
+      const spec: WorkflowSpec = {
+        name: 'Resolution Failure',
+        version: '1.0.0',
+        on: { manual: true },
+        jobs: {
+          main: {
+            runsOn: 'local',
+            retries: { max: 0, backoff: 'exp', initialIntervalMs: 100 },
+            steps: [{ name: 'Failing step', uses: 'plugin:failure/handler' }],
+          },
+        },
+      };
+      const run = await engine.createRun({ spec, trigger: { type: 'manual' } });
+      const jobId = run.jobs[0]!.id;
+      const stepId = run.jobs[0]!.steps[0]!.id;
+
+      await engine.markJobStarted(run.id, jobId);
+      await engine.markStepStarted(run.id, jobId, stepId);
+      await engine.markStepFailed(run.id, jobId, stepId, new Error(diagnostic));
+      await engine.markJobFailed(run.id, jobId, new Error(diagnostic));
+
+      expect(await engine.getRun(run.id)).toMatchObject({
+        status: 'failed',
+        result: { status: 'failed', error: { message: diagnostic } },
+        jobs: [{ status: 'failed', error: { message: diagnostic }, steps: [{ status: 'failed', error: { message: diagnostic } }] }],
+      });
+      const historyEntry = (await engine.getAllRuns()).find((entry) => entry.id === run.id);
+      expect(historyEntry).toMatchObject({
+        status: 'failed',
+        result: { status: 'failed', error: { message: diagnostic } },
+      });
+    };
+
+    // case: S-029.2
+    it('persists terminal history and diagnostics when a handler throws', async () => {
+      await expectTerminalFailureHistory('Step handler threw: handler failure diagnostic');
+    });
+
+    // case: S-029.2
+    it('persists terminal history and diagnostics when a plugin is missing', async () => {
+      await expectTerminalFailureHistory('Plugin @kb-labs/missing was not found');
+    });
+
+    // case: S-029.2
+    it('persists terminal history and diagnostics when a command is unknown', async () => {
+      await expectTerminalFailureHistory('Command workflow.unknown is not registered');
+    });
+
     it('B-029: terminal job failure sets run status to "failed", not "dlq"', async () => {
       const spec: WorkflowSpec = {
         name: 'Fail Test',

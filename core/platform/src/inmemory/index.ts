@@ -9,8 +9,8 @@
  * lost on restart. Cross-process consumers should configure a real
  * adapter (sqlite, redis, etc.).
  *
- * Production-grade by intent: every method is implemented honestly. Not a
- * test mock — those live in `@kb-labs/shared-testing-platform/mocks`.
+ * Production-grade by intent: every method is implemented honestly.
+ * Test adapters and mocks live in `@kb-labs/shared-testing`.
  */
 
 import type { AdapterSlot } from '../adapter-defaults.js';

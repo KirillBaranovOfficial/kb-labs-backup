@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createErrorEnvelope, getCatalogEntry } from '@kb-labs/core-platform/error-envelope';
+import { createUxFailureResult } from '@kb-labs/core-platform/ux-result';
 vi.mock('@kb-labs/sdk', () => ({
   useEnv: (name: string) => process.env[name],
   deriveProjectId: () => 'prj_0123456789abcdef',
@@ -48,6 +50,26 @@ describe('workflow project gateway address', () => {
         crons: [{ id: 'user:journey-cron', schedule: '* * * * *', enabled: true }],
       });
       expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4312/workflow/crons', undefined);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('preserves the structured code and message when a cron mutation is refused', async () => {
+    const errorCode = 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY';
+    const errorMessage = 'Plugin cron plugin:qa:cleanup is read-only';
+    expect(getCatalogEntry(errorCode)?.hint).toBeTruthy();
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(createUxFailureResult(
+      createErrorEnvelope(errorCode, { message: errorMessage }),
+    )), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    try {
+      const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
+      await expect(client.setCronEnabled('plugin:qa:cleanup', true)).rejects.toMatchObject({
+        code: errorCode,
+        message: errorMessage,
+        hint: getCatalogEntry(errorCode)?.hint,
+      });
     } finally {
       vi.unstubAllGlobals();
     }

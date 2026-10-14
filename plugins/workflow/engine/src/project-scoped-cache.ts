@@ -8,12 +8,14 @@ export function requireWorkflowProjectId(projectId: string | undefined): string 
   return projectId
 }
 
+export function workflowProjectCacheKey(projectId: string, key: string): string {
+  return `workflow:project:${requireWorkflowProjectId(projectId)}:${key}`
+}
+
 /** Restricts every workflow-engine cache operation to its registered project. */
 export class ProjectScopedCache implements ICache {
-  private readonly prefix: string
-
-  constructor(private readonly cache: ICache, projectId: string) {
-    this.prefix = `workflow:project:${requireWorkflowProjectId(projectId)}:`
+  constructor(private readonly cache: ICache, private readonly projectId: string) {
+    requireWorkflowProjectId(projectId)
   }
 
   get<T>(key: string): Promise<T | null> {
@@ -29,7 +31,7 @@ export class ProjectScopedCache implements ICache {
   }
 
   clear(pattern?: string): Promise<void> {
-    return this.cache.clear(pattern === undefined ? `${this.prefix}*` : this.key(pattern))
+    return this.cache.clear(pattern === undefined ? `${workflowProjectCacheKey(this.projectId, '')}*` : this.key(pattern))
   }
 
   zadd(key: string, score: number, member: string): Promise<void> {
@@ -49,6 +51,6 @@ export class ProjectScopedCache implements ICache {
   }
 
   private key(key: string): string {
-    return `${this.prefix}${key}`
+    return workflowProjectCacheKey(this.projectId, key)
   }
 }

@@ -239,10 +239,12 @@ describe('Registry Integration', () => {
     await reg2.dispose();
   });
 
-  it('diagnostics report for broken plugins', async () => {
+  it('keeps an unrelated workflow discoverable while retaining a missing-plugin diagnostic', async () => {
     // Good plugin
-    const good = await createFakePlugin(root, '@kb-labs/good');
-    await registerPlugin(root, '@kb-labs/good', good.dir, good.integrity, ['plugin']);
+    const good = await createFakePlugin(root, '@kb-labs/good', {
+      workflows: [{ id: 'unrelated-workflow' }],
+    });
+    await registerPlugin(root, '@kb-labs/good', good.dir, good.integrity, ['plugin', 'workflow']);
 
     // Bad plugin: directory doesn't exist
     const lock = createEmptyLock();
@@ -267,6 +269,9 @@ describe('Registry Integration', () => {
     // Only good plugin loaded
     expect(registry.listPlugins()).toHaveLength(1);
     expect(registry.listPlugins()[0]!.id).toBe('@kb-labs/good');
+    expect(registry.queryEntities({ kind: 'workflow' })).toMatchObject([
+      { ref: { pluginId: '@kb-labs/good', entityId: 'unrelated-workflow' } },
+    ]);
 
     // Diagnostics show the error
     const diag = registry.getDiagnostics();

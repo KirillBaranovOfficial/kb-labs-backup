@@ -17,6 +17,19 @@ import type {
 import { deriveProjectId, getHostServiceAddress, useEnv } from '@kb-labs/sdk';
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
 import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
+import { isUxResult } from '@kb-labs/core-platform/ux-result';
+import type { ErrorCode } from '@kb-labs/core-platform/error-envelope';
+
+export class WorkflowDaemonError extends Error {
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+    readonly hint?: string,
+  ) {
+    super(message);
+    this.name = 'WorkflowDaemonError';
+  }
+}
 
 /** Workflow run summary returned by GET /api/v1/runs */
 export interface WorkflowRunSummary {
@@ -308,9 +321,10 @@ export class WorkflowDaemonClient {
     });
     const data = await this.parseJsonResponse<unknown>(response);
     if (!response.ok) {
-      const error = data && typeof data === 'object' && 'error' in data ? String(data.error) : response.statusText;
-      const code = data && typeof data === 'object' && 'code' in data ? String(data.code) : '';
-      throw new Error(code ? `${code}: ${error}` : error);
+      if (isUxResult(data) && !data.ok) {
+        throw new WorkflowDaemonError(data.error.code, data.error.message, data.error.hint);
+      }
+      throw new Error(`Failed to ${action} cron: ${response.statusText}`);
     }
     return this.unwrapData<{ enabled: boolean }>(data);
   }

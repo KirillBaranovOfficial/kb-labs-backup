@@ -22,14 +22,12 @@ describe('workflow history after daemon restart', () => {
       trigger: { type: 'manual' },
       metadata: { workflowId: 'persisted-workflow' },
     });
-    await firstEngine.getStateStore().updateRun(run.id, (draft) => {
-      draft.status = 'success';
-      const step = draft.jobs[0]?.steps[0];
-      if (step) {
-        step.status = 'success';
-        step.outputs = { stdout: 'persisted-after-restart\n', stderr: '' };
-      }
-    });
+    const job = run.jobs[0]!;
+    const step = job.steps[0]!;
+    await firstEngine.markJobStarted(run.id, job.id);
+    await firstEngine.markStepStarted(run.id, job.id, step.id);
+    await firstEngine.markStepCompleted(run.id, job.id, step.id, { stdout: 'persisted-after-restart\n', stderr: '' });
+    await firstEngine.markJobCompleted(run.id, job.id);
 
     const restartedEngine = new WorkflowEngine({
       projectId: 'prj_0000000000000001',
