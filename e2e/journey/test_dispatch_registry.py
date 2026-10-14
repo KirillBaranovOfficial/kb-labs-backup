@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 import shlex
@@ -392,6 +393,149 @@ def _selection_owner_violations(root: Path) -> list[str]:
     return sorted(violations)
 
 
+def _studio_command_path_sites(root: Path) -> tuple[dict[str, list[str]], list[str]]:
+    """Resolve every reference to the exported command helper by TypeScript symbol."""
+    parser = r"""
+const fs = require('node:fs')
+const path = require('node:path')
+const ts = require('typescript')
+const input = JSON.parse(fs.readFileSync(0, 'utf8'))
+const root = path.resolve(input.root)
+const repositoryRoot = path.resolve(input.repositoryRoot)
+const configPath = path.join(repositoryRoot, 'e2e/studio/tsconfig.json')
+const config = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
+  ...ts.sys,
+  onUnRecoverableConfigFileDiagnostic: diagnostic => {
+    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
+    throw new Error(`Unable to read Studio TypeScript config: ${message}`)
+  },
+})
+if (!config) throw new Error(`Unable to read Studio TypeScript config at ${configPath}`)
+const rootNames = input.isRepository
+  ? config.fileNames
+  : input.sources.map(source => path.join(root, source.file))
+const program = ts.createProgram(rootNames, config.options)
+const checker = program.getTypeChecker()
+const ownerPath = path.join(root, 'e2e/studio/kb-command.ts')
+const ownerFile = program.getSourceFile(ownerPath)
+if (!ownerFile) throw new Error(`Studio command owner is missing: ${ownerPath}`)
+const ownerModule = checker.getSymbolAtLocation(ownerFile)
+if (!ownerModule) throw new Error(`Studio command owner has no module symbol: ${ownerPath}`)
+const ownerSymbol = checker.getExportsOfModule(ownerModule).find(symbol => symbol.name === 'runKbCommand')
+if (!ownerSymbol) throw new Error(`Studio command owner does not export runKbCommand: ${ownerPath}`)
+const calls = []
+const violations = []
+const reason = 'command path must be literal so the rail can check it against product declarations'
+function canonical(symbol) {
+  let current = symbol
+  const visited = new Set()
+  while (current && current.flags & ts.SymbolFlags.Alias && !visited.has(current)) {
+    visited.add(current)
+    const target = checker.getAliasedSymbol(current)
+    if (target === current) break
+    current = target
+  }
+  return current
+}
+function isOwnerReference(identifier) {
+  const symbol = checker.getSymbolAtLocation(identifier)
+  return symbol !== undefined && canonical(symbol) === ownerSymbol
+}
+function location(node, sourceFile) {
+  const relative = path.relative(root, sourceFile.fileName).split(path.sep).join('/')
+  const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+  return { relative, line, site: `${relative}:${line}` }
+}
+function directCall(identifier) {
+  const parent = identifier.parent
+  if (ts.isCallExpression(parent) && parent.expression === identifier) return parent
+  if (ts.isPropertyAccessExpression(parent) && parent.name === identifier
+      && ts.isCallExpression(parent.parent) && parent.parent.expression === parent) return parent.parent
+  return undefined
+}
+function isImportBinding(identifier) {
+  let current = identifier.parent
+  while (current && !ts.isImportDeclaration(current)) current = current.parent
+  return current !== undefined
+}
+function isOwnerDeclaration(identifier, sourceFile) {
+  return sourceFile === ownerFile && identifier.parent && identifier.parent.name === identifier
+}
+const studioFiles = program.getSourceFiles().filter(sourceFile => {
+  const relative = path.relative(root, sourceFile.fileName).split(path.sep).join('/')
+  return relative.startsWith('e2e/studio/') && relative.endsWith('.ts')
+    && !relative.endsWith('.test.ts') && !relative.includes('/node_modules/')
+})
+for (const sourceFile of studioFiles) {
+  function visit(node) {
+    if (ts.isExportSpecifier(node)) {
+      const exported = node.propertyName ?? node.name
+      if (isOwnerReference(exported)) {
+        const site = location(node, sourceFile)
+        violations.push(`${site.site}: ${reason}`)
+      }
+    } else if (ts.isIdentifier(node) && isOwnerReference(node)
+        && !isImportBinding(node) && !isOwnerDeclaration(node, sourceFile)
+        && !ts.isExportSpecifier(node.parent)) {
+      const call = directCall(node)
+      const site = location(node, sourceFile)
+      const argument = call?.arguments[0]
+      if (!argument || !ts.isArrayLiteralExpression(argument)
+          || argument.elements.some(element => !ts.isStringLiteral(element))) {
+        violations.push(`${site.site}: ${reason}`)
+      } else {
+        calls.push({ file: site.relative, line: site.line, values: argument.elements.map(element => element.text) })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+}
+process.stdout.write(JSON.stringify({ calls, violations }))
+"""
+    repository_root = Path(__file__).resolve().parents[2]
+    sources = []
+    for source_path in sorted((root / "e2e/studio").rglob("*.ts")):
+        if "node_modules" in source_path.parts or source_path.name.endswith(".test.ts"):
+            continue
+        sources.append({"file": source_path.relative_to(root).as_posix()})
+    parser_input = {
+        "root": str(root.resolve()),
+        "repositoryRoot": str(repository_root),
+        "isRepository": root.resolve() == repository_root,
+        "sources": sources,
+    }
+    parsed = subprocess.run(
+        ["node", "-e", parser],
+        cwd=repository_root,
+        input=json.dumps(parser_input),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if parsed.returncode != 0:
+        raise RuntimeError(f"TypeScript command rail parser failed: {parsed.stderr.strip()}")
+    result = json.loads(parsed.stdout)
+    paths: dict[str, list[str]] = {}
+    for call in result["calls"]:
+        command = []
+        for value in call["values"]:
+            if value.startswith("-"):
+                break
+            command.append(value)
+        if "--help" in call["values"]:
+            command.append("--help")
+        if command:
+            paths.setdefault(" ".join(command), []).append(
+                f"{call['file']}:{call['line']} (TypeScript owner call)"
+            )
+        else:
+            result["violations"].append(
+                f"{call['file']}:{call['line']}: command path must be literal so the rail can check it against product declarations"
+            )
+    return paths, result["violations"]
+
+
 def _studio_process_creation_violations(root: Path) -> list[str]:
     """Require every TypeScript process sink to live in the generic owner."""
     owner = "e2e/studio/kb-command.ts"
@@ -553,6 +697,98 @@ class DispatchRegistryTests(unittest.TestCase):
                 "e2e/studio/scenario.ts:1: child_process sink outside e2e/studio/kb-command.ts"
             ])
 
+    def test_studio_command_path_rail_resolves_aliases_and_rejects_other_symbol_uses(self):
+        reason = "command path must be literal so the rail can check it against product declarations"
+        with tempfile.TemporaryDirectory(prefix="studio-command-symbols-") as temporary:
+            fixture = Path(temporary)
+            studio = fixture / "e2e/studio"
+            studio.mkdir(parents=True)
+            (studio / "kb-command.ts").write_text(
+                "export function runKbCommand(path: readonly string[]) { return path.join(' ') }\n",
+                encoding="utf-8",
+            )
+            sources = {
+                "aliased-spread.ts": (
+                    "import { runKbCommand as run } from './kb-command'\n"
+                    "run([...prefix, 'commit', 'open'])\n"
+                ),
+                "template-path.ts": (
+                    "import { runKbCommand } from './kb-command'\n"
+                    "runKbCommand([`commit ${verb}`])\n"
+                ),
+                "variable-path.ts": (
+                    "import { runKbCommand } from './kb-command'\n"
+                    "runKbCommand(commandPath)\n"
+                ),
+                "call-path.ts": (
+                    "import { runKbCommand } from './kb-command'\n"
+                    "runKbCommand(resolvePath())\n"
+                ),
+                "invalid-leaf.ts": (
+                    "import { runKbCommand as run } from './kb-command'\n"
+                    "run(['definitely-not-a-product-command'])\n"
+                ),
+                "stored-value.ts": (
+                    "import { runKbCommand } from './kb-command'\n"
+                    "const f = runKbCommand\n"
+                    "f(['commit', 'open'])\n"
+                ),
+                "bridge.ts": "export { runKbCommand as forwarded } from './kb-command'\n",
+                "re-export-use.ts": (
+                    "import { forwarded } from './bridge'\n"
+                    "forwarded(['commit', 'open'])\n"
+                ),
+                "namespace.ts": (
+                    "import * as k from './kb-command'\n"
+                    "k.runKbCommand(path)\n"
+                ),
+            }
+            for filename, source in sources.items():
+                (studio / filename).write_text(source, encoding="utf-8")
+
+            paths, violations = _studio_command_path_sites(fixture)
+            self.assertCountEqual(violations, [
+                f"e2e/studio/aliased-spread.ts:2: {reason}",
+                f"e2e/studio/template-path.ts:2: {reason}",
+                f"e2e/studio/variable-path.ts:2: {reason}",
+                f"e2e/studio/call-path.ts:2: {reason}",
+                f"e2e/studio/stored-value.ts:2: {reason}",
+                f"e2e/studio/bridge.ts:1: {reason}",
+                f"e2e/studio/namespace.ts:2: {reason}",
+            ])
+            self.assertEqual(paths["definitely-not-a-product-command"], [
+                "e2e/studio/invalid-leaf.ts:2 (TypeScript owner call)"
+            ])
+            registered, groups = _registered_command_registry(Path(__file__).resolve().parents[2])
+            self.assertEqual(
+                _unregistered_commands(paths, registered, groups),
+                {"definitely-not-a-product-command": ["e2e/studio/invalid-leaf.ts:2 (TypeScript owner call)"]},
+            )
+
+    def test_studio_command_path_rail_accepts_only_literal_array_elements(self):
+        with tempfile.TemporaryDirectory(prefix="studio-command-literal-") as temporary:
+            fixture = Path(temporary)
+            source = fixture / "e2e/studio/scenario.ts"
+            source.parent.mkdir(parents=True)
+            (source.parent / "kb-command.ts").write_text(
+                "export function runKbCommand(path: readonly string[]) { return path.join(' ') }\n",
+                encoding="utf-8",
+            )
+            source.write_text(
+                "import { runKbCommand } from './kb-command'\n"
+                "runKbCommand(['commit', 'open', '--help'])\n"
+                "runKbCommand(['marketplace', 'install', '@kb-labs/commit-entry', '--json'])\n",
+                encoding="utf-8",
+            )
+            paths, violations = _studio_command_path_sites(fixture)
+            self.assertEqual(violations, [])
+            self.assertEqual(paths, {
+                "commit open --help": ["e2e/studio/scenario.ts:2 (TypeScript owner call)"],
+                "marketplace install @kb-labs/commit-entry": [
+                    "e2e/studio/scenario.ts:3 (TypeScript owner call)"
+                ],
+            })
+
     def test_command_path_rail_rejects_raw_kb_argv_outside_owner(self):
         with tempfile.TemporaryDirectory(prefix="journey-command-owner-") as temporary:
             fixture = Path(temporary)
@@ -692,28 +928,16 @@ class DispatchRegistryTests(unittest.TestCase):
         owner_sites, owner_violations, owner_shapes = _owner_command_sites(root)
         paths.update(owner_sites)
         self.assertEqual(owner_violations, [], "\n".join(owner_violations))
+        typescript_sites, typescript_violations = _studio_command_path_sites(root)
+        paths.update(typescript_sites)
+        owner_violations.extend(typescript_violations)
         for source_path in (root / "e2e").rglob("*.ts"):
             if "node_modules" in source_path.parts or source_path.name.endswith(".test.ts"):
                 continue
             relative = source_path.relative_to(root).as_posix()
-            text = source_path.read_text(encoding="utf-8", errors="replace")
             if relative == "e2e/studio/kb-command.ts":
                 continue
-            for match in re.finditer(r"runKbCommand\s*\(\s*\[([^\]]*)\]", text):
-                raw_args = re.findall(r"['\"]([^'\"]+)['\"]", match.group(1))
-                command = []
-                for value in raw_args:
-                    if value.startswith("-"):
-                        break
-                    command.append(value)
-                if "--help" in raw_args:
-                    command.append("--help")
-                if command:
-                    line = text.count("\n", 0, match.start()) + 1
-                    paths.setdefault(" ".join(command), []).append(f"{relative}:{line} (TypeScript owner call)")
-                else:
-                    line = text.count("\n", 0, match.start()) + 1
-                    owner_violations.append(f"{relative}:{line}: TypeScript command path must be literal")
+            text = source_path.read_text(encoding="utf-8", errors="replace")
             for match in re.finditer(r"runProcessSync\s*\(\s*([^,]+)", text):
                 executable = match.group(1).strip()
                 line = text.count("\n", 0, match.start()) + 1
