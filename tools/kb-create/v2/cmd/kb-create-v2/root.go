@@ -14,6 +14,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/clikit/stream"
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/spf13/cobra"
@@ -267,7 +268,8 @@ func withFirstAdmin(message string, credential *firstAdminCredential) string {
 	case firstAdminPreviouslyDisclosed:
 		return fmt.Sprintf("%s\n%s\n  1. `%s`\n  2. `%s`\n  3. `%s`", message, credential.Notice, credential.StopCommand, credential.RecoveryCommand, credential.StartCommand)
 	default:
-		return fmt.Sprintf("%s\nFirst administrator result is incomplete. Run `kb-create doctor --recover --email %s --generate --yes` to recover access.", message, credential.Email)
+		command := contracts.ShellCommand("kb-create", "doctor", "--recover", "--email", credential.Email, "--generate", "--yes")
+		return fmt.Sprintf("%s\nFirst administrator result is incomplete. Run `%s` to recover access.", message, command)
 	}
 }
 

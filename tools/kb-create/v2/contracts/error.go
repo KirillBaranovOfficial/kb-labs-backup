@@ -83,6 +83,7 @@ const (
 	CodeInstallLayoutUnsupported  = "KB_INSTALL_LAYOUT_UNSUPPORTED"
 	CodeHostSpecInvalid           = "KB_HOST_SPEC_INVALID"
 	CodeHostStateDirUnwritable    = "KB_HOST_STATE_DIR_UNWRITABLE"
+	CodeOperationLockUnsupported  = "KB_HOST_OPERATION_LOCK_UNSUPPORTED"
 	CodeHostProcessIdentityStale  = "KB_HOST_PROCESS_IDENTITY_STALE"
 )
 

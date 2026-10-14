@@ -16,6 +16,8 @@ import (
 )
 
 var ErrInProgress = errors.New("installation operation already in progress")
+var ErrUnsupportedPlatform = errors.New("installation operation locks are unsupported on this platform")
+var ErrIO = errors.New("installation operation lock I/O failed")
 
 type Lease struct {
 	path string
@@ -36,11 +38,11 @@ func Path(stateDir string) string { return filepath.Join(stateDir, "operation.lo
 
 func Acquire(path, operation string) (*Lease, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrIO, err)
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrIO, err)
 	}
 	if err := lockFile(file); err != nil {
 		_ = file.Close()
@@ -54,12 +56,15 @@ func Acquire(path, operation string) (*Lease, error) {
 				fmt.Sprintf("Another launcher operation is already running (process %s).", process),
 				diag.WithHint("Wait for it to finish, then rerun the command."))
 		}
-		return nil, err
+		if errors.Is(err, ErrUnsupportedPlatform) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %w", ErrIO, err)
 	}
 	if err := writeHolder(file, operation); err != nil {
 		unlockFile(file)
 		_ = file.Close()
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrIO, err)
 	}
 	lease := &Lease{path: path, file: file, pid: os.Getpid()}
 	held.Lock()

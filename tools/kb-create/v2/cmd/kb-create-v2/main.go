@@ -158,7 +158,7 @@ func planHasGateway(plan contracts.ResolvedInstallPlan) bool {
 }
 
 func progressWriteFailure(err error, next string) *diag.Diag {
-	command := "kb-create " + next
+	command := contracts.ShellCommand("kb-create", next)
 	return contracts.NewDiag("KB_RUNTIME_UNEXPECTED", "Command progress could not be written.",
 		fmt.Sprintf("Check that command output is writable, then run `%s` to verify the installation.", command), err)
 }

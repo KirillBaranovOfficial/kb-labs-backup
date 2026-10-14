@@ -85,15 +85,27 @@ func (s State) AcquireOperation(operation string) (func(), error) {
 	if err == nil {
 		return lease.Release, nil
 	}
-	if !errors.Is(err, operationlock.ErrInProgress) {
-		return nil, s.unwritable(err)
+	return nil, operationLockFailure(s, path, err)
+}
+
+func operationLockFailure(state State, path string, cause error) *diag.Diag {
+	switch {
+	case errors.Is(cause, operationlock.ErrInProgress):
+		holder, hasHolder := operationlock.Holder(path)
+		process := "unknown"
+		if hasHolder {
+			process = strconv.Itoa(holder)
+		}
+		failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %s).", process), "Wait for it to finish, then rerun the command.", nil)
+		failure.Meta = map[string]any{"pid": process, "path": path}
+		return failure
+	case errors.Is(cause, operationlock.ErrUnsupportedPlatform):
+		return contracts.NewDiag(contracts.CodeOperationLockUnsupported,
+			"Installation operation locks are supported only on Linux and macOS.",
+			"Run this command on a Linux or macOS host.", cause)
+	case errors.Is(cause, operationlock.ErrIO):
+		return state.unwritable(cause)
+	default:
+		return diag.Wrap(cause, "KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", diag.WithHint("Re-run with --debug and include the correlationId in a report."))
 	}
-	holder, hasHolder := operationlock.Holder(path)
-	process := "unknown"
-	if hasHolder {
-		process = strconv.Itoa(holder)
-	}
-	failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %s).", process), "Wait for it to finish, then rerun the command.", nil)
-	failure.Meta = map[string]any{"pid": process, "path": path}
-	return nil, failure
 }

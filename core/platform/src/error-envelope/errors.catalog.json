@@ -461,6 +461,15 @@
       "httpStatus": 503
     },
     {
+      "code": "KB_HOST_OPERATION_LOCK_UNSUPPORTED",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "Installation operation locks are supported only on Linux and macOS.",
+      "hint": "Run this command on a Linux or macOS host."
+    },
+    {
       "code": "KB_HOST_SPEC_INVALID",
       "area": "host",
       "stage": "start",
