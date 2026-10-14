@@ -8,7 +8,7 @@ import type { QueuedRequest, UIPromptMessage, WorkerPoolConfig } from './types.j
 import type { ExecutionRequest, ExecutionResult } from '../../types.js';
 import type { Worker } from './worker.js';
 import { AcquireTimeoutError } from '../../errors.js';
-import { normalizeError } from '../../utils.js';
+import { normalizeExecutionFailure } from '../../utils.js';
 
 /**
  * Queue manager for WorkerPool.
@@ -101,7 +101,7 @@ export class PoolQueueManager {
         this.onAcquireTimeout();
         resolve({
           ok: false,
-          error: normalizeError(
+          ...normalizeExecutionFailure(
             new AcquireTimeoutError(this.config.acquireTimeoutMs)
           ),
           executionTimeMs: performance.now() - startTime,

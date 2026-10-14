@@ -11,7 +11,7 @@ import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { Worker } from './worker.js';
 import type { ExecutionRequest, ExecutionResult, PlatformTransportFactory } from '../../types.js';
 import { QueueFullError } from '../../errors.js';
-import { normalizeError } from '../../utils.js';
+import { normalizeExecutionFailure } from '../../utils.js';
 
 // Modular components
 import { PoolStatsTracker } from './pool-stats.js';
@@ -176,7 +176,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
         this.statsTracker.stats.queueFullRejections++;
         return {
           ok: false,
-          error: normalizeError(
+          ...normalizeExecutionFailure(
             new QueueFullError(current, this.config.maxConcurrentPerPlugin)
           ),
           executionTimeMs: performance.now() - startTime,
@@ -219,7 +219,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
         this.emit('queueFull', this.queueManager.getQueueLength());
         return {
           ok: false,
-          error: normalizeError(
+          ...normalizeExecutionFailure(
             new QueueFullError(
               this.queueManager.getQueueLength(),
               this.config.maxQueueSize

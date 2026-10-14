@@ -5,7 +5,7 @@
  * Simple by default, enterprise when needed.
  */
 
-import type { BackendOptions, ExecutionBackend, ExecutionRequest, RawExecutionBackend } from './types.js';
+import type { BackendOptions, ExecutionBackend, ExecutionDiagnostics, ExecutionRequest, ExecutionResult, RawExecutionBackend } from './types.js';
 import { InProcessBackend } from './backends/in-process.js';
 import { SubprocessBackend } from './backends/subprocess.js';
 import { WorkerPoolBackend } from './backends/worker-pool/backend.js';
@@ -19,6 +19,7 @@ import type { ILogger } from '@kb-labs/core-platform';
 import { normalizePluginHandlerFailure } from './plugin-handler-failure.js';
 import { brandNormalizedExecutionResult, isFactoryNormalizedExecutionResult } from './normalized-result.js';
 import type { NormalizedExecutionResult } from './normalized-result.js';
+import { executionDiagnostics } from './utils.js';
 
 export function ensureHostProcessExecutor(platform: BackendOptions['platform']): void {
   const host = platform as BackendOptions['platform'] & IPlatformAdapters & {
@@ -131,13 +132,19 @@ class NormalizingExecutionBackend implements ExecutionBackend {
   constructor(private readonly backend: DispatchExecutionBackend, private readonly logger: ILogger) {}
 
   async execute(request: ExecutionRequest, options?: Parameters<ExecutionBackend['execute']>[1]): Promise<NormalizedExecutionResult> {
-    let result;
+    let result: ExecutionResult | {
+      ok: false;
+      error: unknown;
+      diagnostics?: ExecutionDiagnostics;
+      executionTimeMs: number;
+    };
     try {
       result = await this.backend.execute(request, options);
     } catch (error) {
       result = {
         ok: false as const,
         error,
+        diagnostics: executionDiagnostics(error),
         executionTimeMs: 0,
       };
     }
@@ -163,11 +170,13 @@ class NormalizingExecutionBackend implements ExecutionBackend {
     const descriptor = request.descriptor;
     const correlationId = descriptor.requestId || request.executionId;
     const hostType = descriptor.hostType;
+    const { diagnostics, ...normalizedResult } = result;
     const error = normalizePluginHandlerFailure(result.error, {
       pluginId: descriptor.pluginId,
       command: request.context?.commandPath ?? request.handlerRef,
       correlationId,
       logger: this.logger,
+      diagnosticStack: diagnostics?.errorStack,
       logContext: {
         applicationId: 'kb-labs',
         serviceId: `${hostType}-plugin-execution`,
@@ -177,7 +186,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
       returnedFailure,
     });
     return brandNormalizedExecutionResult({
-      ...result,
+      ...normalizedResult,
       ok: false,
       error: {
         envelope: error,

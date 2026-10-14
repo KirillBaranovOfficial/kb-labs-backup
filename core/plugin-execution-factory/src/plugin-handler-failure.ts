@@ -17,6 +17,7 @@ export interface PluginHandlerFailureContext {
   logger: ILogger;
   logContext: PlatformLogContext;
   returnedFailure?: boolean;
+  diagnosticStack?: string;
 }
 
 type FailureReason = 'failed unexpectedly' | 'timed out' | 'execution process crashed';
@@ -26,13 +27,15 @@ function recordPluginFailure(
   envelope: ErrorEnvelope,
   error: unknown,
   reason: string,
+  diagnosticStack?: string,
 ): void {
   const logger = createContextLogger(context.logger, context.logContext)
     .forOperation('plugin.handler.failed', { correlationId: context.correlationId })
     .forPlugin({ pluginId: context.pluginId });
   const logError = asError(error);
-  if (typeof error === 'object' && error !== null && 'stack' in error && typeof error.stack === 'string') {
-    logError.stack = error.stack;
+  const stack = diagnosticStack ?? (error instanceof Error ? error.stack : undefined);
+  if (stack) {
+    logError.stack = stack;
   }
   logger.event('error', {
     event: 'plugin.handler.failed',
@@ -117,9 +120,9 @@ export function normalizePluginHandlerFailure(
   const envelope = createContextLogger(context.logger, context.logContext)
     .redactSensitiveValues(rawEnvelope);
   if (typedEnvelope) {
-    recordPluginFailure(context, envelope, error, 'typed product or platform error');
+    recordPluginFailure(context, envelope, error, 'typed product or platform error', context.diagnosticStack);
     return envelope;
   }
-  recordPluginFailure(context, envelope, error, reason);
+  recordPluginFailure(context, envelope, error, reason, context.diagnosticStack);
   return envelope;
 }

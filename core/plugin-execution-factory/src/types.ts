@@ -35,6 +35,7 @@ import type {
   ExecutionResult as CoreExecutionResult,
   ExecutionResponse as CoreExecutionResponse,
   ExecutionError as CoreExecutionError,
+  ExecutionDiagnostics as CoreExecutionDiagnostics,
   ExecutionErrorCode as CoreExecutionErrorCode,
   ExecutionMetadata as CoreExecutionMetadata,
   HealthStatus as CoreHealthStatus,
@@ -172,6 +173,7 @@ export type ExecutionResponse = CoreExecutionResponse;
  * Structured error with code and details.
  */
 export type ExecutionError = CoreExecutionError;
+export type ExecutionDiagnostics = CoreExecutionDiagnostics;
 
 /**
  * Standardized error codes.

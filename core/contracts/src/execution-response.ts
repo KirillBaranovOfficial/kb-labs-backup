@@ -51,9 +51,31 @@ export interface ExecutionError {
   message: string;
   /** Handler errors can carry the platform or product code used by the shared UX contract. */
   code?: string;
-  stack?: string;
+  area?: string;
+  stage?: string;
+  severity?: string;
+  retryable?: boolean;
+  cause?: string;
+  hint?: string;
+  correlationId?: string;
   details?: Record<string, unknown>;
-  [key: string]: unknown;
+  /** Preserves the nested failure claim so the factory can reject malformed results. */
+  error?: unknown;
+  actions?: Array<{ id: string; label: string; command?: string }>;
+  docs?: string;
+  diagnostics?: Array<{
+    code: string;
+    message: string;
+    severity: string;
+    path?: string;
+    line?: number;
+    hint?: string;
+  }>;
+}
+
+/** Private execution diagnostics travel beside the user-facing failure envelope. */
+export interface ExecutionDiagnostics {
+  errorStack?: string;
 }
 
 export interface ExecutionMetadata {
@@ -74,6 +96,7 @@ export interface ExecutionResult {
   ok: boolean;
   data?: unknown;
   error?: ExecutionError;
+  diagnostics?: ExecutionDiagnostics;
   executionTimeMs: number;
   artifactIds?: string[];
   metadata?: ExecutionMetadata;

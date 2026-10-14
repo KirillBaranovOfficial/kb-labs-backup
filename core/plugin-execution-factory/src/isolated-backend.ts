@@ -182,7 +182,7 @@ function buildRoutingBackend(
           });
           const result: ExecutionResult = {
             ok: false,
-            error: { code: envelope.code, message: envelope.message, envelope },
+            error: envelope,
             executionTimeMs: 0,
           };
           return result;

@@ -8,7 +8,7 @@ import type { WorkerPoolConfig, UIPromptMessage } from './types.js';
 import type { Worker } from './worker.js';
 import type { ExecutionRequest, ExecutionResult } from '../../types.js';
 import { WorkerCrashedError } from '../../errors.js';
-import { normalizeError } from '../../utils.js';
+import { normalizeExecutionFailure } from '../../utils.js';
 
 /**
  * Execution manager for WorkerPool.
@@ -112,7 +112,7 @@ export class PoolExecutor {
 
       return {
         ok: false,
-        error: normalizeError(error),
+        ...normalizeExecutionFailure(error),
         executionTimeMs: performance.now() - startTime,
         metadata: {
           workerId: worker.id,

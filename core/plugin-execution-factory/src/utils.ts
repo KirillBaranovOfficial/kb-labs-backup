@@ -6,7 +6,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { createErrorEnvelope, ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
-import type { ExecutionError } from './types.js';
+import type { ExecutionDiagnostics, ExecutionError } from './types.js';
 import { TimeoutError, AbortError, isExecutionLayerError } from './errors.js';
 
 /**
@@ -86,25 +86,21 @@ export function createTimeoutPromise(
  */
 export function normalizeError(error: unknown): ExecutionError {
   if (error instanceof ErrorEnvelopeError) {
-    const envelope = toErrorEnvelope(error);
-    return { ...envelope, stack: error.stack };
+    return toErrorEnvelope(error);
   }
   if (isExecutionLayerError(error)) {
     if (error instanceof AbortError) {
-      const envelope = createErrorEnvelope('KB_PLUGIN_ABORTED', { cause: error.message });
-      return { ...envelope, stack: error.stack };
+      return createErrorEnvelope('KB_PLUGIN_ABORTED', { cause: error.message });
     }
     const details = error instanceof TimeoutError
       ? { failureReason: 'timed out' }
       : error.code === 'WORKER_CRASHED'
         ? { failureReason: 'execution process crashed' }
         : undefined;
-    const envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', details ? { details } : {});
-    return { ...envelope, stack: error.stack };
+    return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', details ? { details } : {});
   }
   if (error instanceof Error) {
-    const envelope = toErrorEnvelope(error);
-    return { ...envelope, stack: error.stack };
+    return toErrorEnvelope(error);
   }
   if (typeof error === 'object' && error !== null) {
     const envelope = toErrorEnvelope(error);
@@ -115,6 +111,22 @@ export function normalizeError(error: unknown): ExecutionError {
   return {
     message: 'The operation did not complete because the handler threw a non-error value.',
     code: 'KB_RUNTIME_UNEXPECTED',
+  };
+}
+
+/** Keeps private stack diagnostics beside, never inside, the serialized failure envelope. */
+export function executionDiagnostics(error: unknown): ExecutionDiagnostics | undefined {
+  return error instanceof Error && error.stack ? { errorStack: error.stack } : undefined;
+}
+
+export function normalizeExecutionFailure(error: unknown): {
+  error: ExecutionError;
+  diagnostics?: ExecutionDiagnostics;
+} {
+  const diagnostics = executionDiagnostics(error);
+  return {
+    error: normalizeError(error),
+    ...(diagnostics ? { diagnostics } : {}),
   };
 }
 

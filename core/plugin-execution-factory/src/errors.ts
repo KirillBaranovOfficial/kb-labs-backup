@@ -64,7 +64,6 @@ export class ExecutionLayerError extends Error {
     return {
       message: this.message,
       code: this.code,
-      stack: this.stack,
       details: this.details,
     };
   }
