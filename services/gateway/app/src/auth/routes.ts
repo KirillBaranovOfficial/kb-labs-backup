@@ -41,6 +41,11 @@ export interface MachineAuthRoutesUserExt {
   pdp: IPolicyDecisionPoint;
 }
 
+async function requireMachineRegistrationIdentity(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (request.authContext || request.userAuthContext) { return; }
+  sendAuthError(reply, 401, undefined, undefined, undefined, { gatewayUrl: gatewayRequestUrl(request) });
+}
+
 export function registerAuthRoutes(
   app: FastifyInstance,
   authService: AuthService,
@@ -48,11 +53,11 @@ export function registerAuthRoutes(
 ): void {
   // Register new agent.
   // Requires MACHINE_REGISTER permission. Auth checks:
-  //   - Anonymous (no cookie, no Bearer) → 401 from machine-auth middleware
+  //   - Anonymous (no cookie, no Bearer) → 401 from this route's declared auth hook
   //   - Cookie-auth user without permission → 403 (PDP check below)
   //   - Cookie-auth admin with MACHINE_REGISTER → 200
   //   - Bearer-auth machine with machine:register in JWT permissions → 200
-  app.post('/auth/register', { schema: { tags: ['Auth'], summary: 'Register new agent and get credentials', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 64 }, capabilities: { type: 'array', items: string }, publicKey: string, handle: { type: 'string', pattern: '^[a-z0-9-]{2,32}$' }, email: { type: 'string', format: 'email' } }, required: ['name'], additionalProperties: false }, response: { 200: { type: 'object', properties: { clientId: string, clientSecret: string, hostId: string, namespaceId: string, handle: string }, required: ['clientId', 'clientSecret', 'hostId', 'namespaceId'] }, ...uxErrorResponses([400, 401, 403, 409]) } } }, async (request, reply) => {
+  app.post('/auth/register', { config: { auth: 'route' }, onRequest: requireMachineRegistrationIdentity, schema: { tags: ['Auth'], summary: 'Register new agent and get credentials', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 64 }, capabilities: { type: 'array', items: string }, publicKey: string, handle: { type: 'string', pattern: '^[a-z0-9-]{2,32}$' }, email: { type: 'string', format: 'email' } }, required: ['name'], additionalProperties: false }, response: { 200: { type: 'object', properties: { clientId: string, clientSecret: string, hostId: string, namespaceId: string, handle: string }, required: ['clientId', 'clientSecret', 'hostId', 'namespaceId'] }, ...uxErrorResponses([400, 401, 403, 409]) } } }, async (request, reply) => {
     // Gate behind MACHINE_REGISTER permission.
     // Two auth paths: cookie-authenticated user (userAuthContext) or Bearer machine (authContext).
     const userCtx = request.userAuthContext;

@@ -10,7 +10,7 @@ export function sendAuthError(
   code?: 'KB_AUTH_REQUIRED' | 'KB_AUTH_FORBIDDEN' | 'KB_AUTH_INVALID_CREDENTIALS'
     | 'KB_AUTH_INVALID_INVITE' | 'KB_AUTH_INVALID_PASSWORD_RESET' | 'KB_AUTH_INVALID_CURRENT_PASSWORD'
     | 'KB_AUTH_LAST_ADMIN',
-  responseFields: Record<string, unknown> = {},
+  options: { gatewayUrl?: string; responseFields?: Record<string, unknown> } = {},
 ) {
   const errorCode = code ?? (status === 403 ? 'KB_AUTH_FORBIDDEN' : 'KB_AUTH_REQUIRED');
   const error = errorCode === 'KB_AUTH_FORBIDDEN'
@@ -18,8 +18,8 @@ export function sendAuthError(
       ? { details: { permission }, ...(cause ? { cause } : {}) }
       : { message: 'You do not have permission to perform this operation.', ...(cause ? { cause } : {}) })
     : createErrorEnvelope(errorCode, {
-      ...(errorCode === 'KB_AUTH_REQUIRED' ? { details: { gatewayUrl: '<url>' } } : {}),
+      ...(errorCode === 'KB_AUTH_REQUIRED' ? { details: { gatewayUrl: options.gatewayUrl ?? '<url>' } } : {}),
       ...(cause ? { cause } : {}),
     });
-  return reply.code(status).send({ ok: false, error, ...responseFields });
+  return reply.code(status).send({ ok: false, error, ...options.responseFields });
 }

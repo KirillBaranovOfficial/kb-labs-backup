@@ -143,7 +143,7 @@ export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): v
       const { adapter: adapterName, method: methodName } = request.params;
 
       if (auth.type === 'user' && ADMIN_ONLY_ADAPTERS.has(adapterName) && !auth.permissions.includes(PERMISSIONS.PLATFORM_SETTINGS_READ)) {
-        return sendAuthError(reply, 403, PERMISSIONS.PLATFORM_SETTINGS_READ, undefined, undefined, { durationMs: 0 });
+        return sendAuthError(reply, 403, PERMISSIONS.PLATFORM_SETTINGS_READ, undefined, undefined, { responseFields: { durationMs: 0 } });
       }
 
       // 1. Check adapter is in allowlist
@@ -159,7 +159,7 @@ export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): v
       // 2. Check method is allowed
       if (!allowedMethods.has(methodName)) {
         return sendAuthError(reply, 403, undefined,
-          `Method "${methodName}" not allowed on adapter "${adapterName}"`, undefined, { durationMs: 0 });
+          `Method "${methodName}" not allowed on adapter "${adapterName}"`, undefined, { responseFields: { durationMs: 0 } });
       }
 
       // 3. Resolve adapter instance
