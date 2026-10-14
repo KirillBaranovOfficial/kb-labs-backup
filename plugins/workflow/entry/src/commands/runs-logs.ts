@@ -6,7 +6,15 @@ import { defineCommand, validationError, handleError, type CLIInput, type Plugin
 import { WorkflowDaemonClient } from '../http-client.js';
 import type { RunsLogsFlags } from '../flags.js';
 
-type LogEntry = { level: string; message: string; timestamp: string; stepId?: string; stepName?: string; [key: string]: unknown };
+type LogEntry = {
+  level: string;
+  message: string;
+  timestamp: string;
+  stepId?: string;
+  stepName?: string;
+  context?: { stdoutTail?: string; stderrTail?: string };
+  [key: string]: unknown;
+};
 
 function renderLogs(ctx: PluginCommandContextV3, logs: LogEntry[], outputJson: boolean): void {
   if (outputJson) {
@@ -22,7 +30,11 @@ function renderLogs(ctx: PluginCommandContextV3, logs: LogEntry[], outputJson: b
     const level = (log.level ?? 'info') as 'info' | 'warn' | 'error' | 'debug';
     const label = log.stepName ?? log.stepId;
     const prefix = label ? `[${label}] ` : '';
-    ctx.ui?.log?.({ level, message: `${prefix}${log.message}` });
+    const output = [
+      log.context?.stdoutTail ? `stdout: ${log.context.stdoutTail}` : undefined,
+      log.context?.stderrTail ? `stderr: ${log.context.stderrTail}` : undefined,
+    ].filter((line): line is string => line !== undefined);
+    ctx.ui?.log?.({ level, message: [`${prefix}${log.message}`, ...output].join('\n') });
   }
 }
 

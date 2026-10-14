@@ -1,5 +1,5 @@
 import { defineCommand, handleError, type PluginCommandContextV3, type CLIInput, type CommandResult } from '@kb-labs/sdk';
-import { WorkflowDaemonClient } from '../http-client.js';
+import { WorkflowDaemonClient, WorkflowDaemonError } from '../http-client.js';
 import { workflowCommandError } from './errors.js';
 
 export interface CronEnabledFlags { json?: boolean }
@@ -21,11 +21,13 @@ export function createCronEnabledCommand(enabled: boolean) {
           if (!outputJson) ctx.ui?.success?.(`Cron ${id} ${enabled ? 'enabled' : 'disabled'}`);
           return { id, ...result };
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (message.startsWith('KB_RUNTIME_CRON_PLUGIN_READ_ONLY:')) {
-            return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'Plugin cron schedules are read-only.', 'List available schedules with: kb workflow crons list', message);
+          if (error instanceof WorkflowDaemonError && error.code === 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY' && error.hint) {
+            return workflowCommandError(
+              'KB_RUNTIME_CRON_PLUGIN_READ_ONLY',
+              error.message,
+              error.hint,
+            );
           }
-          if (!outputJson) { ctx.ui?.warn?.(`Run: kb workflow crons ${action} ${id}`); }
           return handleError(error);
         }
       },

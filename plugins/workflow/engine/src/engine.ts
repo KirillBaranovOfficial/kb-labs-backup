@@ -1124,43 +1124,52 @@ export class WorkflowEngine {
           .map((job) => job.id)
 
         if (abandonedJobIds.length === 0) {
+          // A previous worker may have persisted its failed job and died
+          // before the run-level transition. Reconcile active runs from their
+          // durable job states even when this startup pass has no active job
+          // left to mark abandoned.
+          await this.checkRunCompletion(runId)
           return
         }
 
         if (hasParkedJob) {
-          await this.stateStore.updateRun(runId, (draft) => {
-            for (const job of draft.jobs) {
-              if (abandonedJobIds.includes(job.id)) {
-                job.status = 'failed'
-                job.error = { message: 'Daemon restarted — run was abandoned' }
-                job.finishedAt = now
-              }
-            }
-          })
+          await this.failAbandonedJobs(runId, abandonedJobIds, now)
           count++
+          await this.checkRunCompletion(runId)
           return
         }
 
-        await this.stateStore.transitionRun(runId, 'failed', (draft) => {
-          draft.finishedAt = now
-          if (draft.startedAt) {
-            draft.durationMs = new Date(now).getTime() - new Date(draft.startedAt).getTime()
-          }
-          for (const job of draft.jobs) {
-            if (abandonedJobIds.includes(job.id)) {
-              job.status = 'failed'
-              job.error = { message: 'Daemon restarted — run was abandoned' }
-              job.finishedAt = now
-            }
-          }
-          return draft
-        })
+        await this.failAbandonedJobs(runId, abandonedJobIds, now)
         count++
+        await this.checkRunCompletion(runId)
       }),
     )
 
     if (count > 0) {
       this.logger.warn('Cleaned up stale runs from previous daemon process', { count })
+    }
+  }
+
+  private async failAbandonedJobs(runId: string, jobIds: string[], finishedAt: string): Promise<void> {
+    const run = await this.stateStore.getRun(runId)
+    if (!run) { return }
+
+    for (const jobId of jobIds) {
+      const job = run.jobs.find((candidate) => candidate.id === jobId)
+      if (!job) { continue }
+      const message = 'Daemon restarted — run was abandoned'
+      for (const step of job.steps) {
+        if (step.status === 'running') {
+          await this.stateStore.transitionStep(runId, jobId, step.id, 'failed', (draft) => {
+            draft.error = { message }
+            draft.finishedAt = finishedAt
+          })
+        }
+      }
+      await this.stateStore.transitionJob(runId, jobId, 'failed', (draft) => {
+        draft.error = { message }
+        draft.finishedAt = finishedAt
+      })
     }
   }
 

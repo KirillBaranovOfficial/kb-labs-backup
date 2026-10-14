@@ -10,7 +10,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { statSync, readFileSync } from 'node:fs'
-import { relative, resolve, dirname, basename } from 'node:path'
+import { relative, resolve, basename } from 'node:path'
 
 import fg from 'fast-glob'
 import { parse as parseYaml } from 'yaml'
@@ -47,9 +47,9 @@ export async function lintWorkflowFiles(opts: LintOptions = {}): Promise<FileLin
   const cwd = opts.cwd ?? process.cwd()
   const target = resolve(cwd, opts.path ?? '.kb/workflows')
 
-  // Single-file mode: lint exactly that file, attribute relative to its dir.
+  // Single-file mode: lint exactly that file, attribute its path to the project root.
   if (isFile(target)) {
-    return [await lintOne(target, dirname(target))]
+    return [await lintOne(target, cwd)]
   }
 
   const files = await fg(opts.patterns ?? DEFAULT_PATTERNS, {
@@ -59,7 +59,7 @@ export async function lintWorkflowFiles(opts: LintOptions = {}): Promise<FileLin
     ignore: ['node_modules/**', 'dist/**', '.git/**'],
   })
 
-  const results = await Promise.all(files.map((file) => lintOne(file, target)))
+  const results = await Promise.all(files.map((file) => lintOne(file, cwd)))
   appendInvocationGraphDiagnostics(results)
   return results
 }

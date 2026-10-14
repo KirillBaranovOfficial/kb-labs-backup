@@ -60,7 +60,7 @@ def _plugins(kb: Path, *, cwd: Path, env: dict[str, str], command_runner) -> lis
     return entries
 
 
-def _lock_entry(project: Path) -> tuple[dict, dict]:
+def _lock_entry(project: Path) -> tuple[dict, str, dict]:
     lock_path = project / layout_value('versionStatePaths.kb_marketplace_lock')
     if not lock_path.is_file():
         raise RuntimeError("project .kb/marketplace.lock was not created by marketplace plugins add")
@@ -69,10 +69,15 @@ def _lock_entry(project: Path) -> tuple[dict, dict]:
     except json.JSONDecodeError as error:
         raise RuntimeError("project .kb/marketplace.lock is not valid JSON") from error
     plugins = lock.get("plugins") if isinstance(lock, dict) else None
-    entry = plugins.get(PLUGIN_NAME) if isinstance(plugins, dict) else None
-    if not isinstance(entry, dict):
-        raise RuntimeError("project .kb/marketplace.lock does not contain demo")
-    return lock, entry
+    matches = [
+        (plugin_id, entry)
+        for plugin_id, entry in plugins.items()
+        if isinstance(entry, dict) and entry.get("link") == str(ENTRY_DIR)
+    ] if isinstance(plugins, dict) else []
+    if len(matches) != 1:
+        raise RuntimeError("project .kb/marketplace.lock does not contain one entry for the linked demo package")
+    plugin_id, entry = matches[0]
+    return lock, plugin_id, entry
 
 
 def _json_payload(result: CompletedProcess[str], command: list[str]) -> dict:
@@ -478,11 +483,11 @@ def run_plugin_author_flow(
         _run(kb_command([ "marketplace", "plugins", "add", "--link", ".kb/plugins/demo/packages/demo-entry"], executable=str(kb_path)),
              cwd=project, env=child_env, command_runner=command_runner)
         linked = True
+        _, plugin_id, lock_entry = _lock_entry(project)
         listed = _plugins(kb_path, cwd=project, env=child_env, command_runner=command_runner)
-        if not any(item.get("id") == PLUGIN_NAME and item.get("source") == "local"
+        if not any(item.get("id") == plugin_id and item.get("source") == "local"
                    and item.get("scope") == "project" for item in listed if isinstance(item, dict)):
-            raise RuntimeError("demo is not listed as a local project plugin after marketplace plugins add")
-        _, lock_entry = _lock_entry(project)
+            raise RuntimeError("linked plugin ID is not listed as a local project plugin after marketplace plugins add")
         if lock_entry.get("source") != "local" or lock_entry.get("link") != str(ENTRY_DIR):
             raise RuntimeError("project marketplace.lock does not record demo's local relative link path")
 
@@ -511,20 +516,21 @@ def run_plugin_author_flow(
             raise RuntimeError("kb demo hello did not show the greeting after rebuilding the edited source")
 
     def _remove() -> None:
-        _run(kb_command([ "marketplace", "plugins", "remove", PLUGIN_NAME], executable=str(kb_path)),
+        _, plugin_id, _ = _lock_entry(project)
+        _run(kb_command([ "marketplace", "plugins", "remove", plugin_id], executable=str(kb_path)),
              cwd=project, env=child_env, command_runner=command_runner)
-        if any(item.get("id") == PLUGIN_NAME for item in _plugins(
+        if any(item.get("id") == plugin_id for item in _plugins(
                 kb_path, cwd=project, env=child_env, command_runner=command_runner)
                if isinstance(item, dict)):
-            raise RuntimeError("demo remains in the project plugin list after removal")
+            raise RuntimeError(f"{plugin_id} remains in the project plugin list after removal")
         lock_path = project / layout_value('versionStatePaths.kb_marketplace_lock')
         if lock_path.exists():
             try:
                 plugins = json.loads(lock_path.read_text(encoding="utf-8")).get("plugins", {})
             except json.JSONDecodeError as error:
                 raise RuntimeError("project .kb/marketplace.lock became invalid after removal") from error
-            if PLUGIN_NAME in plugins:
-                raise RuntimeError("demo remains in project .kb/marketplace.lock after removal")
+            if plugin_id in plugins:
+                raise RuntimeError(f"{plugin_id} remains in project .kb/marketplace.lock after removal")
 
     def _record_remove() -> bool:
         return record("remove plugin registration", cases=["S-003.6"], check=_remove)
