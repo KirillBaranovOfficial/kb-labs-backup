@@ -1,8 +1,14 @@
 import type { ExecutionBackend, NormalizedExecutionResult } from '../types.js';
+import type { ErrorEnvelope } from '@kb-labs/core-platform';
 
 // This compile-time assertion keeps structural backend values out of consumers.
-// @ts-expect-error a structurally matching result has not crossed the factory boundary
-const forgedResult: NormalizedExecutionResult = { ok: true, executionTimeMs: 0 };
+declare const forgedEnvelope: ErrorEnvelope;
+// @ts-expect-error a plain normalized marker cannot replace the private factory brand
+const forgedResult: NormalizedExecutionResult = {
+  ok: false,
+  executionTimeMs: 0,
+  error: { normalized: true, envelope: forgedEnvelope },
+};
 void forgedResult;
 
 const forgedBackend = {
