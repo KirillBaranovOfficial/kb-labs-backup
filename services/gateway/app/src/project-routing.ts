@@ -82,14 +82,6 @@ export class ProjectRoutingError extends Error {
   }
 }
 
-const STATUS_BY_CODE: Readonly<Record<string, number>> = {
-  KB_PROJECT_UNKNOWN: 404,
-  KB_PROJECT_RUNTIME_LIMIT: 503,
-  KB_PROJECT_RUNTIME_IDENTITY_MISMATCH: 502,
-  KB_PROJECT_RUNTIME_START_FAILED: 502,
-  KB_HOST_SERVICE_ADDRESS_MISSING: 503,
-};
-
 const HOP_BY_HOP = new Set([
   "connection",
   "keep-alive",
@@ -142,16 +134,16 @@ function sendError(
 ): FastifyReply {
   const envelope = projectRoutingEnvelope(error);
   if (envelope) {
-    const status = STATUS_BY_CODE[envelope.code] ?? 500;
+    const status = isErrorCode(envelope.code)
+      ? getCatalogEntry(envelope.code)?.httpStatus ?? 500
+      : 500;
     return reply.code(status).send(createUxFailureResult(envelope));
   }
   request.kbLogger?.error("Project routing failed", error);
   const failure = createErrorEnvelope("KB_PROJECT_RUNTIME_START_FAILED", {
     details: { projectId, serviceId },
     correlationId: String(request.id),
-    message: `Project service "${serviceId}" for project "${projectId}" could not be reached.`,
     cause: "The project service runtime could not be resolved.",
-    hint: `Run "kb logs query --source ${serviceId} --level error --limit 20" to inspect its errors, then retry the request.`,
   });
   return reply.code(502).send(createUxFailureResult(failure));
 }
@@ -238,11 +230,9 @@ export async function registerProjectRoutes(
         const { projectId, serviceId } = request.params;
         const service = services.find((candidate) => candidate.serviceId === serviceId);
         if (!service) {
-          const error = createErrorEnvelope("KB_RUNTIME_RESOURCE_NOT_FOUND", {
-            details: { path: request.url, serviceId },
+          const error = createErrorEnvelope("KB_PROJECT_SERVICE_NOT_FOUND", {
+            details: { path: request.url, projectId, serviceId },
             correlationId: String(request.id),
-            message: `Project service "${serviceId}" is not declared.`,
-            hint: `Run "kb project show ${projectId}" to confirm the project, then use a declared service ID.`,
           });
           return reply.code(404).send(createUxFailureResult(error));
         }
@@ -255,10 +245,8 @@ export async function registerProjectRoutes(
         const suffix = `/${suffixPath}${query}`;
         const isHealthRequest = request.method === "GET" && suffixPath === "health";
         const sendRuntimeFailure = (
-          message: string,
           reason: string,
           upstreamStatus?: number,
-          retryAction = "request",
         ): FastifyReply => {
           const error = createErrorEnvelope("KB_PROJECT_RUNTIME_START_FAILED", {
             details: {
@@ -267,19 +255,12 @@ export async function registerProjectRoutes(
               ...(upstreamStatus === undefined ? {} : { upstreamStatus: String(upstreamStatus) }),
             },
             correlationId: String(request.id),
-            message,
             cause: reason,
-            hint: `Run "kb logs query --source ${serviceId} --level error --limit 20" to inspect its errors, then retry the ${retryAction}.`,
           });
           return reply.code(502).send(createUxFailureResult(error));
         };
         const sendHealthFailure = (reason: string, upstreamStatus?: number): FastifyReply =>
-          sendRuntimeFailure(
-            `Project service "${serviceId}" for project "${projectId}" did not report healthy.`,
-            reason,
-            upstreamStatus,
-            "health request",
-          );
+          sendRuntimeFailure(reason, upstreamStatus);
 
         let upstream: ProjectServiceConnectionInfo | undefined;
         try {
@@ -337,7 +318,6 @@ export async function registerProjectRoutes(
             const status = isErrorCode(envelope.code) ? getCatalogEntry(envelope.code)?.httpStatus : undefined;
             if (status === undefined) {
               return sendRuntimeFailure(
-                `Project service "${serviceId}" for project "${projectId}" could not be reached.`,
                 `The project runtime timeout error ${envelope.code} has no catalogued HTTP status.`,
               );
             }
@@ -349,7 +329,6 @@ export async function registerProjectRoutes(
             error: error instanceof Error ? error.message : String(error),
           });
           return sendRuntimeFailure(
-            `Project service "${serviceId}" for project "${projectId}" is unavailable.`,
             "The project service runtime could not be reached.",
           );
         }
@@ -399,11 +378,7 @@ export async function registerProjectRoutes(
           const route = `${request.method} ${path}`;
           const error = createErrorEnvelope(code, {
             details: { upstreamStatus: String(upstreamStatus), route },
-            message: `Project runtime returned HTTP ${upstreamStatus} without an error envelope.`,
             correlationId: String(request.id),
-            hint: upstreamStatus === 404
-              ? "Run `kb marketplace plugins doctor --scope project` to inspect project plugin routes, then retry the request."
-              : "Inspect the project runtime response for this route and status, then retry the request.",
           });
           return reply.code(upstreamStatus).send(createUxFailureResult(error));
         }

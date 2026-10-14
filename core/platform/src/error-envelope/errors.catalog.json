@@ -1520,8 +1520,19 @@
       "severity": "error",
       "retryable": true,
       "processExitClass": "operation-failure",
-      "message": "The runtime of project {project} did not start.",
-      "hint": "Read the reason in the log and include the correlationId if you report it."
+      "message": "Project service {serviceId} for project {projectId} could not serve the request.",
+      "hint": "Run `kb logs query --source {serviceId} --level error --limit 20` to inspect its errors, then retry the request."
+    },
+    {
+      "code": "KB_PROJECT_SERVICE_NOT_FOUND",
+      "httpStatus": 404,
+      "area": "project",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "Project service {serviceId} is not declared for project {projectId}.",
+      "hint": "Run `kb project show {projectId}` to confirm the project, then use a declared service ID."
     },
     {
       "code": "KB_PROJECT_UNKNOWN",

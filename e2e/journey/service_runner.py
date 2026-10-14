@@ -357,7 +357,38 @@ def project_plugin_settings_isolation(service_token: str) -> str | None:
     return None
 
 
-def request(path: str, *, method="GET", payload=None, token="", accept="application/json") -> tuple[int, object, dict[str, str]]:
+def _decode_mcp_response(raw: bytes, content_type: str) -> dict:
+    def parse_event_stream() -> object:
+        data = "\n".join(
+            line[5:].strip() for line in raw.decode("utf-8").splitlines()
+            if line.startswith("data:")
+        )
+        return json.loads(data)
+
+    try:
+        if content_type.lower().startswith("text/event-stream"):
+            parsed = parse_event_stream()
+        elif content_type:
+            parsed = json.loads(raw)
+        else:
+            try:
+                parsed = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                parsed = parse_event_stream()
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ValueError("response is neither MCP JSON nor event-stream data") from error
+    if not isinstance(parsed, dict):
+        raise ValueError("response is not an MCP object")
+    return parsed
+
+
+def request(path: str, *, method="GET", payload=None, token="", accept=None,
+            response_kind="ux") -> tuple[int, object, dict[str, str]]:
+    """Build, send, and decode one HTTP exchange at its declared response boundary."""
+    if response_kind not in {"ux", "mcp", "raw"}:
+        raise ValueError(f"unsupported HTTP response kind: {response_kind}")
+    if accept is None:
+        accept = "application/json, text/event-stream" if response_kind == "mcp" else "application/json"
     body = json.dumps(payload).encode() if payload is not None else None
     headers = {"Accept": accept}
     if body is not None:
@@ -369,53 +400,34 @@ def request(path: str, *, method="GET", payload=None, token="", accept="applicat
         status, raw, response_headers = open_http(HTTP.open, req, timeout=15, env=os.environ)
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
+    if response_kind == "raw":
+        return status, raw, response_headers
+    if response_kind == "ux":
+        try:
+            envelope = read_ux_http_result(raw, status)
+            parsed = (decode_ux_success_result(envelope) if 200 <= status < 300
+                      else decode_ux_error_result(envelope))
+        except ValueError as error:
+            raise RuntimeError(f"HTTP {method} {path} did not return a UX JSON envelope: {error}") from error
+        return status, parsed, response_headers
+
+    content_type = response_headers.get("Content-Type", response_headers.get("content-type", ""))
     try:
-        envelope = read_ux_http_result(raw, status)
-        parsed = (decode_ux_success_result(envelope) if 200 <= status < 300
-                  else decode_ux_error_result(envelope))
+        parsed = _decode_mcp_response(raw, content_type)
     except ValueError as error:
-        raise RuntimeError(f"HTTP {method} {path} did not return a UX JSON envelope: {error}") from error
+        raise RuntimeError(f"HTTP {method} {path} returned invalid MCP JSON or event-stream data") from error
     return status, parsed, response_headers
 
 
 def request_mcp(path: str, *, method="POST", payload=None, token="",
                 accept="application/json, text/event-stream") -> tuple[int, object, dict[str, str]]:
-    """Read MCP Streamable HTTP JSON or event-stream data without UX decoding."""
-    body = json.dumps(payload).encode() if payload is not None else None
-    headers = {"Accept": accept}
-    if body is not None:
-        headers["Content-Type"] = "application/json"
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(BASE_URL + path, data=body, headers=headers, method=method)
-    try:
-        status, raw, response_headers = open_http(HTTP.open, req, timeout=15, env=os.environ)
-    except (urllib.error.URLError, TimeoutError) as error:
-        raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
-    content_type = response_headers.get("Content-Type", response_headers.get("content-type", ""))
-    try:
-        if content_type.lower().startswith("text/event-stream"):
-            data = "\n".join(
-                line[5:].strip() for line in raw.decode("utf-8").splitlines()
-                if line.startswith("data:")
-            )
-            parsed = json.loads(data)
-        else:
-            parsed = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
-        raise RuntimeError(f"HTTP {method} {path} returned an invalid MCP or UX JSON response") from error
-    if not isinstance(parsed, dict):
-        raise RuntimeError(f"HTTP {method} {path} returned a non-object MCP or UX JSON response")
-    return status, parsed, response_headers
+    return request(path, method=method, payload=payload, token=token,
+                   accept=accept, response_kind="mcp")
 
 
 def request_raw(path: str, *, accept="application/json") -> tuple[int, bytes, dict[str, str]]:
-    req = urllib.request.Request(BASE_URL + path, headers={"Accept": accept})
-    try:
-        status, raw, response_headers = open_http(HTTP.open, req, timeout=15, env=os.environ)
-    except (urllib.error.URLError, TimeoutError) as error:
-        raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
-    return status, raw, response_headers
+    status, body, headers = request(path, accept=accept, response_kind="raw")
+    return status, body, headers
 
 
 def expect_html(path: str, capability: str) -> str | None:

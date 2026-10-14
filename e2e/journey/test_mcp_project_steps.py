@@ -41,6 +41,15 @@ def tool_error(code: str, message: str, hint: str):
     }}
 
 
+def extract_captured_project_mcp_rows(calls_path: Path) -> list[tuple[int, dict]]:
+    with calls_path.open(encoding="utf-8") as calls_file:
+        return [
+            (line_number, json.loads(line))
+            for line_number, line in enumerate(calls_file, 1)
+            if 178 <= line_number <= 186
+        ]
+
+
 class ProjectMcpJourneyTests(unittest.TestCase):
     def setUp(self):
         def read_installed_contract(*parts: str) -> bytes:
@@ -521,17 +530,44 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, payload)
 
-    def test_mcp_http_reader_accepts_protocol_json_and_event_stream_without_ux_wrapper(self):
+    def test_mcp_http_reader_accepts_protocol_json_without_ux_wrapper(self):
         from service_runner import request_mcp
 
         response = {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-03-26"}}
         with patch("service_runner.open_http", return_value=(200, json.dumps(response).encode(), {
                 "Content-Type": "application/json"})):
             self.assertEqual(request_mcp("/mcp", payload={"method": "initialize"})[:2], (200, response))
-        event = "event: message\ndata: " + json.dumps(response) + "\n\n"
-        with patch("service_runner.open_http", return_value=(200, event.encode(), {
-                "Content-Type": "text/event-stream"})):
-            self.assertEqual(request_mcp("/mcp", payload={"method": "initialize"})[:2], (200, response))
+
+    def test_mcp_http_reader_replays_the_secured_project_rows(self):
+        from service_runner import request_mcp
+
+        calls_path = Path(__file__).resolve().parents[2].parent / "reports" / "j59c-secured" / "invocations" / "calls.jsonl"
+        captured = extract_captured_project_mcp_rows(calls_path)
+        self.assertEqual(len(captured), 9)
+        expected_steps = {
+            178: "S-045.1", 179: "S-045.2", 180: "S-045.3",
+            181: "S-045.5,S-140.6", 182: "S-140.1", 183: "S-140.2",
+            184: "S-140.3", 185: "S-140.4", 186: "S-203.2,S-045.6,S-140.7",
+        }
+        for line_number, row in captured:
+            with self.subTest(capture_row=line_number, step=row["step_id"]):
+                self.assertEqual(row["step_id"], expected_steps[line_number])
+                response = row["stdout"].encode("utf-8")
+                with patch("service_runner.open_http", return_value=(row["exit_code"], response, {})):
+                    try:
+                        status, outcome, _ = request_mcp("/mcp", payload=row.get("request_body"))
+                    except RuntimeError as error:
+                        self.assertEqual(row["exit_code"], 200)
+                        self.assertIn("[REDACTED]", row["stdout"])
+                        self.assertIn("invalid MCP JSON or event-stream data", str(error))
+                        continue
+                self.assertEqual(status, row["exit_code"])
+                self.assertIsInstance(outcome, dict)
+                if line_number == 181:
+                    self.assertEqual(outcome["error"]["code"], "KB_AUTH_REQUIRED")
+                else:
+                    self.assertEqual(outcome["jsonrpc"], "2.0")
+
 
 
 if __name__ == "__main__":

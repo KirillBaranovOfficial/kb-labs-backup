@@ -706,6 +706,7 @@ raise SystemExit(1)
                     executed: list[str] = []
                     fixture_project_ids: list[str] = []
                     fixture_state_at_check_declaration: list[bool] = []
+                    workspace_commands: list[list[str]] = []
 
                     def declare_checks(step_mode, graph):
                         fixture_state_at_check_declaration.append(
@@ -742,6 +743,10 @@ raise SystemExit(1)
                         return {"name": "@kb-labs/commit", "package": "@kb-labs/commit-entry",
                                 "version": "2.120.1"}
 
+                    def capture_workspace_command(argv, **_kwargs):
+                        workspace_commands.append(argv)
+                        return subprocess.CompletedProcess(argv, 0, "", "")
+
                     with patch("service_runner.checks", side_effect=declare_checks), \
                             patch("service_runner.run_service_steps", side_effect=execute_declared_steps), \
                             patch("service_runner.prepare_service_api_session",
@@ -756,6 +761,9 @@ raise SystemExit(1)
                             patch("service_runner.restore_secured_cli_login", return_value=None), \
                             patch("service_runner.run_analytics_steps"), \
                             patch("service_runner.run_gateway_steps"), \
+                            patch("service_runner.run_project_identity_steps"), \
+                            patch("service_runner.run_workspace_cli_steps") as workspace_cli, \
+                            patch("workspace_steps.run_command", side_effect=capture_workspace_command), \
                             patch("service_runner.archive_service_logs"), \
                             patch.dict(os.environ, env, clear=True), \
                             patch("sys.argv", ["service_runner.py", "--mode", mode, "--output", str(output)]), \
@@ -771,6 +779,9 @@ raise SystemExit(1)
                     self.assertEqual(len(executed), len(expected))
                     self.assertEqual(fixture_project_ids, ["prj_fixture"])
                     self.assertEqual(fixture_state_at_check_declaration, [True])
+                    self.assertEqual(workspace_cli.call_count, int(not selected))
+                    self.assertFalse(any(argv[-3:] == ["release", "plan", "--json"]
+                                         for argv in workspace_commands), workspace_commands)
                     status_by_name = {step["name"]: (step["status"], step["message"]) for step in result["steps"]}
                     if selected:
                         self.assertEqual(status_by_name["unselected mcp check"][0], "SKIPPED")

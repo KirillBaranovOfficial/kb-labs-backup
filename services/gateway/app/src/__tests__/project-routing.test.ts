@@ -1,9 +1,19 @@
 import { createServer, request as httpRequest, type Server } from "node:http";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
+import { errorCatalog, renderTemplate } from "@kb-labs/core-platform";
 import { registerProjectRoutes } from "../project-routing.js";
 
 const PROJECT_SERVICES = [{ serviceId: "rest", rewritePrefix: "/api/v1", healthCheck: "/health" }];
+
+function catalogueText(code: string, details: Record<string, string>): { message: string; hint: string } {
+  const entry = errorCatalog.codes.find((candidate) => candidate.code === code);
+  if (!entry) throw new Error(`Expected ${code} in the error catalogue`);
+  return {
+    message: renderTemplate(entry.message, details),
+    hint: renderTemplate(entry.hint, details),
+  };
+}
 
 describe("registerProjectRoutes", () => {
   let upstream: Server | undefined;
@@ -126,13 +136,17 @@ describe("registerProjectRoutes", () => {
     });
 
     expect(res.statusCode).toBe(404);
+    const expectedText = catalogueText("KB_PROJECT_SERVICE_NOT_FOUND", {
+      projectId: "prj_a",
+      serviceId: "unknown-service",
+    });
     expect(res.json()).toMatchObject({
       ok: false,
-      error: { code: "KB_RUNTIME_RESOURCE_NOT_FOUND" },
+      error: {
+        code: "KB_PROJECT_SERVICE_NOT_FOUND",
+        ...expectedText,
+      },
     });
-    expect(res.json().error.hint).toBe(
-      'Run "kb project show prj_a" to confirm the project, then use a declared service ID.',
-    );
     expect(acquired).toBe(false);
   });
 
@@ -144,14 +158,17 @@ describe("registerProjectRoutes", () => {
     }), undefined, [{ serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" }]);
 
     const res = await app!.inject({ method: "POST", url: "/api/v1/projects/p/mcp", payload: '{"jsonrpc":"2.0","id":1,"method":"initialize"}' });
+    const expectedText = catalogueText("KB_PROJECT_RUNTIME_START_FAILED", {
+      projectId: "p",
+      serviceId: "mcp",
+    });
 
     expect(res.statusCode).toBe(502);
     expect(res.json()).toMatchObject({
       ok: false,
       error: {
         code: "KB_PROJECT_RUNTIME_START_FAILED",
-        message: 'Project service "mcp" for project "p" is unavailable.',
-        hint: 'Run "kb logs query --source mcp --level error --limit 20" to inspect its errors, then retry the request.',
+        ...expectedText,
         correlationId: expect.any(String),
       },
     });
@@ -165,14 +182,17 @@ describe("registerProjectRoutes", () => {
     }), undefined, [{ serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" }]);
 
     const response = await app!.inject({ method: "POST", url: "/api/v1/projects/p/mcp", payload: "{}" });
+    const expectedText = catalogueText("KB_PROJECT_RUNTIME_START_FAILED", {
+      projectId: "p",
+      serviceId: "mcp",
+    });
 
     expect(response.statusCode).toBe(502);
     expect(response.json()).toMatchObject({
       ok: false,
       error: {
         code: "KB_PROJECT_RUNTIME_START_FAILED",
-        message: 'Project service "mcp" for project "p" could not be reached.',
-        hint: 'Run "kb logs query --source mcp --level error --limit 20" to inspect its errors, then retry the request.',
+        ...expectedText,
         correlationId: expect.any(String),
       },
     });
@@ -243,14 +263,17 @@ describe("registerProjectRoutes", () => {
     }), { statusCode: 200, body: '{"schema":"kb.health/1","status":"unhealthy"}' });
 
     const response = await app!.inject({ method: "GET", url: "/api/v1/projects/prj_a/rest/health" });
+    const expectedText = catalogueText("KB_PROJECT_RUNTIME_START_FAILED", {
+      projectId: "prj_a",
+      serviceId: "rest",
+    });
 
     expect(response.statusCode).toBe(502);
     expect(response.json()).toMatchObject({
       ok: false,
       error: {
         code: "KB_PROJECT_RUNTIME_START_FAILED",
-        message: 'Project service "rest" for project "prj_a" did not report healthy.',
-        hint: 'Run "kb logs query --source rest --level error --limit 20" to inspect its errors, then retry the health request.',
+        ...expectedText,
       },
     });
   });
@@ -267,14 +290,17 @@ describe("registerProjectRoutes", () => {
     }));
 
     const response = await app!.inject({ method: "GET", url: "/api/v1/projects/prj_a/rest/health" });
+    const expectedText = catalogueText("KB_PROJECT_RUNTIME_START_FAILED", {
+      projectId: "prj_a",
+      serviceId: "rest",
+    });
 
     expect(response.statusCode).toBe(502);
     expect(response.json()).toMatchObject({
       ok: false,
       error: {
         code: "KB_PROJECT_RUNTIME_START_FAILED",
-        message: 'Project service "rest" for project "prj_a" did not report healthy.',
-        hint: 'Run "kb logs query --source rest --level error --limit 20" to inspect its errors, then retry the health request.',
+        ...expectedText,
       },
     });
   });
@@ -344,12 +370,12 @@ describe("registerProjectRoutes", () => {
     const res = await app!.inject({ method: "GET", url: "/api/v1/projects/p/rest/api/v1/plugins/agents/sessions" });
 
     expect(res.statusCode).toBe(404);
+    const expectedText = catalogueText("KB_RUNTIME_RESOURCE_NOT_FOUND", {});
     expect(res.json()).toMatchObject({
       ok: false,
       error: {
         code: "KB_RUNTIME_RESOURCE_NOT_FOUND",
-        message: "Project runtime returned HTTP 404 without an error envelope.",
-        hint: "Run `kb marketplace plugins doctor --scope project` to inspect project plugin routes, then retry the request.",
+        ...expectedText,
         details: { upstreamStatus: "404" },
         correlationId: expect.any(String),
       },
