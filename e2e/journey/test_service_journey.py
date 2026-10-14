@@ -90,6 +90,63 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_flow_schedules_declared_state_producer_before_gate(self):
+        journey = Journey("secured", "producer-before-consumer")
+        graph = FlowGraph(
+            journey,
+            {"consumer": ("project-registered",), "project": ()},
+            state_producers={"project-registered": "project"},
+            groups={"consumer": {"depends_on": ("project-registered",)},
+                    "project": {"produces": ("project-registered",)}},
+        )
+        events = []
+        graph.register_state_producer(
+            "project-registered",
+            lambda: graph.probe_state(
+                "project-registered", "project", "verify project registration",
+                lambda: events.append("producer probe") and None,
+                value=lambda: {"id": "project-1"},
+            ),
+        )
+        result = graph.flow(
+            "consumer prerequisite gate", "consumer", "journey.consumer",
+            lambda: events.append("consumer gate") and None,
+            record_empty_success=False,
+        )
+
+        self.assertEqual(result, "PASS")
+        self.assertEqual(events, ["producer probe", "consumer gate"])
+        self.assertTrue(graph.states["project-registered"]["passed"])
+
+    def test_failed_scheduled_state_producer_blocks_gate_with_evidence(self):
+        journey = Journey("secured", "failed-producer-before-consumer")
+        graph = FlowGraph(
+            journey,
+            {"consumer": ("project-registered",), "project": ()},
+            state_producers={"project-registered": "project"},
+            groups={"consumer": {"depends_on": ("project-registered",)},
+                    "project": {"produces": ("project-registered",)}},
+        )
+        consumer_calls = []
+        graph.register_state_producer(
+            "project-registered",
+            lambda: graph.probe_state(
+                "project-registered", "project", "verify project registration",
+                lambda: "kb project show exited 7: secondary shim missing",
+            ),
+        )
+        result = graph.flow(
+            "consumer prerequisite gate", "consumer", "journey.consumer",
+            lambda: consumer_calls.append("ran"),
+            record_empty_success=False,
+        )
+
+        self.assertEqual(result, "BLOCKED")
+        self.assertEqual(consumer_calls, [])
+        blocked = next(step for step in journey.steps if step.name == "consumer prerequisite gate")
+        self.assertIn("state project-registered", blocked.message)
+        self.assertIn("secondary shim missing", blocked.message)
+
     def test_mutated_state_blocks_consumers_until_its_producer_reestablishes_it(self):
         journey = Journey("secured", "declared-state-mutation")
         graph = FlowGraph(journey, {"project": (), "projects": ("project-registered",)}, states={

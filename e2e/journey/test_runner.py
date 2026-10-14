@@ -76,6 +76,41 @@ def throwing_runner_state_read_violations(sources: dict[str, str]) -> list[str]:
     return violations
 
 
+def state_producer_order_violations(source_text: str, dependencies: dict[str, tuple[str, ...]],
+                                    state_producers: dict[str, str]) -> list[str]:
+    """Require each runner gate to register a declared missing-state producer first."""
+    tree = ast.parse(source_text, filename="runner.py")
+    entrypoint = next((node for node in tree.body
+                       if isinstance(node, ast.FunctionDef) and node.name == "_main"), None)
+    if entrypoint is None:
+        return ["runner.py: missing _main entrypoint"]
+
+    producer_lines: dict[str, int] = {}
+    for node in ast.walk(entrypoint):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "register_state_producer" and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            producer_lines[node.args[0].value] = node.lineno
+
+    violations = []
+    for node in ast.walk(entrypoint):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "flow" and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)):
+            continue
+        group = node.args[1].value
+        for state in dependencies.get(group, ()):
+            producer = state_producers.get(state)
+            registered_at = producer_lines.get(state)
+            if producer is not None and registered_at is not None and node.lineno < registered_at:
+                violations.append(
+                    f"runner.py:{node.lineno}: gate {group!r} consumes state {state!r} "
+                    f"before its {producer!r} producer is scheduled at line {registered_at}")
+    return violations
+
+
 class RunnerInstallFailureTests(unittest.TestCase):
     def test_main_rejects_missing_or_malformed_ownership_before_running_steps(self):
         from journey_selection import JourneySelectionError
@@ -297,6 +332,34 @@ class RunnerInstallFailureTests(unittest.TestCase):
             '    return graph.state_value("project-registered")\n'
         )
         self.assertEqual(len(throwing_runner_state_read_violations(sources)), 1)
+
+    def test_state_producers_are_registered_before_runner_gates_that_consume_them(self):
+        runner = importlib.import_module("runner")
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        self.assertEqual(state_producer_order_violations(
+            source, runner.OUTER_GROUP_DEPENDENCIES, runner.FLOW_GRAPH_STATE_PRODUCERS), [])
+
+    def test_state_producer_order_rail_rejects_a_swapped_gate_and_producer(self):
+        runner = importlib.import_module("runner")
+        group, state = next((group, state)
+                            for group, needed in runner.OUTER_GROUP_DEPENDENCIES.items()
+                            for state in needed if state in runner.FLOW_GRAPH_STATE_PRODUCERS)
+        producer = runner.FLOW_GRAPH_STATE_PRODUCERS[state]
+        source = (
+            "def _main(graph):\n"
+            f"    graph.register_state_producer({state!r}, produce_state)\n"
+            f"    graph.flow('consumer gate', {group!r}, 'journey.test', lambda: None)\n")
+        self.assertEqual(state_producer_order_violations(
+            source, runner.OUTER_GROUP_DEPENDENCIES, runner.FLOW_GRAPH_STATE_PRODUCERS), [])
+        mutated = source.replace(
+            f"    graph.register_state_producer({state!r}, produce_state)\n"
+            f"    graph.flow('consumer gate', {group!r}, 'journey.test', lambda: None)\n",
+            f"    graph.flow('consumer gate', {group!r}, 'journey.test', lambda: None)\n"
+            f"    graph.register_state_producer({state!r}, produce_state)\n")
+        violations = state_producer_order_violations(
+            mutated, runner.OUTER_GROUP_DEPENDENCIES, runner.FLOW_GRAPH_STATE_PRODUCERS)
+        self.assertEqual(len(violations), 1)
+        self.assertIn(producer, violations[0])
 
     def test_failed_state_probe_blocks_its_producer_without_stopping_independent_flows(self):
         with tempfile.TemporaryDirectory(prefix="journey-state-producer-blocked-") as temporary:
