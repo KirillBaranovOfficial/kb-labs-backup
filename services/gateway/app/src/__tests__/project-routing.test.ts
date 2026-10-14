@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -128,33 +128,10 @@ describe("registerProjectRoutes", () => {
     expect(seen[0]?.url).toBe("/mcp/");
   });
 
-  it("keeps the journey MCP wire fixture in sync with bytes and headers forwarded by the project route", async () => {
-    const wireReplies = [
-      {
-        step: "initialize",
-        statusCode: 200,
-        contentType: "text/event-stream",
-        body: 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"kb-mcp","version":"1"}}}\n\n',
-      },
-      {
-        step: "tools/list",
-        statusCode: 200,
-        contentType: "application/json",
-        body: '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"kb-labs__mcp_diagnostics","inputSchema":{"type":"object"}}]}}',
-      },
-      {
-        step: "tool call",
-        statusCode: 200,
-        contentType: "text/event-stream",
-        body: 'event: message\ndata: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"loaded cleanly"}],"isError":false}}\n\n',
-      },
-      {
-        step: "error",
-        statusCode: 200,
-        contentType: "application/json",
-        body: '{"jsonrpc":"2.0","id":4,"error":{"code":-32602,"message":"Invalid params"}}',
-      },
-    ];
+  it("forwards the MCP service wire fixture through the project route byte-for-byte", async () => {
+    const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../e2e/journey/fixtures/project-mcp-responses.json");
+    const wireReplies: Array<{ step: string; status: number; headers: Record<string, string>; body: string }> =
+      JSON.parse(await readFile(fixturePath, "utf8"));
     const seen = await setup((port) => ({
       resolveProjectService: async () => ({
         baseUrl: `http://127.0.0.1:${port}`,
@@ -162,40 +139,27 @@ describe("registerProjectRoutes", () => {
         headers: {},
         release: () => undefined,
       }),
-    }), wireReplies.map(({ statusCode, contentType, body }, index) => ({
-      statusCode,
-      contentType,
+    }), wireReplies.map(({ status, headers, body }) => ({
+      statusCode: status,
       body,
-      headers: { "x-mcp-fixture": wireReplies[index]!.step },
+      headers,
     })), [{ serviceId: "mcp", rewritePrefix: "/", healthCheck: "/health" }]);
 
-    const forwarded = [];
     for (let index = 0; index < wireReplies.length; index += 1) {
+      const reply = wireReplies[index]!;
       const response = await app!.inject({
         method: "POST",
         url: "/api/v1/projects/prj_fixture/mcp",
         headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
         payload: JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "test" }),
       });
-      forwarded.push({
-        step: wireReplies[index]!.step,
-        status: response.statusCode,
-        headers: {
-          "content-type": response.headers["content-type"],
-          "x-mcp-fixture": response.headers["x-mcp-fixture"],
-        },
-        body: response.rawPayload.toString("utf8"),
-      });
+      expect(response.statusCode).toBe(reply.status);
+      for (const [name, value] of Object.entries(reply.headers)) {
+        expect(response.headers[name]).toBe(value);
+      }
+      expect(response.rawPayload.toString("utf8")).toBe(reply.body);
     }
     expect(seen).toHaveLength(wireReplies.length);
-
-    const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../e2e/journey/fixtures/project-mcp-responses.json");
-    const generated = `${JSON.stringify(forwarded, null, 2)}\n`;
-    if (process.env.KB_UPDATE_PROJECT_MCP_FIXTURE === "1") {
-      await mkdir(dirname(fixturePath), { recursive: true });
-      await writeFile(fixturePath, generated, "utf8");
-    }
-    await expect(readFile(fixturePath, "utf8")).resolves.toBe(generated);
   });
 
   // case: S-192.5

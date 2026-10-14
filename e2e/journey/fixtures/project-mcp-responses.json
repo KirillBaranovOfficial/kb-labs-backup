@@ -1,38 +1,34 @@
 [
   {
-    "step": "initialize",
     "status": 200,
     "headers": {
-      "content-type": "text/event-stream",
-      "x-mcp-fixture": "initialize"
+      "content-type": "text/event-stream"
     },
-    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"serverInfo\":{\"name\":\"kb-mcp\",\"version\":\"1\"}}}\n\n"
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"kb-labs\",\"version\":\"1.0.0\"}},\"jsonrpc\":\"2.0\",\"id\":1}\n\n",
+    "step": "initialize"
   },
   {
-    "step": "tools/list",
     "status": 200,
     "headers": {
-      "content-type": "application/json",
-      "x-mcp-fixture": "tools/list"
+      "content-type": "text/event-stream"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"kb-labs__mcp_diagnostics\",\"inputSchema\":{\"type\":\"object\"}}]}}"
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"fixture-wire-plugin__echo\",\"description\":\"Return fixture adapter output\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"echo\",\"description\":\"Return fixture adapter output\",\"operationType\":\"read\",\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"additionalProperties\":false,\"required\":[\"text\"],\"examples\":[]}},{\"name\":\"kb-labs__mcp_diagnostics\",\"description\":\"List plugin commands that failed to load as MCP tools (malformed manifests), with the reason for each.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n",
+    "step": "tools/list"
   },
   {
-    "step": "tool call",
     "status": 200,
     "headers": {
-      "content-type": "text/event-stream",
-      "x-mcp-fixture": "tool call"
+      "content-type": "text/event-stream"
     },
-    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"loaded cleanly\"}],\"isError\":false}}\n\n"
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"output from the external command adapter\"}],\"structuredContent\":{\"ok\":true,\"data\":\"output from the external command adapter\"},\"isError\":false},\"jsonrpc\":\"2.0\",\"id\":3}\n\n",
+    "step": "tool call"
   },
   {
-    "step": "error",
     "status": 200,
     "headers": {
-      "content-type": "application/json",
-      "x-mcp-fixture": "error"
+      "content-type": "text/event-stream"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":4,\"error\":{\"code\":-32602,\"message\":\"Invalid params\"}}"
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":4,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n\n",
+    "step": "error"
   }
 ]

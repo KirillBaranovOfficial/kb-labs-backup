@@ -1,0 +1,127 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { NoOpLogger } from '@kb-labs/core-platform/noop';
+import { InMemoryCache } from '@kb-labs/core-platform/inmemory';
+import type { PlatformContainer } from '@kb-labs/core-runtime';
+import type { Policy } from '@kb-labs/core-policy';
+import { McpDaemonServer } from '../server.js';
+import { callOutput } from '../mcp/output-capture.js';
+
+const executeCommandV3 = vi.hoisted(() => vi.fn());
+vi.mock('@kb-labs/cli-runtime', () => ({
+  executeCommandV3: (...args: unknown[]) => executeCommandV3(...args),
+}));
+
+interface WireResponse {
+  step: string;
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+const fixturePath = resolve(
+  fileURLToPath(new URL('../../../../../e2e/journey/fixtures/project-mcp-responses.json', import.meta.url)),
+);
+
+async function postMcp(port: number, id: number, method: string, params: unknown): Promise<Omit<WireResponse, 'step'>> {
+  const response = await fetch(`http://127.0.0.1:${port}/api/v1/mcp`, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json, text/event-stream',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+  });
+  return {
+    status: response.status,
+    headers: { 'content-type': response.headers.get('content-type') ?? '' },
+    body: await response.text(),
+  };
+}
+
+describe('project MCP wire fixture producer', () => {
+  let daemon: McpDaemonServer | undefined;
+  let projectRoot: string | undefined;
+
+  afterEach(async () => {
+    const runningDaemon = daemon;
+    const temporaryProjectRoot = projectRoot;
+    daemon = undefined;
+    projectRoot = undefined;
+    try {
+      await runningDaemon?.stop();
+    } finally {
+      if (temporaryProjectRoot) await rm(temporaryProjectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('records responses emitted by the real project MCP server and detects protocol drift', async () => {
+    projectRoot = await mkdtemp(join(tmpdir(), 'kb-mcp-wire-'));
+    const pluginRoot = join(projectRoot, 'plugins', 'wire-fixture');
+    await mkdir(join(pluginRoot, 'dist'), { recursive: true });
+    await writeFile(join(projectRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "plugins/*"\n');
+    await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({
+      name: '@fixture/wire-plugin',
+      version: '1.0.0',
+      kb: { manifest: './dist/manifest.js' },
+    }));
+    await writeFile(join(pluginRoot, 'dist', 'manifest.json'), JSON.stringify({
+      schema: 'kb.plugin/3',
+      id: '@fixture/wire-plugin',
+      version: '1.0.0',
+      cli: { commands: [{
+        path: 'echo',
+        describe: 'Return fixture adapter output',
+        handler: 'dist/commands/echo.js',
+        operationType: 'read',
+        flags: [{ name: 'text', type: 'string', required: true }],
+      }] },
+    }));
+    executeCommandV3.mockReset();
+    executeCommandV3.mockImplementation(async () => {
+      callOutput.getStore()?.push('output from the external command adapter');
+      return 0;
+    });
+    daemon = new McpDaemonServer({
+      port: 0,
+      host: '127.0.0.1',
+      logger: new NoOpLogger(),
+      cache: new InMemoryCache(),
+      platform: {
+        analytics: { track: async () => undefined },
+        getSocketPath: () => '/tmp/kb-mcp-wire-fixture.sock',
+      } as unknown as PlatformContainer,
+      projectRoot,
+      policy: { schemaVersion: '1.0', default: 'allow', rules: [] } satisfies Policy,
+      authMode: 'local',
+    });
+    const address = await daemon.start();
+    const port = Number(new URL(address).port);
+
+    const responses: WireResponse[] = [
+      { ...(await postMcp(port, 1, 'initialize', {
+        protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'fixture-client', version: '1' },
+      })), step: 'initialize' },
+      { ...(await postMcp(port, 2, 'tools/list', {})), step: 'tools/list' },
+      { ...(await postMcp(port, 3, 'tools/call', {
+        name: 'fixture-wire-plugin__echo', arguments: { text: 'through real router' },
+      })), step: 'tool call' },
+      { ...(await postMcp(port, 4, 'unknown/method', {})), step: 'error' },
+    ];
+
+    const generated = `${JSON.stringify(responses, null, 2)}\n`;
+    if (process.env.KB_UPDATE_PROJECT_MCP_FIXTURE === '1') {
+      await mkdir(dirname(fixturePath), { recursive: true });
+      await writeFile(fixturePath, generated, 'utf8');
+    }
+    await expect(readFile(fixturePath, 'utf8')).resolves.toBe(generated);
+    expect(executeCommandV3).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: '@fixture/wire-plugin',
+      commandPath: 'fixture-wire-plugin__echo',
+      flags: { text: 'through real router' },
+    }));
+  });
+});
