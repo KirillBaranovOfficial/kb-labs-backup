@@ -212,7 +212,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 				args = append(args, "--json")
 			}
 			var stdout, stderr bytes.Buffer
-			if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr); code != 0 {
+			if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr).Code(); code != 0 {
 				t.Fatalf("%s command failed with exit %d", test.name, code)
 			}
 			for _, output := range []string{stdout.String(), stderr.String()} {
@@ -240,7 +240,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 			}
 			stdout.Reset()
 			stderr.Reset()
-			if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr); code != 0 {
+			if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr).Code(); code != 0 {
 				t.Fatalf("repeat %s command failed with exit %d", test.name, code)
 			}
 			if strings.Contains(stdout.String(), password) || strings.Contains(stdout.String(), environment) {
@@ -338,7 +338,7 @@ func TestExecuteRejectsUndeclaredAndLifecycleSecretIDsBeforeWriting(t *testing.T
 				args = append(args, "--secret-env", mapping)
 			}
 			var stdout, stderr bytes.Buffer
-			code := clikitcommand.Execute(newRootCommand(), args, &stdout, &stderr)
+			code := clikitcommand.Execute(newRootCommand(), args, &stdout, &stderr).Code()
 			if code == 0 {
 				t.Fatal("undeclared requirement was accepted")
 			}
@@ -400,7 +400,7 @@ func TestExecuteInteractiveInstallDoesNotPersistPromptSecretsBeforeMappingValida
 	var stdout, stderr bytes.Buffer
 	args := []string{"install", "--index", indexPath, "--platform-root", root, "--project-root", project,
 		"--secret-env", secrets.BootstrapPassword + "=" + passwordEnv + ",gateway.bootstrap.generated=" + markerEnv}
-	if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr); code == 0 {
+	if code := clikitcommand.Execute(newRootCommandWithDependencyFactory(factory), args, &stdout, &stderr).Code(); code == 0 {
 		t.Fatal("interactive install accepted an installer lifecycle ID")
 	}
 	output := stdout.String() + stderr.String()

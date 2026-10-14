@@ -100,8 +100,8 @@ class ServiceJourneyTests(unittest.TestCase):
         graph.invalidate_state("project-registered", group="auth",
                                step="bootstrap administrator recovery",
                                evidence="recovery removed the shared project registration")
-        blocked = graph.step("project API", "projects", "projects", lambda: None,
-                             cases=["PC-002.3"])
+        blocked = graph.dispatch_step("project API", "projects", "projects", lambda: None,
+                                      cases=["PC-002.3"])
         self.assertEqual(blocked.status, "BLOCKED")
         self.assertIn("state project-registered", blocked.message)
         self.assertIn("recovery removed the shared project registration", blocked.message)
@@ -109,8 +109,8 @@ class ServiceJourneyTests(unittest.TestCase):
         graph.probe_state("project-registered", "project", "project registration restored",
                           lambda: None,
                           value=lambda: {"id": "project-1", "root": "/work/project"})
-        passed = graph.step("project API after restore", "projects", "projects", lambda: None,
-                            cases=["PC-002.3"])
+        passed = graph.dispatch_step("project API after restore", "projects", "projects", lambda: None,
+                                     cases=["PC-002.3"])
         self.assertEqual(passed.status, "PASS")
 
         failed_journey = Journey("secured", "declared-state-mutation-recovery-failed")
@@ -124,8 +124,8 @@ class ServiceJourneyTests(unittest.TestCase):
                                       evidence="recovery removed the shared journey project")
         failed_graph.probe_state("project-registered", "project", "project registration restored",
                                  lambda: "fresh session was revoked before project re-registration")
-        blocked_recovery = failed_graph.step("project API after failed restore", "projects", "projects",
-                                             lambda: None, cases=["PC-002.3"])
+        blocked_recovery = failed_graph.dispatch_step("project API after failed restore", "projects", "projects",
+                                                      lambda: None, cases=["PC-002.3"])
         self.assertEqual(blocked_recovery.status, "BLOCKED")
         self.assertIn("fresh session was revoked before project re-registration", blocked_recovery.message)
 

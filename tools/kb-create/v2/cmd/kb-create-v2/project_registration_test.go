@@ -432,7 +432,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		return deps
 	})
 	noticeCode := clikitcommand.Execute(noticeCommand,
-		[]string{"install", "--json", "--index", indexPath, "--input", requestPath}, &noticeStdout, &noticeStderr)
+		[]string{"install", "--json", "--index", indexPath, "--input", requestPath}, &noticeStdout, &noticeStderr).Code()
 	noticeOutput := noticeStdout.String() + noticeStderr.String()
 	if noticeCode != 0 {
 		t.Fatalf("completed secured install for an unregistered project exit=%d output=%s", noticeCode, noticeOutput)
@@ -661,7 +661,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 					return deps
 				})
 				var stdout, stderr bytes.Buffer
-				code := clikitcommand.Execute(command, args, &stdout, &stderr)
+				code := clikitcommand.Execute(command, args, &stdout, &stderr).Code()
 				output := stdout.String() + stderr.String()
 				if code != 0 {
 					t.Fatalf("completed %s exit=%d output=%s", label, code, output)

@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from platform_update_steps import run_platform_update_steps
+from journey_selection import read_journey_selection
 from service_steps import FlowGraph, Journey
 
 
@@ -57,21 +58,33 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         with patch.dict(os.environ, {
                 "KB_JOURNEY_SELECTED_STEPS": "S-100.1,S-023.1,S-023.2,S-023.3,S-023.4,S-023.5,S-023.6,S-023.8,S-024.2,S-024.3,S-024.4",
-                "KB_JOURNEY_SELECTED_SOURCES": "e2e/journey/platform_update_steps.py",
+                "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps([
+                    "candidate provenance", "launcher version", "start host",
+                ]),
+                "KB_JOURNEY_PREREQUISITE_FLOWS": json.dumps(["start platform host"]),
+                "KB_JOURNEY_NEEDED_STATES": "project-registered",
                 "KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore",
         }, clear=False):
+            parent = Journey("local", "update-step-test-parent", selection=read_journey_selection(os.environ))
+            parent.step("candidate provenance", "journey.orchestration", lambda: None)
+            parent.step("launcher version", "platform.install", lambda: None)
+            graph = FlowGraph(parent, {})
+            graph.flow("start platform host", "host", "platform.host",
+                       lambda: parent.step("start host", "platform.host", lambda: None))
+            graph.probe_state("project-registered", "project", "kb project show/list", lambda: None,
+                              value=lambda: {"id": "prj_update_test", "root": str(self.root)})
             journey = run_platform_update_steps(
                 mode="secured", launcher="kb-create", kb_binary="kb",
                 platform_root=self.root, update_index=self.update_index,
                 request_file=self.root / "request.json", base_version="3.0.0",
                 updated_version="3.0.1", bootstrap_password=None, run_command=self.fake_kb,
-                parent_journey=self.parent_journey,
+                parent_journey=parent,
             )
 
         scan = next((step for step in journey.steps
                      if step.name == "verify disclosed bootstrap credential absent after update and rollback"), None)
         self.assertIsNotNone(scan, "selected S-100.1 scan must be registered without a password")
-        self.assertEqual(scan.status, "BLOCKED")
+        self.assertEqual(scan.status, "BLOCKED", scan.message)
         self.assertIn("bootstrap password was unavailable", scan.message)
         self.assertNotIn("journey-bootstrap-secret-sentinel", scan.message)
 

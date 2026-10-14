@@ -875,7 +875,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             )
             results = []
             for command in commands:
-                result = runner(["kb", *command], cwd=str(platform_root), env=base_env,
+                result = runner(kb_command(command), cwd=str(platform_root), env=base_env,
                                 capture_output=True, text=True, timeout=300)
                 payload = _json(result, command)
                 if result.returncode != 0 or payload.get("ok") is not True:

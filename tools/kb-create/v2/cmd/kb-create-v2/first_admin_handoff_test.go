@@ -89,8 +89,8 @@ func TestUnsupportedSecretStoreFormatUsesItsOwnCataloguedDiagnostic(t *testing.T
 		t.Fatalf("diagnostic code = %s", failure.Code)
 	}
 	catalog, ok := diag.LookupCatalog(failure.Code)
-	if !ok || failure.Message != catalog.Message || failure.Hint != catalog.Hint || diag.ExitCode(failure) != diag.ExitError {
-		t.Fatalf("unsupported store diagnostic does not match its catalogue entry: code=%s exit=%d", failure.Code, diag.ExitCode(failure))
+	if !ok || failure.Message != catalog.Message || failure.Hint != catalog.Hint || diag.ExitCode(failure).Code() != 1 {
+		t.Fatalf("unsupported store diagnostic does not match its catalogue entry: code=%s exit=%d", failure.Code, diag.ExitCode(failure).Code())
 	}
 	if failure.Hint == "" || !strings.Contains(failure.Hint, "kb-create install --platform-root NEW_ROOT") {
 		t.Fatal("diagnostic omitted the exact clean-root recovery command")
