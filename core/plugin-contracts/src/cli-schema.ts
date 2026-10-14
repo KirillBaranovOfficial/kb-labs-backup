@@ -7,6 +7,7 @@ interface CliFlagBase {
   description?: string;
   required?: boolean;
   secret?: boolean;
+  credential?: boolean;
 }
 
 export type CliFlagDecl =
@@ -47,6 +48,12 @@ function validateFlag(value: unknown): CliSchemaIssue[] {
   }
   if (value.secret !== undefined && typeof value.secret !== 'boolean') {
     issues.push({ path: ['secret'], message: 'Secret must be a boolean' });
+  }
+  if (value.credential !== undefined && typeof value.credential !== 'boolean') {
+    issues.push({ path: ['credential'], message: 'Credential must be a boolean' });
+  }
+  if (value.credential === true && value.secret !== true) {
+    issues.push({ path: ['secret'], message: 'Credential flags must be marked secret' });
   }
   if (value.choices !== undefined) {
     if (value.type !== 'string') {

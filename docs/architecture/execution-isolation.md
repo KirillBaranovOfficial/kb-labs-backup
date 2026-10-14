@@ -123,7 +123,7 @@ Plugin handler (Node.js)         ← API платформы, всегда TS
 **Отвечает за:** диспетчеризацию выполнения
 **Знает:** есть ли `environmentId` → local или remote
 **Не знает:** Docker/K8s/VM, workspace, snapshot
-**Интерфейс:** `IExecutionBackend` — `execute(request)`
+**Интерфейс:** `ExecutionBackend` из `@kb-labs/plugin-execution-factory`; его `execute(request)` возвращает результат с меткой нормализации фабрики.
 
 ### IExecutionTransport
 **Отвечает за:** канал связи между backend и runtime сервером в окружении

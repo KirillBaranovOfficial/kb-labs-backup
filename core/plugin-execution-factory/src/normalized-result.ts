@@ -1,26 +1,42 @@
-import type { NormalizedExecutionResult as CoreNormalizedExecutionResult } from '@kb-labs/core-contracts';
+import type { ExecutionMetadata, ExecutionError } from '@kb-labs/core-contracts';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 
 const NORMALIZED_RESULT: unique symbol = Symbol('normalized-execution-result');
 
-/** Opaque result type created only by the factory boundary. */
-export type FactoryNormalizedExecutionResult = CoreNormalizedExecutionResult<ErrorEnvelope> & {
+export interface NormalizedExecutionFailure extends ExecutionError {
+  envelope: ErrorEnvelope;
+}
+
+/** Public result type created only by the factory normalization boundary. */
+export type NormalizedExecutionResult = ( {
+  ok: true;
+  data?: unknown;
+  executionTimeMs: number;
+  artifactIds?: string[];
+  metadata?: ExecutionMetadata;
+  [key: string]: unknown;
+} | {
+  ok: false;
+  error: NormalizedExecutionFailure;
+  executionTimeMs: number;
+  metadata?: ExecutionMetadata;
+  [key: string]: unknown;
+}) & {
   readonly [NORMALIZED_RESULT]: true;
 };
 
+type BeforeNormalization<T> = T extends unknown ? Omit<T, typeof NORMALIZED_RESULT> : never;
+
 /** Internal to this package; the public package entry exports only the type. */
-export function brandNormalizedExecutionResult(
-  result: CoreNormalizedExecutionResult<ErrorEnvelope>,
-): FactoryNormalizedExecutionResult {
-  const branded = { ...result };
-  Object.defineProperty(branded, NORMALIZED_RESULT, { value: true });
-  return branded as FactoryNormalizedExecutionResult;
+export function brandNormalizedExecutionResult<T extends BeforeNormalization<NormalizedExecutionResult>>(
+  result: T,
+) {
+  return Object.assign(result, { [NORMALIZED_RESULT]: true as const });
 }
 
 /** Identify results created at this package's normalization boundary. */
 export function isFactoryNormalizedExecutionResult(
   result: unknown,
-): result is FactoryNormalizedExecutionResult {
-  return typeof result === 'object' && result !== null && NORMALIZED_RESULT in result &&
-    (result as FactoryNormalizedExecutionResult)[NORMALIZED_RESULT] === true;
+): result is NormalizedExecutionResult {
+  return typeof result === 'object' && result !== null && Reflect.get(result, NORMALIZED_RESULT) === true;
 }

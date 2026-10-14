@@ -5,7 +5,7 @@
  * Simple by default, enterprise when needed.
  */
 
-import type { BackendOptions, ExecutionBackend, ExecutionRequest, NormalizedExecutionFailure, NormalizedExecutionResult, RawExecutionBackend } from './types.js';
+import type { BackendOptions, ExecutionBackend, ExecutionRequest, RawExecutionBackend } from './types.js';
 import { InProcessBackend } from './backends/in-process.js';
 import { SubprocessBackend } from './backends/subprocess.js';
 import { WorkerPoolBackend } from './backends/worker-pool/backend.js';
@@ -18,6 +18,7 @@ import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import type { ILogger } from '@kb-labs/core-platform';
 import { normalizePluginHandlerFailure } from './plugin-handler-failure.js';
 import { brandNormalizedExecutionResult, isFactoryNormalizedExecutionResult } from './normalized-result.js';
+import type { NormalizedExecutionResult } from './normalized-result.js';
 
 export function ensureHostProcessExecutor(platform: BackendOptions['platform']): void {
   const host = platform as BackendOptions['platform'] & IPlatformAdapters & {
@@ -155,7 +156,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
           },
         };
       } else {
-        return brandNormalizedExecutionResult({ ...result, ok: true });
+        return brandNormalizedExecutionResult({ ...result, ok: true as const });
       }
     }
 
@@ -183,7 +184,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         code: error.code,
         message: error.message,
         details: error.details,
-      } as NormalizedExecutionFailure,
+      },
     });
   }
 

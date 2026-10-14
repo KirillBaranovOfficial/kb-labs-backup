@@ -4,7 +4,7 @@ Universal execution layer for KB Labs plugins — runs handlers in-process, subp
 
 ## Overview
 
-Provides a unified `IExecutionBackend` interface with pluggable backends, workspace isolation per execution, WebSocket channel support, and structured error handling. The backend is selected via `createExecutionBackend()` based on configuration.
+Provides the factory-owned branded `ExecutionBackend` contract with pluggable backends, workspace isolation per execution, WebSocket channel support, and structured error handling. The backend is selected via `createExecutionBackend()` based on configuration.
 
 ## Quick Start
 

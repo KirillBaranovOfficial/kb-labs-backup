@@ -4,7 +4,7 @@
  * Core contracts - Interfaces and types for KB Labs core systems.
  *
  * This package contains all contract definitions (interfaces-only, no implementations):
- * - Execution layer contracts (ExecutionRequest, IExecutionBackend, etc.)
+ * - Execution request/response data contracts
  * - Platform gateway contracts (IPlatformGateway, RequestContext)
  * - Subprocess runner contracts (ISubprocessRunner)
  *
@@ -15,7 +15,7 @@
 export * from "./execution-request.js";
 export * from "./execution-response.js";
 
-// Execution backend interface
+// Execution backend lifecycle metrics
 export * from "./execution-backend.js";
 
 // Platform gateway interface

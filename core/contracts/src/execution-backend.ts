@@ -4,12 +4,6 @@
  * Execution backend interfaces - contract for execution layer.
  */
 
-import type { ExecutionRequest } from "./execution-request.js";
-import type {
-  NormalizedExecutionResult,
-  ExecuteOptions,
-} from "./execution-response.js";
-
 /**
  * Health status for execution backend.
  */
@@ -45,38 +39,4 @@ export interface ExecutionStats {
 
   /** P99 execution time in ms */
   p99ExecutionTimeMs?: number;
-}
-
-/**
- * Execution backend interface.
- *
- * Implemented by backends in @kb-labs/plugin-execution.
- * Used by @kb-labs/core-runtime and CLI/REST hosts.
- */
-export interface IExecutionBackend<TDescriptor = unknown, TEnvelope = unknown> {
-  /**
-   * Execute a plugin handler.
-   *
-   * Returns a success result or the envelope normalized at the factory boundary.
-   * Never throws - failures are returned as NormalizedExecutionResult.
-   */
-  execute(
-    request: ExecutionRequest<TDescriptor>,
-    options?: ExecuteOptions,
-  ): Promise<NormalizedExecutionResult<TEnvelope>>;
-
-  /**
-   * Get backend health status.
-   */
-  health(): Promise<HealthStatus>;
-
-  /**
-   * Get execution statistics.
-   */
-  stats(): Promise<ExecutionStats>;
-
-  /**
-   * Shutdown backend and cleanup resources.
-   */
-  shutdown(): Promise<void>;
 }

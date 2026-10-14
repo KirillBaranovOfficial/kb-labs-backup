@@ -85,7 +85,6 @@ export {
 // Types
 export type {
   ExecutionBackend,
-  NormalizedExecutionResult,
   BackendOptions,
   WorkerPoolOptions,
   WarmupPolicy,
@@ -114,6 +113,7 @@ export type {
   PlatformTransportFactory,
   PlatformTransportServer,
 } from './types.js';
+export type { NormalizedExecutionResult } from './normalized-result.js';
 
 // Platform transport factories
 export { IPCPlatformTransportFactory } from './platform-transport/index.js';
