@@ -28,6 +28,10 @@ func expandEnv(yf *yamlFile, rootDir string) error {
 	if err != nil {
 		return fmt.Errorf("load launcher secret state: %w", err)
 	}
+	return expandEnvWithProjection(yf, rootDir, projection)
+}
+
+func expandEnvWithProjection(yf *yamlFile, rootDir string, projection secretstate.HostProjection) error {
 	launcherSecrets := projection.Values
 	dotenv, err := loadDotEnv(filepath.Join(rootDir, ".env"))
 	if err != nil {

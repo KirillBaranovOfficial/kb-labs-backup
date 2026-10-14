@@ -63,7 +63,7 @@ func (s State) SupervisorPID() string  { return filepath.Join(s.Dir, "supervisor
 func (s State) SupervisorLog() string  { return filepath.Join(s.Dir, "supervisor.log") }
 func (s State) Control() string        { return filepath.Join(s.Dir, "control.json") }
 func (s State) UpdateRequests() string { return filepath.Join(s.Dir, "update-requests.json") }
-func (s State) OperationLock() string  { return filepath.Join(s.Dir, "operation.lock") }
+func (s State) OperationLock() string  { return operationlock.Path(s.Dir) }
 
 // Ensure creates the state directory with owner-only permissions.
 func (s State) Ensure() error { return os.MkdirAll(s.Dir, 0o700) }
@@ -72,10 +72,10 @@ func (s State) unwritable(cause error) *diag.Diag {
 	return contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "Cannot write to the state directory "+s.Dir+".", "Fix the directory permissions or free disk space.", cause)
 }
 
-// AcquireOperation takes the per-installation lifecycle lock so two launchers never
-// swap the same installation at once. The lock records the holder's pid; a lock
-// whose holder is gone is stale and is replaced. The returned function releases
-// it and is safe to call more than once.
+// AcquireOperation takes the kernel-owned per-installation lifecycle lock so two
+// launchers never mutate the same installation at once. Its persistent file is
+// only descriptive metadata; process exit releases the descriptor lock. The
+// returned function releases it and is safe to call more than once.
 func (s State) AcquireOperation(operation string) (func(), error) {
 	if err := s.Ensure(); err != nil {
 		return nil, s.unwritable(err)
@@ -88,8 +88,12 @@ func (s State) AcquireOperation(operation string) (func(), error) {
 	if !errors.Is(err, operationlock.ErrInProgress) {
 		return nil, s.unwritable(err)
 	}
-	holder, _ := operationlock.Holder(path)
-	failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %d).", holder), "Wait for it to finish; if no launcher is running, remove the stale lock with `"+contracts.ShellCommand("rm", path)+"`.", nil)
-	failure.Meta = map[string]any{"pid": strconv.Itoa(holder), "path": path}
+	holder, hasHolder := operationlock.Holder(path)
+	process := "unknown"
+	if hasHolder {
+		process = strconv.Itoa(holder)
+	}
+	failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %s).", process), "Wait for it to finish, then rerun the command.", nil)
+	failure.Meta = map[string]any{"pid": process, "path": path}
 	return nil, failure
 }

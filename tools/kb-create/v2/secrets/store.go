@@ -4,6 +4,7 @@
 package secrets
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -70,7 +71,6 @@ type Store struct {
 	PlatformRoot string
 	ReadOnly     bool
 	atomicWrite  func(string, []byte, os.FileMode) error
-	beforeWrite  func() error
 }
 
 const (
@@ -103,15 +103,13 @@ func (store Store) Put(name, value string) error {
 		return store.PutBootstrapPassword(value, BootstrapOriginSupplied)
 	}
 	if name == BootstrapPasswordEnvironment {
-		record, err := store.readRecord()
-		if err != nil {
-			return err
-		}
-		origin, _ := record.BootstrapPasswordOrigin()
-		if origin != BootstrapOriginGenerated && origin != BootstrapOriginSupplied {
-			origin = BootstrapOriginSupplied
-		}
-		return store.PutBootstrapPassword(value, origin)
+		return store.mutate("secret-state", func(record *secretStoreRecord) error {
+			origin, _ := record.BootstrapPasswordOrigin()
+			if origin != BootstrapOriginGenerated && origin != BootstrapOriginSupplied {
+				origin = BootstrapOriginSupplied
+			}
+			return setBootstrapPassword(record, value, origin)
+		})
 	}
 	return store.put(name, value)
 }
@@ -131,15 +129,16 @@ func (store Store) PutBootstrapPassword(value string, origin BootstrapPasswordOr
 	if origin != BootstrapOriginGenerated && origin != BootstrapOriginSupplied {
 		return errors.New("bootstrap password origin is invalid")
 	}
-	record, err := store.readRecord()
-	if err != nil {
-		return err
-	}
+	return store.mutate("secret-state", func(record *secretStoreRecord) error {
+		return setBootstrapPassword(record, value, origin)
+	})
+}
+
+func setBootstrapPassword(record *secretStoreRecord, value string, origin BootstrapPasswordOrigin) error {
 	current, _ := record.Requirement(BootstrapPassword)
 	currentOrigin, _ := record.BootstrapPasswordOrigin()
 	_, completed := record.BootstrapCompleted()
-	if completed &&
-		(current != value || currentOrigin != origin || record.BootstrapPasswordDisclosed()) {
+	if completed && (current != value || currentOrigin != origin || record.BootstrapPasswordDisclosed()) {
 		return ErrBootstrapCredentialLocked
 	}
 	if record.BootstrapPasswordDisclosed() {
@@ -150,7 +149,7 @@ func (store Store) PutBootstrapPassword(value string, origin BootstrapPasswordOr
 		return nil
 	}
 	record.SetBootstrapPassword(value, origin)
-	return store.writeRecord(record)
+	return nil
 }
 
 func (store Store) put(name, value string) error {
@@ -163,12 +162,10 @@ func (store Store) put(name, value string) error {
 	if value == "" {
 		return fmt.Errorf("secret %q is empty", name)
 	}
-	record, err := store.readRecord()
-	if err != nil {
-		return err
-	}
-	record.SetRequirement(name, value)
-	return store.writeRecord(record)
+	return store.mutate("secret-state", func(record *secretStoreRecord) error {
+		record.SetRequirement(name, value)
+		return nil
+	})
 }
 
 // MarkBootstrapDisclosed atomically records handoff and removes both stored
@@ -177,12 +174,10 @@ func (store Store) MarkBootstrapDisclosed() error {
 	if store.ReadOnly {
 		return fmt.Errorf("secret store is read-only during staged update verification")
 	}
-	record, err := store.readRecord()
-	if err != nil {
-		return err
-	}
-	record.MarkBootstrapDisclosed()
-	return store.writeRecord(record)
+	return store.mutate("secret-state", func(record *secretStoreRecord) error {
+		record.MarkBootstrapDisclosed()
+		return nil
+	})
 }
 
 // MarkBootstrapCompleted records the Gateway's proven first-admin readiness.
@@ -190,12 +185,10 @@ func (store Store) MarkBootstrapCompleted(value string) error {
 	if store.ReadOnly {
 		return fmt.Errorf("secret store is read-only during staged update verification")
 	}
-	record, err := store.readRecord()
-	if err != nil {
-		return err
-	}
-	record.MarkBootstrapCompleted(value)
-	return store.writeRecord(record)
+	return store.mutate("secret-state", func(record *secretStoreRecord) error {
+		record.MarkBootstrapCompleted(value)
+		return nil
+	})
 }
 
 func (store Store) BootstrapCompleted() (bool, error) {
@@ -221,7 +214,54 @@ func (store Store) BootstrapOrigin() (BootstrapPasswordOrigin, bool, error) {
 	return origin, present, err
 }
 
-func (store Store) writeRecord(record secretStoreRecord) error {
+// mutate owns the complete read-modify-write transaction under the same
+// cross-process operation lock used by launcher commands.
+func (store Store) mutate(operation string, update func(*secretStoreRecord) error) error {
+	layout, err := versionroot.ForPlatformPath(store.PlatformRoot)
+	if err != nil {
+		return err
+	}
+	lockPath := operationlock.Path(layout.HostStateDir())
+	lease := operationlock.Held(lockPath)
+	if lease == nil {
+		lease, err = operationlock.Acquire(lockPath, operation)
+		if err != nil {
+			if errors.Is(err, operationlock.ErrInProgress) {
+				return contracts.NewDiag(contracts.CodeOperationInProgress,
+					"Another launcher operation is already running.",
+					"Wait for it to finish, then rerun the command.", err)
+			}
+			return err
+		}
+		defer lease.Release()
+	}
+	return lease.With(func() error {
+		record, err := store.readRecord()
+		if err != nil {
+			return err
+		}
+		before, err := secretstate.Encode(record)
+		if err != nil {
+			return err
+		}
+		if err := update(&record); err != nil {
+			return err
+		}
+		after, err := secretstate.Encode(record)
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(before, after) {
+			return nil
+		}
+		if store.ReadOnly {
+			return fmt.Errorf("secret store is read-only during staged update verification")
+		}
+		return store.writeRecord(lease, record)
+	})
+}
+
+func (store Store) writeRecord(lease *operationlock.Lease, record secretStoreRecord) error {
 	path, err := store.path()
 	if err != nil {
 		return err
@@ -229,48 +269,30 @@ func (store Store) writeRecord(record secretStoreRecord) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	if store.beforeWrite != nil {
-		if err := store.beforeWrite(); err != nil {
-			return err
-		}
-	}
 	layout, err := versionroot.ForPlatformPath(store.PlatformRoot)
 	if err != nil {
 		return err
 	}
-	lockPath := filepath.Join(layout.HostStateDir(), "operation.lock")
-	lease := operationlock.Held(lockPath)
-	if lease == nil {
-		lease, err = operationlock.Acquire(lockPath, "secret-state")
-		if err != nil {
-			if errors.Is(err, operationlock.ErrInProgress) {
-				return contracts.NewDiag(contracts.CodeOperationInProgress,
-					"Another launcher operation is already running.",
-					"Wait for it to finish, then rerun `"+contracts.ShellCommand("kb-create", "apply", "--platform-root", store.PlatformRoot)+"`.", err)
-			}
-			return err
-		}
-		defer lease.Release()
+	if operationlock.Held(operationlock.Path(layout.HostStateDir())) != lease {
+		return errors.New("secret-state write requires its installation operation lock")
 	}
-	return lease.With(func() error {
-		current, err := store.readRecord()
-		if err != nil {
-			return err
-		}
-		if !record.AdvanceFrom(current) {
-			return contracts.NewDiag(contracts.CodeOperationInProgress,
-				"The installation secret state changed while this command was preparing an update.",
-				"Rerun `"+contracts.ShellCommand("kb-create", "apply", "--platform-root", store.PlatformRoot)+"` to apply it to the current state.", nil)
-		}
-		data, err := secretstate.Encode(record)
-		if err != nil {
-			return err
-		}
-		if store.atomicWrite != nil {
-			return store.atomicWrite(path, data, 0o600)
-		}
-		return versionroot.AtomicWriteFile(path, data, 0o600)
-	})
+	current, err := store.readRecord()
+	if err != nil {
+		return err
+	}
+	if !record.AdvanceFrom(current) {
+		return contracts.NewDiag(contracts.CodeSecretStateChanged,
+			"The installation secret state changed underneath this operation.",
+			"Rerun `kb-create apply --platform-root "+store.PlatformRoot+"` to apply changes to the current state.", nil)
+	}
+	data, err := secretstate.Encode(record)
+	if err != nil {
+		return err
+	}
+	if store.atomicWrite != nil {
+		return store.atomicWrite(path, data, 0o600)
+	}
+	return versionroot.AtomicWriteFile(path, data, 0o600)
 }
 
 func (store Store) readRecord() (secretStoreRecord, error) {
@@ -334,36 +356,28 @@ func (store Store) Get(name string) (string, bool, error) {
 // bound: a missing required one is reported by the runtime. Two secrets bound to
 // one variable must hold the same value. Safe to run repeatedly.
 func (store Store) BindEnvironments(patches []contracts.ConfigPatch) error {
-	delivered := map[string]string{}
-	for _, patch := range patches {
-		if patch.Environment == "" || !strings.HasPrefix(patch.Owner, "manifest:") {
-			continue
+	return store.mutate("secret-state", func(record *secretStoreRecord) error {
+		delivered := map[string]string{}
+		for _, patch := range patches {
+			if patch.Environment == "" || !strings.HasPrefix(patch.Owner, "manifest:") {
+				continue
+			}
+			id := strings.TrimPrefix(patch.Owner, "manifest:")
+			if id == patch.Environment {
+				continue
+			}
+			value, present := record.Requirement(id)
+			if !present || value == "" {
+				continue
+			}
+			if previous, seen := delivered[patch.Environment]; seen && previous != value {
+				return errors.New("secrets bound to the same environment variable hold different values")
+			}
+			delivered[patch.Environment] = value
+			record.SetRequirement(patch.Environment, value)
 		}
-		id := strings.TrimPrefix(patch.Owner, "manifest:")
-		if id == patch.Environment {
-			continue
-		}
-		value, present, err := store.Get(id)
-		if err != nil {
-			return err
-		}
-		if !present {
-			continue
-		}
-		if previous, seen := delivered[patch.Environment]; seen && previous != value {
-			return errors.New("secrets bound to the same environment variable hold different values")
-		}
-		delivered[patch.Environment] = value
-		if existing, present, err := store.Get(patch.Environment); err != nil {
-			return err
-		} else if present && existing == value {
-			continue
-		}
-		if err := store.Put(patch.Environment, value); err != nil {
-			return err
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // Environment returns the stored values that are valid environment variable

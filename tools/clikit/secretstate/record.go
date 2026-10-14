@@ -214,6 +214,11 @@ func HostEnvironment(path string) (HostProjection, error) {
 	if err != nil {
 		return HostProjection{}, err
 	}
+	return ProjectHost(record), nil
+}
+
+// ProjectHost returns only secret values safe for the host to receive.
+func ProjectHost(record Record) HostProjection {
 	values := make(map[string]string, len(record.requirements))
 	for name, value := range record.requirements {
 		if environmentName.MatchString(name) {
@@ -225,17 +230,12 @@ func HostEnvironment(path string) (HostProjection, error) {
 		delete(projection.Values, BootstrapPasswordEnvironment)
 		projection.Suppressed = []string{BootstrapPasswordEnvironment}
 	}
-	return projection, nil
-}
-
-// RecordPath resolves the active version's shared launcher secret record.
-func RecordPath(root string) string {
-	return filepath.Join(root, ".kb", "v2", "secret-state.json")
+	return projection
 }
 
 // HostEnvironmentAtRoot loads the active version's shared launcher secrets.
 func HostEnvironmentAtRoot(root string) (HostProjection, error) {
-	return HostEnvironment(RecordPath(root))
+	return HostEnvironment(filepath.Join(root, ".kb", "v2", "secret-state.json"))
 }
 
 func unsupported() error {
