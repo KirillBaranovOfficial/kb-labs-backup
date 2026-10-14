@@ -399,19 +399,42 @@ def _case_terminal_run(step_id: str, run_id: str, *, env: dict[str, str], cwd: P
 def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
     """Check deny-by-default plugin dispatch, then restore the admin CLI session."""
     def verify_unregistered_project_auth() -> None:
-        with tempfile.TemporaryDirectory(prefix="kb-unregistered-cli-project-") as anonymous_home:
+        with tempfile.TemporaryDirectory(prefix="kb-secured-cli-projects-") as anonymous_home:
             unregistered_project = Path(anonymous_home) / "fresh-project"
             unregistered_project.mkdir()
             anonymous_env = env.copy()
             anonymous_env["HOME"] = anonymous_home
-            anonymous_env["KB_JOURNEY_HOME_LABEL"] = "anonymous-unregistered-project"
+            anonymous_env["KB_JOURNEY_HOME_LABEL"] = "anonymous-secured-projects"
             anonymous_env["KB_PLATFORM_ROOT"] = env["KB_JOURNEY_PLATFORM_ROOT"]
+            anonymous_env["KB_DIAGNOSTICS"] = "agent"
+            anonymous_env["KB_LOG_LEVEL"] = "warn"
             anonymous_env.pop("KB_PROJECT_ROOT", None)
-            command = ["config", "show", "--json"]
+            registration = run_cli(["project", "add", str(project), "--json"],
+                                   env=anonymous_env, cwd=project)
+            if registration.returncode != 0:
+                raise AssertionError(f"kb project add failed for secured auth evidence: {(registration.stderr or registration.stdout).strip()}")
+            listed = run_cli(["project", "list", "--json"], env=anonymous_env, cwd=project)
+            if listed.returncode != 0:
+                raise AssertionError(f"kb project list failed for secured auth evidence: {(listed.stderr or listed.stdout).strip()}")
+            registry_payload = read_ux_cli_result(listed)
+            projects = registry_payload["data"].get("projects")
+            if not isinstance(projects, list):
+                raise AssertionError("kb project list omitted project registry contents")
+            registered_paths = {Path(item["path"]).resolve() for item in projects if isinstance(item, dict) and isinstance(item.get("path"), str)}
+            if project.resolve() not in registered_paths or unregistered_project.resolve() in registered_paths:
+                raise AssertionError("secured auth evidence did not establish registered and unregistered project roots")
+            report_root = env.get("KB_JOURNEY_INVOCATIONS")
+            if report_root:
+                write_report_json(Path(report_root) / "project-registries.jsonl", {
+                    "mode": "secured", "projects": projects,
+                }, env=anonymous_env, append=True, indent=None)
+            commands = [["config", "show", "--json"], ["workflow", "defs", "list", "--json"]]
             with invocation_context(step_id="S-041.17"):
-                result = run_cli(command, env=anonymous_env, cwd=unregistered_project)
-            assert_platform_auth_required(
-                result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
+                for cwd in (project, unregistered_project):
+                    for command in commands:
+                        result = run_cli(command, env=anonymous_env, cwd=cwd)
+                        assert_platform_auth_required(
+                            result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
 
     journey.step("secured auth precedes unregistered project resolution", "workflow",
                  verify_unregistered_project_auth, cases=["S-041.17"])

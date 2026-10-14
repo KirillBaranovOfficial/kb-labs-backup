@@ -102,6 +102,37 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
 
 class PtyInvocationTest(unittest.TestCase):
+    def test_invocation_records_kb_environment_and_resolved_shim_with_shared_redaction(self):
+        with tempfile.TemporaryDirectory(prefix="journey-kb-shim-evidence-") as temp:
+            root = Path(temp)
+            target = root / "installed-kb"
+            target.write_text("#!/bin/sh\nexit 0\n")
+            target.chmod(0o755)
+            shim = root / "kb"
+            shim.symlink_to(target)
+            secret = "journey-secret-token-value"
+            env = {
+                "PATH": str(root),
+                "KB_PLATFORM_ROOT": str(root / "platform"),
+                "KB_JOURNEY_API_TOKEN": secret,
+            }
+            with invocations.invocation_context(report_root=root):
+                invocations.record_invocation(
+                    kind="command", argv=[str(shim), "config", "show"], cwd=root,
+                    env=env, exit_code=1, duration_seconds=0.1,
+                )
+
+            serialized = (root / "invocations/calls.jsonl").read_text()
+            record = json.loads(serialized)
+            self.assertEqual(record["kb_environment"]["KB_PLATFORM_ROOT"], str(root / "platform"))
+            self.assertEqual(record["kb_environment"]["KB_JOURNEY_API_TOKEN"], "[REDACTED]")
+            self.assertEqual(record["kb_shim"], {
+                "path": str(shim),
+                "realpath": os.path.realpath(target),
+                "target": str(target),
+            })
+            self.assertNotIn(secret, serialized)
+
     def test_template_like_data_passes_through_command_and_http_boundaries(self):
         commands = []
         result = invocations.run_command(

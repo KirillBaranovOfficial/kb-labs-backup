@@ -9,6 +9,8 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
+const CLI_CHILD_PROCESS_TIMEOUT_MS = 60_000;
+
 describe('installed platform adapter defaults', () => {
   let tempRoot: string | undefined;
   let gatewayServer: Server | undefined;
@@ -44,31 +46,40 @@ describe('installed platform adapter defaults', () => {
     await createProjectRegistry({ root: path.join(home, '.kb') }).add(registeredProject);
 
     const cliPath = path.join(workspaceRoot, 'cli/bin/dist/bin.js');
-    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, KB_PLATFORM_ROOT: platformRoot };
+    const env: NodeJS.ProcessEnv = {
+      ...process.env, HOME: home, KB_PLATFORM_ROOT: platformRoot,
+      KB_DIAGNOSTICS: 'agent', KB_LOG_LEVEL: 'warn',
+    };
     delete env.KB_HOME;
     delete env.KB_NET_OFFSET;
     delete env.KB_PROJECT_ROOT;
     delete env.KB_PROJECT_ID;
     for (const cwd of [registeredProject, unregisteredProject]) {
-      const result = spawnSync(process.execPath, [cliPath, 'config', 'show', '--json'], {
-        cwd,
-        env,
-        encoding: 'utf8',
-        timeout: 30_000,
-      });
-
-      expect(result.error?.message, result.stderr || result.stdout).toBeUndefined();
-      expect(result.status, result.stderr || result.stdout).toBe(1);
-      const payload: unknown = JSON.parse(result.stdout);
-      expect(payload).toMatchObject({ ok: false, error: {
-        code: 'KB_AUTH_REQUIRED',
-        message: 'Authentication is required.',
-        hint: createErrorEnvelope('KB_AUTH_REQUIRED', {
-          details: { gatewayUrl: 'http://127.0.0.1:4000' },
-        }).hint,
-      } });
+      for (const command of [['config', 'show'], ['workflow', 'defs', 'list']]) {
+        const result = spawnSync(process.execPath, [cliPath, ...command, '--json'], {
+          cwd, env, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
+        });
+        expect(result.error?.message, result.stderr || result.stdout).toBeUndefined();
+        expect(result.status, result.stderr || result.stdout).toBe(1);
+        const payload: unknown = JSON.parse(result.stdout);
+        expect(payload).toMatchObject({ ok: false, error: {
+          code: 'KB_AUTH_REQUIRED',
+          message: 'Authentication is required.',
+          hint: createErrorEnvelope('KB_AUTH_REQUIRED', {
+            details: { gatewayUrl: 'http://127.0.0.1:4000' },
+          }).hint,
+        } });
+        expect(result.stderr).toContain('CLI auth gate refused invocation');
+        expect(result.stderr).toContain('"accessMode":"secured"');
+        expect(result.stderr).toContain(`"platformConfigSource":"${path.join(platformRoot, '.kb', 'kb.config.jsonc')}"`);
+        const logRecord = JSON.parse(result.stderr.slice(result.stderr.indexOf('{'))) as {
+          correlationId: string;
+        };
+        expect(logRecord.correlationId).toBeTypeOf('string');
+        expect(logRecord.correlationId.length).toBeGreaterThan(0);
+      }
     }
-  });
+  }, CLI_CHILD_PROCESS_TIMEOUT_MS * 2);
 
   // case: S-124.1, S-124.9
   it('manages the project registry from an unregistered working directory', async () => {
@@ -435,7 +446,7 @@ describe('installed platform adapter defaults', () => {
     };
     const runRepositoryCommand = async (cwd: string, args: string[]): Promise<void> => {
       const result = spawnSync(process.execPath, [cliPath, ...args], {
-        cwd, env, encoding: 'utf8', timeout: 60_000,
+        cwd, env, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
       });
       expect(result.status, `${args.join(' ')}\n${result.stderr || result.stdout}`).toBe(0);
       await assertRepositoriesUnchanged();
@@ -465,7 +476,7 @@ describe('installed platform adapter defaults', () => {
     }).stdout;
 
     const systemCommand = spawnSync(process.execPath, [cliPath, 'adapter', 'list', '--json'], {
-      cwd: projectRoot, env, encoding: 'utf8', timeout: 60_000,
+      cwd: projectRoot, env, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
     });
     expect(systemCommand.status, systemCommand.stderr || systemCommand.stdout).toBe(0);
     const canonicalDataRoot = await realpath(dataRoot);
@@ -484,7 +495,7 @@ describe('installed platform adapter defaults', () => {
     const pluginEnv = { ...env };
     delete pluginEnv.KB_GATEWAY_URL;
     const pluginCommand = spawnSync(process.execPath, [cliPath, 'commit', 'reset', '--json'], {
-      cwd: projectRoot, env: pluginEnv, encoding: 'utf8', timeout: 60_000,
+      cwd: projectRoot, env: pluginEnv, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
     });
     expect(pluginCommand.status, pluginCommand.stderr || pluginCommand.stdout).toBe(0);
     expect(JSON.parse(pluginCommand.stdout)).toMatchObject({ ok: true });
@@ -498,14 +509,14 @@ describe('installed platform adapter defaults', () => {
       config.platform.adapterOptions.documentDatabase.filename = invalidPath;
       await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
       const invalid = spawnSync(process.execPath, [cliPath, 'adapter', 'list', '--json'], {
-        cwd: projectRoot, env, encoding: 'utf8', timeout: 60_000,
+        cwd: projectRoot, env, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
       });
       expect(invalid.status).not.toBe(0);
       expect(invalid.stdout).toContain('KB_CONFIG_INVALID');
       expect(invalid.stdout).toContain(invalidPath.startsWith('.kb/') ? 'database/kb.sqlite' : 'outside.sqlite');
       expect(await snapshotRepositoryTree(projectRoot)).toEqual(treeBefore);
     }
-  });
+  }, CLI_CHILD_PROCESS_TIMEOUT_MS * 2);
 
   // case: S-203.1
   it('keeps discovery diagnostics off JSON stdout', async () => {

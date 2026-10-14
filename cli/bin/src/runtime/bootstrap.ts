@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   createJsonPresenter,
   createTextPresenter,
@@ -35,8 +36,8 @@ import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } f
 import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
-import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, toErrorEnvelope } from "@kb-labs/core-platform";
+import { platform as runtimePlatform, type PlatformContainer, type PlatformConfig } from "@kb-labs/core-runtime";
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, isAgentDiagnosticsEnabled, toErrorEnvelope } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth, resolveActiveGateway } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
@@ -119,7 +120,7 @@ export async function executeCli(
   const cwd = options.cwd ?? process.cwd();
   const parse = options.parseArgs ?? parseArgs;
   const { cmdPath, rest, global, flagsObj } = parse(argv);
-  createProcessRootLogContext({
+  const processLogContext = createProcessRootLogContext({
     applicationId: 'kb',
     serviceId: 'kb',
     instanceId: `${process.pid}`,
@@ -176,6 +177,20 @@ export async function executeCli(
       help: global.help,
     }, async () => true);
   if ("error" in authResult) {
+    if (isAgentDiagnosticsEnabled()) {
+      const correlationId = randomUUID();
+      runtimePlatform.logger.warn("CLI auth gate refused invocation", {
+        ...processLogContext,
+        component: "cli-auth-gate",
+        operation: "cli.auth-gate",
+        requestId: correlationId,
+        event: "cli.auth.gate.refused",
+        commandPath: authCommandPath,
+        accessMode,
+        platformConfigSource: loadedConfig.sources.platformDefaults,
+        correlationId,
+      });
+    }
     const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
     return reportGateResult(authResult, global.json, presenter);
   }

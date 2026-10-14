@@ -16,6 +16,7 @@ import re
 import shlex
 import select
 import signal
+import shutil
 import struct
 import subprocess
 from subprocess import CalledProcessError, CompletedProcess, PIPE, STDOUT, TimeoutExpired
@@ -570,6 +571,7 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
     if root is None:
         return None
     effective_env = env if env is not None else os.environ
+    kb_environment = {key: value for key, value in effective_env.items() if key.startswith("KB_")}
     record = {
         "step_id": _STEP_ID.get(),
         "kind": kind,
@@ -584,12 +586,29 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         "error": error,
         "duration_seconds": round(duration_seconds, 3),
     }
+    if kind == "command":
+        record["kb_environment"] = kb_environment
+        shim = _kb_shim_evidence(effective_env)
+        if shim is not None:
+            record["kb_shim"] = shim
     if invocation_evidence is None and kind == "command" and exit_code not in (None, 0):
         invocation_evidence = _capture_typed_error_files(argv, stdout, stderr, exit_code, effective_env)
     if invocation_evidence:
         record["invocation_evidence"] = invocation_evidence
     target = root / "invocations" / "calls.jsonl"
     return write_report_json(target, record, env=effective_env, append=True, indent=None, ensure_ascii=False)
+
+
+def _kb_shim_evidence(env: Mapping[str, str]) -> dict[str, str] | None:
+    configured = env.get("KB_JOURNEY_CLI_PATH")
+    found = configured or shutil.which("kb", path=env.get("PATH"))
+    if found is None:
+        return None
+    path = Path(found)
+    absolute_path = os.path.abspath(path)
+    realpath = os.path.realpath(absolute_path)
+    target = os.readlink(absolute_path) if os.path.islink(absolute_path) else realpath
+    return {"path": absolute_path, "realpath": realpath, "target": target}
 
 
 def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,
