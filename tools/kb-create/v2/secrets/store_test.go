@@ -3,8 +3,14 @@ package secrets
 import (
 	"bytes"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -14,6 +20,127 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
+
+func TestStaleStoreCommandRoundTripsPlatformRootThroughPOSIXShell(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "KB Labs; $(touch SHOULD_NOT_RUN) 'prod'")
+	command := "set -- " + staleWriteRerunCommand(root) + `; printf '%s\0' "$@"`
+	output, err := exec.Command("/bin/sh", "-c", command).Output()
+	if err != nil {
+		t.Fatalf("shell could not parse the rerun command: %v", err)
+	}
+	got := strings.Split(string(output), "\x00")
+	got = got[:len(got)-1]
+	want := []string{"kb-create", "apply", "--platform-root", root}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("shell argv = %#v; want %#v", got, want)
+	}
+}
+
+// This accidental-source rail scans every production Go file in kb-create v2
+// for a command string that combines a kb-create invocation and a path-like
+// value without passing through the shared shell command renderer. It does not
+// attempt to detect deliberate evasion, which remains a code-review concern.
+func TestCommandHintsDoNotHandFormatDynamicCLIArguments(t *testing.T) {
+	root := filepath.Clean("..")
+	fset := token.NewFileSet()
+	var violations []string
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			var expression ast.Expr
+			switch current := node.(type) {
+			case *ast.BinaryExpr:
+				if current.Op == token.ADD && containsCLIInvocation(current) && containsPathOrAccountValue(current) && !containsShellCommand(current) {
+					expression = current
+				}
+			case *ast.CallExpr:
+				if len(current.Args) > 1 && isFmtSprintf(current.Fun) && containsCLIInvocation(current.Args[0]) && containsPathOrAccountValue(current) && !containsShellCommand(current) {
+					expression = current
+				}
+			}
+			if expression != nil {
+				violations = append(violations, fset.Position(expression.Pos()).String())
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) > 0 {
+		t.Fatalf("dynamic CLI hints must render argv with contracts.ShellCommand: %s", strings.Join(violations, ", "))
+	}
+}
+
+func isFmtSprintf(expression ast.Expr) bool {
+	selector, ok := expression.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Sprintf" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && pkg.Name == "fmt"
+}
+
+func containsCLIInvocation(expression ast.Node) bool {
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		literal, ok := node.(*ast.BasicLit)
+		if ok && literal.Kind == token.STRING && strings.Contains(literal.Value, "kb-create") {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+func containsPathOrAccountValue(expression ast.Node) bool {
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		var name string
+		switch current := node.(type) {
+		case *ast.Ident:
+			name = current.Name
+		case *ast.SelectorExpr:
+			name = current.Sel.Name
+		}
+		name = strings.ToLower(name)
+		if strings.Contains(name, "root") || strings.Contains(name, "path") || strings.Contains(name, "dir") ||
+			strings.Contains(name, "url") || strings.Contains(name, "email") {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+func containsShellCommand(expression ast.Node) bool {
+	found := false
+	ast.Inspect(expression, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return !found
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if ok && selector.Sel.Name == "ShellCommand" {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
 
 func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 	root := t.TempDir()
