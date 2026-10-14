@@ -350,7 +350,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     def assert_shared_errors() -> None:
         failures = (
             (["marketplace", "install", "@kb-labs/not-published"], "KB_PLUGIN_NOT_FOUND",
-             "Plugin @kb-labs/not-published was not found in the registry.", "kb marketplace search"),
+             "Plugin @kb-labs/not-published was not found in the registry.",
+             'Check the exact package name and package source. If available, run `kb marketplace install @kb-labs/not-published`; `kb marketplace plugins list` shows installed plugins.'),
             (["adapter", "bind", "storage", "@kb-labs/adapters-not-installed"], "KB_ADAPTER_NOT_INSTALLED",
              "Adapter package @kb-labs/adapters-not-installed is not installed on this platform.",
              "kb marketplace install @kb-labs/adapters-not-installed --scope platform"),

@@ -29,25 +29,6 @@ export {
   type RemoteJobContext,
 } from './isolated-backend.js';
 
-// Backends
-export {
-  InProcessBackend,
-  type InProcessBackendOptions,
-} from './backends/in-process.js';
-
-export {
-  SubprocessBackend,
-  type SubprocessBackendOptions,
-} from './backends/subprocess.js';
-
-export {
-  WorkerPoolBackend,
-  type WorkerPoolBackendOptions,
-} from './backends/worker-pool/backend.js';
-
-// Adapters
-export { SubprocessRunnerAdapter } from './adapters/index.js';
-
 // Worker-pool internals (re-exported for facade package compatibility)
 export {
   DEFAULT_WORKER_POOL_CONFIG,
@@ -104,6 +85,7 @@ export {
 // Types
 export type {
   ExecutionBackend,
+  NormalizedExecutionResult,
   BackendOptions,
   WorkerPoolOptions,
   WarmupPolicy,

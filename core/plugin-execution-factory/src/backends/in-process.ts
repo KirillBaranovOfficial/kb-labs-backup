@@ -38,7 +38,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import type {
-  ExecutionBackend,
+  RawExecutionBackend,
   ExecutionRequest,
   ExecutionResult,
   ExecuteOptions,
@@ -84,7 +84,7 @@ export interface InProcessBackendOptions {
 /**
  * InProcessBackend - executes handlers in current process.
  */
-export class InProcessBackend implements ExecutionBackend {
+export class InProcessBackend implements RawExecutionBackend {
   private _stats: ExecutionStats = {
     totalExecutions: 0,
     successCount: 0,

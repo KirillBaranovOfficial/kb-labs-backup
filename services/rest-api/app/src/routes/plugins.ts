@@ -16,7 +16,7 @@ import {
   mountEventStreams,
   mountWebSocketChannels,
 } from "@kb-labs/plugin-execution";
-import { InProcessBackend } from "@kb-labs/plugin-execution-factory";
+import { createExecutionBackend } from "@kb-labs/plugin-execution-factory";
 import { combineManifestsToRegistry } from "@kb-labs/rest-api-core";
 import { platform } from "@kb-labs/core-runtime";
 import {
@@ -165,7 +165,7 @@ export async function registerPluginRoutes(
     // Worker-pool serialization strips its methods (close/getConnectionId
     // become undefined in the worker), so defineWebSocket's createTypedSender
     // crashes with "Cannot read properties of undefined (reading 'bind')".
-    const wsBackend = new InProcessBackend({ platform });
+    const wsBackend = createExecutionBackend({ platform, mode: 'in-process' });
 
     // Filter plugins that have routes, realtime streams or channels to mount
     const mountableManifests = manifests.filter(

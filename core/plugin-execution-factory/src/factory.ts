@@ -5,16 +5,18 @@
  * Simple by default, enterprise when needed.
  */
 
-import type { BackendOptions, ExecutionBackend, ExecutionRequest } from './types.js';
+import type { BackendOptions, ExecutionBackend, ExecutionRequest, NormalizedExecutionFailure, NormalizedExecutionResult, RawExecutionBackend } from './types.js';
 import { InProcessBackend } from './backends/in-process.js';
 import { SubprocessBackend } from './backends/subprocess.js';
 import { WorkerPoolBackend } from './backends/worker-pool/backend.js';
 import { RemoteBackend } from './backends/remote.js';
 import { SubprocessRunnerAdapter } from './adapters/index.js';
 import { BrokeredProcessExecutor, createDefaultProcessExecutor } from '@kb-labs/plugin-runtime';
-import type { IPlatformAdapters } from '@kb-labs/core-platform';
+import { isErrorEnvelope, type IPlatformAdapters } from '@kb-labs/core-platform';
+import { isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
-import { normalizePluginHandlerFailure, type ILogger } from '@kb-labs/core-platform';
+import type { ILogger } from '@kb-labs/core-platform';
+import { normalizePluginHandlerFailure } from './plugin-handler-failure.js';
 
 export function ensureHostProcessExecutor(platform: BackendOptions['platform']): void {
   const host = platform as BackendOptions['platform'] & IPlatformAdapters & {
@@ -64,7 +66,7 @@ export function createExecutionBackend(options: BackendOptions): ExecutionBacken
     ? detectMode()
     : options.mode;
 
-  let backend: ExecutionBackend;
+  let backend: RawExecutionBackend;
   switch (mode) {
     case 'in-process':
       backend = new InProcessBackend({
@@ -112,14 +114,21 @@ export function createExecutionBackend(options: BackendOptions): ExecutionBacken
     default:
       throw new Error(`Unknown execution mode: ${mode}`);
   }
-  return new NormalizingExecutionBackend(backend, options.platform.logger);
+  return createNormalizedExecutionBackend(backend, options.platform.logger);
 }
 
 /** Every execution backend crosses this owner before a result reaches a surface. */
-class NormalizingExecutionBackend implements ExecutionBackend {
-  constructor(private readonly backend: ExecutionBackend, private readonly logger: ILogger) {}
+export function createNormalizedExecutionBackend(
+  backend: DispatchExecutionBackend,
+  logger: ILogger,
+): ExecutionBackend {
+  return new NormalizingExecutionBackend(backend, logger);
+}
 
-  async execute(request: ExecutionRequest, options?: Parameters<ExecutionBackend['execute']>[1]) {
+class NormalizingExecutionBackend implements ExecutionBackend {
+  constructor(private readonly backend: DispatchExecutionBackend, private readonly logger: ILogger) {}
+
+  async execute(request: ExecutionRequest, options?: Parameters<ExecutionBackend['execute']>[1]): Promise<NormalizedExecutionResult> {
     let result;
     try {
       result = await this.backend.execute(request, options);
@@ -130,7 +139,24 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         executionTimeMs: 0,
       };
     }
-    if (result.ok) return result;
+    let returnedFailure = false;
+    if (result.ok) {
+      if (isUxResultCandidate(result.data) && result.data.ok === false) {
+        returnedFailure = true;
+        result = {
+          ...result,
+          ok: false,
+          error: {
+            message: 'Plugin handler returned a failure result.',
+            error: 'error' in result.data ? result.data.error : undefined,
+          },
+        };
+      } else {
+        return { ...result, ok: true };
+      }
+    }
+
+    if (isNormalizedExecutionFailure(result.error)) return result as NormalizedExecutionResult;
 
     const descriptor = request.descriptor;
     const correlationId = descriptor.requestId || request.executionId;
@@ -150,13 +176,36 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         .filter(([key]) => /(?:secret|token|password|credential|api[_-]?key)/i.test(key))
         .map(([, value]) => value)
         .filter((value): value is string => value !== undefined),
+      returnedFailure,
     });
-    return { ...result, ok: false as const, error: { ...error } };
+    return {
+      ...result,
+      ok: false,
+      error: {
+        normalized: true,
+        envelope: error,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+      } as NormalizedExecutionFailure,
+    };
   }
 
   health() { return this.backend.health(); }
   stats() { return this.backend.stats(); }
   shutdown() { return this.backend.shutdown(); }
+}
+
+interface DispatchExecutionBackend {
+  execute(request: ExecutionRequest, options?: Parameters<ExecutionBackend['execute']>[1]): Promise<import('./types.js').ExecutionResult | NormalizedExecutionResult>;
+  health(): ReturnType<RawExecutionBackend['health']>;
+  stats(): ReturnType<RawExecutionBackend['stats']>;
+  shutdown(): ReturnType<RawExecutionBackend['shutdown']>;
+}
+
+function isNormalizedExecutionFailure(error: unknown): error is NormalizedExecutionFailure {
+  return typeof error === 'object' && error !== null && 'normalized' in error && error.normalized === true &&
+    'envelope' in error && isErrorEnvelope(error.envelope);
 }
 
 /**
@@ -204,7 +253,7 @@ function detectLocalMode(): 'in-process' | 'subprocess' | 'worker-pool' {
  * This allows isolation: strict to coexist with isolation: relaxed/balanced
  * without changing call sites — the backend decides dynamically.
  */
-function createRoutingBackend(options: BackendOptions, remoteBackend: RemoteBackend): ExecutionBackend {
+function createRoutingBackend(options: BackendOptions, remoteBackend: RemoteBackend): RawExecutionBackend {
   const localBackend = createLocalBackend(options);
 
   return {
@@ -227,7 +276,7 @@ function createRoutingBackend(options: BackendOptions, remoteBackend: RemoteBack
  * Used internally by createRoutingBackend.
  * Never returns remote — remote routing is handled by createRoutingBackend.
  */
-function createLocalBackend(options: BackendOptions): ExecutionBackend {
+function createLocalBackend(options: BackendOptions): RawExecutionBackend {
   const mode = detectLocalMode();
   switch (mode) {
     case 'in-process':

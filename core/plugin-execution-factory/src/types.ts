@@ -33,6 +33,8 @@ import type {
   WorkspaceConfig as CoreWorkspaceConfig,
   ArtifactsConfig as CoreArtifactsConfig,
   ExecutionResult as CoreExecutionResult,
+  NormalizedExecutionResult as CoreNormalizedExecutionResult,
+  NormalizedExecutionFailure as CoreNormalizedExecutionFailure,
   ExecutionResponse as CoreExecutionResponse,
   ExecutionError as CoreExecutionError,
   ExecutionErrorCode as CoreExecutionErrorCode,
@@ -166,6 +168,8 @@ export type ArtifactsConfig = CoreArtifactsConfig;
  * Execution result - returned by backend.execute().
  */
 export type ExecutionResult = CoreExecutionResult;
+export type NormalizedExecutionResult = CoreNormalizedExecutionResult<import('@kb-labs/core-platform').ErrorEnvelope>;
+export type NormalizedExecutionFailure = CoreNormalizedExecutionFailure<import('@kb-labs/core-platform').ErrorEnvelope>;
 export type ExecutionResponse = CoreExecutionResponse;
 
 /**
@@ -200,6 +204,12 @@ export type ExecutionMetadata = CoreExecutionMetadata;
  */
 type CoreExecutionBackendLifecycle = Pick<CoreExecutionBackend<PluginContextDescriptor>, 'health' | 'stats' | 'shutdown'>;
 
+/** Internal raw backend contract. It is only used by the factory package. */
+export interface RawExecutionBackend extends CoreExecutionBackendLifecycle {
+  execute(request: ExecutionRequest, options?: ExecuteOptions): Promise<ExecutionResult>;
+  start?(): Promise<void>;
+}
+
 export interface ExecutionBackend extends CoreExecutionBackendLifecycle {
   /**
    * Execute plugin request with plugin-typed descriptor.
@@ -207,7 +217,7 @@ export interface ExecutionBackend extends CoreExecutionBackendLifecycle {
   execute(
     request: ExecutionRequest,
     options?: ExecuteOptions
-  ): Promise<ExecutionResult>;
+  ): Promise<NormalizedExecutionResult>;
 
   /**
    * Optional initialization hook for backends that need startup work.
