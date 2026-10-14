@@ -4,34 +4,9 @@ Core system interface contracts — zero runtime dependencies, zero implementati
 
 ## Overview
 
-Defines the wire protocol and interface boundaries for the KB Labs core execution layer. Lives at layer 0 of the dependency graph: implementations depend on these contracts, not the other way around.
+Defines backend-independent execution data contracts and platform interface boundaries. Execution backend construction and normalized results are owned by `@kb-labs/plugin-execution-factory`.
 
 ## Interfaces
-
-### `IExecutionBackend`
-
-Contract that all execution backends must satisfy:
-
-```typescript
-import type { IExecutionBackend, ExecutionRequest, ExecutionResponse } from '@kb-labs/core-contracts';
-
-class MyBackend implements IExecutionBackend {
-  async execute(
-    request: ExecutionRequest,
-    options?: ExecuteOptions
-  ): Promise<ExecutionResponse> {
-    // ...
-  }
-
-  async health(): Promise<HealthStatus> {
-    return { healthy: true, backend: 'my-backend' };
-  }
-
-  async stats(): Promise<ExecutionStats> {
-    return { activeRequests: 0, queueDepth: 0 };
-  }
-}
-```
 
 ### `IPlatformGateway`
 

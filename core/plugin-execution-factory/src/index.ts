@@ -18,7 +18,7 @@
  */
 
 // Factory
-export { createExecutionBackend, ensureHostProcessExecutor } from './factory.js';
+export { createExecutionBackend, createNormalizedExecutionBackend, ensureHostProcessExecutor } from './factory.js';
 export { PROTOCOL_VERSION } from './types.js';
 
 // Isolated execution (unified factory for all hosts)
@@ -85,7 +85,6 @@ export {
 // Types
 export type {
   ExecutionBackend,
-  NormalizedExecutionResult,
   BackendOptions,
   WorkerPoolOptions,
   WarmupPolicy,
@@ -114,6 +113,7 @@ export type {
   PlatformTransportFactory,
   PlatformTransportServer,
 } from './types.js';
+export type { NormalizedExecutionResult } from './normalized-result.js';
 
 // Platform transport factories
 export { IPCPlatformTransportFactory } from './platform-transport/index.js';

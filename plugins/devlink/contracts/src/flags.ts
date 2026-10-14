@@ -9,7 +9,6 @@ export const switchFlags = {
     description: 'Linking mode: local (link:), npm (^version), auto',
     choices: ['local', 'npm', 'auto'] as string[],
     alias: 'm',
-    demandOption: true,
   },
   'dry-run': {
     type: 'boolean' as const,

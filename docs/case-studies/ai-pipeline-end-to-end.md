@@ -179,7 +179,7 @@ The platform is built on adapter interfaces:
 Switching from local to cloud is an adapter swap, not a rewrite. The interfaces are already defined:
 - `IWorkspaceProvider` — materialize/release workspaces
 - `IEnvironmentProvider` — provision execution environments
-- `IExecutionBackend` — route execution to local/remote
+- `ExecutionBackend` from `@kb-labs/plugin-execution-factory` — route execution to local/remote through the normalized result boundary
 
 ---
 

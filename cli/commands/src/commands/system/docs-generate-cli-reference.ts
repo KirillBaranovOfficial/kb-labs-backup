@@ -105,7 +105,7 @@ export const docsGenerateCliReference = defineSystemCommand<GenerateCliReference
           for (const flag of cmd.manifest.flags) {
             const alias = flag.alias ? ` (-${flag.alias})` : '';
             const required = flag.required ? ' **(required)**' : '';
-            const defaultVal = flag.default !== undefined ? ` (default: \`${flag.default}\`)` : '';
+            const defaultVal = flag.default !== undefined && flag.secret !== true ? ` (default: \`${flag.default}\`)` : '';
             const choices = flag.choices ? ` (choices: ${flag.choices.map(c => `\`${c}\``).join(', ')})` : '';
             lines.push(`- \`--${flag.name}\`${alias}: ${flag.description || 'No description'}${required}${defaultVal}${choices}`);
           }

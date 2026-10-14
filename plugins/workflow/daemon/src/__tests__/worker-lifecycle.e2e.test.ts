@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockLogger } from '@kb-labs/shared-testing';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
-import type { IExecutionBackend } from '@kb-labs/core-contracts';
 import type { StateStore, WorkflowEngine } from '@kb-labs/workflow-engine';
 import type { JobRun, StepRun, StepSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
 import { EnvSecretProvider } from '@kb-labs/workflow-engine';
+import { createWorkflowExecutionBackendFixture } from './execution-backend-fixture.js';
 
 // Mock SandboxRunner — worker tests verify orchestration, not plugin resolution.
 // SandboxRunner is tested separately in workflow-runtime.
@@ -129,7 +129,7 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const cliApi = {} satisfies Partial<IEntityRegistry>;
-    const executionBackend = { execute: vi.fn() } satisfies Partial<IExecutionBackend>;
+    const executionBackend = createWorkflowExecutionBackendFixture();
     const worker = await createWorkflowWorker({
       projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
@@ -138,7 +138,7 @@ describe('workflow worker lifecycle', () => {
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: executionBackend as unknown as IExecutionBackend,
+        executionBackend: executionBackend.backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -251,7 +251,7 @@ describe('workflow worker lifecycle', () => {
       return { status: 'success', outputs: {} };
     });
     const cliApi = {} satisfies Partial<IEntityRegistry>;
-    const executionBackend = { execute: vi.fn() } satisfies Partial<IExecutionBackend>;
+    const executionBackend = createWorkflowExecutionBackendFixture();
     const worker = await createWorkflowWorker({
       projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
@@ -261,7 +261,7 @@ describe('workflow worker lifecycle', () => {
       workspaceRoot: '/tmp/test-workspace',
       platformRoot: '/opt/kb-platform',
       platform: {
-        executionBackend: executionBackend as unknown as IExecutionBackend,
+        executionBackend: executionBackend.backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -337,7 +337,7 @@ describe('workflow worker lifecycle', () => {
       logger: mockLogger(),
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -410,7 +410,7 @@ describe('workflow worker lifecycle', () => {
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -469,8 +469,9 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     // Platform has getAdapter returning undefined — worker should handle it gracefully
+    const executionBackendFixture = createWorkflowExecutionBackendFixture();
     const platformObj = {
-      executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+      executionBackend: executionBackendFixture.backend,
       hasExecutionBackend: true,
       getAdapter: vi.fn().mockReturnValue(undefined),
     };
@@ -497,7 +498,7 @@ describe('workflow worker lifecycle', () => {
     expect(run.jobs[0]!.status).toBe('success');
     // getAdapter is called to check for a workspace provider, but since it returns
     // undefined no materialization happens — execution backend is NOT bypassed.
-    expect(platformObj.executionBackend.execute).not.toHaveBeenCalled(); // no steps to execute
+    expect(executionBackendFixture.execute).not.toHaveBeenCalled(); // no steps to execute
   });
 
   it('emits structured diagnostic log when workspace provisioning fails', async () => {
@@ -553,7 +554,7 @@ describe('workflow worker lifecycle', () => {
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(failingWsProvider),
       },
@@ -638,7 +639,7 @@ describe('workflow worker lifecycle', () => {
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -730,7 +731,7 @@ describe('workflow worker lifecycle', () => {
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -808,7 +809,7 @@ describe('workflow worker lifecycle', () => {
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -937,7 +938,7 @@ describe('workflow worker lifecycle', () => {
       logger,
       workspaceRoot: '/tmp/test-approval-cancel',
       platform: {
-        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -1041,7 +1042,7 @@ describe('workflow worker lifecycle', () => {
       logger,
       workspaceRoot: '/tmp/test-terminal-mid-loop',
       platform: {
-        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -1154,7 +1155,7 @@ describe('workflow worker lifecycle', () => {
       logger,
       workspaceRoot: '/tmp/test-wf003',
       platform: {
-        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },

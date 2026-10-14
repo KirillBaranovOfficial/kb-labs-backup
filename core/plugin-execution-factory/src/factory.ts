@@ -5,7 +5,7 @@
  * Simple by default, enterprise when needed.
  */
 
-import type { BackendOptions, ExecutionBackend, ExecutionRequest, NormalizedExecutionFailure, NormalizedExecutionResult, RawExecutionBackend } from './types.js';
+import type { BackendOptions, ExecutionBackend, ExecutionRequest, RawExecutionBackend } from './types.js';
 import { InProcessBackend } from './backends/in-process.js';
 import { SubprocessBackend } from './backends/subprocess.js';
 import { WorkerPoolBackend } from './backends/worker-pool/backend.js';
@@ -17,6 +17,8 @@ import { isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import type { ILogger } from '@kb-labs/core-platform';
 import { normalizePluginHandlerFailure } from './plugin-handler-failure.js';
+import { brandNormalizedExecutionResult, isFactoryNormalizedExecutionResult } from './normalized-result.js';
+import type { NormalizedExecutionResult } from './normalized-result.js';
 
 export function ensureHostProcessExecutor(platform: BackendOptions['platform']): void {
   const host = platform as BackendOptions['platform'] & IPlatformAdapters & {
@@ -139,6 +141,8 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         executionTimeMs: 0,
       };
     }
+    if (isFactoryNormalizedExecutionResult(result)) return result;
+
     let returnedFailure = false;
     if (result.ok) {
       if (isUxResultCandidate(result.data) && result.data.ok === false) {
@@ -152,11 +156,9 @@ class NormalizingExecutionBackend implements ExecutionBackend {
           },
         };
       } else {
-        return { ...result, ok: true };
+        return brandNormalizedExecutionResult({ ...result, ok: true as const });
       }
     }
-
-    if (isNormalizedExecutionFailure(result.error)) return result as NormalizedExecutionResult;
 
     const descriptor = request.descriptor;
     const correlationId = descriptor.requestId || request.executionId;
@@ -172,23 +174,18 @@ class NormalizingExecutionBackend implements ExecutionBackend {
         instanceId: String(process.pid),
         layer: hostType,
       },
-      sensitiveValues: Object.entries(request.env ?? {})
-        .filter(([key]) => /(?:secret|token|password|credential|api[_-]?key)/i.test(key))
-        .map(([, value]) => value)
-        .filter((value): value is string => value !== undefined),
       returnedFailure,
     });
-    return {
+    return brandNormalizedExecutionResult({
       ...result,
       ok: false,
       error: {
-        normalized: true,
         envelope: error,
         code: error.code,
         message: error.message,
         details: error.details,
-      } as NormalizedExecutionFailure,
-    };
+      },
+    });
   }
 
   health() { return this.backend.health(); }
@@ -201,11 +198,6 @@ interface DispatchExecutionBackend {
   health(): ReturnType<RawExecutionBackend['health']>;
   stats(): ReturnType<RawExecutionBackend['stats']>;
   shutdown(): ReturnType<RawExecutionBackend['shutdown']>;
-}
-
-function isNormalizedExecutionFailure(error: unknown): error is NormalizedExecutionFailure {
-  return typeof error === 'object' && error !== null && 'normalized' in error && error.normalized === true &&
-    'envelope' in error && isErrorEnvelope(error.envelope);
 }
 
 /**

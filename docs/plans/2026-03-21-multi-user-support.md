@@ -21,7 +21,7 @@ tags: ["workspace-agent", "cloud", "multi-user", "infrastructure"]
 ## Блок 2: RoutingBackend
 > Platform dispatch'ит plugin execution через Gateway к нужному host'у
 
-- [ ] `WorkspaceAgentBackend` implements `IExecutionBackend` — dispatch через Gateway WS
+- [ ] `WorkspaceAgentBackend` uses `ExecutionBackend` from `@kb-labs/plugin-execution-factory` — dispatch через Gateway WS
 - [ ] `RoutingBackend` в `plugin-execution-factory`: по `ExecutionTarget.type` выбирает backend (local / workspace-agent / container)
 - [ ] Host selection strategies: `pinned`, `any-matching`, `prefer-local`
 - [ ] Fallback policy: workspace-agent недоступен → local / error

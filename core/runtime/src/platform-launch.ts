@@ -16,6 +16,7 @@
 import { hostname } from "node:os";
 import {
   createContextLogger,
+  createProcessRootLogContext,
   type HostServiceEnvironment,
   type IContextLogger,
   type ILogReader,
@@ -214,6 +215,13 @@ async function launch(
 
   const startedAt = Date.now();
   const instanceId = `${hostname()}:${process.pid}`;
+  const processLogContext = createProcessRootLogContext({
+    applicationId,
+    serviceId,
+    instanceId,
+    layer: kind,
+  });
+  platform.setAdapter('logger', createContextLogger(platform.logger, processLogContext));
   registerLifecycleLogging(applicationId, serviceId, kind, instanceId);
 
   const loadResult = await loadPlatformConfig({

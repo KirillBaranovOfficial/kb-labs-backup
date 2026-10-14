@@ -47,7 +47,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const loggerError = vi.fn();
     const execute = vi.fn(async () => ({
       ok: false as const,
-      error: { normalized: true as const, envelope: error },
+      error: { envelope: error },
       executionTimeMs: 1,
     }));
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
@@ -81,7 +81,7 @@ describe('executeCommandV3 plugin command result output', () => {
     });
     const execute = vi.fn(async () => ({
       ok: false as const,
-      error: { normalized: true as const, envelope },
+      error: { envelope },
       executionTimeMs: 1,
     }));
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
@@ -145,7 +145,7 @@ describe('executeCommandV3 plugin command result output', () => {
     });
     const execute = vi.fn(async () => ({
       ok: false as const,
-      error: { normalized: true as const, envelope },
+      error: { envelope },
       executionTimeMs: 1,
     }));
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
@@ -175,7 +175,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const json = vi.fn();
     const execute = vi.fn(async () => ({
       ok: false as const,
-      error: { normalized: true as const, envelope: createErrorEnvelope('KB_PLUGIN_NOT_FOUND', { message: 'Plugin @acme/missing was not found.', hint: 'Install the plugin and retry.', correlationId: 'worker-correlation-17', details: { plugin: '@acme/missing' } }) },
+      error: { envelope: createErrorEnvelope('KB_PLUGIN_NOT_FOUND', { message: 'Plugin @acme/missing was not found.', hint: 'Install the plugin and retry.', correlationId: 'worker-correlation-17', details: { plugin: '@acme/missing' } }) },
       executionTimeMs: 1,
     }));
     const platform = { logger: { error: vi.fn() } } as unknown as PlatformServices;
@@ -210,7 +210,7 @@ describe('executeCommandV3 plugin command result output', () => {
     });
     const execute = vi.fn(async () => ({
       ok: false as const,
-      error: { normalized: true as const, envelope },
+      error: { envelope },
       executionTimeMs: 1,
     }));
     const platform = { logger: { error: logError } } as unknown as PlatformServices;
@@ -236,7 +236,7 @@ describe('executeCommandV3 plugin command result output', () => {
       details: { reason: 'empty' },
       retryable: false,
     });
-    const execute = vi.fn(async () => ({ ok: false as const, error: { normalized: true as const, envelope: productError }, executionTimeMs: 1 }));
+    const execute = vi.fn(async () => ({ ok: false as const, error: { envelope: productError }, executionTimeMs: 1 }));
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     await executeCommandV3({

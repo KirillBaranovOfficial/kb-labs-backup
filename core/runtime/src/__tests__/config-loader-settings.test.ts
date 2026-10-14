@@ -10,9 +10,12 @@ const discoveryResult = vi.hoisted(() => ({
 }))
 
 vi.mock('@kb-labs/core-discovery', () => ({
+  DiagnosticCollector: class { info() {} error() {} },
   DiscoveryManager: class {
     async discover() { return discoveryResult }
   },
+  resolveMarketplaceLockScope: async () => 'platform',
+  readMarketplaceLock: async () => null,
 }))
 
 import { loadPlatformConfig } from '../config-loader.js'

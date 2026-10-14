@@ -85,30 +85,6 @@ export interface ExecutionResult {
  */
 export type ExecutionResponse = ExecutionResult;
 
-/** Failure value produced by the execution factory after its sole normalization boundary. */
-export interface NormalizedExecutionFailure<TEnvelope = unknown> extends ExecutionError {
-  envelope: TEnvelope;
-  normalized: true;
-}
-
-/** Result visible to runtime surfaces; failed results can only carry the shared envelope type. */
-export type NormalizedExecutionResult<TEnvelope = unknown> =
-  | {
-      ok: true;
-      data?: unknown;
-      executionTimeMs: number;
-      artifactIds?: string[];
-      metadata?: ExecutionMetadata;
-      [key: string]: unknown;
-    }
-  | {
-      ok: false;
-      error: NormalizedExecutionFailure<TEnvelope>;
-      executionTimeMs: number;
-      metadata?: ExecutionMetadata;
-      [key: string]: unknown;
-    };
-
 export interface ExecuteOptions {
   signal?: AbortSignal;
   pluginInvoker?: <T = unknown>(

@@ -188,8 +188,8 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         step = "MCP UX result contract from live registry"
         local = {name: cases for name, _, _, cases, _, _ in checks("local")}
         secured = {name: cases for name, _, _, cases, _, _ in checks("secured")}
-        self.assertEqual(local[step], ["S-203.2", "S-203.6"])
-        self.assertEqual(secured[step], ["S-203.2", "S-203.6", "S-045.6", "S-140.7"])
+        self.assertEqual(local[step], ["S-203.2"])
+        self.assertEqual(secured[step], ["S-203.2", "S-045.6", "S-140.7"])
 
     def test_platform_readiness_claims_both_gateway_and_project_workflow_checks(self):
         journey = Journey("local", "readiness-registered-project-state")

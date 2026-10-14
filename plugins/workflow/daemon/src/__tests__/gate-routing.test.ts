@@ -8,6 +8,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockLogger } from '@kb-labs/shared-testing';
+import { createWorkflowExecutionBackendFixture } from './execution-backend-fixture.js';
 
 const mockRunnerExecute = vi.fn();
 vi.mock('@kb-labs/workflow-runtime', async (importOriginal) => {
@@ -156,7 +157,7 @@ async function startWorker(engine: any) {
     logger: mockLogger(),
     workspaceRoot: '/tmp/gate-test',
     platform: {
-      executionBackend: { execute: vi.fn() } as any,
+      executionBackend: createWorkflowExecutionBackendFixture().backend,
       hasExecutionBackend: true,
       getAdapter: vi.fn().mockReturnValue(undefined),
     },

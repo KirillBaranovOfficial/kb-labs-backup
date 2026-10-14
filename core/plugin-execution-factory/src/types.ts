@@ -33,16 +33,14 @@ import type {
   WorkspaceConfig as CoreWorkspaceConfig,
   ArtifactsConfig as CoreArtifactsConfig,
   ExecutionResult as CoreExecutionResult,
-  NormalizedExecutionResult as CoreNormalizedExecutionResult,
-  NormalizedExecutionFailure as CoreNormalizedExecutionFailure,
   ExecutionResponse as CoreExecutionResponse,
   ExecutionError as CoreExecutionError,
   ExecutionErrorCode as CoreExecutionErrorCode,
   ExecutionMetadata as CoreExecutionMetadata,
-  IExecutionBackend as CoreExecutionBackend,
   HealthStatus as CoreHealthStatus,
   ExecutionStats as CoreExecutionStats,
 } from '@kb-labs/core-contracts';
+import type { NormalizedExecutionFailure, NormalizedExecutionResult } from './normalized-result.js';
 
 // Re-export runtime types for convenience (consumers use these, not custom types)
 export type { PluginContextDescriptor, HostContext, HostType, PermissionSpec };
@@ -168,8 +166,6 @@ export type ArtifactsConfig = CoreArtifactsConfig;
  * Execution result - returned by backend.execute().
  */
 export type ExecutionResult = CoreExecutionResult;
-export type NormalizedExecutionResult = CoreNormalizedExecutionResult<import('@kb-labs/core-platform').ErrorEnvelope>;
-export type NormalizedExecutionFailure = CoreNormalizedExecutionFailure<import('@kb-labs/core-platform').ErrorEnvelope>;
 export type ExecutionResponse = CoreExecutionResponse;
 
 /**
@@ -202,7 +198,11 @@ export type ExecutionMetadata = CoreExecutionMetadata;
  * - WorkerPoolBackend (Level 1)
  * - RemoteExecutionBackend (Level 2)
  */
-type CoreExecutionBackendLifecycle = Pick<CoreExecutionBackend<PluginContextDescriptor>, 'health' | 'stats' | 'shutdown'>;
+interface CoreExecutionBackendLifecycle {
+  health(): Promise<HealthStatus>;
+  stats(): Promise<ExecutionStats>;
+  shutdown(): Promise<void>;
+}
 
 /** Internal raw backend contract. It is only used by the factory package. */
 export interface RawExecutionBackend extends CoreExecutionBackendLifecycle {

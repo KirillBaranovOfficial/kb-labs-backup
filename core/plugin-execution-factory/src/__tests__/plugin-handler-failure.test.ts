@@ -7,11 +7,11 @@ import {
   ErrorEnvelopeJsonSchema,
   hasErrorEnvelopeIdentity,
   validateErrorEnvelope,
-  type ILogger,
+  type IContextLogger,
 } from '@kb-labs/core-platform';
 import { normalizePluginHandlerFailure } from '../plugin-handler-failure.js';
 
-function loggerFor(records: Array<Record<string, unknown>>): ILogger {
+function loggerFor(records: Array<Record<string, unknown>>): IContextLogger {
   const write = (level: string, message: string, error?: Error, fields?: Record<string, unknown>) => {
     records.push({ level, message, ...(error ? { error } : {}), ...(fields ?? {}) });
   };
@@ -44,7 +44,7 @@ describe('normalizePluginHandlerFailure', () => {
     const expected = cause instanceof ErrorEnvelopeError ? cause.envelope : undefined;
     const envelope = normalizePluginHandlerFailure(cause, {
       pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'typed-correlation',
-      logger: loggerFor(records), logContext, sensitiveValues: [],
+      logger: loggerFor(records), logContext,
     });
     expect(envelope).toEqual({ ...expected, correlationId: 'typed-correlation' });
     expect(records).toHaveLength(1);
@@ -59,7 +59,7 @@ describe('normalizePluginHandlerFailure', () => {
     const records: Array<Record<string, unknown>> = [];
     const envelope = normalizePluginHandlerFailure({ code: 'MIND_NOT_FOUND', message: 'Missing' }, {
       pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'malformed-correlation',
-      logger: loggerFor(records), logContext, sensitiveValues: [],
+      logger: loggerFor(records), logContext,
     });
     expect(envelope).toMatchObject({
       code: 'KB_PLUGIN_CONTRACT_VIOLATION', correlationId: 'malformed-correlation',
@@ -100,7 +100,7 @@ describe('normalizePluginHandlerFailure', () => {
         expect(invalidField, field).toBe(field);
         const envelope = normalizePluginHandlerFailure(malformed, {
           pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'bad-field',
-          logger: loggerFor(records), logContext, sensitiveValues: [],
+          logger: loggerFor(records), logContext,
         });
         expect(envelope).toMatchObject({
           code: 'KB_PLUGIN_CONTRACT_VIOLATION',
@@ -115,18 +115,20 @@ describe('normalizePluginHandlerFailure', () => {
     const records: Array<Record<string, unknown>> = [];
     const secret = 'x46-redaction-fixture-value';
     const cause = new Error(`provider rejected ${secret}`, { cause: { token: secret } });
+    const logger = loggerFor(records);
+    logger.registerSensitiveValues([secret]);
     const envelope = normalizePluginHandlerFailure(cause, {
       pluginId: '@kb-labs/test-plugin',
       command: 'test run',
       correlationId: 'failure-correlation-1',
-      logger: loggerFor(records),
+      logger,
       logContext,
-      sensitiveValues: [secret],
     });
 
     expect(envelope.code).toBe('KB_PLUGIN_COMMAND_FAILED');
     expect(envelope.correlationId).toBe('failure-correlation-1');
     expect(records).toHaveLength(1);
+    expect(JSON.stringify(envelope)).not.toContain(secret);
     expect(records[0]).toMatchObject({
       event: 'plugin.handler.failed',
       correlationId: 'failure-correlation-1',
@@ -138,13 +140,33 @@ describe('normalizePluginHandlerFailure', () => {
     expect(((records[0]!.error as Error).cause as { token: string }).token).toBe('[REDACTED]');
   });
 
+  it('redacts process secrets from a typed envelope returned to the caller', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const secret = 'x46-typed-envelope-secret-fixture';
+    const logger = loggerFor(records);
+    logger.registerSensitiveValues([secret]);
+    const envelope = normalizePluginHandlerFailure(new ErrorEnvelopeError(createProductErrorEnvelope({
+      code: 'MIND_NOT_FOUND', retryable: false,
+      message: `Provider rejected ${secret}`,
+      hint: 'Choose another mind.', details: { credential: secret },
+    })), {
+      pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'typed-secret-correlation',
+      logger, logContext,
+    });
+
+    expect(records).toHaveLength(1);
+    expect(JSON.stringify(envelope)).not.toContain(secret);
+    expect(envelope.message).toContain('[REDACTED]');
+    expect(envelope.details?.credential).toBe('[REDACTED]');
+  });
+
   it('keeps the original thrown stack on its single correlated log record', () => {
     const records: Array<Record<string, unknown>> = [];
     const cause = new Error('handler diagnostic');
     cause.stack = 'original-handler-stack';
     normalizePluginHandlerFailure(cause, {
       pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'stack-correlation',
-      logger: loggerFor(records), logContext, sensitiveValues: [],
+      logger: loggerFor(records), logContext,
     });
     expect(records).toHaveLength(1);
     expect((records[0]!.error as Error).stack).toBe('original-handler-stack');
@@ -161,7 +183,6 @@ describe('normalizePluginHandlerFailure', () => {
       correlationId: 'failure-correlation-2',
       logger: loggerFor(records),
       logContext,
-      sensitiveValues: [],
     });
     expect(envelope.code).toBe('KB_PLUGIN_COMMAND_FAILED');
     expect(envelope.message).toContain(reason);

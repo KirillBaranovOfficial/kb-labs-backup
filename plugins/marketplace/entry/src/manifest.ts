@@ -36,7 +36,7 @@ export const manifest = {
       // Top-level: kb marketplace <cmd>
       { path: 'marketplace install', operationType: 'mutate' as const, describe: 'Install package(s)', flags: [
         { name: 'dev', type: 'boolean' as const, description: 'Install development dependencies' },
-        { name: 'token', type: 'string' as const, description: 'Marketplace access token' },
+        { name: 'token', type: 'string' as const, description: 'Marketplace access token', secret: true },
         { name: 'dry-run', type: 'boolean' as const, description: 'Preview without installing' },
         scopeFlag,
       ], handler: './commands/install.js#default' },

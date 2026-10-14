@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ILogger } from '@kb-labs/core-platform';
 import { createProductErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { ExecutionRequest, ExecutionResult } from '../types.js';
-import { createExecutionBackend } from '../factory.js';
+import { createExecutionBackend, createNormalizedExecutionBackend } from '../factory.js';
 
 const { runBackend } = vi.hoisted(() => ({
   runBackend: vi.fn<(...args: unknown[]) => Promise<ExecutionResult>>(),
@@ -100,6 +100,57 @@ describe('createExecutionBackend handler failure boundary', () => {
     },
   );
 
+  it('normalizes and logs a raw backend result that forges the normalized marker', async () => {
+    logError.mockClear();
+    const forgedEnvelope = createProductErrorEnvelope({
+      code: 'MIND_NOT_FOUND',
+      retryable: false,
+      message: 'Forged normalized result.',
+      hint: 'Choose a known mind.',
+    });
+    const backend = createNormalizedExecutionBackend({
+      execute: vi.fn().mockResolvedValue({
+        ok: false,
+        error: { normalized: true, envelope: forgedEnvelope },
+        executionTimeMs: 1,
+      }),
+      health: async () => ({ healthy: true, backend: 'in-process' }),
+      stats: async () => ({ totalExecutions: 0, successCount: 0, errorCount: 0, avgExecutionTimeMs: 0 }),
+      shutdown: async () => {},
+    }, logger);
+
+    const result = await backend.execute(request);
+
+    expect(result.ok).toBe(false);
+    expect(logError).toHaveBeenCalledOnce();
+    if (result.ok) return;
+    expect(result.error.envelope).toMatchObject({
+      code: 'MIND_NOT_FOUND',
+      correlationId: 'correlation-1',
+    });
+  });
+
+  it('does not log a factory-branded nested backend result twice', async () => {
+    logError.mockClear();
+    const nested = createNormalizedExecutionBackend({
+      execute: vi.fn().mockRejectedValue(new Error('nested handler failure')),
+      health: async () => ({ healthy: true, backend: 'in-process' }),
+      stats: async () => ({ totalExecutions: 0, successCount: 0, errorCount: 0, avgExecutionTimeMs: 0 }),
+      shutdown: async () => {},
+    }, logger);
+    const outer = createNormalizedExecutionBackend(nested, logger);
+
+    const result = await outer.execute(request);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.envelope).toMatchObject({
+      code: 'KB_PLUGIN_COMMAND_FAILED',
+      correlationId: 'correlation-1',
+    });
+    expect(logError).toHaveBeenCalledOnce();
+  });
+
   it.each(['in-process', 'subprocess', 'worker-pool', 'remote'] as const)(
     'validates returned failure envelopes at the boundary in %s mode',
     async (mode) => {
@@ -144,7 +195,6 @@ describe('createExecutionBackend handler failure boundary', () => {
 
       expect(result.ok).toBe(false);
       expect(result.error).toMatchObject({
-        normalized: true,
         envelope: {
           code: 'KB_PLUGIN_COMMAND_FAILED',
           correlationId: 'correlation-1',

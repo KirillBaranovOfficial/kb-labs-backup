@@ -3,6 +3,7 @@ import {
   createTextPresenter,
   createContext,
   parseArgs,
+  registerSecretFlagValues,
   type ExecutionLimits,
 } from "@kb-labs/cli-runtime";
 import {
@@ -35,7 +36,7 @@ import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, createErrorEnvelope, toErrorEnvelope } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, toErrorEnvelope } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth, resolveActiveGateway } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
@@ -118,6 +119,12 @@ export async function executeCli(
   const cwd = options.cwd ?? process.cwd();
   const parse = options.parseArgs ?? parseArgs;
   const { cmdPath, rest, global, flagsObj } = parse(argv);
+  createProcessRootLogContext({
+    applicationId: 'kb',
+    serviceId: 'kb',
+    instanceId: `${process.pid}`,
+    layer: 'cli',
+  });
   const registryStore = options.registry ?? registry;
   registerBuiltinSystemCommands();
   const jsonPresenterFactory = options.createJsonPresenter ?? createJsonPresenter;
@@ -342,6 +349,12 @@ export async function executeCli(
 
   // ── Route using Trie ───────────────────────────────────────────────────────
   const routeResult = registryStore.resolve(cmdPath);
+  const commandFlags = routeResult.type === 'system-cmd'
+    ? routeResult.cmd.flags ?? []
+    : routeResult.type === 'command'
+      ? routeResult.command.manifest.flags ?? []
+      : [];
+  registerSecretFlagValues(commandFlags, flagsObj);
 
   switch (routeResult.type) {
     case "not-found": {

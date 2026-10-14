@@ -1,11 +1,19 @@
 export type CliFlagType = 'string' | 'boolean' | 'number' | 'array';
 
+const CLI_FLAG_FIELDS = new Set([
+  'name', 'type', 'alias', 'default', 'description', 'describe', 'examples', 'required', 'secret', 'choices',
+]);
+
 interface CliFlagBase {
   name: string;
   alias?: string;
   default?: unknown;
   description?: string;
+  describe?: string;
+  examples?: string[];
   required?: boolean;
+  /** The flag value is sensitive and must be registered for process log redaction. */
+  secret?: boolean;
 }
 
 export type CliFlagDecl =
@@ -29,6 +37,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 function validateFlag(value: unknown): CliSchemaIssue[] {
   if (!isRecord(value)) { return [{ path: [], message: 'Flag declaration must be an object' }]; }
   const issues: CliSchemaIssue[] = [];
+  for (const field of Object.keys(value)) {
+    if (!CLI_FLAG_FIELDS.has(field)) {
+      issues.push({ path: [field], message: `Unknown flag field "${field}"` });
+    }
+  }
   if (typeof value.name !== 'string' || !/^[a-z0-9-]+$/.test(value.name)) {
     issues.push({ path: ['name'], message: 'Flag name must be lowercase alphanumeric with hyphens' });
   }
@@ -38,11 +51,19 @@ function validateFlag(value: unknown): CliSchemaIssue[] {
   if (value.alias !== undefined && (typeof value.alias !== 'string' || !/^[a-z]$/i.test(value.alias))) {
     issues.push({ path: ['alias'], message: 'Alias must be a single letter' });
   }
-  if (value.description !== undefined && typeof value.description !== 'string') {
-    issues.push({ path: ['description'], message: 'Description must be a string' });
+  for (const field of ['description', 'describe'] as const) {
+    if (value[field] !== undefined && typeof value[field] !== 'string') {
+      issues.push({ path: [field], message: `${field} must be a string` });
+    }
+  }
+  if (value.examples !== undefined && (!Array.isArray(value.examples) || value.examples.some(item => typeof item !== 'string'))) {
+    issues.push({ path: ['examples'], message: 'examples must be an array of strings' });
   }
   if (value.required !== undefined && typeof value.required !== 'boolean') {
     issues.push({ path: ['required'], message: 'Required must be a boolean' });
+  }
+  if (value.secret !== undefined && typeof value.secret !== 'boolean') {
+    issues.push({ path: ['secret'], message: 'Secret must be a boolean' });
   }
   if (value.choices !== undefined) {
     if (value.type !== 'string') {

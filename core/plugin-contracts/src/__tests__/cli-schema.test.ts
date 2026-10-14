@@ -13,6 +13,15 @@ describe('shared plugin CLI declaration schema', () => {
     expect(CliFlagDeclSchema.safeParse({ name: 'run-id', type: 'string', alias: 'long' }).success).toBe(false);
   });
 
+  it('rejects removed credential metadata as an unknown flag field', () => {
+    const result = CliFlagDeclSchema.safeParse({ name: 'token', type: 'string', credential: true, secret: true });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual({ path: ['credential'], message: 'Unknown flag field "credential"' });
+    }
+    expect(CliFlagDeclSchema.safeParse({ name: 'token', type: 'string', secret: true }).success).toBe(true);
+  });
+
   it('requires the V3 command fields and validates flags with the same schema', () => {
     expect(CliCommandDeclSchema.safeParse({
       path: 'release clean install', describe: 'Install a packed release', handler: './commands/install.js#default',
