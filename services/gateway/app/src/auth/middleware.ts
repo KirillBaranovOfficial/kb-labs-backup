@@ -121,7 +121,6 @@ export function createAuthMiddleware(
       Object.assign(request.headers, forwardedIdentityHeaders(request.authContext, options.internalSecret));
       return;
     }
-
     const rawPath = new URL(request.url, 'http://localhost').pathname;
     const routePath = rawPath.replace(/\/+/g, '/').replace(/\/+$/, '') || '/';
     const registryPublicRead = request.method === 'GET' && isRegistryPublicReadRoute(routePath);

@@ -36,6 +36,8 @@ interface FlagDefinition {
 export interface Command {
   name: string;
   scope: 'platform' | 'project';
+  /** Public access is explicit; system commands otherwise require a user session. */
+  authProtection?: 'public' | 'session';
   /** Registry test fixture for the command's safe JSON success path. */
   jsonTest: SystemCommandJsonTest;
   describe: string;
@@ -155,6 +157,8 @@ export interface SystemCommandConfig<
   name: string;
   /** Startup scope required before command execution. */
   scope: 'platform' | 'project';
+  /** Public access is explicit; system commands otherwise require a user session. */
+  authProtection?: 'public' | 'session';
   /** Registry test fixture or explicit reason this command has no safe valid path. */
   jsonTest: SystemCommandJsonTest;
   /** Command description (required for system commands) */
@@ -309,12 +313,13 @@ export function defineSystemCommand<
 >(
   config: SystemCommandConfig<TFlags, TResult, TArgv>
 ): Command {
-  const { name, scope, jsonTest, description, longDescription, category, aliases, examples, flags, handler, formatter } = config;
+  const { name, scope, authProtection, jsonTest, description, longDescription, category, aliases, examples, flags, handler, formatter } = config;
 
   // Return command with direct handler (no wrapping needed - system commands don't use V3 defineCommand)
   return {
     name,
     scope,
+    authProtection,
     jsonTest,
     describe: description,
     longDescription,

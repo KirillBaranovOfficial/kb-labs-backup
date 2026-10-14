@@ -508,8 +508,10 @@ class FlowGraph:
             "claim": "no case claim",
         }
 
-    def _blocker(self, group: str) -> tuple[str, dict[str, object]] | None:
+    def _blocker(self, group: str, *, producing_state: str | None = None) -> tuple[str, dict[str, object]] | None:
         for state in self.dependencies.get(group, ()):
+            if state == producing_state:
+                continue
             result = self.states.get(state)
             if result is None:
                 return state, {"passed": False, "evidence": "state probe has not run",
@@ -529,7 +531,7 @@ class FlowGraph:
             if state not in self.needed_states and not after_flow:
                 return self.journey.skipped(f"state probe: {state}", "journey.state")
 
-        blocker = self._blocker(group)
+        blocker = self._blocker(group, producing_state=state)
         if blocker:
             blocked_state, evidence = blocker
             message = (f"blocked by state {blocked_state}: {evidence.get('evidence', 'state probe failed')} "

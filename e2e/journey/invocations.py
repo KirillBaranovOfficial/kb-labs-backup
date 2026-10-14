@@ -16,6 +16,7 @@ import re
 import shlex
 import select
 import signal
+import shutil
 import struct
 import subprocess
 from subprocess import CalledProcessError, CompletedProcess, PIPE, STDOUT, TimeoutExpired
@@ -251,22 +252,53 @@ def _cli_process_result(result: Any) -> tuple[str, int]:
     return stdout, result.returncode
 
 
-@lru_cache(maxsize=None)
-def _catalog_exit_status(code: str) -> tuple[str, int] | None:
+@lru_cache(maxsize=1)
+def _error_catalog_entries() -> dict[str, dict[str, Any]]:
     catalog_path = workspace_resource("core", "platform", "src", "error-envelope", "errors.catalog.json")
     try:
         catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         _invalid_ux_result(f"cannot read the shared error catalog at {catalog_path}: {error}")
-    for entry in catalog.get("codes", []):
-        if entry.get("code") == code:
-            exit_class = entry.get("processExitClass")
-            if exit_class == "input-refusal":
-                return exit_class, 2
-            if exit_class == "operation-failure":
-                return exit_class, 1
-            _invalid_ux_result(f"catalogued error {code} has no supported process exit class")
-    return None
+    return {entry["code"]: entry for entry in catalog.get("codes", []) if isinstance(entry, dict)
+            and isinstance(entry.get("code"), str)}
+
+
+def catalogued_error_hint(code: str, **values: str) -> str:
+    """Render a catalogued error hint from its authoritative template."""
+    entry = _error_catalog_entries().get(code)
+    if entry is None:
+        _invalid_ux_result(f"error code {code} is missing from the shared error catalog")
+    hint = entry.get("hint")
+    if not isinstance(hint, str):
+        _invalid_ux_result(f"catalogued error {code} has no hint template")
+    try:
+        return hint.format_map(values)
+    except KeyError as error:
+        _invalid_ux_result(f"catalogued error {code} hint needs template value {error.args[0]}")
+
+
+def catalogued_error_message(code: str) -> str:
+    """Read a catalogued error message from its authoritative entry."""
+    entry = _error_catalog_entries().get(code)
+    if entry is None:
+        _invalid_ux_result(f"error code {code} is missing from the shared error catalog")
+    message = entry.get("message")
+    if not isinstance(message, str):
+        _invalid_ux_result(f"catalogued error {code} has no message")
+    return message
+
+
+@lru_cache(maxsize=None)
+def _catalog_exit_status(code: str) -> tuple[str, int] | None:
+    entry = _error_catalog_entries().get(code)
+    if entry is None:
+        return None
+    exit_class = entry.get("processExitClass")
+    if exit_class == "input-refusal":
+        return exit_class, 2
+    if exit_class == "operation-failure":
+        return exit_class, 1
+    _invalid_ux_result(f"catalogued error {code} has no supported process exit class")
 
 
 @lru_cache(maxsize=1)
@@ -550,6 +582,7 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
     if root is None:
         return None
     effective_env = env if env is not None else os.environ
+    kb_environment = {key: value for key, value in effective_env.items() if key.startswith("KB_")}
     record = {
         "step_id": _STEP_ID.get(),
         "kind": kind,
@@ -564,12 +597,29 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         "error": error,
         "duration_seconds": round(duration_seconds, 3),
     }
+    if kind == "command":
+        record["kb_environment"] = kb_environment
+        shim = _kb_shim_evidence(effective_env)
+        if shim is not None:
+            record["kb_shim"] = shim
     if invocation_evidence is None and kind == "command" and exit_code not in (None, 0):
         invocation_evidence = _capture_typed_error_files(argv, stdout, stderr, exit_code, effective_env)
     if invocation_evidence:
         record["invocation_evidence"] = invocation_evidence
     target = root / "invocations" / "calls.jsonl"
     return write_report_json(target, record, env=effective_env, append=True, indent=None, ensure_ascii=False)
+
+
+def _kb_shim_evidence(env: Mapping[str, str]) -> dict[str, str] | None:
+    configured = env.get("KB_JOURNEY_CLI_PATH")
+    found = configured or shutil.which("kb", path=env.get("PATH"))
+    if found is None:
+        return None
+    path = Path(found)
+    absolute_path = os.path.abspath(path)
+    realpath = os.path.realpath(absolute_path)
+    target = os.readlink(absolute_path) if os.path.islink(absolute_path) else realpath
+    return {"path": absolute_path, "realpath": realpath, "target": target}
 
 
 def _capture_typed_error_files(argv: list[str], stdout: str, stderr: str,

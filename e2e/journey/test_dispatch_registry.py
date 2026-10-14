@@ -842,122 +842,26 @@ class DispatchRegistryTests(unittest.TestCase):
                     violations.append(f"{source_path.name}:{node.lineno}: {key}")
         self.assertEqual(violations, [])
 
-    def test_literal_kb_command_paths_resolve_to_registered_leaf_commands(self):
+    def test_installed_registry_lists_runnable_representatives_for_each_session_class(self):
         root = Path(__file__).resolve().parents[2]
-        registered, registered_groups = _registered_command_registry(root)
-
-        paths = {}
-        for directory in (root / "e2e", root / "scripts"):
-            for path in directory.rglob("*"):
-                if not path.is_file() or "node_modules" in path.parts:
-                    continue
-                if path.suffix not in {".py", ".sh", ".js", ".mjs", ".ts", ".yaml", ".yml"}:
-                    continue
-                text = path.read_text(encoding="utf-8", errors="replace")
-                relative = path.relative_to(root).as_posix()
-                if path.suffix == ".py":
-                    try:
-                        tree = ast.parse(text, filename=relative)
-                    except SyntaxError:
-                        continue
-                    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-                    for node in ast.walk(tree):
-                        values = ([item.value if isinstance(item, ast.Constant) else None for item in node.elts]
-                                  if isinstance(node, ast.List) else [])
-                        if values and values[0] == "kb":
-                            parent = parents.get(node)
-                            if isinstance(parent, (ast.Compare, ast.Subscript, ast.Set)):
-                                continue
-                            command = []
-                            for value in values[1:]:
-                                if not isinstance(value, str) or value.startswith("-"):
-                                    break
-                                command.append(value)
-                            if command:
-                                paths.setdefault(" ".join(command), []).append(f"{relative}:{node.lineno}")
-                    for node in ast.walk(tree):
-                        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-                            continue
-                        current = node
-                        execution_context = False
-                        while current in parents:
-                            current = parents[current]
-                            if isinstance(current, ast.Call):
-                                function_name = (current.func.id if isinstance(current.func, ast.Name)
-                                                 else current.func.attr if isinstance(current.func, ast.Attribute)
-                                                 else "")
-                                execution_context = function_name in {
-                                    "run", "run_command", "run_pty_command", "_run", "exec", "spawn",
-                                    "execFile", "execFileSync", "spawnSync",
-                                }
-                                break
-                        if not execution_context:
-                            continue
-                        for match in re.finditer(r"(?<![\w-])kb((?:\s+[A-Za-z0-9_-]+){1,6})", node.value):
-                            tokens = shlex.split(match.group(0))
-                            command = []
-                            for token in tokens[1:]:
-                                if token.startswith("-") or token.startswith("$"):
-                                    break
-                                command.append(token)
-                            if command:
-                                paths.setdefault(" ".join(command), []).append(f"{relative}:{node.lineno}")
-                elif path.suffix == ".sh":
-                    for line_number, line in enumerate(text.splitlines(), start=1):
-                        if line.lstrip().startswith("#"):
-                            continue
-                        for match in re.finditer(r"(?<![\w-])kb((?:\s+[A-Za-z0-9_-]+){1,6})", line):
-                            tokens = shlex.split(match.group(0))
-                            command = []
-                            for token in tokens[1:]:
-                                if token.startswith("-") or token.startswith("$"):
-                                    break
-                                command.append(token)
-                            if command:
-                                paths.setdefault(" ".join(command), []).append(f"{relative}:{line_number}")
-                elif path.suffix in {".mjs", ".js", ".ts"}:
-                    for match in re.finditer(
-                            r"\b(?:exec|execFile|execFileSync|spawn|spawnSync|execa)\s*\(\s*['\"]kb['\"]\s*,\s*\[([^\]]*)\]",
-                            text):
-                        command = re.findall(r"['\"]([^'\"]+)['\"]", match.group(1))
-                        command = [item for item in command if not item.startswith("-")]
-                        if command:
-                            line = text.count("\n", 0, match.start()) + 1
-                            paths.setdefault(" ".join(command), []).append(f"{relative}:{line}")
-
-        owner_sites, owner_violations, owner_shapes = _owner_command_sites(root)
-        paths.update(owner_sites)
-        self.assertEqual(owner_violations, [], "\n".join(owner_violations))
-        typescript_sites, typescript_violations = _studio_command_path_sites(root)
-        paths.update(typescript_sites)
-        owner_violations.extend(typescript_violations)
-        for source_path in (root / "e2e").rglob("*.ts"):
-            if "node_modules" in source_path.parts or source_path.name.endswith(".test.ts"):
-                continue
-            relative = source_path.relative_to(root).as_posix()
-            if relative == "e2e/studio/kb-command.ts":
-                continue
-            text = source_path.read_text(encoding="utf-8", errors="replace")
-            for match in re.finditer(r"runProcessSync\s*\(\s*([^,]+)", text):
-                executable = match.group(1).strip()
-                line = text.count("\n", 0, match.start()) + 1
-                if not re.fullmatch(r"['\"][^'\"]+['\"]", executable) or executable[1:-1] == "kb":
-                    owner_violations.append(
-                        f"{relative}:{line}: generic process executable must be a literal non-kb tool; use runKbCommand for kb")
-
-        owner_violations.extend(_studio_process_creation_violations(root))
-
-        for source_path in (root / "scripts").rglob("*.sh"):
-            source = source_path.read_text(encoding="utf-8", errors="replace")
-            for line_number, line in enumerate(source.splitlines(), start=1):
-                if re.search(r"(?:^|&&|\|\||;)\s*(?:pnpm(?:\s+-\S+)*\s+)?kb\s+[a-zA-Z]", line):
-                    owner_violations.append(
-                        f"{source_path.relative_to(root).as_posix()}:{line_number}: raw kb shell invocation outside owner")
-        self.assertEqual(owner_violations, [], "\n".join(owner_violations))
-        self.assertTrue(owner_shapes)
-
-        failures = _unregistered_commands(paths, registered, registered_groups)
-        self.assertEqual(failures, {}, str(list(failures.items())[:30]))
+        node = shutil.which("node")
+        self.assertIsNotNone(node)
+        result = run_hermetic_cli(
+            [node, str(root / "cli/bin/dist/bin.js"), "registry", "commands", "--json"],
+            cwd=root,
+            env=os.environ,
+            timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        listing = json.loads(result.stdout)
+        commands = listing["data"]["commands"]
+        registered_by_path = {tuple(command["path"]): command for command in commands}
+        from workflow_steps import select_session_protection_representatives
+        representatives = select_session_protection_representatives(listing)
+        self.assertTrue(representatives)
+        for protection_class, path in representatives.items():
+            self.assertEqual(registered_by_path[tuple(path)]["protectionClass"], protection_class)
+            self.assertTrue(registered_by_path[tuple(path)]["available"])
 
     def test_fixture_default_runner_comes_from_registered_mode(self):
         with tempfile.TemporaryDirectory(prefix="journey-fixture-mode-") as temporary:

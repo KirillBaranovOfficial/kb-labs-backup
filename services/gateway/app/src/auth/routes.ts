@@ -48,7 +48,7 @@ export function registerAuthRoutes(
 ): void {
   // Register new agent.
   // Requires MACHINE_REGISTER permission. Auth checks:
-  //   - Anonymous (no cookie, no Bearer) → 401 from machine-auth middleware
+  //   - Anonymous (no cookie, no Bearer) → 401 from the global auth middleware
   //   - Cookie-auth user without permission → 403 (PDP check below)
   //   - Cookie-auth admin with MACHINE_REGISTER → 200
   //   - Bearer-auth machine with machine:register in JWT permissions → 200

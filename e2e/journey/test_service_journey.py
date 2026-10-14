@@ -33,7 +33,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
                             prepare_service_api_session, service_api_token,
                             run_grouped_service_steps, run_service_steps)
 from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
-from invocations import run_pty_command, store_report_secret
+from invocations import catalogued_error_hint, run_pty_command, store_report_secret
 from steps.auth import run_secured_auth_steps
 
 
@@ -90,6 +90,28 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_invalidated_state_is_reestablished_by_its_declared_probe(self):
+        journey = Journey("secured", "mutated-shared-state-restored")
+        graph = FlowGraph(
+            journey,
+            {"host": ("host-running",), "auth": ("host-running",)},
+            states={"host-running": {"passed": True, "evidence": "host ready"}},
+            state_producers={"host-running": "host"},
+            groups={"host": {"produces": ("host-running",)}, "auth": {}},
+        )
+        graph.invalidate_state(
+            "host-running", group="auth", step="recovery", evidence="recovery restarted the shared host",
+        )
+
+        restored = graph.probe_state(
+            "host-running", "host", "health probe after recovery", lambda: None,
+        )
+        consumer = graph.flow("auth consumer", "auth", "auth", lambda: None)
+
+        self.assertEqual(restored.status, "PASS")
+        self.assertEqual(consumer, "PASS")
+        self.assertEqual([step.status for step in journey.steps], ["PASS", "PASS"])
+
     def test_flow_schedules_declared_state_producer_before_gate(self):
         journey = Journey("secured", "producer-before-consumer")
         graph = FlowGraph(
@@ -745,15 +767,22 @@ raise SystemExit(1)
                                   side_effect=produce_commit_fixture), \
                             patch("service_runner._prepare_mcp_projects",
                                   side_effect=prepare_project_fixtures), \
+                            patch("service_runner.run_marketplace_steps"), \
+                            patch("service_runner.install_project_agents_plugin"), \
                             patch("service_runner.configure_installed_cli_path"), \
                             patch("service_runner.restore_secured_cli_login", return_value=None), \
                             patch("service_runner.run_analytics_steps"), \
                             patch("service_runner.run_gateway_steps"), \
+                            patch("service_runner.run_workspace_cli_steps") as workspace_cli_steps, \
                             patch("service_runner.archive_service_logs"), \
                             patch.dict(os.environ, env, clear=True), \
                             patch("sys.argv", ["service_runner.py", "--mode", mode, "--output", str(output)]), \
                             redirect_stdout(io.StringIO()):
                         service_main()
+                        if selected:
+                            workspace_cli_steps.assert_not_called()
+                        else:
+                            workspace_cli_steps.assert_called_once()
 
                     result = json.loads(output.read_text())
                     expected = (
@@ -1657,7 +1686,7 @@ raise SystemExit(1)
                 return {
                     "code": "KB_AUTH_REQUIRED",
                     "message": "Authentication is required.",
-                    "hint": 'Run "kb auth login --gateway-url http://gateway.test --email <email>".',
+                    "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://gateway.test"),
                 }
             if path == "/auth/permissions":
                 return {"permissions": ["users:read"]}

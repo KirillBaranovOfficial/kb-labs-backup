@@ -522,6 +522,7 @@ async function runTrace(ctx: TraceCtx): Promise<CommandTraceResult> {
 export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResult>({
   name: 'diag',
   scope: 'platform',
+  authProtection: 'public',
   jsonTest: { noSafeValidPath: "This command probes local services and system state that the unit fixture does not start." },
   description: 'Comprehensive system diagnostics (plugins, environment, versions)',
   category: 'info',

@@ -41,6 +41,7 @@ type LoginResult = CommandResult & {
 export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
   name: 'login',
   scope: 'platform',
+  authProtection: 'public',
   jsonTest: { noSafeValidPath: "This command creates an authentication session." },
   description: 'Authenticate CLI with Gateway',
   longDescription:

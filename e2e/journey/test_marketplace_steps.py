@@ -22,7 +22,7 @@ from service_steps import FlowGraph, Journey
 from journey_dependencies import Dependency
 import service_runner
 from test_install_layout import create_test_install_container
-from invocations import invocation_context, open_http, run_command
+from invocations import catalogued_error_hint, invocation_context, open_http, run_command
 
 
 class MarketplaceStepTests(unittest.TestCase):
@@ -294,7 +294,7 @@ class MarketplaceStepTests(unittest.TestCase):
                         "error": {
                             "code": "KB_AUTH_REQUIRED",
                             "message": "Authentication is required.",
-                            "hint": 'Run "kb auth login --gateway-url http://gateway.test --email <email>".',
+                            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://gateway.test"),
                         },
                     }), "")
                 if args[:2] == ["auth", "login"]:

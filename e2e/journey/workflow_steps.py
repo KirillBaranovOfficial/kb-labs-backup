@@ -14,6 +14,7 @@ from kb_invocation import kb_command, kb_login_shell
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
 from invocations import (
     CompletedProcess,
+    catalogued_error_hint,
     decode_ux_error_result,
     invocation_context,
     read_ux_cli_result,
@@ -395,22 +396,102 @@ def _case_terminal_run(step_id: str, run_id: str, *, env: dict[str, str], cwd: P
                              clock=clock, sleep=sleep)
 
 
+def select_session_protection_representatives(registry_listing: dict) -> dict[str, list[str]]:
+    """Choose the first runnable command from each session-protected registry class."""
+    data = registry_listing.get("data")
+    commands = data.get("commands") if isinstance(data, dict) else None
+    if not isinstance(commands, list):
+        raise AssertionError("kb registry commands --json omitted data.commands")
+
+    representatives: dict[str, list[str]] = {}
+    classes: set[str] = set()
+    for command in commands:
+        if not isinstance(command, dict):
+            raise AssertionError("CLI command registry returned a malformed command entry")
+        protection_class = command.get("protectionClass")
+        if not isinstance(protection_class, str) or not protection_class:
+            raise AssertionError("CLI command registry omitted a command protectionClass")
+        if command.get("requiresSession") is not True:
+            continue
+        classes.add(protection_class)
+        if command.get("available") is not True:
+            continue
+        path = command.get("path")
+        if not isinstance(path, list) or not path or not all(isinstance(part, str) and part for part in path):
+            continue
+        representatives.setdefault(protection_class, path)
+
+    missing = sorted(classes - representatives.keys())
+    if missing:
+        raise AssertionError("No runnable registry command represents protected class(es): " + ", ".join(missing))
+    if not representatives:
+        raise AssertionError("CLI command registry declares no session-protected command classes")
+    return representatives
+
+
 def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
-    """Check deny-by-default plugin dispatch, then restore the admin CLI session."""
+    """Authenticate setup, then prove registry-declared session commands are gated."""
     def verify_unregistered_project_auth() -> None:
-        with tempfile.TemporaryDirectory(prefix="kb-unregistered-cli-project-") as anonymous_home:
-            unregistered_project = Path(anonymous_home) / "fresh-project"
+        email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
+        password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+        if not email or not password:
+            raise AssertionError("secured workflow journey requires KB_JOURNEY_ADMIN_EMAIL and KB_JOURNEY_ADMIN_PASSWORD")
+        gateway = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
+        with tempfile.TemporaryDirectory(prefix="kb-secured-cli-projects-") as setup_home:
+            unregistered_project = Path(setup_home) / "fresh-project"
             unregistered_project.mkdir()
-            anonymous_env = env.copy()
-            anonymous_env["HOME"] = anonymous_home
-            anonymous_env["KB_JOURNEY_HOME_LABEL"] = "anonymous-unregistered-project"
-            anonymous_env["KB_PLATFORM_ROOT"] = env["KB_JOURNEY_PLATFORM_ROOT"]
-            anonymous_env.pop("KB_PROJECT_ROOT", None)
-            command = ["config", "show", "--json"]
+            setup_env = env.copy()
+            setup_env["HOME"] = setup_home
+            setup_env["KB_JOURNEY_HOME_LABEL"] = "authenticated-secured-project-setup"
+            setup_env["KB_PLATFORM_ROOT"] = env["KB_JOURNEY_PLATFORM_ROOT"]
+            setup_env["KB_DIAGNOSTICS"] = "agent"
+            setup_env["KB_LOG_LEVEL"] = "warn"
+            setup_env.pop("KB_PROJECT_ROOT", None)
+            login = run_cli(["auth", "login", "--gateway-url", gateway, "--email", email,
+                             "--password-stdin"], env=setup_env, cwd=project,
+                            input_text=password + "\n")
+            if login.returncode != 0:
+                raise AssertionError(f"admin CLI login failed: {' '.join((login.stdout or login.stderr).split())[-400:]}")
+            registration = run_cli(["project", "add", str(project), "--json"],
+                                   env=setup_env, cwd=project)
+            if registration.returncode != 0:
+                raise AssertionError(f"kb project add failed for secured auth evidence: {(registration.stderr or registration.stdout).strip()}")
+            listed = run_cli(["project", "list", "--json"], env=setup_env, cwd=project)
+            if listed.returncode != 0:
+                raise AssertionError(f"kb project list failed for secured auth evidence: {(listed.stderr or listed.stdout).strip()}")
+            registry_payload = read_ux_cli_result(listed)
+            projects = registry_payload["data"].get("projects")
+            if not isinstance(projects, list):
+                raise AssertionError("kb project list omitted project registry contents")
+            registered_paths = {Path(item["path"]).resolve() for item in projects if isinstance(item, dict) and isinstance(item.get("path"), str)}
+            if project.resolve() not in registered_paths or unregistered_project.resolve() in registered_paths:
+                raise AssertionError("secured auth evidence did not establish registered and unregistered project roots")
+            report_root = env.get("KB_JOURNEY_INVOCATIONS")
+            if report_root:
+                write_report_json(Path(report_root) / "project-registries.jsonl", {
+                    "mode": "secured", "projects": projects,
+                }, env=setup_env, append=True, indent=None)
             with invocation_context(step_id="S-041.17"):
-                result = run_cli(command, env=anonymous_env, cwd=unregistered_project)
-            assert_platform_auth_required(
-                result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
+                command_listing = run_cli(["registry", "commands", "--json"], env=setup_env, cwd=project)
+                if command_listing.returncode != 0:
+                    raise AssertionError(f"kb registry commands failed for secured auth evidence: {(command_listing.stderr or command_listing.stdout).strip()}")
+                representatives = select_session_protection_representatives(read_ux_cli_result(command_listing))
+                logout = run_cli(["auth", "logout", "--json"], env=setup_env, cwd=project)
+                if logout.returncode != 0:
+                    raise AssertionError(f"kb auth logout failed for secured auth evidence: {(logout.stderr or logout.stdout).strip()}")
+                anonymous_env = setup_env.copy()
+                anonymous_env["KB_JOURNEY_HOME_LABEL"] = "anonymous-secured-project-probes"
+                assert_platform_auth_required(
+                    run_cli(["project", "add", str(unregistered_project), "--json"], env=anonymous_env,
+                            cwd=unregistered_project),
+                    ["project", "add", str(unregistered_project), "--json"], gateway, require_context=True)
+                for cwd in (project, unregistered_project):
+                    for command_path in representatives.values():
+                        command = [*command_path, "--json"]
+                        result = run_cli(command, env=anonymous_env, cwd=cwd)
+                        assert_platform_auth_required(
+                            result, command, gateway,
+                            require_context=True)
 
     journey.step("secured auth precedes unregistered project resolution", "workflow",
                  verify_unregistered_project_auth, cases=["S-041.17"])
@@ -448,7 +529,8 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
                 assert_platform_auth_required(result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
             human_result = run_cli(["workflow", "defs", "list"], env=anonymous_env, cwd=project)
             human_output = (human_result.stdout or "") + (human_result.stderr or "")
-            login_hint = f'Run "kb auth login --gateway-url {env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")} --email <email>"'
+            login_hint = catalogued_error_hint(
+                "KB_AUTH_REQUIRED", gatewayUrl=env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
             if (human_result.returncode == 0 or "KB_AUTH_REQUIRED" not in human_output
                     or "Authentication is required." not in human_output or login_hint not in human_output):
                 raise AssertionError("unauthenticated `kb workflow defs list` did not show the catalogued login error and hint")

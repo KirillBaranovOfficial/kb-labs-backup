@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   createJsonPresenter,
   createTextPresenter,
@@ -35,12 +36,12 @@ import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } f
 import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
-import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, toErrorEnvelope } from "@kb-labs/core-platform";
+import { platform as runtimePlatform, type PlatformContainer, type PlatformConfig } from "@kb-labs/core-runtime";
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, isAgentDiagnosticsEnabled, toErrorEnvelope } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth, resolveActiveGateway } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
-import { isPlatformAuthExempt, isPlatformAuthExemptFlag } from "./platform-auth-policy";
+import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
 import { resolveProjectScope } from "./command-scope";
 import { handleExecutionError } from "./execution-error";
 
@@ -119,7 +120,8 @@ export async function executeCli(
   const cwd = options.cwd ?? process.cwd();
   const parse = options.parseArgs ?? parseArgs;
   const { cmdPath, rest, global, flagsObj } = parse(argv);
-  createProcessRootLogContext({
+  const correlationId = randomUUID();
+  const processLogContext = createProcessRootLogContext({
     applicationId: 'kb',
     serviceId: 'kb',
     instanceId: `${process.pid}`,
@@ -137,28 +139,54 @@ export async function executeCli(
 
   loadEnvFile(cwd);
 
-  let loadedConfig: Awaited<ReturnType<typeof loadPlatformConfiguration>>;
+  let configResolution:
+    | { ok: true; value: Awaited<ReturnType<typeof loadPlatformConfiguration>> }
+    | { ok: false; error: unknown };
   try {
-    loadedConfig = await loadPlatformConfiguration(cwd, options.moduleUrl, 'platform');
+    configResolution = { ok: true, value: await loadPlatformConfiguration(cwd, options.moduleUrl, 'platform') };
   } catch (error) {
-    return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
+    configResolution = { ok: false, error };
   }
-  globalThis.__KB_RAW_CONFIG__ = loadedConfig.rawConfig;
+  const loadedConfigBeforeGates = configResolution.ok ? configResolution.value : undefined;
+  if (loadedConfigBeforeGates) globalThis.__KB_RAW_CONFIG__ = loadedConfigBeforeGates.rawConfig;
   const authRoute = registryStore.resolve(cmdPath);
   const authCommandKind = authRoute.type === "system-cmd" ? "system" : "plugin";
   const authCommandPath = authRoute.type === "system-cmd"
     ? authRoute.cmd.category ? `${authRoute.cmd.category} ${authRoute.cmd.name}` : authRoute.cmd.name
     : cmdPath.join(" ");
-  const authExempt = isPlatformAuthExempt(authCommandPath, authCommandKind)
+  const accessMode = loadedConfigBeforeGates ? resolveCliAccessMode() : 'unknown';
+  if (isAgentDiagnosticsEnabled()) {
+    runtimePlatform.logger.warn("CLI resolved invocation context", {
+      ...processLogContext,
+      component: "cli-bootstrap",
+      operation: "cli.resolve-context",
+      requestId: correlationId,
+      event: "cli.bootstrap.context.resolved",
+      commandPath: authCommandPath,
+      accessMode: accessMode ?? "unknown",
+      platformConfigSource: loadedConfigBeforeGates?.sources.platformDefaults ?? "unresolved",
+      projectResolution: {
+        cwd,
+        explicitProjectRoot: process.env.KB_PROJECT_ROOT ?? null,
+        scope: typeof flagsObj.scope === 'string' ? flagsObj.scope : null,
+      },
+      correlationId,
+    });
+  }
+  if (!configResolution.ok) {
+    return reportInitializationError(configResolution.error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
+  }
+  let loadedConfig = configResolution.value;
+  const protection = registryStore.protectionFor(authRoute);
+  const authExempt = !protection.requiresSession
     || isPlatformAuthExemptFlag("help") && global.help
     || isPlatformAuthExemptFlag("version") && global.version;
-  const accessMode = resolveCliAccessMode();
   let gatewayTarget: Awaited<ReturnType<typeof configuredGatewayUrl>> | undefined;
   if (accessMode === 'secured' && !authExempt) {
     try {
       gatewayTarget = await configuredGatewayUrl(cwd, loadedConfig.platformRoot);
     } catch (error) {
-      return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
+      return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
     }
   }
   const authCheck: Awaited<ReturnType<typeof hasUsablePlatformAuth>> = accessMode === 'secured' && !authExempt
@@ -170,6 +198,7 @@ export async function executeCli(
       accessMode,
       commandPath: authCommandPath,
       commandKind: authCommandKind,
+      requiresSession: protection.requiresSession,
       hasAuth: authCheck.authenticated,
       ...(authCheck.error ? { authError: authCheck.error } : {}),
       gatewayUrl: gatewayTarget?.gatewayUrl,
@@ -177,7 +206,7 @@ export async function executeCli(
     }, async () => true);
   if ("error" in authResult) {
     const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
-    return reportGateResult(authResult, global.json, presenter);
+    return reportGateResult(authResult, global.json, presenter, correlationId);
   }
 
   const projectScope = resolveProjectScope(authRoute, global, cmdPath, flagsObj);
@@ -185,7 +214,7 @@ export async function executeCli(
     try {
       loadedConfig = await resolveProjectConfig(cwd, options.moduleUrl);
     } catch (error) {
-      return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
+      return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
     }
   }
 
@@ -197,7 +226,7 @@ export async function executeCli(
       skipAdapterInitialization: Boolean(isGlobalHelp || isGlobalVersion),
     });
   } catch (error) {
-    return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
+    return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
   }
 
   const { platform, platformConfig, rawConfig, effectiveConfig, platformRoot, projectRoot } = initialized;
@@ -631,12 +660,14 @@ function reportGateResult<T>(
   gated: { error: import('@kb-labs/core-platform').ErrorEnvelope } | { value: T },
   json: boolean | undefined,
   presenter: Presenter,
+  correlationId: string,
 ): T | number {
   if ('error' in gated) {
+    const error = { ...gated.error, correlationId };
     if (json && typeof presenter.json === 'function') {
-      presenter.json({ ok: false, error: gated.error });
+      presenter.json({ ok: false, error });
     } else {
-      presenter.error(`${gated.error.code}: ${gated.error.message} ${gated.error.hint}`);
+      presenter.error(`${error.code}: ${error.message} ${error.hint}`);
     }
     return 1;
   }
@@ -648,10 +679,12 @@ function reportInitializationError(
   global: ReturnType<typeof parseArgs>["global"],
   jsonPresenterFactory: typeof createJsonPresenter,
   textPresenterFactory: typeof createTextPresenter,
+  correlationId: string,
 ): number {
   const envelope = isProjectRegistryError(error)
     ? projectErrorEnvelope(error)
     : toErrorEnvelope(error);
+  envelope.correlationId = correlationId;
   const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
   if (global.json) {
     presenter.json({ ok: false, error: envelope });

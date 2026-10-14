@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { ICache } from '@kb-labs/core-platform';
+import { createErrorEnvelope, type ICache } from '@kb-labs/core-platform';
 import { signAccessToken, type JwtConfig } from '@kb-labs/gateway-auth';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import { createAuthMiddleware } from '../auth/middleware.js';
@@ -71,7 +71,7 @@ beforeAll(async () => {
   registerGatewayUxErrorResponses(app);
 
   const cache = makeCache();
-  app.addHook('preHandler', createAuthMiddleware(cache, testJwtConfig));
+  app.addHook('onRequest', createAuthMiddleware(cache, testJwtConfig));
 
   // We inject the mocked authService via cast — same interface
   registerAuthRoutes(app, authService as never);
@@ -89,6 +89,24 @@ afterAll(async () => {
 // without the permission get 403 from the handler.
 
 describe('POST /auth/register', () => {
+  it('denies an authenticated machine without machine:register before registration', async () => {
+    authService.register.mockClear();
+    const token = await makeMachineJwt([]);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      headers: { Authorization: `Bearer ${token}` },
+      payload: { name: 'Unauthorized Agent' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_FORBIDDEN',
+      message: 'Permission denied: machine:register',
+    } });
+    expect(authService.register).not.toHaveBeenCalled();
+  });
+
   it('returns 200 with clientId, clientSecret, hostId, namespaceId on success (admin Bearer)', async () => {
     authService.register.mockResolvedValue({
       clientId: 'client-abc',
@@ -174,14 +192,35 @@ describe('POST /auth/register', () => {
     );
   });
 
-  it('returns 401 for anonymous (no Authorization header)', async () => {
+  // case: S-104.6
+  it('refuses anonymous machine registration at the global auth gate', async () => {
+    authService.register.mockClear();
     const res = await app.inject({
       method: 'POST',
       url: '/auth/register',
       payload: { name: 'x' },
-      // No Authorization header — middleware blocks with 401
+      // No Authorization header — the global auth gate rejects before route dispatch.
     });
     expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', {
+      details: { gatewayUrl: 'http://localhost:80' },
+    }) });
+    expect(res.json().error.correlationId).toEqual(expect.any(String));
+    expect(authService.register).not.toHaveBeenCalled();
+  });
+
+  // case: S-104.6
+  it('refuses an anonymous human signup body before machine request validation', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { name: 'new-member', email: 'new-member@example.test', password: 'HumanPass123!' },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', {
+      details: { gatewayUrl: 'http://localhost:80' },
+    }) });
   });
 });
 

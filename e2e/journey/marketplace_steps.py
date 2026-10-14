@@ -17,6 +17,7 @@ from journey_resources import active_platform_root
 from service_steps import Journey
 from invocations import (
     CompletedProcess,
+    catalogued_error_hint,
     decode_ux_error_result,
     decode_ux_success_result,
     export_project_identity_to_child_environment,
@@ -268,7 +269,8 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         if (result.returncode == 0 or not isinstance(failure, dict)
                 or failure.get("code") != "KB_AUTH_REQUIRED"
                 or failure.get("message") != "Authentication is required."
-                or failure.get("hint") != f'Run "kb auth login --gateway-url {env.get("KB_JOURNEY_BASE_URL", "<url>")} --email <email>".'):
+                or failure.get("hint") != catalogued_error_hint(
+                    "KB_AUTH_REQUIRED", gatewayUrl=env.get("KB_JOURNEY_BASE_URL", "<url>"))):
             raise RuntimeError("unauthenticated marketplace list did not return KB_AUTH_REQUIRED with the login hint")
 
     journey.step("secured marketplace requires a saved CLI session", "marketplace",

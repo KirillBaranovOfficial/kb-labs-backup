@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Writable } from 'node:stream';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import type { ICache, ILogger, IServiceTransport } from '@kb-labs/core-platform';
+import { createErrorEnvelope, type ICache, type ILogger, type IServiceTransport } from '@kb-labs/core-platform';
 import type { ManifestV3, ProjectServiceDeclaration } from '@kb-labs/plugin-contracts';
 import { signAccessToken } from '@kb-labs/gateway-auth';
 import { AuthConfigSchema, type GatewayConfig } from '@kb-labs/gateway-contracts';
@@ -107,13 +107,20 @@ describe('Gateway global auth gate', () => {
       const url = route.url.replace(/:([A-Za-z0-9_]+)/g, 'test-value').replace(/\*/g, 'probe');
       if (isPlatformPublicRoute(method, url)) { continue; }
       const gatewayUrl = 'http://gateway.test';
-      const response = await app.inject({ method, url, headers: { host: 'gateway.test' } });
+      const response = await app.inject({
+        method,
+        url,
+        headers: { host: 'gateway.test' },
+        ...(url === '/auth/register' ? {
+          payload: { name: 'new-member', email: 'new-member@example.test', password: 'HumanPass123!' },
+        } : {}),
+      });
       expect(response.statusCode, `${method} ${url}`).toBe(401);
       expect(response.json(), `${method} ${url}`).toMatchObject({
         ok: false,
         error: {
           code: 'KB_AUTH_REQUIRED',
-          hint: `Run "kb auth login --gateway-url ${gatewayUrl} --email <email>" and enter your password at the prompt, or provide it with --password-stdin.`,
+          hint: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl } }).hint,
           correlationId: expect.any(String),
         },
       });

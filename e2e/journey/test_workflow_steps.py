@@ -10,9 +10,37 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import workflow_steps
 from service_steps import Journey
+from invocations import catalogued_error_hint, catalogued_error_message
 
 
 class WorkflowJourneyTests(unittest.TestCase):
+    def test_registry_representative_selection_fails_for_unrepresented_protection_class(self):
+        registry_listing = {
+            "data": {"commands": [
+                {"path": ["config", "show"], "protectionClass": "session:system", "requiresSession": True, "available": True},
+                {"path": ["workflow", "defs", "list"], "protectionClass": "session:plugin", "requiresSession": True, "available": True},
+                {"path": ["auth", "status"], "protectionClass": "public:system", "requiresSession": False, "available": True},
+                {"path": ["new", "feature"], "protectionClass": "session:new-class", "requiresSession": True, "available": False},
+            ]}
+        }
+
+        with self.assertRaisesRegex(AssertionError, "session:new-class"):
+            workflow_steps.select_session_protection_representatives(registry_listing)
+
+    def test_registry_representative_selection_uses_one_command_from_each_session_class(self):
+        registry_listing = {
+            "data": {"commands": [
+                {"path": ["config", "show"], "protectionClass": "session:system", "requiresSession": True, "available": True},
+                {"path": ["workflow", "defs", "list"], "protectionClass": "session:plugin", "requiresSession": True, "available": True},
+                {"path": ["auth", "status"], "protectionClass": "public:system", "requiresSession": False, "available": True},
+            ]}
+        }
+
+        self.assertEqual(workflow_steps.select_session_protection_representatives(registry_listing), {
+            "session:system": ["config", "show"],
+            "session:plugin": ["workflow", "defs", "list"],
+        })
+
     # case: S-203.1
     def test_bash_profile_cli_capture_keeps_stderr_separate_from_stdout(self):
         with tempfile.TemporaryDirectory(prefix="journey-cli-streams-") as temp:
@@ -135,79 +163,108 @@ class WorkflowJourneyTests(unittest.TestCase):
     def test_secured_plugin_commands_are_gated_and_admin_login_recovers(self):
         authenticated = [False]
         calls = []
-        call_homes = []
-        call_cwds = []
-        call_envs = []
+        repository = Path(__file__).resolve().parents[2]
+        cli_path = repository / "cli" / "bin" / "dist" / "bin.js"
+        with tempfile.TemporaryDirectory(prefix="journey-registry-cli-") as fixture:
+            home = Path(fixture) / "home"
+            home.mkdir()
+            launcher = Path(fixture) / "kb-built"
+            launcher.write_text(f'#!/bin/sh\nexec node "{cli_path}" "$@"\n', encoding="utf-8")
+            launcher.chmod(0o755)
+            registry_env = {key: value for key, value in os.environ.items() if not key.startswith("KB_")}
+            registry_env.update({"HOME": str(home), "KB_JOURNEY_CLI_PATH": str(launcher)})
+            registry_result = workflow_steps.run_cli(["registry", "commands", "--json"],
+                                                       env=registry_env, cwd=repository)
+            if registry_result.returncode != 0:
+                self.fail(f"built CLI registry listing failed: {(registry_result.stderr or registry_result.stdout).strip()}")
+            real_listing = json.loads(registry_result.stdout)
+        commands = real_listing["data"]["commands"]
+        session_paths = [tuple(command["path"]) for command in commands if command["requiresSession"]]
+        self.assertIn(("registry", "commands"), session_paths)
+        self.assertIn(("project", "add"), session_paths)
+        representatives = workflow_steps.select_session_protection_representatives(real_listing)
+
+        def refused(args):
+            correlation_id = f"journey-correlation-{len(calls)}"
+            envelope = {"ok": False, "error": {
+                "code": "KB_AUTH_REQUIRED", "message": catalogued_error_message("KB_AUTH_REQUIRED"),
+                "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000"),
+                "correlationId": correlation_id,
+            }}
+            diagnostic = json.dumps({"event": "cli.bootstrap.context.resolved", "correlationId": correlation_id})
+            return CompletedProcess(args, 1, json.dumps(envelope), f"[WARN] CLI resolved invocation context {diagnostic}")
 
         def fake_run(args, *, env, cwd, timeout=120, input_text=None):
             args = list(args)
             calls.append(args)
-            call_homes.append(env["HOME"])
-            call_cwds.append(cwd)
-            call_envs.append({key: env.get(key) for key in ("KB_JOURNEY_CLI_PATH", "KB_PLATFORM_ROOT", "KB_PROJECT_ROOT")})
-            if args == ["auth", "status", "--json"]:
-                return CompletedProcess(args, 0, json.dumps({
-                    "ok": True, "data": {"authenticated": False, "session": {"authenticated": False}},
-                }))
-            if args in (["auth", "login", "--help"], ["version"], ["health", "--json"]):
-                return CompletedProcess(args, 0, json.dumps({"ok": True}))
-            if args[:3] in (["config", "show", "--json"], ["workflow", "defs", "list"],
-                            ["marketplace", "plugins", "list"], ["qa", "cases", "validate"]):
-                if not authenticated[0]:
-                    if args == ["workflow", "defs", "list"]:
-                        return CompletedProcess(args, 1, "", 'KB_AUTH_REQUIRED: Authentication is required.\nHint: Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>"')
-                    return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
-                        "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
-                        "hint": 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>".',
-                    }}))
-                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"id": "hello"}}))
-            if args[:2] == ["auth", "login"]:
+            if args[:2] == ["auth", "login"] and "--help" not in args:
                 self.assertIn("admin@example.test", args)
                 self.assertNotIn("admin-password", args)
                 self.assertEqual(input_text, "admin-password\n")
                 authenticated[0] = True
                 return CompletedProcess(args, 0, "Logged in")
+            if args[:2] == ["auth", "logout"]:
+                authenticated[0] = False
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}))
+            path = tuple(argument for argument in args if argument != "--json")
+            is_session_command = any(path[:len(command_path)] == command_path for command_path in session_paths)
+            if is_session_command and not authenticated[0]:
+                if "--json" not in args:
+                    return CompletedProcess(args, 1,
+                                            f"KB_AUTH_REQUIRED: {catalogued_error_message('KB_AUTH_REQUIRED')}\nHint: {catalogued_error_hint('KB_AUTH_REQUIRED', gatewayUrl='http://127.0.0.1:4000')}\n")
+                return refused(args)
+            if args[:2] == ["project", "add"]:
+                target = Path(args[2]).resolve()
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"project": {"path": str(target)}}}))
+            if args == ["project", "list", "--json"]:
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"projects": [{"path": "/tmp/project"}]}}))
+            if args == ["registry", "commands", "--json"]:
+                return CompletedProcess(args, 0, json.dumps(real_listing))
+            if args == ["auth", "status", "--json"]:
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"authenticated": False, "session": {"authenticated": False}}}))
+            if args in (["auth", "login", "--help"], ["version"], ["health", "--json"]):
+                return CompletedProcess(args, 0, json.dumps({"ok": True}))
+            if is_session_command:
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"id": "fixture"}}))
             self.fail(f"unexpected CLI command: {args!r}")
 
         old_run_cli = workflow_steps.run_cli
         workflow_steps.run_cli = fake_run
         try:
             with tempfile.TemporaryDirectory() as home:
-                shared_home = home
                 journey = Journey("secured", "workflow-auth")
+                report_root = Path(home) / "journey-report"
                 workflow_steps.run_secured_cli_auth_step(
                     journey,
                     env={"HOME": home,
                          "KB_JOURNEY_CLI_PATH": "/installed/bin/kb",
                          "KB_JOURNEY_PLATFORM_ROOT": "/installed/platform",
+                         "KB_JOURNEY_INVOCATIONS": str(report_root),
                          "KB_JOURNEY_BASE_URL": "http://127.0.0.1:4000",
                          "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
                          "KB_JOURNEY_ADMIN_PASSWORD": "admin-password"},
                     project=Path("/tmp/project"),
                 )
+                registry_record = json.loads((report_root / "project-registries.jsonl").read_text())
+                self.assertEqual(registry_record["mode"], "secured")
+                self.assertEqual(registry_record["projects"], [{"path": "/tmp/project"}])
         finally:
             workflow_steps.run_cli = old_run_cli
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
-        self.assertEqual(calls[:1], [["config", "show", "--json"]])
-        self.assertEqual(calls[1:5], [["auth", "status", "--json"], ["auth", "login", "--help"], ["version"], ["health", "--json"]])
-        self.assertEqual(calls[5:9], [
-            ["config", "show", "--json"],
-            ["workflow", "defs", "list", "--json"],
-            ["marketplace", "plugins", "list", "--json"],
-            ["qa", "cases", "validate", "--json"],
-        ])
-        self.assertEqual(calls[9], ["workflow", "defs", "list"])
-        self.assertEqual(calls[10][:2], ["auth", "login"])
-        self.assertEqual(calls[11:], calls[5:9])
-        self.assertNotEqual(call_cwds[0], Path("/tmp/project"))
-        self.assertTrue(all(call_home != shared_home for call_home in call_homes[:10]))
-        self.assertTrue(all(call_home == shared_home for call_home in call_homes[10:]))
-        self.assertTrue(all(call_env["KB_JOURNEY_CLI_PATH"] == "/installed/bin/kb" for call_env in call_envs[:10]))
-        self.assertTrue(call_envs[0]["KB_PROJECT_ROOT"] is None)
-        self.assertTrue(all(call_env["KB_PLATFORM_ROOT"] == "/installed/platform"
-                            and call_env["KB_PROJECT_ROOT"] == "/tmp/project" for call_env in call_envs[1:10]))
+        setup_login = calls.index(next(call for call in calls if call[:2] == ["auth", "login"] and "--help" not in call))
+        project_add = calls.index(["project", "add", "/tmp/project", "--json"])
+        listing_call = calls.index(["registry", "commands", "--json"])
+        logout = calls.index(["auth", "logout", "--json"])
+        self.assertLess(setup_login, project_add)
+        self.assertLess(project_add, listing_call)
+        self.assertLess(listing_call, logout)
+        first_anonymous_probe = logout + 1
+        self.assertEqual(calls[first_anonymous_probe], ["project", "add", str(Path(calls[first_anonymous_probe][2])), "--json"])
+        expected_probe_paths = [[*paths, "--json"] for paths in representatives.values()]
+        self.assertEqual(calls[first_anonymous_probe + 1:first_anonymous_probe + 1 + len(expected_probe_paths) * 2],
+                         expected_probe_paths * 2)
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-007.4", "kind": "journey", "status": "PASS"},
             {"claimId": "S-041.12", "kind": "journey", "status": "PASS"},

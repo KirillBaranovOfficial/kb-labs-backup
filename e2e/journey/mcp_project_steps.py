@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 
-from invocations import invocation_context, run_command
+from invocations import catalogued_error_hint, invocation_context, run_command
 from journey_resources import read_installed_platform_resource
 from service_steps import Journey
 
@@ -240,7 +240,7 @@ def secured_auth(project_id: str) -> str | None:
         if (not isinstance(envelope, dict)
                 or machine_result.get("ok") is not False
                 or envelope.get("code") != "KB_AUTH_REQUIRED"
-                or envelope.get("hint") != 'Run "kb auth login --gateway-url <url> --email <email>".'
+                or envelope.get("hint") != catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>")
                 or not isinstance(envelope.get("correlationId"), str)
                 or not envelope["correlationId"].strip()):
             return f"secured tools/list with {'missing' if not token else 'invalid'} token returned no KB_AUTH_REQUIRED envelope"
