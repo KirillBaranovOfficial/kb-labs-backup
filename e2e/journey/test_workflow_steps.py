@@ -14,6 +14,33 @@ from invocations import catalogued_error_hint
 
 
 class WorkflowJourneyTests(unittest.TestCase):
+    def test_registry_representative_selection_fails_for_unrepresented_protection_class(self):
+        registry_listing = {
+            "data": {"commands": [
+                {"path": ["config", "show"], "protectionClass": "session:system", "requiresSession": True, "available": True},
+                {"path": ["workflow", "defs", "list"], "protectionClass": "session:plugin", "requiresSession": True, "available": True},
+                {"path": ["auth", "status"], "protectionClass": "public:system", "requiresSession": False, "available": True},
+                {"path": ["new", "feature"], "protectionClass": "session:new-class", "requiresSession": True, "available": False},
+            ]}
+        }
+
+        with self.assertRaisesRegex(AssertionError, "session:new-class"):
+            workflow_steps.select_session_protection_representatives(registry_listing)
+
+    def test_registry_representative_selection_uses_one_command_from_each_session_class(self):
+        registry_listing = {
+            "data": {"commands": [
+                {"path": ["config", "show"], "protectionClass": "session:system", "requiresSession": True, "available": True},
+                {"path": ["workflow", "defs", "list"], "protectionClass": "session:plugin", "requiresSession": True, "available": True},
+                {"path": ["auth", "status"], "protectionClass": "public:system", "requiresSession": False, "available": True},
+            ]}
+        }
+
+        self.assertEqual(workflow_steps.select_session_protection_representatives(registry_listing), {
+            "session:system": ["config", "show"],
+            "session:plugin": ["workflow", "defs", "list"],
+        })
+
     # case: S-203.1
     def test_bash_profile_cli_capture_keeps_stderr_separate_from_stdout(self):
         with tempfile.TemporaryDirectory(prefix="journey-cli-streams-") as temp:
@@ -150,6 +177,12 @@ class WorkflowJourneyTests(unittest.TestCase):
                 return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"project": {"path": "/tmp/project"}}}))
             if args == ["project", "list", "--json"]:
                 return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"projects": [{"path": "/tmp/project"}]}}))
+            if args == ["registry", "commands", "--json"]:
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"commands": [
+                    {"path": ["config", "show"], "protectionClass": "session:system", "requiresSession": True, "available": True},
+                    {"path": ["workflow", "defs", "list"], "protectionClass": "session:plugin", "requiresSession": True, "available": True},
+                    {"path": ["auth", "status"], "protectionClass": "public:system", "requiresSession": False, "available": True},
+                ]}}))
             if args == ["auth", "status", "--json"]:
                 return CompletedProcess(args, 0, json.dumps({
                     "ok": True, "data": {"authenticated": False, "session": {"authenticated": False}},
@@ -159,12 +192,15 @@ class WorkflowJourneyTests(unittest.TestCase):
             if args[:3] in (["config", "show", "--json"], ["workflow", "defs", "list"],
                             ["marketplace", "plugins", "list"], ["qa", "cases", "validate"]):
                 if not authenticated[0]:
+                    correlation_id = f"journey-correlation-{len(calls)}"
+                    diagnostic = json.dumps({"event": "cli.bootstrap.context.resolved", "correlationId": correlation_id})
                     if args == ["workflow", "defs", "list"]:
-                        return CompletedProcess(args, 1, "", f'KB_AUTH_REQUIRED: Authentication is required.\nHint: {catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000")}')
+                        return CompletedProcess(args, 1, "", f'KB_AUTH_REQUIRED: Authentication is required.\nHint: {catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000")}\n{diagnostic}')
                     return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
                         "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                         "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000"),
-                    }}))
+                        "correlationId": correlation_id,
+                    }}), f"[WARN] CLI resolved invocation context {diagnostic}")
                 return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"id": "hello"}}))
             if args[:2] == ["auth", "login"]:
                 self.assertIn("admin@example.test", args)
@@ -200,30 +236,30 @@ class WorkflowJourneyTests(unittest.TestCase):
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
-        self.assertEqual(calls[:2], [["project", "add", "/tmp/project", "--json"], ["project", "list", "--json"]])
-        self.assertEqual(calls[2:6], [
+        self.assertEqual(calls[:3], [["project", "add", "/tmp/project", "--json"], ["project", "list", "--json"], ["registry", "commands", "--json"]])
+        self.assertEqual(calls[3:7], [
             ["config", "show", "--json"], ["workflow", "defs", "list", "--json"],
             ["config", "show", "--json"], ["workflow", "defs", "list", "--json"],
         ])
-        self.assertEqual(call_cwds[2:4], [Path("/tmp/project"), Path("/tmp/project")])
-        self.assertNotEqual(call_cwds[4], Path("/tmp/project"))
-        self.assertNotEqual(call_cwds[4], call_cwds[0])
-        self.assertEqual(calls[6:10], [["auth", "status", "--json"], ["auth", "login", "--help"], ["version"], ["health", "--json"]])
-        self.assertEqual(calls[10:14], [
+        self.assertEqual(call_cwds[3:5], [Path("/tmp/project"), Path("/tmp/project")])
+        self.assertNotEqual(call_cwds[5], Path("/tmp/project"))
+        self.assertNotEqual(call_cwds[5], call_cwds[0])
+        self.assertEqual(calls[7:11], [["auth", "status", "--json"], ["auth", "login", "--help"], ["version"], ["health", "--json"]])
+        self.assertEqual(calls[11:15], [
             ["config", "show", "--json"],
             ["workflow", "defs", "list", "--json"],
             ["marketplace", "plugins", "list", "--json"],
             ["qa", "cases", "validate", "--json"],
         ])
-        self.assertEqual(calls[14], ["workflow", "defs", "list"])
-        self.assertEqual(calls[15][:2], ["auth", "login"])
-        self.assertEqual(calls[16:], calls[10:14])
-        self.assertTrue(all(call_home != shared_home for call_home in call_homes[:15]))
-        self.assertTrue(all(call_home == shared_home for call_home in call_homes[15:]))
-        self.assertTrue(all(call_env["KB_JOURNEY_CLI_PATH"] == "/installed/bin/kb" for call_env in call_envs[:15]))
-        self.assertTrue(all(call_env["KB_PROJECT_ROOT"] is None for call_env in call_envs[:6]))
+        self.assertEqual(calls[15], ["workflow", "defs", "list"])
+        self.assertEqual(calls[16][:2], ["auth", "login"])
+        self.assertEqual(calls[17:], calls[11:15])
+        self.assertTrue(all(call_home != shared_home for call_home in call_homes[:16]))
+        self.assertTrue(all(call_home == shared_home for call_home in call_homes[16:]))
+        self.assertTrue(all(call_env["KB_JOURNEY_CLI_PATH"] == "/installed/bin/kb" for call_env in call_envs[:16]))
+        self.assertTrue(all(call_env["KB_PROJECT_ROOT"] is None for call_env in call_envs[:7]))
         self.assertTrue(all(call_env["KB_PLATFORM_ROOT"] == "/installed/platform"
-                            and call_env["KB_PROJECT_ROOT"] == "/tmp/project" for call_env in call_envs[6:15]))
+                            and call_env["KB_PROJECT_ROOT"] == "/tmp/project" for call_env in call_envs[7:16]))
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-007.4", "kind": "journey", "status": "PASS"},
             {"claimId": "S-041.12", "kind": "journey", "status": "PASS"},

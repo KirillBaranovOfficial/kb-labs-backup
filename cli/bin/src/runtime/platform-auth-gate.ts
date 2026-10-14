@@ -1,10 +1,11 @@
 import { createErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { isPlatformAuthExempt, isPlatformAuthExemptFlag } from './platform-auth-policy.js';
+import { isPlatformAuthExemptFlag } from './platform-auth-policy.js';
 
 export interface PlatformAuthGateInput {
   accessMode: unknown;
   commandPath: string;
   commandKind: 'system' | 'plugin';
+  requiresSession: boolean;
   hasAuth: boolean;
   gatewayUrl?: string;
   authError?: ErrorEnvelope;
@@ -12,7 +13,7 @@ export interface PlatformAuthGateInput {
 }
 
 export function platformAuthFailure(input: PlatformAuthGateInput): ErrorEnvelope | null {
-  if (input.accessMode !== 'secured' || (input.help && isPlatformAuthExemptFlag('help')) || isPlatformAuthExempt(input.commandPath, input.commandKind) || input.hasAuth) {
+  if (input.accessMode !== 'secured' || (input.help && isPlatformAuthExemptFlag('help')) || !input.requiresSession || input.hasAuth) {
     return null;
   }
   if (input.authError) { return input.authError; }

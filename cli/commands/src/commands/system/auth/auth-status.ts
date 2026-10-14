@@ -37,6 +37,7 @@ type StatusResult = CommandResult & {
 export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
   name: 'status',
   scope: 'platform',
+  authProtection: 'public',
   jsonTest: { safeArgs: [] },
   description: 'Show Gateway authentication status',
   longDescription: 'Displays current machine credentials and human session status, token expiry, and Gateway URL.',

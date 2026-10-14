@@ -396,6 +396,39 @@ def _case_terminal_run(step_id: str, run_id: str, *, env: dict[str, str], cwd: P
                              clock=clock, sleep=sleep)
 
 
+def select_session_protection_representatives(registry_listing: dict) -> dict[str, list[str]]:
+    """Choose the first runnable command from each session-protected registry class."""
+    data = registry_listing.get("data")
+    commands = data.get("commands") if isinstance(data, dict) else None
+    if not isinstance(commands, list):
+        raise AssertionError("kb registry commands --json omitted data.commands")
+
+    representatives: dict[str, list[str]] = {}
+    classes: set[str] = set()
+    for command in commands:
+        if not isinstance(command, dict):
+            raise AssertionError("CLI command registry returned a malformed command entry")
+        protection_class = command.get("protectionClass")
+        if not isinstance(protection_class, str) or not protection_class:
+            raise AssertionError("CLI command registry omitted a command protectionClass")
+        if command.get("requiresSession") is not True:
+            continue
+        classes.add(protection_class)
+        if command.get("available") is not True:
+            continue
+        path = command.get("path")
+        if not isinstance(path, list) or not path or not all(isinstance(part, str) and part for part in path):
+            continue
+        representatives.setdefault(protection_class, path)
+
+    missing = sorted(classes - representatives.keys())
+    if missing:
+        raise AssertionError("No runnable registry command represents protected class(es): " + ", ".join(missing))
+    if not representatives:
+        raise AssertionError("CLI command registry declares no session-protected command classes")
+    return representatives
+
+
 def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
     """Check deny-by-default plugin dispatch, then restore the admin CLI session."""
     def verify_unregistered_project_auth() -> None:
@@ -428,13 +461,18 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
                 write_report_json(Path(report_root) / "project-registries.jsonl", {
                     "mode": "secured", "projects": projects,
                 }, env=anonymous_env, append=True, indent=None)
-            commands = [["config", "show", "--json"], ["workflow", "defs", "list", "--json"]]
             with invocation_context(step_id="S-041.17"):
+                command_listing = run_cli(["registry", "commands", "--json"], env=anonymous_env, cwd=project)
+                if command_listing.returncode != 0:
+                    raise AssertionError(f"kb registry commands failed for secured auth evidence: {(command_listing.stderr or command_listing.stdout).strip()}")
+                representatives = select_session_protection_representatives(read_ux_cli_result(command_listing))
                 for cwd in (project, unregistered_project):
-                    for command in commands:
+                    for command_path in representatives.values():
+                        command = [*command_path, "--json"]
                         result = run_cli(command, env=anonymous_env, cwd=cwd)
                         assert_platform_auth_required(
-                            result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
+                            result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"),
+                            require_context=True)
 
     journey.step("secured auth precedes unregistered project resolution", "workflow",
                  verify_unregistered_project_auth, cases=["S-041.17"])

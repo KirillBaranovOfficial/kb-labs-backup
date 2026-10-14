@@ -43,6 +43,7 @@ function fail(_ctx: PluginContextV3, _json: boolean | undefined, msg: string): R
 export const authRegister = defineSystemCommand<RegisterFlags, RegisterResult>({
   name: 'register',
   scope: 'platform',
+  authProtection: 'public',
   jsonTest: { noSafeValidPath: "This command creates an authentication account." },
   description: 'Register a new service account with Gateway',
   longDescription:

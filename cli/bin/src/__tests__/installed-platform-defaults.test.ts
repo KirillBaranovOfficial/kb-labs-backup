@@ -54,8 +54,27 @@ describe('installed platform adapter defaults', () => {
     delete env.KB_NET_OFFSET;
     delete env.KB_PROJECT_ROOT;
     delete env.KB_PROJECT_ID;
+    const listingResult = spawnSync(process.execPath, [cliPath, 'registry', 'commands', '--json'], {
+      cwd: unregisteredProject, env, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
+    });
+    expect(listingResult.error?.message, listingResult.stderr || listingResult.stdout).toBeUndefined();
+    expect(listingResult.status, listingResult.stderr || listingResult.stdout).toBe(0);
+    const listing = JSON.parse(listingResult.stdout) as {
+      data: { commands: Array<{ path: string[]; protectionClass: string; requiresSession: boolean; available: boolean }> };
+    };
+    const representatives = new Map<string, string[]>();
+    const registeredClasses = new Set<string>();
+    for (const command of listing.data.commands) {
+      if (!command.requiresSession) continue;
+      registeredClasses.add(command.protectionClass);
+      if (command.available && !representatives.has(command.protectionClass)) {
+        representatives.set(command.protectionClass, command.path);
+      }
+    }
+    expect([...registeredClasses].sort()).toEqual([...representatives.keys()].sort());
+
     for (const cwd of [registeredProject, unregisteredProject]) {
-      for (const command of [['config', 'show'], ['workflow', 'defs', 'list']]) {
+      for (const command of representatives.values()) {
         const result = spawnSync(process.execPath, [cliPath, ...command, '--json'], {
           cwd, env, encoding: 'utf8', timeout: CLI_CHILD_PROCESS_TIMEOUT_MS,
         });
@@ -69,7 +88,7 @@ describe('installed platform adapter defaults', () => {
             details: { gatewayUrl: 'http://127.0.0.1:4000' },
           }).hint,
         } });
-        expect(result.stderr).toContain('CLI auth gate refused invocation');
+        expect(result.stderr).toContain('CLI resolved invocation context');
         expect(result.stderr).toContain('"accessMode":"secured"');
         expect(result.stderr).toContain(`"platformConfigSource":"${path.join(platformRoot, '.kb', 'kb.config.jsonc')}"`);
         const logRecord = JSON.parse(result.stderr.slice(result.stderr.indexOf('{'))) as {
@@ -77,6 +96,7 @@ describe('installed platform adapter defaults', () => {
         };
         expect(logRecord.correlationId).toBeTypeOf('string');
         expect(logRecord.correlationId.length).toBeGreaterThan(0);
+        expect((payload as { error: { correlationId: string } }).error.correlationId).toBe(logRecord.correlationId);
       }
     }
   }, CLI_CHILD_PROCESS_TIMEOUT_MS * 2);

@@ -10,6 +10,7 @@ import { hello } from './hello';
 import { version } from './version';
 import { health } from './health';
 import { registryDiagnostics } from './registry-diagnostics';
+import { registryCommands } from './registry-commands';
 import { docsGenerateCliReference } from './docs-generate-cli-reference';
 import { logsDiagnose, logsContext, logsSummarize, logsQuery, logsSearch, logsGet, logsStats } from './logs';
 import { authLogin, authLogout, authStatus, authRegister, authResetLink, authTokens } from './auth';
@@ -54,6 +55,7 @@ export const logsGroup = defineSystemCommandGroup('logs', 'Log viewing and analy
  */
 export const registryGroup = defineSystemCommandGroup('registry', 'Entity registry commands', [
   registryDiagnostics,
+  registryCommands,
 ]);
 
 /**

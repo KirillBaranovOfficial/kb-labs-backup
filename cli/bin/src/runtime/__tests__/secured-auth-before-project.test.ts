@@ -4,8 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { createErrorEnvelope, resolveCliGatewayTarget } from '@kb-labs/core-platform';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
+import { ProjectRegistryError } from '@kb-labs/core-project-registry';
+import { platform as runtimePlatform } from '@kb-labs/core-runtime';
 import { registerBuiltinCommands, registerBuiltinSystemCommands, registry } from '@kb-labs/cli-commands';
-import { isPlatformAuthExempt } from '../platform-auth-policy.js';
 
 const mocks = vi.hoisted(() => ({
   loadPlatformConfiguration: vi.fn(),
@@ -50,6 +51,8 @@ describe('secured CLI auth ordering', () => {
   const originalLogStream = process.env.KB_LOG_STREAM;
   const originalOutputMode = process.env.KB_OUTPUT_MODE;
   const originalCliVersion = process.env.CLI_VERSION;
+  const originalDiagnostics = process.env.KB_DIAGNOSTICS;
+  const originalLogLevel = process.env.KB_LOG_LEVEL;
 
   afterEach(async () => {
     if (isolatedHome) await rm(isolatedHome, { recursive: true, force: true });
@@ -63,6 +66,8 @@ describe('secured CLI auth ordering', () => {
     process.env.KB_LOG_STREAM = originalLogStream;
     process.env.KB_OUTPUT_MODE = originalOutputMode;
     process.env.CLI_VERSION = originalCliVersion;
+    process.env.KB_DIAGNOSTICS = originalDiagnostics;
+    process.env.KB_LOG_LEVEL = originalLogLevel;
     vi.clearAllMocks();
   });
 
@@ -94,7 +99,7 @@ describe('secured CLI auth ordering', () => {
       platformConfig: {}, rawConfig: { gateway: { access: { mode: 'secured' } } },
       rawPlatformConfig: { gateway: { access: { mode: 'secured' } } }, effectiveConfig: undefined,
       platformRoot: isolatedHome, projectRoot: undefined, sameLocation: true,
-      sources: { platform: 'env', project: 'platform', fields: {} },
+      sources: { platformDefaults: 'platform', platform: 'env', project: 'platform', fields: {} },
     });
     mocks.initializePlatform.mockResolvedValue({
       platform: { logger: mocks.logger }, platformConfig: {},
@@ -130,6 +135,8 @@ describe('secured CLI auth ordering', () => {
     delete process.env.KB_PLATFORM_ROOT;
     process.env.GATEWAY_PORT = '4300';
     process.env.KB_NET_OFFSET = '200';
+    process.env.KB_DIAGNOSTICS = 'agent';
+    process.env.KB_LOG_LEVEL = 'warn';
 
     mocks.loadPlatformConfiguration.mockResolvedValue({
       platformConfig: {},
@@ -142,9 +149,10 @@ describe('secured CLI auth ordering', () => {
       platformRoot: isolatedHome,
       projectRoot: isolatedHome,
       sameLocation: true,
-      sources: { platform: 'env', project: 'platform', fields: {} },
+      sources: { platformDefaults: 'platform', platform: 'env', project: 'platform', fields: {} },
     });
     mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: false });
+    const diagnostic = vi.spyOn(runtimePlatform.logger, 'warn');
 
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -165,6 +173,10 @@ describe('secured CLI auth ordering', () => {
         }).hint,
       },
     });
+    const contextRecord = diagnostic.mock.calls.find(([message]) => message === 'CLI resolved invocation context')?.[1];
+    expect(diagnostic.mock.calls.filter(([message]) => message === 'CLI resolved invocation context')).toHaveLength(1);
+    expect(contextRecord).toMatchObject({ accessMode: 'secured', platformConfigSource: 'platform', commandPath: 'config show' });
+    expect(JSON.parse(records[0]!).error.correlationId).toBe(contextRecord?.correlationId);
     expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(
       path.join(isolatedHome, 'unregistered-project'),
       undefined,
@@ -174,6 +186,81 @@ describe('secured CLI auth ordering', () => {
     expect(mocks.initializePlatform).not.toHaveBeenCalled();
     expect(mocks.tryResolveGateway).not.toHaveBeenCalled();
     expect(mocks.executeViaGateway).not.toHaveBeenCalled();
+  });
+
+  // case: S-041.17
+  it('joins project-resolution failures to the same resolved context record', async () => {
+    isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-project-error-context-'));
+    process.env.HOME = isolatedHome;
+    process.env.KB_HOME = path.join(isolatedHome, '.kb');
+    process.env.KB_DIAGNOSTICS = 'agent';
+    process.env.KB_LOG_LEVEL = 'warn';
+    delete process.env.KB_GATEWAY_URL;
+    delete process.env.KB_PLATFORM_ROOT;
+    process.env.GATEWAY_PORT = '4300';
+    process.env.KB_NET_OFFSET = '200';
+
+    mocks.loadPlatformConfiguration.mockResolvedValue({
+      platformConfig: {},
+      rawConfig: { gateway: { access: { mode: 'secured' } } },
+      rawPlatformConfig: { gateway: { access: { mode: 'secured' } } },
+      effectiveConfig: undefined,
+      platformRoot: isolatedHome,
+      projectRoot: undefined,
+      sameLocation: false,
+      sources: { platformDefaults: '/isolated/platform/.kb/kb.config.json', platform: 'platform', project: 'platform', fields: {} },
+    });
+    mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: true });
+    mocks.resolveProjectConfig.mockRejectedValue(new ProjectRegistryError(
+      'KB_PROJECT_UNKNOWN', 'No registered project matches this directory.', { path: 'unregistered' },
+    ));
+    const diagnostic = vi.spyOn(runtimePlatform.logger, 'warn');
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const exitCode = await executeCli(['config', 'show', '--json'], {
+      cwd: path.join(isolatedHome, 'unregistered-project'),
+    });
+
+    const records = stdout.mock.calls.map(([record]) => String(record));
+    expect(exitCode).toBe(1);
+    expect(records).toHaveLength(1);
+    const envelope = JSON.parse(records[0]!).error;
+    expect(envelope.code).toBe('KB_PROJECT_UNKNOWN');
+    const contextRecord = diagnostic.mock.calls.find(([message]) => message === 'CLI resolved invocation context')?.[1];
+    expect(diagnostic.mock.calls.filter(([message]) => message === 'CLI resolved invocation context')).toHaveLength(1);
+    expect(contextRecord).toMatchObject({
+      accessMode: 'secured',
+      platformConfigSource: '/isolated/platform/.kb/kb.config.json',
+      commandPath: 'config show',
+      projectResolution: { cwd: path.join(isolatedHome, 'unregistered-project') },
+    });
+    expect(envelope.correlationId).toBe(contextRecord?.correlationId);
+  });
+
+  it('joins configuration-resolution failures to a context record with unresolved provenance', async () => {
+    isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-config-error-context-'));
+    process.env.HOME = isolatedHome;
+    process.env.KB_DIAGNOSTICS = 'agent';
+    process.env.KB_LOG_LEVEL = 'warn';
+    mocks.loadPlatformConfiguration.mockRejectedValue(new Error('invalid configuration'));
+    const diagnostic = vi.spyOn(runtimePlatform.logger, 'warn');
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const exitCode = await executeCli(['config', 'show', '--json'], { cwd: isolatedHome });
+
+    const records = stdout.mock.calls.map(([record]) => String(record));
+    expect(exitCode).toBe(1);
+    expect(records).toHaveLength(1);
+    const envelope = JSON.parse(records[0]!).error;
+    const contextRecord = diagnostic.mock.calls.find(([message]) => message === 'CLI resolved invocation context')?.[1];
+    expect(diagnostic.mock.calls.filter(([message]) => message === 'CLI resolved invocation context')).toHaveLength(1);
+    expect(contextRecord).toMatchObject({
+      accessMode: 'unknown',
+      platformConfigSource: 'unresolved',
+      commandPath: 'config show',
+      projectResolution: { cwd: isolatedHome },
+    });
+    expect(envelope.correlationId).toBe(contextRecord?.correlationId);
   });
 
   // case: S-041.7, S-041.17, S-007.4
@@ -192,14 +279,9 @@ describe('secured CLI auth ordering', () => {
       platformRoot: path.resolve(import.meta.dirname, '../../../../../'),
       projectRoot: path.resolve(import.meta.dirname, '../../../../../'),
     });
-    const systemCommands = registry.listSystemCommands()
-      .filter((command) => !isPlatformAuthExempt(
-        command.category ? `${command.category} ${command.name}` : command.name,
-        'system',
-      ))
-      .map((command) => command.category ? [command.category, command.name] : [command.name]);
-    const pluginCommands = registry.listCommands().map((command) => command.manifest.segments);
-    const commands = [...systemCommands, ...pluginCommands];
+    const commands = registry.listProtectionCommands()
+      .filter(({ requiresSession }) => requiresSession)
+      .map(({ path }) => path);
     expect(commands.length).toBeGreaterThan(0);
     mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: false });
     const registeredProjectRoot = path.join(isolatedHome, 'registered-project');
@@ -251,6 +333,8 @@ describe('secured CLI auth ordering', () => {
     process.env.HOME = isolatedHome;
     process.env.KB_HOME = path.join(isolatedHome, '.kb');
     process.env.GATEWAY_PORT = '4000oops';
+    process.env.KB_DIAGNOSTICS = 'agent';
+    process.env.KB_LOG_LEVEL = 'warn';
     delete process.env.KB_GATEWAY_URL;
     delete process.env.KB_PLATFORM_ROOT;
     delete process.env.KB_NET_OFFSET;
@@ -262,6 +346,7 @@ describe('secured CLI auth ordering', () => {
       sources: { platform: 'env', project: 'platform', fields: {} },
     });
     mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: false });
+    const diagnostic = vi.spyOn(runtimePlatform.logger, 'warn');
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const exitCode = await executeCli(['config', 'show', '--json'], { cwd: isolatedHome });
@@ -273,6 +358,10 @@ describe('secured CLI auth ordering', () => {
       ok: false,
       error: { code: 'KB_CONFIG_INVALID', message: expect.stringContaining('GATEWAY_PORT') },
     });
+    const envelope = JSON.parse(records[0]!).error;
+    const contextRecord = diagnostic.mock.calls.find(([message]) => message === 'CLI resolved invocation context')?.[1];
+    expect(contextRecord).toMatchObject({ accessMode: 'secured', commandPath: 'config show' });
+    expect(envelope.correlationId).toBe(contextRecord?.correlationId);
     expect(mocks.hasUsablePlatformAuth).not.toHaveBeenCalled();
   });
 

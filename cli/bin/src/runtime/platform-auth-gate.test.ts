@@ -8,7 +8,7 @@ describe('platform authentication gate', () => {
   it('blocks an undeclared plugin before its handler is called', async () => {
     const handler = vi.fn(async () => 0);
     const result = await dispatchWithPlatformAuthGate({
-      accessMode: 'secured', commandPath: 'fresh-plugin run', commandKind: 'plugin', hasAuth: false,
+      accessMode: 'secured', commandPath: 'fresh-plugin run', commandKind: 'plugin', requiresSession: true, hasAuth: false,
     }, handler);
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
@@ -22,7 +22,7 @@ describe('platform authentication gate', () => {
   it('requires login when the host rejects a saved user token', async () => {
     const handler = vi.fn(async () => 0);
     const result = await dispatchWithPlatformAuthGate({
-      accessMode: 'secured', commandPath: 'project list', commandKind: 'system', hasAuth: false,
+      accessMode: 'secured', commandPath: 'project list', commandKind: 'system', requiresSession: true, hasAuth: false,
       gatewayUrl: 'http://127.0.0.1:4000',
     }, handler);
     expect(result).toMatchObject({ error: {
@@ -42,7 +42,7 @@ describe('platform authentication gate', () => {
       details: { address: 'http://127.0.0.1:4000' }, correlationId: 'host-down',
     } as const;
     const result = await dispatchWithPlatformAuthGate({
-      accessMode: 'secured', commandPath: 'project list', commandKind: 'system', hasAuth: false, authError: hostError,
+      accessMode: 'secured', commandPath: 'project list', commandKind: 'system', requiresSession: true, hasAuth: false, authError: hostError,
     }, async () => 0);
     expect(result).toEqual({ error: hostError });
   });
@@ -51,7 +51,7 @@ describe('platform authentication gate', () => {
   it('blocks protected platform commands with the same envelope before dispatch', async () => {
     const handler = vi.fn(async () => 0);
     const result = await dispatchWithPlatformAuthGate({
-      accessMode: 'secured', commandPath: 'config show', commandKind: 'system', hasAuth: false,
+      accessMode: 'secured', commandPath: 'config show', commandKind: 'system', requiresSession: true, hasAuth: false,
     }, handler);
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
@@ -68,6 +68,7 @@ describe('platform authentication gate', () => {
       accessMode: 'secured',
       commandPath: 'marketplace plugins list',
       commandKind: 'plugin',
+      requiresSession: true,
       hasAuth: false,
     }, handler);
 
@@ -82,7 +83,7 @@ describe('platform authentication gate', () => {
   // case: S-031.4
   it('uses the configured Gateway URL in the login recovery command', async () => {
     const result = await dispatchWithPlatformAuthGate({
-      accessMode: 'secured', commandPath: 'auth tokens', commandKind: 'system', hasAuth: false,
+      accessMode: 'secured', commandPath: 'auth tokens', commandKind: 'system', requiresSession: true, hasAuth: false,
       gatewayUrl: 'https://gateway.example.test',
     }, async () => 0);
     expect(result).toMatchObject({ error: {
@@ -94,7 +95,7 @@ describe('platform authentication gate', () => {
   // case: S-041.7
   it('does not show an unresolved URL placeholder when no Gateway address is configured', async () => {
     const result = await dispatchWithPlatformAuthGate({
-      accessMode: 'secured', commandPath: 'config show', commandKind: 'system', hasAuth: false,
+      accessMode: 'secured', commandPath: 'config show', commandKind: 'system', requiresSession: true, hasAuth: false,
     }, async () => 0);
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
@@ -104,21 +105,20 @@ describe('platform authentication gate', () => {
   });
 
   // case: S-041.8
-  it('allows only platform-owned system commands without a session', async () => {
-    for (const commandPath of ['auth login', 'auth logout', 'auth status', 'auth register', 'info version', 'info health', 'diag']) {
-      const handler = vi.fn(async () => 0);
-      const result = await dispatchWithPlatformAuthGate({
-        accessMode: 'secured', commandPath, commandKind: 'system', hasAuth: false,
-      }, handler);
-      expect(result).toEqual({ value: 0 });
-      expect(handler).toHaveBeenCalledOnce();
-    }
+  it('allows commands only when the registry marks them as not session-protected', async () => {
+    const handler = vi.fn(async () => 0);
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'secured', commandPath: 'auth login', commandKind: 'system',
+      requiresSession: false, hasAuth: false,
+    }, handler);
+    expect(result).toEqual({ value: 0 });
+    expect(handler).toHaveBeenCalledOnce();
   });
 
   it('does not let a plugin widen the system allowlist by choosing an auth command path', async () => {
     const handler = vi.fn(async () => 0);
     const result = await dispatchWithPlatformAuthGate({
-      accessMode: 'secured', commandPath: 'auth login', commandKind: 'plugin', hasAuth: false,
+      accessMode: 'secured', commandPath: 'auth login', commandKind: 'plugin', requiresSession: true, hasAuth: false,
     }, handler);
     expect(result).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
     expect(handler).not.toHaveBeenCalled();
@@ -127,8 +127,8 @@ describe('platform authentication gate', () => {
   it('allows help output and every local-mode command without a session', async () => {
     const handler = vi.fn(async () => 0);
     for (const input of [
-      { accessMode: 'secured', commandPath: 'plugin run', commandKind: 'plugin', hasAuth: false, help: true },
-      { accessMode: 'local', commandPath: 'plugin run', commandKind: 'plugin', hasAuth: false },
+      { accessMode: 'secured', commandPath: 'plugin run', commandKind: 'plugin', requiresSession: true, hasAuth: false, help: true },
+      { accessMode: 'local', commandPath: 'plugin run', commandKind: 'plugin', requiresSession: true, hasAuth: false },
     ] as const) {
       await dispatchWithPlatformAuthGate(input, handler);
     }

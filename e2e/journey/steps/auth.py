@@ -172,7 +172,7 @@ def _combined(result: CompletedProcess[str]) -> str:
 
 
 def assert_platform_auth_required(result: CompletedProcess[str], command: list[str],
-                                  gateway: str = "<url>") -> None:
+                                  gateway: str = "<url>", *, require_context: bool = False) -> None:
     """Require the exact anonymous CLI auth envelope promised by S-041.7."""
     try:
         payload = decode_ux_error_result(read_ux_cli_result(result))
@@ -184,6 +184,21 @@ def assert_platform_auth_required(result: CompletedProcess[str], command: list[s
             or failure.get("message") != "Authentication is required."
             or failure.get("hint") != catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl=gateway)):
         raise AssertionError(f"unauthenticated {' '.join(command)} returned an unexpected result: {payload!r}")
+    if require_context:
+        correlation_id = failure.get("correlationId")
+        records = []
+        for line in (result.stderr or "").splitlines():
+            marker = "CLI resolved invocation context "
+            if marker in line:
+                encoded = line.split(marker, 1)[1]
+                try:
+                    record = json.loads(encoded)
+                except json.JSONDecodeError as error:
+                    raise AssertionError("CLI context diagnostic was not structured JSON") from error
+                records.append(record)
+        if (not isinstance(correlation_id, str) or not correlation_id
+                or len(records) != 1 or records[0].get("correlationId") != correlation_id):
+            raise AssertionError(f"unauthenticated {' '.join(command)} did not join to one resolved CLI context record")
 
 
 def assert_cli_session_absent(result: CompletedProcess[str]) -> None:
