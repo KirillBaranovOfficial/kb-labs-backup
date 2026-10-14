@@ -877,6 +877,142 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 	}
 }
 
+func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "install")
+	launcher, fakehost := binaries(t)
+	port := freeLoopbackPort(t)
+	kbHome := filepath.Join(t.TempDir(), ".kb")
+	t.Setenv(host.KBHomeEnv, kbHome)
+	hostSpec := &contracts.HostSpec{Command: fakehost, Args: []string{"-port", fmt.Sprint(port)},
+		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10}
+	fixtures := map[string][]byte{
+		"install": []byte("install binary fixture"),
+		"update1": []byte("first update binary fixture"),
+		"update2": []byte("second update binary fixture"),
+	}
+	digests := make(map[string]string, len(fixtures))
+	for name, data := range fixtures {
+		digest := sha256.Sum256(data)
+		digests[name] = hex.EncodeToString(digest[:])
+	}
+	var requests int
+	var stageProjectionFailure string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		name := strings.TrimPrefix(request.URL.Path, "/")
+		data, ok := fixtures[name]
+		if !ok {
+			http.NotFound(writer, request)
+			return
+		}
+		requests++
+		entries, err := os.ReadDir(filepath.Join(root, "versions"))
+		if err != nil {
+			stageProjectionFailure = err.Error()
+		} else {
+			stages := 0
+			for _, entry := range entries {
+				if !strings.HasPrefix(entry.Name(), ".stage-") {
+					continue
+				}
+				stages++
+				stage := filepath.Join(root, "versions", entry.Name())
+				for _, projection := range contracts.SharedRuntimeProjections() {
+					path := filepath.Join(stage, filepath.FromSlash(projection.PlatformPath))
+					if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+						stageProjectionFailure = fmt.Sprintf("%s exists in staged version %s (stat error: %v)", projection.PlatformPath, stage, statErr)
+						break
+					}
+				}
+			}
+			if stages == 0 {
+				stageProjectionFailure = "binary download did not observe a staged version"
+			}
+		}
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(data)
+	}))
+	defer server.Close()
+
+	installPlan := contracts.ResolvedInstallPlan{
+		Schema: contracts.ResolvedPlanSchema, PlanHash: "production-artifacts-install",
+		Request:      contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
+		Host:         hostSpec,
+		Artifacts: []contracts.Artifact{{ID: "fixture-binary", Kind: "binary", Version: "1.0.0",
+			URL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"}},
+	}
+	state, err := host.StateForRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{}}
+	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
+	t.Cleanup(func() {
+		status, code, output := inst.run("status", "--json")
+		if code == 0 && status["host"].(map[string]any)["state"] == host.StateRunning {
+			pid := int(status["host"].(map[string]any)["pid"].(float64))
+			if _, code, output := inst.run("stop", "--json"); code != 0 {
+				t.Errorf("production artifact wiring test cleanup stop: %s", output)
+			}
+			if !waitHostExit(pid, 5*time.Second) {
+				t.Errorf("production artifact wiring left host process %d alive", pid)
+			}
+		} else if code != 0 && !strings.Contains(output, "not running") {
+			t.Errorf("production artifact wiring test cleanup status: %s", output)
+		}
+	})
+	runApplyStreamForTest(t, resolvedPlan{Plan: installPlan, State: state}, deps)
+
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertBinaryCached := func(name string) {
+		t.Helper()
+		cached, readErr := os.ReadFile(filepath.Join(cacheRoot, "binaries", digests[name]))
+		if readErr != nil || !bytes.Equal(cached, fixtures[name]) {
+			t.Fatalf("%s binary was not cached in install-root shared cache %s: %v", name, cacheRoot, readErr)
+		}
+	}
+	assertBinaryCached("install")
+
+	launcherState, err := host.StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = host.StateForRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"update1", "update2"} {
+		version := map[string]string{"update1": "2.0.0", "update2": "3.0.0"}[name]
+		plan := contracts.ResolvedInstallPlan{
+			Schema: contracts.ResolvedPlanSchema, PlanHash: "production-artifacts-" + name,
+			Request:      contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
+			ServiceGraph: contracts.ServiceGraph{PlatformVersion: version, Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
+			Host:         hostSpec,
+			Artifacts: []contracts.Artifact{{ID: "fixture-binary", Kind: "binary", Version: version,
+				URL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"}},
+		}
+		plan.Request.PlatformRoot = layout.PlatformRoot()
+		if _, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: "kb-create"}, root, plan,
+			state, launcherState, nil); failure != nil {
+			t.Fatalf("production update to %s failed: %v", version, failure)
+		}
+		if stageProjectionFailure != "" {
+			t.Fatalf("shared projection existed in a staged tree during %s: %s", name, stageProjectionFailure)
+		}
+		assertBinaryCached(name)
+	}
+	if requests != 3 {
+		t.Fatalf("production artifact downloads = %d, want first install and two updates", requests)
+	}
+}
+
 func assertContainerParent(t *testing.T, parent string) {
 	t.Helper()
 	entries, err := os.ReadDir(parent)

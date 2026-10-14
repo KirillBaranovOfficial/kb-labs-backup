@@ -280,8 +280,8 @@ func TestActivationRefusalLeavesActiveRootUntouched(t *testing.T) {
 }
 
 // case: S-223.6
-func TestActivationRejectsEveryDeclaredSharedRuntimeEntryInStagedTree(t *testing.T) {
-	for _, shared := range contracts.SharedRuntimePaths() {
+func TestActivationRejectsEveryDeclaredSharedRuntimeProjectionInStagedTree(t *testing.T) {
+	for _, shared := range contracts.SharedRuntimeProjections() {
 		t.Run(shared.PlatformPath, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "platform")
 			layout, active := initialLayout(t, root, "1.0.0")

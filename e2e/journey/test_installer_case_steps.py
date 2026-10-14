@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import subprocess
 import shlex
 import tempfile
@@ -13,7 +14,7 @@ from unittest.mock import patch
 
 import installer_case_steps
 from test_catalog_exit_status import catalogued_exit
-from installer_case_steps import (_data, _seed_doctor_fixture,
+from installer_case_steps import (_add_installed_manifest_requirement, _data, _seed_installed_fixture,
                                   cleanup_installer_fixture_root,
                                   run_doctor_root_isolation_step,
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
@@ -46,7 +47,89 @@ def kb_create_stream(envelope: dict, exit_code: int) -> str:
     return "\n".join((json.dumps(envelope), json.dumps(terminal))) + "\n"
 
 
+def fake_product_install(args: list[str]) -> None:
+    """Model install output from the layout contract, independently of a seeder's expectation."""
+    layout = json.loads((Path(__file__).parents[2] / "tools/kb-create/v2/contracts/platform-layout.json").read_text())
+    install_root = Path(args[args.index("--platform-root") + 1])
+    version_root = install_root / layout["versionRoots"]["path"] / "1.0.0"
+    version_root.mkdir(parents=True)
+    for entry in layout["ownedEntries"]:
+        if entry == layout["currentLink"]:
+            continue
+        path = install_root / entry
+        if entry == layout["ownershipRecord"]:
+            path.write_text(json.dumps({"schema": "kb.create.installation-owner/v1", "installationId": "a" * 32}))
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+    (install_root / layout["currentLink"]).symlink_to(Path(layout["versionRoots"]["path"]) / "1.0.0")
+    for projection in [layout["platformDataRoot"], *layout["sharedRuntimePaths"]]:
+        state = install_root / projection["statePath"]
+        if projection.get("kind", "directory") == "directory":
+            state.mkdir(parents=True, exist_ok=True)
+        else:
+            state.parent.mkdir(parents=True, exist_ok=True)
+            state.write_text("{}\n")
+        target = version_root / projection["platformPath"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(os.path.relpath(state, target.parent), target_is_directory=projection.get("kind", "directory") == "directory")
+    package = "@kb-labs/journey-fixture"
+    package_root = version_root / "node_modules" / package
+    package_root.mkdir(parents=True)
+    artifact = {"id": "journey-fixture", "kind": "plugin", "package": package, "version": "1.0.0", "config": []}
+    (package_root / "package.json").write_text(json.dumps({"name": package, "version": "1.0.0"}))
+    (package_root / "kb-create.manifest.json").write_text(json.dumps({
+        "schema": "kb.create.artifact-manifest/v2", "id": artifact["id"],
+        "package": package, "version": "1.0.0", "requirements": []}))
+    receipt_path = version_root / ".kb/v2/receipt.json"
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(json.dumps({"id": "product-install-fixture", "plan": {"artifacts": [artifact]}}))
+
+
+def fixture_seeder_writes_layout_owned_path(source: str, layout: dict) -> list[str]:
+    """Find direct filesystem writes rooted at a seeder's install-root argument."""
+    owned_paths = set(layout["ownedEntries"])
+    owned_paths.update((layout["platformDataRoot"]["platformPath"], layout["platformDataRoot"]["statePath"]))
+    for projection in layout["sharedRuntimePaths"]:
+        owned_paths.update((projection["platformPath"], projection["statePath"]))
+
+    def under_install_root(node: ast.AST, root_names: set[str]) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in root_names
+        if isinstance(node, ast.Attribute):
+            return under_install_root(node.value, root_names)
+        if isinstance(node, ast.BinOp):
+            return under_install_root(node.left, root_names) or under_install_root(node.right, root_names)
+        if isinstance(node, ast.Call):
+            return any(under_install_root(argument, root_names) for argument in node.args)
+        return False
+
+    mutating_methods = {"mkdir", "open", "replace", "rename", "rmdir", "symlink_to", "touch",
+                        "unlink", "write_bytes", "write_text"}
+    tree = ast.parse(source)
+    violations = []
+    for function in (node for node in ast.walk(tree)
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("_seed")):
+        arguments = [*function.args.args, *function.args.kwonlyargs]
+        root_names = {argument.arg for argument in arguments if "root" in argument.arg.lower()}
+        for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
+            if (isinstance(call.func, ast.Attribute) and call.func.attr in mutating_methods
+                    and under_install_root(call.func.value, root_names)):
+                violations.append(f"{function.name}:{call.lineno} writes under an install root; owned paths: {sorted(owned_paths)}")
+    return violations
+
+
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_fixture_seeders_cannot_write_layout_owned_install_paths(self):
+        journey_root = Path(__file__).parents[2]
+        layout = json.loads((journey_root / "tools/kb-create/v2/contracts/platform-layout.json").read_text())
+        source = (journey_root / "e2e/journey/installer_case_steps.py").read_text()
+        self.assertEqual(fixture_seeder_writes_layout_owned_path(source, layout), [])
+
+        for owned_path in sorted(layout["ownedEntries"]):
+            mutation = f"def _seed_mutation(target_root):\n    (target_root / {owned_path!r}).write_text('hand-built')\n"
+            self.assertTrue(fixture_seeder_writes_layout_owned_path(mutation, layout),
+                            f"a hand-written mutation of {owned_path} must make the static rail fail")
+
     def test_installation_spelling_matrix_uses_case_verbs_and_scenario_shim_owner(self):
         with tempfile.TemporaryDirectory(prefix="journey-install-spellings-") as temp:
             home = Path(temp)
@@ -1339,11 +1422,23 @@ class InstallerCaseStepsTest(unittest.TestCase):
             move_test_platform_into_container(source)
             calls = []
             primary_running = True
+            fixture_running = {}
 
             def run_command(args):
                 nonlocal primary_running
                 calls.append(args)
-                if args[1:3] == ["doctor", "--fix"]:
+                if args[1] == "install":
+                    fake_product_install(args)
+                    fixture_root = Path(args[args.index("--platform-root") + 1])
+                    fixture_running[fixture_root] = True
+                    output = {"ok": True, "data": {"operation": "apply"}}
+                elif args[1] == "uninstall":
+                    fixture_root = Path(args[args.index("--platform-root") + 1])
+                    import shutil
+                    shutil.rmtree(fixture_root, ignore_errors=True)
+                    fixture_running.pop(fixture_root, None)
+                    output = {"ok": True, "data": {"operation": "uninstall"}}
+                elif args[1:3] == ["doctor", "--fix"]:
                     output = {"ok": True, "data": {"operation": "doctor-fix", "hostRestarted": False}}
                 elif args[1] == "start" and str(source) in args:
                     primary_running = True
@@ -1355,69 +1450,64 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                "meta": {"pid": "42"}}}
                     return subprocess.CompletedProcess(args, 1, json.dumps(output), "")
                 elif args[1] == "stop":
-                    primary_running = False
+                    fixture_root = Path(args[args.index("--platform-root") + 1])
+                    if fixture_root in fixture_running:
+                        fixture_running[fixture_root] = False
+                    else:
+                        primary_running = False
                     output = {"ok": True, "data": {"operation": "stop"}}
                 elif args[1] == "status" and Path(args[args.index("--platform-root") + 1]) in {
                         source, source / "current", (source / "current").resolve()}:
                     output = {"ok": True, "data": {"host": {"state": "running" if primary_running else "stopped"}}}
                 elif args[1] == "status":
-                    output = {"ok": True, "data": {"host": {"state": "stopped"}}}
+                    requested = Path(args[args.index("--platform-root") + 1])
+                    state = "running" if fixture_running.get(requested, False) else "stopped"
+                    output = {"ok": True, "data": {"host": {"state": state}}}
                 else:
                     output = {"ok": True, "data": {"host": {"state": "running"}}}
                 return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
 
-            journey = run_doctor_root_isolation_step(mode="local", launcher="kb-create",
+            stable_index = root / "stable-index.json"
+            stable_index.write_text("{}")
+            journey = run_doctor_root_isolation_step(mode="local", launcher="kb-create", stable_index=stable_index,
                                                      platform_root=source, run_command=run_command)
 
         self.assertEqual(journey.steps[0].cases, ["S-025.7"])
         self.assertEqual(journey.steps[0].status, "PASS")
         self.assertEqual(journey.steps[1].cases, ["S-025.8"])
         self.assertEqual(journey.steps[1].status, "PASS")
-        self.assertEqual(len(calls), 12)
-        self.assertEqual(calls[-1][1], "start")
+        self.assertEqual(len(calls), 17)
+        self.assertEqual(calls[0][1], "install")
+        self.assertEqual(calls[-1][1], "uninstall")
 
-    def test_doctor_fixture_requirement_matches_receipt_and_manifest_projection(self):
+    def test_fixture_seeder_uses_product_install_and_requirement_is_an_explicit_fault(self):
         with tempfile.TemporaryDirectory(prefix="journey-doctor-fixture-") as temp:
             root = Path(temp)
-            source = root / "source"
-            source_receipt = source / ".kb/v2/receipt.json"
-            source_receipt.parent.mkdir(parents=True)
-            source_receipt.write_text(json.dumps({"plan": {"artifacts": [
-                {"kind": "platform", "id": "platform", "package": "@kb/platform", "version": "1.0.0"},
-            ]}}))
-            move_test_platform_into_container(source)
             target = root / "fixture"
             requirement = {"id": "fixture.required", "path": "/fixture/required", "required": True,
                            "secret": False, "hint": "configure fixture"}
+            calls = []
 
-            _seed_doctor_fixture(source, target, requirement=requirement)
+            def run_command(args):
+                calls.append(args)
+                fake_product_install(args)
+                return subprocess.CompletedProcess(args, 0, "", "")
 
+            index = root / "index.json"
+            index.write_text("{}")
+            receipt_path = _seed_installed_fixture(target, launcher="kb-create", index=index,
+                                                   run_command=run_command, label="doctor fixture")
+            self.assertEqual(calls[0][1], "install")
+            self.assertEqual(calls[0][calls[0].index("--index") + 1], str(index))
+            self.assertEqual(calls[0][calls[0].index("--platform-root") + 1], str(target))
+            _add_installed_manifest_requirement(receipt_path, requirement)
             target_active = active_platform_root(target)
-            receipt = json.loads((target_active / ".kb/v2/receipt.json").read_text())
-            manifest = json.loads((target_active / "node_modules/@kb-labs/journey-doctor-fixture/kb-create.manifest.json").read_text())
-            fixture_artifact = next(item for item in receipt["plan"]["artifacts"]
-                                    if item["id"] == "journey-doctor-fixture")
+            receipt = json.loads(receipt_path.read_text())
+            manifest_path = target_active / "node_modules/@kb-labs/journey-fixture/kb-create.manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            fixture_artifact = receipt["plan"]["artifacts"][0]
             self.assertEqual(fixture_artifact["config"], [requirement])
             self.assertEqual(manifest["requirements"], [requirement])
-
-    def test_doctor_fixture_includes_installed_cli_entry_needed_by_launcher_shim(self):
-        with tempfile.TemporaryDirectory(prefix="journey-doctor-cli-fixture-") as temp:
-            root = Path(temp)
-            source = root / "source"
-            source_package = source / "node_modules/@kb-labs/cli-bin"
-            source_package.joinpath("dist").mkdir(parents=True)
-            source_package.joinpath("dist/bin.js").write_text("export {};\n")
-            receipt = source / ".kb/v2/receipt.json"
-            receipt.parent.mkdir(parents=True)
-            receipt.write_text(json.dumps({"plan": {"artifacts": [
-                {"kind": "cli", "id": "cli", "package": "@kb-labs/cli-bin", "version": "1.0.0"},
-            ]}}))
-            move_test_platform_into_container(source)
-            target = root / "target"
-
-            _seed_doctor_fixture(source, target)
-
-            self.assertEqual(((target / "current").resolve() / "node_modules/@kb-labs/cli-bin/dist/bin.js").read_text(), "export {};\n")
 
     def test_uninstall_decline_claim_fails_for_a_failed_fake_response(self):
         with tempfile.TemporaryDirectory(prefix="journey-uninstall-decline-") as temp:
