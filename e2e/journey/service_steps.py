@@ -385,6 +385,8 @@ class FlowGraph:
             state: group for group, spec in self.groups.items()
             for state in spec.get("produces", ())
         })
+        self._state_producer_actions: dict[str, Callable[[], object]] = {}
+        self._state_producers_running: set[str] = set()
         self.resources: list[Any] = []
         self.selected_groups = {
             group for group, spec in self.groups.items()
@@ -428,6 +430,38 @@ class FlowGraph:
 
     def _group_produces_needed_state(self, group: str) -> bool:
         return bool(set(self.groups.get(group, {}).get("produces", ())) & self.needed_states)
+
+    def register_state_producer(self, state: str, action: Callable[[], object]) -> None:
+        """Register the action that establishes a declared state when a consumer needs it."""
+        if state not in self.state_producers:
+            raise JourneyContractError(f"harness defect: state {state!r} has no declared producer")
+        if state in self._state_producer_actions:
+            raise JourneyContractError(f"harness defect: state {state!r} has multiple producer actions")
+        self._state_producer_actions[state] = action
+
+    def _ensure_dependency_producers(self, group: str) -> None:
+        """Run registered producers for absent dependencies before a group's state gate."""
+        dependencies = self.dependencies.get(group, self.groups.get(group, {}).get("depends_on", ()))
+        for state in dependencies:
+            if state in self.states or state in self._state_producers_running:
+                continue
+            action = self._state_producer_actions.get(state)
+            producer_group = self.state_producers.get(state)
+            if action is None or producer_group is None:
+                continue
+            self._ensure_dependency_producers(producer_group)
+            producer_dependencies = self.dependencies.get(
+                producer_group, self.groups.get(producer_group, {}).get("depends_on", ()))
+            if any(dependency not in self.states for dependency in producer_dependencies):
+                continue
+            if any(self.states[dependency].get("passed") is not True
+                   for dependency in producer_dependencies):
+                continue
+            self._state_producers_running.add(state)
+            try:
+                action()
+            finally:
+                self._state_producers_running.remove(state)
 
     def _flow_owns_selected_claim(self, group: str, cases: Iterable[str]) -> bool:
         if self.journey.selected_claims.intersection(cases):
@@ -576,6 +610,7 @@ class FlowGraph:
             self.journey.skipped(name, capability)
             self.journey.record_flow(name, "SKIPPED", "not selected")
             return "SKIPPED"
+        self._ensure_dependency_producers(group)
         blocker = None if lifecycle else self._blocker(group)
         if blocker:
             state, evidence = blocker

@@ -1026,6 +1026,12 @@ def _main(*, update_variant_runner=None):
     selection_groups = outer_selection_groups()
     outer_graph = FlowGraph(CASE_JOURNEY, OUTER_GROUP_DEPENDENCIES,
                             diagnostics_path=diagnostics, groups=selection_groups)
+
+    def produce_project_registration_state() -> None:
+        establish_project_registration(outer_graph, PROJECT, env)
+        capture_case_failure()
+
+    outer_graph.register_state_producer("project-registered", produce_project_registration_state)
     ACTIVE_OUTER_GRAPH = outer_graph
     ACTIVE_MAIN_ENV = env
     # Agent flows pass --registry explicitly. Human `install` uses the package
@@ -1414,9 +1420,6 @@ def _main(*, update_variant_runner=None):
         )
         update_journey = update_gate != "BLOCKED"
     if update_journey:
-        if outer_graph.states.get("project-registered") is None:
-            establish_project_registration(outer_graph, PROJECT, env)
-            capture_case_failure()
         try:
             receipt_path = PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json"
             active = json.loads(receipt_path.read_text())
