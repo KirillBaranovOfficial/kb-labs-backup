@@ -289,15 +289,7 @@ function toRestErrorEnvelope(error: unknown, correlationId: string) {
     return createErrorEnvelope(code, {
       correlationId,
       ...(code === "KB_RUNTIME_INPUT_INVALID" ? { hint: "Correct the request fields and retry." } : {}),
-      ...(code === "KB_RUNTIME_UNEXPECTED" ? { hint: "Retry the request. If it fails again, give the correlation ID to a platform administrator." } : {}),
     });
   }
-  const envelope = toErrorEnvelope(error, { correlationId });
-  if (envelope.code === "KB_RUNTIME_UNEXPECTED") {
-    return createErrorEnvelope("KB_RUNTIME_UNEXPECTED", {
-      correlationId,
-      hint: "Retry the request. If it fails again, give the correlation ID to a platform administrator.",
-    });
-  }
-  return envelope;
+  return toErrorEnvelope(error, { correlationId });
 }

@@ -2024,7 +2024,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "An unexpected error occurred.",
-      "hint": "Re-run with --debug and include the correlationId in a report."
+      "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_API_FAILURE",

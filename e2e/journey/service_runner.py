@@ -54,6 +54,7 @@ from worktree_steps import run_worktree_steps
 from project_identity_steps import run_project_identity_steps, run_project_registry_steps
 from workspace_steps import run_workspace_cli_steps, workspace_checkout_problem
 from plugin_isolation_steps import run_project_plugin_availability_steps
+from unexpected_error_steps import run_unexpected_error_steps
 from mcp_project_steps import (
     apply_commit_plan,
     commit_tool_schema,
@@ -941,6 +942,14 @@ def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runne
 
 def _run_installed_flows(journey: Journey, project_root: str, registry: str, graph: FlowGraph) -> None:
     env = os.environ.copy()
+    graph.flow(
+        "unexpected CLI error trail",
+        "unexpected-error-trail",
+        "cli",
+        lambda: run_unexpected_error_steps(journey, mode=journey.mode, env=env),
+        cases=["S-203.26"],
+        record_empty_success=False,
+    )
     project_id = service_project(graph)["id"]
     cli_path = Path.home() / ".local/bin/kb"
     graph.flow("project registry and current-project flows", "project-registry", "projects",

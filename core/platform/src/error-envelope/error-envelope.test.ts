@@ -68,6 +68,14 @@ describe('errors.catalog.json lint', () => {
     }
   });
 
+
+  it('renders the unexpected-error log query from the envelope correlation ID', () => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId: 'cli-correlation-1' });
+
+    expect(envelope.hint).toBe('Run \"kb logs query --correlation-id cli-correlation-1\" to inspect the failure details and stack.');
+    expect(envelope.details).toBeUndefined();
+  });
+
   it('defines the shared CLI command failure code', () => {
     expect(getCatalogEntry('KB_RUNTIME_COMMAND_FAILED')).toMatchObject({
       area: 'runtime',

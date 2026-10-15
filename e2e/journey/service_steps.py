@@ -242,8 +242,9 @@ class Journey:
                 return result
         started = time.monotonic()
         missing_state_key: str | None = None
+        invocation_capture = None
         try:
-            with invocation_context(step_id=",".join(case_ids) or name):
+            with invocation_context(step_id=",".join(case_ids) or name) as invocation_capture:
                 with self.memory.activate(name, (str(item) for item in required), provided_items):
                     message = self.step_guard(name, check) if self.step_guard else check()
             if isinstance(message, str) and message.startswith("BLOCKED:"):
@@ -265,6 +266,9 @@ class Journey:
         if missing_state_key:
             step_details = dict(step_details or {})
             step_details["missingStateKey"] = missing_state_key
+        if invocation_capture and invocation_capture.unexpected_error_diagnostics:
+            step_details = dict(step_details or {})
+            step_details["unexpectedErrorDiagnostics"] = invocation_capture.unexpected_error_diagnostics
         if prerequisite or lifecycle:
             step_details = dict(step_details or {})
             step_details["selectionRole"] = "prerequisite" if prerequisite else "lifecycle"

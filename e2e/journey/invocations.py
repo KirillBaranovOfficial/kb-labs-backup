@@ -179,6 +179,7 @@ def _acquire_controlling_terminal(slave_fd: int) -> None:
 
 _STEP_ID: ContextVar[str] = ContextVar("journey_step_id", default="journey.setup")
 _REPORT_ROOT: ContextVar[Path | None] = ContextVar("journey_report_root", default=None)
+_UNEXPECTED_DIAGNOSTICS: ContextVar[list[dict[str, Any]] | None] = ContextVar("journey_unexpected_diagnostics", default=None)
 # `root.go` routes these registered commands to JSON stream executors. Every
 # other registered kb-create command returns one ADR-0049 document.
 KB_CREATE_JSON_STREAM_COMMANDS = frozenset({"install", "apply"})
@@ -529,9 +530,12 @@ def invocation_context(*, step_id: str | None = None, report_root: str | Path | 
         def __enter__(self):
             self.step_token = _STEP_ID.set(step_id or _STEP_ID.get())
             self.report_token = _REPORT_ROOT.set(Path(report_root) if report_root else _REPORT_ROOT.get())
+            self.unexpected_error_diagnostics: list[dict[str, Any]] = []
+            self.diagnostics_token = _UNEXPECTED_DIAGNOSTICS.set(self.unexpected_error_diagnostics)
             return self
 
         def __exit__(self, *_exc):
+            _UNEXPECTED_DIAGNOSTICS.reset(self.diagnostics_token)
             _STEP_ID.reset(self.step_token)
             _REPORT_ROOT.reset(self.report_token)
     return Context()
@@ -575,6 +579,9 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
                       url: str | None = None, request_body: str | None = None,
                       invocation_evidence: list[str] | None = None,
                       error: str | None = None) -> dict[str, Any] | None:
+    unexpected_error_diagnostics = (
+        _unexpected_error_diagnostics(argv, stdout, stderr, cwd, env) if kind == "command" else None
+    )
     root = _REPORT_ROOT.get()
     if root is None:
         path = journey_value("KB_JOURNEY_INVOCATIONS")
@@ -606,6 +613,8 @@ def record_invocation(*, kind: str, argv: list[str], cwd: str | Path | None,
         invocation_evidence = _capture_typed_error_files(argv, stdout, stderr, exit_code, effective_env)
     if invocation_evidence:
         record["invocation_evidence"] = invocation_evidence
+    if unexpected_error_diagnostics:
+        record["unexpected_error_diagnostics"] = unexpected_error_diagnostics
     target = root / "invocations" / "calls.jsonl"
     return write_report_json(target, record, env=effective_env, append=True, indent=None, ensure_ascii=False)
 
@@ -711,6 +720,78 @@ def invocation_link(step_id: str) -> str | None:
     if evidence:
         reference += f"; copied report evidence: {', '.join(evidence)}"
     return reference
+
+
+def parse_unexpected_correlation_id(stdout: str, stderr: str = "") -> tuple[bool, str | None]:
+    """Read unexpected status and its correlation ID from JSON or human output."""
+    try:
+        result = json.loads(stdout)
+    except json.JSONDecodeError:
+        result = None
+    error = result.get("error") if isinstance(result, dict) and result.get("ok") is False else None
+    if isinstance(error, dict) and error.get("code") == "KB_RUNTIME_UNEXPECTED":
+        correlation_id = error.get("correlationId")
+        return True, correlation_id if isinstance(correlation_id, str) and correlation_id else None
+
+    retrieval_command = 'kb logs query --correlation-id '
+    for output in (stderr, stdout):
+        if "KB_RUNTIME_UNEXPECTED" not in output:
+            continue
+        before, separator, after = output.partition(retrieval_command)
+        if separator and before:
+            correlation_id = after.split('"', 1)[0].split()[0:1]
+            if correlation_id:
+                return True, correlation_id[0]
+        return True, None
+    return False, None
+
+
+def logs_from_query_envelope(envelope: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Extract records from the real CLI query result nested in its command envelope."""
+    command_result = envelope.get("data")
+    query_result = command_result.get("data") if isinstance(command_result, dict) else None
+    logs = query_result.get("logs") if isinstance(query_result, dict) else None
+    return [record for record in logs if isinstance(record, dict)] if isinstance(logs, list) else []
+
+
+def _unexpected_error_diagnostics(argv: list[str], stdout: str, stderr: str,
+                                  cwd: str | Path | None, env: Mapping[str, str] | None) -> dict[str, Any] | None:
+    is_unexpected, correlation_id = parse_unexpected_correlation_id(stdout, stderr)
+    if not is_unexpected:
+        return None
+    if correlation_id is None:
+        return {"queryError": "KB_RUNTIME_UNEXPECTED omitted its correlationId"}
+    effective_env = env if env is not None else os.environ
+    kb_cli = _kb_shim_evidence(effective_env)
+    if not argv or kb_cli is None or os.path.realpath(argv[0]) != kb_cli["realpath"]:
+        return {"correlationId": correlation_id,
+                "queryError": "diagnostic retrieval requires the installed kb executable"}
+    try:
+        query = subprocess.run(
+            [argv[0], "logs", "query", "--correlation-id", correlation_id, "--json"],
+            cwd=str(cwd) if cwd else None,
+            env=dict(effective_env),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as query_error:
+        diagnostic = {"correlationId": correlation_id, "queryError": str(query_error)}
+    else:
+        try:
+            query_result = json.loads(query.stdout)
+        except json.JSONDecodeError:
+            query_result = None
+        if query.returncode != 0 or not isinstance(query_result, dict) or query_result.get("ok") is not True:
+            diagnostic = {"correlationId": correlation_id,
+                          "queryError": query.stderr.strip() or query.stdout.strip() or f"query exited {query.returncode}"}
+        else:
+            diagnostic = {"correlationId": correlation_id, "logs": logs_from_query_envelope(query_result)}
+    collector = _UNEXPECTED_DIAGNOSTICS.get()
+    if collector is not None:
+        collector.append(diagnostic)
+    return diagnostic
 
 
 def run_command(argv: list[str], *, cwd: str | Path | None = None,

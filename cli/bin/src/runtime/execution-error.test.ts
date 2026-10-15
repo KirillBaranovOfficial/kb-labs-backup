@@ -69,13 +69,19 @@ describe('handleExecutionError', () => {
     } as unknown as Presenter;
 
     const exitCode = handleExecutionError(cause, presenter);
-    const rendered = json.mock.calls[0]?.[0] as { error: { code: string; correlationId: string } };
+    const rendered = json.mock.calls[0]?.[0] as { error: { code: string; correlationId: string; hint: string } };
 
     expect(exitCode).toBe(1);
     expect(rendered.error.code).toBe('KB_RUNTIME_UNEXPECTED');
-    expect(loggerError).toHaveBeenCalledWith('CLI command failed unexpectedly', cause, {
+    expect(rendered.error.hint).toBe(`Run \"kb logs query --correlation-id ${rendered.error.correlationId}\" to inspect the failure details and stack.`);
+    expect(loggerError).toHaveBeenCalledWith('CLI command failed unexpectedly', cause, expect.objectContaining({
       correlationId: rendered.error.correlationId,
-    });
+      event: 'cli.unexpected_error',
+      errorClass: 'Error',
+      errorMessage: cause.message,
+      causeChain: [{ name: 'Error', message: cause.message, stack: cause.stack }],
+      stack: cause.stack,
+    }));
     expect(JSON.stringify(rendered)).not.toContain(cause.message);
     expect(JSON.stringify(rendered)).not.toContain(cause.stack);
     loggerError.mockRestore();
