@@ -8,6 +8,8 @@ package proc
 #include <sys/proc.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <signal.h>
 
 typedef struct {
 	int pid;
@@ -18,22 +20,38 @@ typedef struct {
 	char command[64];
 } kb_proc_info;
 
-static kb_proc_info *kb_proc_snapshot(int *count) {
+static kb_proc_info *kb_proc_snapshot(int *count, int *failure, int *failure_pid) {
+	*failure = 0;
+	*failure_pid = 0;
+	errno = 0;
 	int bytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
-	if (bytes <= 0) { *count = 0; return NULL; }
+	if (bytes < 0) { *failure = errno ? errno : EIO; *count = 0; return NULL; }
+	if (bytes == 0) { *count = 0; return NULL; }
 	int slots = bytes / (int)sizeof(pid_t) + 32;
 	pid_t *pids = calloc((size_t)slots, sizeof(pid_t));
-	if (pids == NULL) { *count = 0; return NULL; }
+	if (pids == NULL) { *failure = ENOMEM; *count = 0; return NULL; }
+	errno = 0;
 	bytes = proc_listpids(PROC_ALL_PIDS, 0, pids, slots * (int)sizeof(pid_t));
+	if (bytes < 0) { *failure = errno ? errno : EIO; free(pids); *count = 0; return NULL; }
 	int max = bytes / (int)sizeof(pid_t);
 	kb_proc_info *out = calloc((size_t)max, sizeof(kb_proc_info));
-	if (out == NULL) { free(pids); *count = 0; return NULL; }
+	if (out == NULL && max > 0) { *failure = ENOMEM; free(pids); *count = 0; return NULL; }
 	int used = 0;
 	for (int i = 0; i < max; i++) {
 		if (pids[i] <= 0) continue;
 		struct proc_bsdinfo info;
+		errno = 0;
 		int got = proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &info, sizeof(info));
-		if (got != sizeof(info)) continue;
+		if (got != sizeof(info)) {
+			int query_errno = errno;
+			errno = 0;
+			if (query_errno == ESRCH || query_errno == ENOENT || (kill(pids[i], 0) < 0 && (errno == ESRCH || errno == ENOENT))) continue;
+			if (*failure == 0) {
+				*failure_pid = (int)pids[i];
+				*failure = query_errno ? query_errno : EIO;
+			}
+			continue;
+		}
 		if (info.pbi_status == SZOMB) continue;
 		out[used].pid = (int)info.pbi_pid;
 		out[used].ppid = (int)info.pbi_ppid;
@@ -53,18 +71,28 @@ import "C"
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"syscall"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
-func darwinProcessSnapshot(runID string) []Process {
+func darwinProcessSnapshot(runID string) ([]Process, error) {
 	count := C.int(0)
-	list := C.kb_proc_snapshot(&count)
-	if list == nil || count == 0 {
-		return nil
+	failure := C.int(0)
+	failurePID := C.int(0)
+	list := C.kb_proc_snapshot(&count, &failure, &failurePID)
+	if count == 0 {
+		if failure != 0 {
+			return []Process{}, fmt.Errorf("inspect kern.proc entry for PID %d: %w", int(failurePID), syscall.Errno(failure))
+		}
+		return []Process{}, nil
+	}
+	if list == nil {
+		return nil, errors.New("enumerate kern.proc process table: no snapshot returned")
 	}
 	defer C.free(unsafe.Pointer(list))
 	infos := unsafe.Slice(list, int(count))
@@ -75,7 +103,11 @@ func darwinProcessSnapshot(runID string) []Process {
 		marker := false
 		unverified := false
 		if runID != "" {
-			marker, unverified = inspectProcessMarker(pid, runID)
+			var err error
+			marker, unverified, err = inspectProcessMarker(pid, runID)
+			if err != nil {
+				return nil, fmt.Errorf("inspect process %d environment: %w", pid, err)
+			}
 		}
 		processes = append(processes, Process{
 			PID: pid, PPID: int(info.ppid), Command: C.GoString(&info.command[0]),
@@ -84,18 +116,24 @@ func darwinProcessSnapshot(runID string) []Process {
 			Unverified: unverified, uid: uint32(info.uid),
 		})
 	}
-	return processes
+	if failure != 0 {
+		return processes, fmt.Errorf("inspect kern.proc entry for PID %d: %w", int(failurePID), syscall.Errno(failure))
+	}
+	return processes, nil
 }
 
-func inspectProcessMarker(pid int, runID string) (bool, bool) {
+func inspectProcessMarker(pid int, runID string) (bool, bool, error) {
 	args, err := unix.SysctlRaw("kern.procargs2", pid)
 	if err != nil {
-		return false, true
+		if processGone(err) {
+			return false, false, nil
+		}
+		return false, true, nil
 	}
 	if bytes.Contains(args, []byte(runEnv+"="+runID)) {
-		return true, false
+		return true, false, nil
 	}
-	return false, !procargs2HasEnvironment(args)
+	return false, !procargs2HasEnvironment(args), nil
 }
 
 func procargs2HasEnvironment(data []byte) bool {

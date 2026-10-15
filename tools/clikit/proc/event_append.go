@@ -16,7 +16,7 @@ func appendEvent(dir string, event Event) error {
 	if err != nil {
 		return fmt.Errorf("open event stream: %w", err)
 	}
-	unlock, err := lockEventFile(file)
+	unlock, err := lockFile(file)
 	if err != nil {
 		return errors.Join(fmt.Errorf("lock event stream: %w", err), file.Close())
 	}

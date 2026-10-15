@@ -10,10 +10,30 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+type activityWriter struct {
+	file     *os.File
+	terminal *os.File
+	activity *atomic.Int64
+}
+
+func (writer activityWriter) Write(data []byte) (int, error) {
+	writer.activity.Store(time.Now().UnixNano())
+	if err := writeOutput(writer.file, data); err != nil {
+		return 0, err
+	}
+	if writer.terminal != nil {
+		if err := writeOutput(writer.terminal, data); err != nil {
+			return 0, err
+		}
+	}
+	return len(data), nil
+}
 
 func runKeeper(cfg keeperConfig) int {
 	ready := os.NewFile(3, "proc-ready")
@@ -40,15 +60,22 @@ func runKeeper(cfg keeperConfig) int {
 		writeReadyError(ready, err)
 		return 1
 	}
-	startedAt, ok := ProcessIdentity(os.Getpid())
+	startedAt, ok, identityErr := ProcessIdentity(os.Getpid())
+	if identityErr != nil {
+		return keeperError(record{StateDir: cfg.StateDir, RunID: cfg.RunID, Tag: cfg.Tag}, "inspect keeper process identity", identityErr)
+	}
 	if !ok {
 		writeReadyError(ready, errors.New("cannot determine keeper process start identity"))
 		return 1
 	}
-	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, PID: os.Getpid(), StartedAt: startedAt, Command: cfg.Command, StateDir: cfg.StateDir}
+	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, PID: os.Getpid(), StartedAt: startedAt, Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusStarting}
 	if err := writeRecord(rec); err != nil {
 		writeReadyError(ready, err)
 		return 1
+	}
+	if err := claimGate(cfg.StateDir, cfg.RunID, cfg.HoldGate, rec.PID, rec.StartedAt); err != nil {
+		writeReadyError(ready, err)
+		return keeperError(rec, "claim held gate", err)
 	}
 	stdout, err := openOutput(cfg.StdoutPath)
 	if err != nil {
@@ -75,21 +102,65 @@ func runKeeper(cfg keeperConfig) int {
 	cmd.Dir = cfg.Dir
 	cmd.Env = append(filteredEnv(os.Environ()), cfg.Env...)
 	configureCommand(cmd, cfg.RunID)
-	stdoutPipe, err := cmd.StdoutPipe()
+	if cfg.StdinPath != "" {
+		stdin, err := os.Open(cfg.StdinPath)
+		if err != nil {
+			writeReadyError(ready, fmt.Errorf("open command stdin %s: %w", cfg.StdinPath, err))
+			return keeperError(rec, "open command stdin", err)
+		}
+		defer func() {
+			if err := stdin.Close(); err != nil {
+				fmt.Fprintln(os.Stderr, "proc: close command stdin:", err)
+			}
+		}()
+		cmd.Stdin = stdin
+	}
+	stdoutPipe, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		writeReadyError(ready, err)
 		return keeperError(rec, "create stdout pipe", err)
 	}
-	stderrPipe, err := cmd.StderrPipe()
+	defer stdoutPipe.Close()
+	defer stdoutWriter.Close()
+	stderrPipe, stderrWriter, err := os.Pipe()
 	if err != nil {
 		writeReadyError(ready, err)
 		return keeperError(rec, "create stderr pipe", err)
 	}
+	defer stderrPipe.Close()
+	defer stderrWriter.Close()
+	var lastOutput atomic.Int64
+	lastOutput.Store(time.Now().UnixNano())
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 	if err := cmd.Start(); err != nil {
 		writeReadyError(ready, err)
 		return keeperError(rec, "start command", err)
 	}
-	if err := appendEvent(cfg.StateDir, eventFor(rec, "start")); err != nil {
+	if err := errors.Join(stdoutWriter.Close(), stderrWriter.Close()); err != nil {
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			fmt.Fprintln(os.Stderr, "proc: stop command after output pipe close failure:", killErr)
+		}
+		if waitErr := cmd.Wait(); waitErr != nil {
+			fmt.Fprintln(os.Stderr, "proc: wait after output pipe close failure:", waitErr)
+		}
+		writeReadyError(ready, err)
+		return keeperError(rec, "close command output pipes", err)
+	}
+	rec.Status = StatusRunning
+	rec.StartedAtTime = time.Now().UTC()
+	rec.LastOutputAt = rec.StartedAtTime
+	rec.StallMS = cfg.Stall.Milliseconds()
+	if err := updateRecord(cfg.StateDir, rec.RunID, func(stored *record) error {
+		rec.SlotGroup, rec.Slots, rec.QueueOrder = stored.SlotGroup, stored.Slots, stored.QueueOrder
+		rec.EnqueuedAt, rec.WaitGate, rec.HoldGate, rec.MinFree = stored.EnqueuedAt, stored.WaitGate, stored.HoldGate, stored.MinFree
+		*stored = rec
+		return nil
+	}); err != nil {
+		writeReadyError(ready, err)
+		return keeperError(rec, "record command start", err)
+	}
+	if err := appendEvent(cfg.StateDir, eventFor(rec, EventStart)); err != nil {
 		writeReadyError(ready, err)
 		return keeperError(rec, "record command start", err)
 	}
@@ -113,11 +184,23 @@ func runKeeper(cfg keeperConfig) int {
 		return keeperError(rec, "close readiness", err)
 	}
 	ready = nil
-	var lastOutput atomic.Int64
-	lastOutput.Store(time.Now().UnixNano())
+	var initialSampleError error
+	if ancestrySampleInterval > 0 {
+		rec.Observed, initialSampleError = sampleDescendants(rec, rec.Observed)
+		if initialSampleError != nil {
+			fmt.Fprintln(os.Stderr, "proc: sample initial descendant tree:", initialSampleError)
+		}
+		if err := saveProgress(rec, lastOutput.Load()); err != nil {
+			fmt.Fprintln(os.Stderr, "proc: save initial descendant sample:", err)
+		}
+	}
 	copyDone := make(chan error, 2)
-	go func() { copyDone <- copyOutput(stdoutPipe, stdout, os.Stdout, &lastOutput) }()
-	go func() { copyDone <- copyOutput(stderrPipe, stderr, os.Stderr, &lastOutput) }()
+	go func() {
+		copyDone <- copyOutput(stdoutPipe, activityWriter{file: stdout, terminal: os.Stdout, activity: &lastOutput})
+	}()
+	go func() {
+		copyDone <- copyOutput(stderrPipe, activityWriter{file: stderr, terminal: os.Stderr, activity: &lastOutput})
+	}()
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- cmd.Wait() }()
 	stall := time.NewTicker(100 * time.Millisecond)
@@ -127,40 +210,58 @@ func runKeeper(cfg keeperConfig) int {
 	var commandFinished bool
 	stallReported := false
 	var parentMonitorError string
-	var outputError error
-	var cleanupError error
+	var cleanupError error = initialSampleError
+	cleanup := treeCleanup{Reaped: []Process{}, Unverified: []Process{}}
 	var eventError error
+	var outputError error
 	readersRemaining := 2
-	var copyNotifications <-chan error = copyDone
 	for !commandFinished {
 		select {
 		case waitErr = <-waitDone:
 			commandExitedAt = time.Now().UTC()
 			commandFinished = true
-		case copyErr := <-copyNotifications:
+		case copyErr := <-copyDone:
 			readersRemaining--
 			if copyErr != nil {
 				outputError = errors.Join(outputError, copyErr)
-				cleanupError = errors.Join(cleanupError, killTree(rec.PID, rec.RunID))
+				result := killTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
+				cleanup = mergeCleanup(cleanup, result)
+				cleanupError = errors.Join(cleanupError, result.err)
 				waitErr = <-waitDone
 				commandExitedAt = time.Now().UTC()
 				commandFinished = true
-			}
-			if readersRemaining == 0 {
-				copyNotifications = nil
 			}
 		case parentErr := <-parentGone:
 			if parentErr != nil {
 				parentMonitorError = parentErr.Error()
 			}
-			cleanupError = errors.Join(cleanupError, killTree(rec.PID, rec.RunID))
+			result := killTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
+			cleanup = mergeCleanup(cleanup, result)
+			cleanupError = errors.Join(cleanupError, result.err)
 			waitErr = <-waitDone
 			commandExitedAt = time.Now().UTC()
 			commandFinished = true
 		case <-stall.C:
+			if ancestrySampleInterval > 0 {
+				observed, observeErr := sampleDescendants(rec, rec.Observed)
+				if observeErr != nil {
+					cleanupError = errors.Join(cleanupError, observeErr)
+					fmt.Fprintln(os.Stderr, "proc: sample descendant tree:", observeErr)
+				}
+				rec.Observed = observed
+			}
+			if err := saveProgress(rec, lastOutput.Load()); err != nil {
+				fmt.Fprintln(os.Stderr, "proc: update run progress:", err)
+				cleanupError = errors.Join(cleanupError, err)
+			}
 			if !stallReported && time.Since(time.Unix(0, lastOutput.Load())) >= cfg.Stall {
-				e := eventFor(rec, "stall")
-				e.Leaves = ProcessLeaves(rec.PID, rec.RunID)
+				e := eventFor(rec, EventStall)
+				leaves, leafErr := ProcessLeavesWithHistory(rec.PID, rec.RunID, rec.Observed)
+				e.Leaves = leaves
+				if leafErr != nil {
+					e.Error = "unverified/failed observation: " + leafErr.Error()
+					cleanupError = errors.Join(cleanupError, leafErr)
+				}
 				if err := appendEvent(cfg.StateDir, e); err != nil {
 					fmt.Fprintln(os.Stderr, "proc: append stall event:", err)
 					eventError = errors.Join(eventError, err)
@@ -169,7 +270,9 @@ func runKeeper(cfg keeperConfig) int {
 			}
 		}
 	}
-	cleanupError = errors.Join(cleanupError, killTree(rec.PID, rec.RunID))
+	result := killTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
+	cleanup = mergeCleanup(cleanup, result)
+	cleanupError = errors.Join(cleanupError, result.err)
 	for readersRemaining > 0 {
 		if copyErr := <-copyDone; copyErr != nil {
 			outputError = errors.Join(outputError, copyErr)
@@ -177,15 +280,15 @@ func runKeeper(cfg keeperConfig) int {
 		readersRemaining--
 	}
 	code, signal, exitError := platformExit(waitErr)
-	exitEvent := eventFor(rec, "exit")
+	exitEvent := eventFor(rec, EventExit)
 	exitEvent.At = commandExitedAt
+	exitEvent.DurationMS = commandExitedAt.Sub(rec.StartedAtTime).Milliseconds()
 	exitEvent.ExitCode = code
 	exitEvent.Signal = signal
 	exitEvent.Error = exitError
-	for _, leaf := range ProcessLeaves(rec.PID, rec.RunID) {
-		if leaf.Unverified {
-			exitEvent.Leaves = append(exitEvent.Leaves, leaf)
-		}
+	exitEvent.Unverified = append(exitEvent.Unverified, cleanup.Unverified...)
+	if exitEvent.Error == "" {
+		exitEvent.Error = parentMonitorError
 	}
 	if outputError != nil {
 		if exitEvent.Error == "" {
@@ -193,9 +296,6 @@ func runKeeper(cfg keeperConfig) int {
 		} else {
 			exitEvent.Error = errors.Join(errors.New(exitEvent.Error), outputError).Error()
 		}
-	}
-	if exitEvent.Error == "" {
-		exitEvent.Error = parentMonitorError
 	}
 	if cleanupError != nil {
 		if exitEvent.Error == "" {
@@ -218,7 +318,11 @@ func runKeeper(cfg keeperConfig) int {
 	if reapErr := reapAdopted(); reapErr != nil {
 		cleanupError = errors.Join(cleanupError, reapErr)
 	}
-	reapEvent := eventFor(rec, "reap")
+	reapEvent := eventFor(rec, EventTeardown)
+	reapEvent.DurationMS = exitEvent.DurationMS
+	reapEvent.Reaped = cleanup.Reaped
+	reapEvent.Unverified = cleanup.Unverified
+	reapEvent.Remaining = cleanup.Remaining
 	if cleanupError != nil {
 		reapEvent.Error = cleanupError.Error()
 	}
@@ -230,8 +334,16 @@ func runKeeper(cfg keeperConfig) int {
 		}
 	}
 	if err := appendEvent(cfg.StateDir, reapEvent); err != nil {
-		fmt.Fprintln(os.Stderr, "proc: append reap event:", err)
+		fmt.Fprintln(os.Stderr, "proc: append teardown event:", err)
 		eventError = errors.Join(eventError, err)
+	}
+	if err := releaseGate(cfg.StateDir, cfg.RunID, cfg.HoldGate); err != nil {
+		fmt.Fprintln(os.Stderr, "proc: release held gate:", err)
+		cleanupError = errors.Join(cleanupError, err)
+	}
+	if err := completeRecord(cfg.StateDir, cfg.RunID, code, signal, time.Duration(exitEvent.DurationMS)*time.Millisecond, rec.Observed); err != nil {
+		fmt.Fprintln(os.Stderr, "proc: record completed run:", err)
+		cleanupError = errors.Join(cleanupError, err)
 	}
 	if code != nil && *code != 0 {
 		return *code
@@ -251,28 +363,11 @@ func runKeeper(cfg keeperConfig) int {
 	return 0
 }
 
-func copyOutput(src io.Reader, dst, terminal *os.File, activity *atomic.Int64) error {
-	buffer := make([]byte, 32*1024)
-	for {
-		n, err := src.Read(buffer)
-		if n > 0 {
-			activity.Store(time.Now().UnixNano())
-			if err := writeOutput(dst, buffer[:n]); err != nil {
-				return fmt.Errorf("write output file: %w", err)
-			}
-			if terminal != nil {
-				if err := writeOutput(terminal, buffer[:n]); err != nil {
-					return fmt.Errorf("write terminal output: %w", err)
-				}
-			}
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return fmt.Errorf("read command output: %w", err)
-		}
+func copyOutput(src io.Reader, dst activityWriter) error {
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("copy command output: %w", err)
 	}
+	return nil
 }
 
 func writeReadyError(ready *os.File, cause error) {
@@ -301,7 +396,7 @@ func openOutput(path string) (*os.File, error) {
 
 func keeperError(rec record, action string, err error) int {
 	fmt.Fprintf(os.Stderr, "proc: %s: %v\n", action, err)
-	e := eventFor(rec, "exit")
+	e := eventFor(rec, EventExit)
 	e.Error = err.Error()
 	if cleanupErr := killTree(rec.PID, rec.RunID); cleanupErr != nil {
 		e.Error = errors.Join(err, cleanupErr).Error()
@@ -310,19 +405,96 @@ func keeperError(rec record, action string, err error) int {
 	if appendErr := appendEvent(rec.StateDir, e); appendErr != nil {
 		fmt.Fprintln(os.Stderr, "proc: record command failure:", appendErr)
 	}
-	reapEvent := eventFor(rec, "reap")
+	reapEvent := eventFor(rec, EventTeardown)
 	reapEvent.Error = e.Error
 	if appendErr := appendEvent(rec.StateDir, reapEvent); appendErr != nil {
-		fmt.Fprintln(os.Stderr, "proc: record reap:", appendErr)
+		fmt.Fprintln(os.Stderr, "proc: record teardown:", appendErr)
+	}
+	if releaseErr := releaseGate(rec.StateDir, rec.RunID, rec.HoldGate); releaseErr != nil {
+		fmt.Fprintln(os.Stderr, "proc: release gate after keeper error:", releaseErr)
 	}
 	return 1
+}
+
+func sampleDescendants(rec record, previous []Process) ([]Process, error) {
+	observed := make(map[string]Process, len(previous))
+	for _, process := range previous {
+		identity, alive, err := inspectIdentity(process.PID)
+		if err != nil {
+			return nil, fmt.Errorf("inspect previously observed process %d: %w", process.PID, err)
+		}
+		if alive && identity == process.Identity {
+			observed[processObservationKey(process)] = process
+		}
+	}
+	tree, err := ProcessTree(rec.PID, rec.RunID)
+	for _, process := range tree {
+		if !process.Unverified {
+			observed[processObservationKey(process)] = process
+		}
+	}
+	out := make([]Process, 0, len(observed))
+	for _, process := range observed {
+		out = append(out, process)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PID == out[j].PID {
+			return out[i].Identity < out[j].Identity
+		}
+		return out[i].PID < out[j].PID
+	})
+	return out, err
+}
+
+func processObservationKey(process Process) string {
+	return fmt.Sprintf("%d:%s", process.PID, process.Identity)
+}
+
+func saveProgress(rec record, lastOutput int64) error {
+	last := time.Unix(0, lastOutput).UTC()
+	status := StatusRunning
+	if rec.StallMS > 0 && time.Since(last) >= time.Duration(rec.StallMS)*time.Millisecond {
+		status = StatusStalled
+	}
+	return updateRecord(rec.StateDir, rec.RunID, func(stored *record) error {
+		stored.Status = status
+		stored.LastOutputAt = last
+		stored.Observed = rec.Observed
+		return nil
+	})
+}
+
+func mergeCleanup(left, right treeCleanup) treeCleanup {
+	appendUnique := func(dst, src []Process) []Process {
+		seen := make(map[string]bool, len(dst)+len(src))
+		for _, process := range dst {
+			seen[processObservationKey(process)] = true
+		}
+		for _, process := range src {
+			key := processObservationKey(process)
+			if !seen[key] {
+				seen[key] = true
+				dst = append(dst, process)
+			}
+		}
+		return dst
+	}
+	left.Reaped = appendUnique(left.Reaped, right.Reaped)
+	left.Unverified = appendUnique(left.Unverified, right.Unverified)
+	left.Remaining = appendUnique(left.Remaining, right.Remaining)
+	left.err = errors.Join(left.err, right.err)
+	return left
 }
 
 func signalKeeper(pid int, identity string) error {
 	if pid <= 0 {
 		return errors.New("proc: invalid keeper pid")
 	}
-	if current, ok := ProcessIdentity(pid); !ok || current != identity {
+	current, alive, err := inspectIdentity(pid)
+	if err != nil {
+		return err
+	}
+	if !alive || current != identity {
 		return nil
 	}
 	return syscall.Kill(pid, syscall.SIGTERM)

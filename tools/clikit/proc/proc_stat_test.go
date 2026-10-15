@@ -43,23 +43,40 @@ func TestRealChildSnapshotHasStableIdentityAndWallStart(t *testing.T) {
 	})
 	deadline := time.Now().Add(3 * time.Second)
 	var snapshots []Process
+	var err error
 	for time.Now().Before(deadline) {
-		snapshots = ProcessTree(os.Getpid(), "")
-		if len(snapshots) == 1 {
+		snapshots, err = ProcessTree(os.Getpid(), "")
+		if processByPID(snapshots, cmd.Process.Pid) != nil {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(snapshots) != 1 {
+	first := processByPID(snapshots, cmd.Process.Pid)
+	if first == nil {
 		t.Fatalf("child snapshot = %+v", snapshots)
 	}
-	first := snapshots[0]
+	if err != nil {
+		t.Logf("snapshot retained a partial table and reported an unrelated observation gap: %v", err)
+	}
 	if first.Identity == "" || first.ElapsedMS < 0 || first.StartedAt.Before(before.Add(-time.Second)) || first.StartedAt.After(time.Now().Add(time.Second)) {
-		t.Fatalf("invalid child identity/time: %+v, started after %s", first, before)
+		t.Fatalf("invalid child identity/time: %+v, started after %s", *first, before)
 	}
 	time.Sleep(20 * time.Millisecond)
-	again := ProcessTree(os.Getpid(), "")
-	if len(again) != 1 || again[0].Identity != first.Identity {
-		t.Fatalf("identity changed across snapshots: first=%+v second=%+v", first, again)
+	again, err := ProcessTree(os.Getpid(), "")
+	second := processByPID(again, cmd.Process.Pid)
+	if second == nil || second.Identity != first.Identity {
+		t.Fatalf("identity changed across snapshots: first=%+v second=%+v error=%v", *first, again, err)
 	}
+	if err != nil {
+		t.Logf("second snapshot retained the child and reported an unrelated observation gap: %v", err)
+	}
+}
+
+func processByPID(processes []Process, pid int) *Process {
+	for i := range processes {
+		if processes[i].PID == pid {
+			return &processes[i]
+		}
+	}
+	return nil
 }

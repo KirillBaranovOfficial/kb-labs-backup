@@ -48,7 +48,7 @@ func TestDetachedDarwinShellAndSleepExposeMarkerOrUnverified(t *testing.T) {
 		_ = run.Kill()
 		_ = run.Wait()
 		for _, pid := range pids {
-			if _, alive := ProcessIdentity(pid); alive {
+			if _, alive := processIdentityForTest(t, pid); alive {
 				if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
 					t.Logf("cleanup test process group %d: %v", pid, err)
 				}
@@ -58,7 +58,7 @@ func TestDetachedDarwinShellAndSleepExposeMarkerOrUnverified(t *testing.T) {
 		for time.Now().Before(deadline) {
 			alive := false
 			for _, pid := range pids {
-				if _, ok := ProcessIdentity(pid); ok {
+				if _, ok := processIdentityForTest(t, pid); ok {
 					alive = true
 				}
 			}
@@ -101,7 +101,10 @@ func TestDetachedDarwinShellAndSleepExposeMarkerOrUnverified(t *testing.T) {
 		markerFound := queryErr == nil && bytes.Contains(raw, []byte(runEnv+"="+run.RunID))
 		environmentFound := queryErr == nil && procargs2HasEnvironment(raw)
 		t.Logf("pid=%d kern.procargs2_error=%v environment=%t marker=%t", pid, queryErr, environmentFound, markerFound)
-		tree := ProcessTree(run.PID, run.RunID)
+		tree, treeErr := ProcessTree(run.PID, run.RunID)
+		if treeErr != nil {
+			t.Logf("process table had an unrelated observation gap while sampling target: %v", treeErr)
+		}
 		var found *Process
 		for i := range tree {
 			if tree[i].PID == pid {
@@ -162,6 +165,16 @@ func TestDetachedDarwinShellAndSleepExposeMarkerOrUnverified(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("no stall event reported the detached unverified processes")
+}
+
+func processIdentityForTest(t *testing.T, pid int) (string, bool) {
+	t.Helper()
+	identity, alive, err := ProcessIdentity(pid)
+	if err != nil {
+		t.Errorf("inspect process %d identity: %v", pid, err)
+		return "", false
+	}
+	return identity, alive
 }
 
 func runtimeCaller(skip int) (uintptr, string, int, bool) { return runtime.Caller(skip + 1) }

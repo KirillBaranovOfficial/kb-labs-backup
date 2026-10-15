@@ -11,11 +11,36 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
+func ParseEventFilter(value string) ([]EventType, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	allowed := map[EventType]bool{
+		EventQueued: true, EventBlocked: true, EventStart: true,
+		EventStall: true, EventExit: true, EventLost: true, EventTeardown: true,
+	}
+	parts := strings.Split(value, ",")
+	filters := make([]EventType, 0, len(parts))
+	seen := make(map[EventType]bool, len(parts))
+	for _, part := range parts {
+		kind := EventType(strings.TrimSpace(part))
+		if !allowed[kind] {
+			return nil, fmt.Errorf("unknown event type %q", part)
+		}
+		if !seen[kind] {
+			seen[kind] = true
+			filters = append(filters, kind)
+		}
+	}
+	return filters, nil
+}
+
 // Events streams existing JSONL records and, when follow is true, later appends.
-func Events(ctx context.Context, stateDir string, follow bool, output io.Writer) error {
+func Events(ctx context.Context, stateDir string, follow bool, filter []EventType, output io.Writer) error {
 	info, err := os.Stat(stateDir)
 	if err != nil {
 		return fmt.Errorf("proc: inspect state directory: %w", err)
@@ -26,6 +51,10 @@ func Events(ctx context.Context, stateDir string, follow bool, output io.Writer)
 	path := filepath.Join(stateDir, "events.jsonl")
 	var offset int64
 	var pending []byte
+	allowed := make(map[EventType]bool, len(filter))
+	for _, kind := range filter {
+		allowed[kind] = true
+	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -62,8 +91,10 @@ func Events(ctx context.Context, stateDir string, follow bool, output io.Writer)
 				if err := json.Unmarshal(data[:lineEnd], &event); err != nil {
 					return fmt.Errorf("proc: decode event: %w", err)
 				}
-				if err := json.NewEncoder(output).Encode(event); err != nil {
-					return err
+				if len(allowed) == 0 || allowed[event.Type] {
+					if err := json.NewEncoder(output).Encode(event); err != nil {
+						return err
+					}
 				}
 				data = data[lineEnd+1:]
 			}

@@ -32,14 +32,17 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 	readyFile := filepath.Join(state, "descendant.pid")
 	cmd := exec.CommandContext(ctx, runner, "run", "--tag", "normal", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--", helper, "detached", "3", readyFile)
 	output, err := cmd.CombinedOutput()
-	if err != nil {
+	if err != nil && !teardownHasObservationFailure(t, state, outputRunID(t, state, "normal")) {
 		forceKillRecordedTree(t, state)
 		stderr, _ := os.ReadFile(filepath.Join(state, "stderr.log"))
 		events, _ := os.ReadFile(filepath.Join(state, "events.jsonl"))
 		t.Fatalf("kb-runner normal exit failed: %v\n%s\nstderr: %s\nevents: %s", err, output, stderr, events)
 	}
-	if !strings.Contains(string(output), "run normal completed") {
+	if err == nil && !strings.Contains(string(output), "run normal completed") {
 		t.Fatalf("kb-runner did not report completion: %s", output)
+	}
+	if err != nil && !strings.Contains(string(output), "supervised command exited with status 1") {
+		t.Fatalf("observation failure was not shown to the caller: %s", output)
 	}
 	pidBytes, err := os.ReadFile(readyFile)
 	if err != nil {
@@ -49,17 +52,17 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid descendant PID %q: %v", pidBytes, err)
 	}
-	identity, found := proc.ProcessIdentity(descendant)
+	identity, found := identityForTest(t, descendant)
 	if found {
 		t.Cleanup(func() {
-			if current, ok := proc.ProcessIdentity(descendant); ok && current == identity {
+			if current, ok := identityForTest(t, descendant); ok && current == identity {
 				if err := syscall.Kill(descendant, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 					t.Logf("cleanup detached test process %d: %v", descendant, err)
 				}
 			}
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
-				if current, ok := proc.ProcessIdentity(descendant); !ok || current != identity {
+				if current, ok := identityForTest(t, descendant); !ok || current != identity {
 					return
 				}
 				time.Sleep(20 * time.Millisecond)
@@ -67,7 +70,7 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 			t.Logf("test-owned descendant %d remains after bounded cleanup", descendant)
 		})
 	}
-	if processExists(descendant) {
+	if processExists(t, descendant) {
 		if runtime.GOOS != "darwin" {
 			t.Fatalf("descendant %d remains alive after normal command exit", descendant)
 		}
@@ -86,7 +89,11 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 		t.Fatalf("tree remains after normal exit: %+v", listing)
 	}
 	assertEvent(t, state, "exit")
-	assertEvent(t, state, "reap")
+	assertEvent(t, state, "teardown")
+	teardown := eventOfType(t, state, proc.EventTeardown)
+	if len(teardown.Reaped)+len(teardown.Unverified) == 0 && teardown.Error == "" {
+		t.Fatalf("teardown event omitted the process cleanup inventory: %+v", teardown)
+	}
 }
 
 // case: S-237.1
@@ -123,7 +130,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 			}
 		}
 		for pid, identity := range started {
-			if current, ok := proc.ProcessIdentity(pid); ok && current == identity {
+			if current, ok := identityForTest(t, pid); ok && current == identity {
 				if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 					t.Logf("cleanup test process %d: %v", pid, err)
 				}
@@ -139,7 +146,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 		for time.Now().Before(deadline) {
 			alive := false
 			for pid, identity := range started {
-				if current, ok := proc.ProcessIdentity(pid); ok && current == identity {
+				if current, ok := identityForTest(t, pid); ok && current == identity {
 					alive = true
 				}
 			}
@@ -168,7 +175,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 		t.Fatal("setsid descendant readiness timed out")
 	}
 	listing := proc.List(state)
-	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusLive {
+	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusRunning {
 		t.Fatalf("run did not become live before SIGKILL: %+v", listing)
 	}
 	descendantBytes, err := waitFile(t, descendantPIDFile, 3*time.Second)
@@ -206,11 +213,11 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity, ok := proc.ProcessIdentity(sleepPID); ok {
+	if identity, ok := identityForTest(t, sleepPID); ok {
 		started[sleepPID] = identity
 	}
 	var found bool
-	_, found = proc.ProcessIdentity(descendant)
+	_, found = identityForTest(t, descendant)
 	if !found {
 		t.Fatalf("setsid descendant %d disappeared before supervisor kill", descendant)
 	}
@@ -220,18 +227,27 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	}
 	if !waitUntil(5*time.Second, func() bool {
 		listing := proc.List(state)
-		if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusDead || countEvents(t, state, "reap") != 1 {
+		if listing.Error != nil || len(listing.Runs) != 1 ||
+			(listing.Runs[0].Status != proc.StatusDead && listing.Runs[0].Status != proc.StatusLost) || countEvents(t, state, "teardown") != 1 {
+			return false
+		}
+		teardown := eventOfType(t, state, proc.EventTeardown)
+		if runtime.GOOS == "darwin" && teardown.Error != "" {
+			if len(teardown.Remaining) == 0 {
+				t.Fatalf("non-clean teardown omitted remaining observations: %+v", teardown)
+			}
+		} else if teardown.Error != "" || len(teardown.Remaining) != 0 {
 			return false
 		}
 		for _, process := range owned {
-			if identity, ok := proc.ProcessIdentity(process.PID); ok && identity == process.Identity {
+			if identity, ok := identityForTest(t, process.PID); ok && identity == process.Identity {
 				if runtime.GOOS == "darwin" && process.Unverified {
 					continue
 				}
 				return false
 			}
 		}
-		return runtime.GOOS == "darwin" && descendantUnverified || !processExists(descendant)
+		return runtime.GOOS == "darwin" && descendantUnverified || !processExists(t, descendant)
 	}) {
 		events, _ := os.ReadFile(filepath.Join(state, "events.jsonl"))
 		t.Fatalf("supervised tree did not end after supervisor SIGKILL; events: %s; stderr: %s", events, stderr.String())
@@ -245,17 +261,33 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 // case: S-237.2
 func TestSilentLeafEmitsOneStallEvent(t *testing.T) {
 	state := t.TempDir()
-	runner := buildRunner(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, runner, "run", "--state", state, "--tag", "stall", "--stall", "250ms", "--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--", "/bin/sleep", "3")
-	output, err := cmd.CombinedOutput()
+	helper := buildHelper(t)
+	run, err := proc.Start(context.Background(), proc.Config{
+		HelperPath: helper, StateDir: state, Tag: "stall", Stall: 250 * time.Millisecond,
+		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
+		Command: []string{"/bin/sleep", "3"},
+	})
 	if err != nil {
-		forceKillRecordedTree(t, state)
-		t.Fatalf("kb-runner silent run failed: %v\n%s", err, output)
+		t.Fatal(err)
 	}
-	if got := countEvents(t, state, "stall"); got != 1 {
-		t.Fatalf("stall event count = %d, want 1", got)
+	cleanupRun(t, state, run)
+	if !waitUntil(5*time.Second, func() bool {
+		listing := proc.List(state)
+		return listing.Error == nil && len(listing.Runs) == 1 && listing.Runs[0].Status == proc.StatusStalled
+	}) {
+		t.Fatalf("silent run never became visibly stalled: %+v", proc.List(state))
+	}
+	if !waitUntil(2*time.Second, func() bool { return countEvents(t, state, "stall") == 1 }) {
+		t.Fatalf("stall event count = %d, want 1", countEvents(t, state, "stall"))
+	}
+	listing := proc.List(state)
+	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusStalled || listing.Runs[0].ElapsedMS <= 0 || len(listing.Runs[0].Tree) == 0 {
+		t.Fatalf("ps listing does not distinguish a stalled run with elapsed tree: %+v", listing)
+	}
+	runner := buildRunner(t)
+	psOutput := outputPS(t, runner, state)
+	if !strings.Contains(psOutput, "\tSTALLED\t") || !strings.Contains(psOutput, "elapsed=") {
+		t.Fatalf("kb-runner ps does not show stalled run and tree elapsed time: %s", psOutput)
 	}
 	leaves := eventLeaves(t, state, "stall")
 	var foundSleep bool
@@ -266,6 +298,69 @@ func TestSilentLeafEmitsOneStallEvent(t *testing.T) {
 	}
 	if !foundSleep {
 		t.Fatalf("stall event leaves = %+v, want the command's verified sleep leaf with elapsed time and identity", leaves)
+	}
+}
+
+// case: S-237.7
+func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS ancestry sampling contract")
+	}
+	state := t.TempDir()
+	helper := buildHelper(t)
+	pidFile := filepath.Join(state, "grandchild.pid")
+	releaseFile := filepath.Join(state, "release-command")
+	run, err := proc.Start(context.Background(), proc.Config{
+		HelperPath: helper, StateDir: state, Tag: "darwin-sampled-descendant", Stall: time.Hour,
+		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
+		Command: []string{helper, "double-fork-system-held", "30", pidFile, releaseFile},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupRun(t, state, run)
+	pidBytes, err := waitFile(t, pidFile, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandchild, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandchildIdentity, alive := identityForTest(t, grandchild)
+	if !alive {
+		t.Fatalf("fixture grandchild %d exited before ownership sampling", grandchild)
+	}
+	t.Cleanup(func() {
+		if identity, exists := identityForTest(t, grandchild); exists && identity == grandchildIdentity {
+			if err := syscall.Kill(grandchild, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				t.Logf("stop test-owned detached grandchild %d: %v", grandchild, err)
+			}
+		}
+	})
+	if !waitUntil(2*time.Second, func() bool {
+		listing := proc.List(state)
+		if listing.Error != nil || len(listing.Runs) != 1 {
+			return false
+		}
+		for _, process := range listing.Runs[0].Tree {
+			if process.PID == grandchild && !process.Unverified && process.Identity != "" {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("sampler did not record detached PID %d as verified: %+v", grandchild, proc.List(state))
+	}
+	time.Sleep(350 * time.Millisecond)
+	if err := os.WriteFile(releaseFile, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Wait(); err != nil && !teardownHasObservationFailure(t, state, run.RunID) {
+		t.Fatalf("keeper failed after detached command exit: %v", err)
+	}
+	if _, alive := identityForTest(t, grandchild); alive {
+		t.Fatalf("sampled detached grandchild %d survived tree teardown", grandchild)
 	}
 }
 
@@ -287,7 +382,7 @@ func TestListShowsLiveTreeAndDetectsDeadKeeper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kb-runner ps failed: %v\n%s", err, output)
 	}
-	if !strings.Contains(string(output), "LIVE") || !strings.Contains(string(output), "  └─") || !strings.Contains(string(output), "sleep") {
+	if !strings.Contains(string(output), "RUNNING") || !strings.Contains(string(output), "  └─") || !strings.Contains(string(output), "sleep") {
 		t.Fatalf("separate kb-runner ps did not show the live tree: %s", output)
 	}
 	if err := run.Kill(); err != nil {
@@ -319,7 +414,7 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := run.Wait(); err != nil {
+	if err := run.Wait(); err != nil && !teardownHasObservationFailure(t, state, run.RunID) {
 		t.Fatal(err)
 	}
 	f, err := os.Open(filepath.Join(state, "events.jsonl"))
@@ -334,6 +429,7 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	counts := make(map[string]int)
 	exitHasCode := false
 	s := bufio.NewScanner(f)
+	s.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for s.Scan() {
 		var event proc.Event
 		if err := json.Unmarshal(s.Bytes(), &event); err != nil {
@@ -345,12 +441,12 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 		if event.Type == "exit" && event.ExitCode != nil && *event.ExitCode == 0 {
 			exitHasCode = true
 		}
-		counts[event.Type]++
+		counts[string(event.Type)]++
 	}
 	if err := s.Err(); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"start", "exit", "reap"} {
+	for _, kind := range []string{"start", "exit", "teardown"} {
 		if counts[kind] != 1 {
 			t.Fatalf("%s event count = %d, want one", kind, counts[kind])
 		}
@@ -389,12 +485,13 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := followRun.Wait(); err != nil {
+	if err := followRun.Wait(); err != nil && !teardownHasObservationFailure(t, followState, followRun.RunID) {
 		t.Fatal(err)
 	}
 	lines := make(chan []string, 1)
 	go func() {
 		scanner := bufio.NewScanner(followStdout)
+		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 		var records []string
 		for len(records) < 3 && scanner.Scan() {
 			records = append(records, scanner.Text())
@@ -462,6 +559,80 @@ func assertEvent(t *testing.T, state, kind string) {
 	}
 }
 
+func eventOfType(t *testing.T, state string, kind proc.EventType) proc.Event {
+	t.Helper()
+	f, err := os.Open(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var event proc.Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == kind {
+			return event
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Fatalf("event %q not found", kind)
+	return proc.Event{}
+}
+
+func outputRunID(t *testing.T, state, tag string) string {
+	t.Helper()
+	f, err := os.Open(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var event proc.Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Tag == tag {
+			return event.RunID
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Fatalf("run tag %q has no lifecycle event", tag)
+	return ""
+}
+
+func teardownHasObservationFailure(t *testing.T, state, runID string) bool {
+	t.Helper()
+	f, err := os.Open(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var event proc.Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == proc.EventTeardown && event.RunID == runID {
+			return strings.Contains(event.Error, "unverified/failed observation")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return false
+}
+
 func assertSignalExitEvent(t *testing.T, state string) {
 	t.Helper()
 	f, err := os.Open(filepath.Join(state, "events.jsonl"))
@@ -474,6 +645,7 @@ func assertSignalExitEvent(t *testing.T, state string) {
 		}
 	}()
 	s := bufio.NewScanner(f)
+	s.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for s.Scan() {
 		var event proc.Event
 		if json.Unmarshal(s.Bytes(), &event) == nil && event.Type == "exit" && event.Signal != "" {
@@ -507,13 +679,13 @@ func forceKillRecordedTree(t *testing.T, state string) {
 			if child.Unverified {
 				continue
 			}
-			if identity, ok := proc.ProcessIdentity(child.PID); ok && identity == child.Identity {
+			if identity, ok := identityForTest(t, child.PID); ok && identity == child.Identity {
 				if err := syscall.Kill(child.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 					t.Logf("cleanup test process %d: %v", child.PID, err)
 				}
 			}
 		}
-		if identity, ok := proc.ProcessIdentity(run.PID); ok && identity == run.StartedAt {
+		if identity, ok := identityForTest(t, run.PID); ok && identity == run.StartedAt {
 			if err := syscall.Kill(run.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 				t.Logf("cleanup test keeper %d: %v", run.PID, err)
 			}
@@ -534,9 +706,10 @@ func countEvents(t *testing.T, state, kind string) int {
 	}()
 	n := 0
 	s := bufio.NewScanner(f)
+	s.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for s.Scan() {
 		var event proc.Event
-		if json.Unmarshal(s.Bytes(), &event) == nil && event.Type == kind {
+		if json.Unmarshal(s.Bytes(), &event) == nil && string(event.Type) == kind {
 			n++
 		}
 	}
@@ -555,9 +728,10 @@ func eventLeaves(t *testing.T, state, kind string) []proc.Process {
 		}
 	}()
 	s := bufio.NewScanner(f)
+	s.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for s.Scan() {
 		var event proc.Event
-		if json.Unmarshal(s.Bytes(), &event) == nil && event.Type == kind {
+		if json.Unmarshal(s.Bytes(), &event) == nil && string(event.Type) == kind {
 			return event.Leaves
 		}
 	}
@@ -575,7 +749,25 @@ func waitUntil(d time.Duration, condition func() bool) bool {
 	return condition()
 }
 
-func processExists(pid int) bool { return proc.ProcessExists(pid) }
+func identityForTest(t testing.TB, pid int) (string, bool) {
+	t.Helper()
+	identity, alive, err := proc.ProcessIdentity(pid)
+	if err != nil {
+		t.Errorf("inspect process %d identity: %v", pid, err)
+		return "", false
+	}
+	return identity, alive
+}
+
+func processExists(t testing.TB, pid int) bool {
+	t.Helper()
+	alive, err := proc.ProcessExists(pid)
+	if err != nil {
+		t.Errorf("inspect process %d: %v", pid, err)
+		return false
+	}
+	return alive
+}
 
 // case: S-237.1
 func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
@@ -604,7 +796,11 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !waitUntil(3*time.Second, func() bool {
-		for _, child := range proc.ProcessTree(run.PID, run.RunID) {
+		tree, treeErr := proc.ProcessTree(run.PID, run.RunID)
+		if treeErr != nil {
+			t.Fatalf("process tree for run %s: %v", run.RunID, treeErr)
+		}
+		for _, child := range tree {
 			if child.PID == grandchild && child.PPID == run.PID {
 				return true
 			}
@@ -619,7 +815,7 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 	if err := run.Wait(); err != nil {
 		t.Fatal(err)
 	}
-	if _, alive := proc.ProcessIdentity(grandchild); alive {
+	if _, alive := identityForTest(t, grandchild); alive {
 		t.Fatalf("double-fork grandchild %d survived the keeper's subreaper cleanup", grandchild)
 	}
 }
@@ -643,7 +839,7 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 		runs = append(runs, run)
 	}
 	for _, run := range runs {
-		if err := run.Wait(); err != nil {
+		if err := run.Wait(); err != nil && !teardownHasObservationFailure(t, state, run.RunID) {
 			t.Fatal(err)
 		}
 	}
@@ -654,6 +850,7 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 	defer f.Close()
 	countLines := 0
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
 		var event proc.Event
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -664,8 +861,8 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if countLines != count*3 {
-		t.Fatalf("event lines = %d, want %d (start, exit, reap per keeper)", countLines, count*3)
+	if countLines != count*4 {
+		t.Fatalf("event lines = %d, want %d (queued, start, exit, teardown per keeper)", countLines, count*4)
 	}
 	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
 	if err != nil {
@@ -726,7 +923,7 @@ func TestStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 	if parseErr != nil {
 		t.Fatal(parseErr)
 	}
-	if identity, alive := proc.ProcessIdentity(pid); alive {
+	if identity, alive := identityForTest(t, pid); alive {
 		t.Fatalf("invalid helper process %d remains alive with identity %s", pid, identity)
 	}
 	if time.Since(started) > 4*time.Second {
@@ -754,10 +951,10 @@ func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
 	if err := os.Rename(replacement, helper); err != nil {
 		t.Fatal(err)
 	}
-	if identity, alive := proc.ProcessIdentity(run.PID); !alive || identity != run.StartedAt {
+	if identity, alive := identityForTest(t, run.PID); !alive || identity != run.StartedAt {
 		t.Fatalf("running keeper changed identity after on-disk replacement: pid=%d identity=%q alive=%t", run.PID, identity, alive)
 	}
-	if err := run.Wait(); err != nil {
+	if err := run.Wait(); err != nil && !teardownHasObservationFailure(t, state, run.RunID) {
 		t.Fatalf("running keeper failed after on-disk helper replacement: %v", err)
 	}
 	_, err = proc.Start(context.Background(), proc.Config{
@@ -767,6 +964,660 @@ func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
 		t.Fatalf("future run with replacement helper error = %v", err)
+	}
+}
+
+// case: S-237.6
+func TestRunReadsStdinAndMergesEnvWithMarker(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	prompt := filepath.Join(state, "prompt.txt")
+	if err := os.WriteFile(prompt, []byte("prompt-line-one\nprompt-line-two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(runner,
+		"run", "--tag", "stdin-env", "--state", state, "--stall", "1h",
+		"--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"),
+		"--stdin", prompt, "--env", "PHASE2=present", "--env", "TASK_ID=42", "--",
+		"/bin/sh", "-c", `printf 'prompt='; cat; printf 'phase2=%s task=%s marker=%s\n' "$PHASE2" "$TASK_ID" "$KBLABS_CLIPROC_RUN"`,
+	)
+	output, err := command.CombinedOutput()
+	runID := outputRunID(t, state, "stdin-env")
+	if err != nil && !teardownHasObservationFailure(t, state, runID) {
+		t.Fatalf("kb-runner run with stdin/env failed: %v\n%s", err, output)
+	}
+	if len(output) == 0 {
+		t.Fatal("kb-runner did not report command completion")
+	}
+	data, err := os.ReadFile(filepath.Join(state, "stdout.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{"prompt=prompt-line-one\nprompt-line-two\n", "phase2=present task=42 marker="} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("supervised output missing %q: stdout-file=%q stderr-file=%q runner=%s", expected, text, readText(t, filepath.Join(state, "stderr.log")), output)
+		}
+	}
+	if strings.HasSuffix(strings.TrimSpace(text), "marker=") {
+		t.Fatalf("run marker was empty: %s", text)
+	}
+}
+
+// case: S-237.8
+func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	startedLog := filepath.Join(state, "start-order")
+	commands := make([]*exec.Cmd, 4)
+	pidFiles := make([]string, 4)
+	finished := make([]bool, 4)
+	t.Cleanup(func() {
+		for i, command := range commands {
+			if command != nil && command.Process != nil && !finished[i] {
+				if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+					t.Logf("stop slot test runner: %v", err)
+				}
+				if err := command.Wait(); err != nil {
+					t.Logf("wait for slot test runner: %v", err)
+				}
+			}
+		}
+		forceKillRecordedTree(t, state)
+	})
+	for i := range commands {
+		tag := fmt.Sprintf("worker-%d", i+1)
+		pidFiles[i] = filepath.Join(state, tag+".pid")
+		commands[i] = exec.Command(runner,
+			"run", "--tag", tag, "--state", state, "--stall", "1h",
+			"--stdout", filepath.Join(state, tag+".stdout"), "--stderr", filepath.Join(state, tag+".stderr"),
+			"--slot-group", "workers", "--slots", "2", "--",
+			"/bin/sh", "-c", `printf '%s\n' "$1" >> "$2"; echo $$ > "$3"; exec /bin/sleep 30`, "sh", tag, startedLog, pidFiles[i],
+		)
+		if err := commands[i].Start(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !waitUntil(5*time.Second, func() bool {
+		output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
+		return err == nil && strings.Count(string(output), "\tRUNNING\t") == 2 && strings.Count(string(output), "\tQUEUED\t") == 2
+	}) {
+		t.Fatalf("slot capacity was not enforced for four concurrent starts: %s", outputPS(t, runner, state))
+	}
+	ps := outputPS(t, runner, state)
+	for _, tag := range activeTags(t, ps) {
+		if _, err := waitFile(t, pidFiles[tagIndex(tag)], 5*time.Second); err != nil {
+			t.Fatalf("active worker %s did not create its pid file: %v", tag, err)
+		}
+	}
+	firstQueued := queuedTagAtPosition(t, ps, 1)
+	secondQueued := queuedTagAtPosition(t, ps, 2)
+	firstActive := activeTags(t, ps)
+	for _, tag := range firstActive[:1] {
+		stopSlotProcess(t, pidFiles[tagIndex(tag)])
+	}
+	firstQueuedIndex := tagIndex(firstQueued)
+	if _, err := waitFile(t, pidFiles[firstQueuedIndex], 5*time.Second); err != nil {
+		t.Fatalf("first queued run was not admitted: %v; ps: %s", err, outputPS(t, runner, state))
+	}
+	order, err := os.ReadFile(startedLog)
+	if err != nil || !strings.Contains(string(order), firstQueued+"\n") {
+		t.Fatalf("slot admission was not FIFO after first release: %q, err=%v", order, err)
+	}
+	ps = outputPS(t, runner, state)
+	active := activeTags(t, ps)
+	for _, tag := range active {
+		if tag != firstQueued {
+			stopSlotProcess(t, pidFiles[tagIndex(tag)])
+			break
+		}
+	}
+	secondQueuedIndex := tagIndex(secondQueued)
+	if _, err := waitFile(t, pidFiles[secondQueuedIndex], 5*time.Second); err != nil {
+		t.Fatalf("second queued run was not admitted: %v; ps: %s", err, outputPS(t, runner, state))
+	}
+	order, err = os.ReadFile(startedLog)
+	if err != nil || !strings.Contains(string(order), firstQueued+"\n"+secondQueued+"\n") {
+		t.Fatalf("slot admission order = %q, err=%v", order, err)
+	}
+	stopSlotProcess(t, pidFiles[firstQueuedIndex])
+	stopSlotProcess(t, pidFiles[secondQueuedIndex])
+	for i, command := range commands {
+		if err := command.Wait(); err == nil {
+			t.Fatal("slot command returned success after SIGTERM")
+		}
+		finished[i] = true
+	}
+}
+
+// case: S-237.8
+func TestDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	firstPIDFile := filepath.Join(state, "first-child.pid")
+	secondPIDFile := filepath.Join(state, "second-child.pid")
+	start := func(tag, pidFile string) *exec.Cmd {
+		t.Helper()
+		cmd := exec.Command(runner, "run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err"), "--slot-group", "stale", "--slots", "1", "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", pidFile)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return cmd
+	}
+	first := start("stale-holder", firstPIDFile)
+	var second *exec.Cmd
+	ownedChildren := make(map[int]string)
+	t.Cleanup(func() {
+		if first.Process != nil {
+			_ = first.Process.Kill()
+			_ = first.Wait()
+		}
+		if second != nil && second.Process != nil {
+			_ = second.Process.Kill()
+			_ = second.Wait()
+		}
+		for pid, identity := range ownedChildren {
+			if current, alive := identityForTest(t, pid); alive && current == identity {
+				if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+					t.Logf("cleanup owned slot-test child %d: %v", pid, err)
+				}
+			}
+		}
+		forceKillRecordedTree(t, state)
+	})
+	firstChildBytes, err := waitFile(t, firstPIDFile, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstChild, err := strconv.Atoi(strings.TrimSpace(string(firstChildBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstIdentity, alive := identityForTest(t, firstChild)
+	if !alive {
+		t.Fatalf("cannot verify first command identity for PID %d", firstChild)
+	}
+	ownedChildren[firstChild] = firstIdentity
+	listing := proc.List(state)
+	if listing.Error != nil || len(listing.Runs) != 1 {
+		t.Fatalf("list first run: %+v", listing)
+	}
+	firstRun := listing.Runs[0]
+	if runtime.GOOS == "darwin" && !waitUntil(3*time.Second, func() bool {
+		data, err := os.ReadFile(filepath.Join(state, "runs", firstRun.RunID+".json"))
+		if err != nil {
+			return false
+		}
+		var stored struct {
+			Observed []proc.Process `json:"observed"`
+		}
+		if json.Unmarshal(data, &stored) != nil {
+			return false
+		}
+		for _, process := range stored.Observed {
+			if process.PID == firstChild {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("keeper never persisted the live descendant identity before SIGKILL")
+	}
+	if err := syscall.Kill(firstRun.PID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	second = start("stale-waiter", secondPIDFile)
+	secondChildBytes, err := waitFile(t, secondPIDFile, 5*time.Second)
+	if err != nil {
+		t.Fatalf("queued run did not acquire slot after keeper death: %v; ps: %s", err, outputPS(t, runner, state))
+	}
+	secondChild, err := strconv.Atoi(strings.TrimSpace(string(secondChildBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondIdentity, alive := identityForTest(t, secondChild)
+	if !alive {
+		t.Fatalf("cannot verify second command identity for PID %d", secondChild)
+	}
+	ownedChildren[secondChild] = secondIdentity
+	if !waitUntil(5*time.Second, func() bool {
+		listing := proc.List(state)
+		if listing.Error != nil {
+			return false
+		}
+		for _, run := range listing.Runs {
+			if run.RunID == firstRun.RunID && run.Status == proc.StatusLost {
+				return countLostEvents(t, state, firstRun.RunID) == 1
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("dead keeper was not recorded LOST with one event: %s", outputPS(t, runner, state))
+	}
+	if _, alive := identityForTest(t, firstChild); alive {
+		t.Fatalf("surviving tree process %d was not cleaned after keeper death", firstChild)
+	}
+}
+
+// case: S-237.9
+func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	start := func(tag string, args ...string) *exec.Cmd {
+		t.Helper()
+		base := []string{"run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err")}
+		command := exec.Command(runner, append(base, args...)...)
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return command
+	}
+	holderPID := filepath.Join(state, "holder.pid")
+	holder := exec.Command(runner, append([]string{"gate", "hold", "maintenance", "--tag", "holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "holder.out"), "--stderr", filepath.Join(state, "holder.err"), "--"}, "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", holderPID)...)
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if holder.Process != nil {
+			_ = holder.Process.Kill()
+			_ = holder.Wait()
+		}
+		forceKillRecordedTree(t, state)
+	})
+	if _, err := waitFile(t, holderPID, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	waiterPID := filepath.Join(state, "waiter.pid")
+	waiter := start("waiter", "--wait-gate", "maintenance", "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", waiterPID)
+	t.Cleanup(func() {
+		if waiter.Process != nil {
+			_ = waiter.Process.Kill()
+			_ = waiter.Wait()
+		}
+	})
+	if !waitUntil(5*time.Second, func() bool {
+		return strings.Contains(outputPS(t, runner, state), "waiter\t") && strings.Contains(outputPS(t, runner, state), "BLOCKED")
+	}) {
+		t.Fatalf("gate waiter was not visibly blocked: %s", outputPS(t, runner, state))
+	}
+	if _, err := os.Stat(waiterPID); !os.IsNotExist(err) {
+		t.Fatalf("wait-gated command started before release: stat=%v", err)
+	}
+	if err := holder.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Wait(); err == nil {
+		t.Fatal("killed gate holder returned success")
+	}
+	if _, err := waitFile(t, waiterPID, 5*time.Second); err != nil {
+		t.Fatalf("dead holder did not release gate: %v; ps=%s", err, outputPS(t, runner, state))
+	}
+	stopSlotProcess(t, waiterPID)
+	if err := waiter.Wait(); err == nil {
+		t.Fatal("terminated waiter command returned success")
+	}
+}
+
+// case: S-237.10
+func TestMinFreeWaitIsVisibleAndEmitsOneEvent(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	started := filepath.Join(state, "command.started")
+	command := exec.Command(runner,
+		"run", "--tag", "disk-wait", "--state", state, "--stall", "1h", "--min-free", "18446744073709551615",
+		"--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"),
+		"--", "/bin/sh", "-c", `touch "$1"`, "sh", started,
+	)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if command.Process != nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+		forceKillRecordedTree(t, state)
+	})
+	if !waitUntil(5*time.Second, func() bool {
+		output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
+		return err == nil && strings.Contains(string(output), "BLOCKED") && strings.Contains(string(output), "disk budget")
+	}) {
+		t.Fatalf("minimum-free wait was invisible: %s", outputPS(t, runner, state))
+	}
+	if _, err := os.Stat(started); !os.IsNotExist(err) {
+		t.Fatalf("command started below min-free threshold: %v", err)
+	}
+	if got := countEvents(t, state, "blocked"); got != 1 {
+		t.Fatalf("blocked event count = %d, want one disk wait transition", got)
+	}
+	if err := command.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Wait(); err == nil {
+		t.Fatal("cancelled disk wait returned success")
+	}
+}
+
+// case: S-237.11
+func TestWaitReturnsRecordedExitAndFilteredEvents(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	command := exec.Command(runner,
+		"run", "--tag", "result", "--state", state, "--stall", "100ms",
+		"--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"),
+		"--", "/bin/sh", "-c", "/bin/sleep 0.4; exit 7",
+	)
+	output, err := command.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
+		t.Fatalf("run exit = %v, output=%s; want code 7", err, output)
+	}
+	wait := exec.Command(runner, "wait", "--tag", "result", "--state", state)
+	waitOutput, waitErr := wait.CombinedOutput()
+	if !errors.As(waitErr, &exitErr) || exitErr.ExitCode() != 7 || !strings.Contains(string(waitOutput), "run result exited after ") {
+		t.Fatalf("wait result = %v, output=%s; want recorded code 7 and duration", waitErr, waitOutput)
+	}
+	events := exec.Command(runner, "events", "--state", state, "--filter", "exit,stall")
+	eventOutput, err := events.CombinedOutput()
+	if err != nil {
+		t.Fatalf("filtered events: %v: %s", err, eventOutput)
+	}
+	var seen []proc.EventType
+	for _, line := range bytes.Split(bytes.TrimSpace(eventOutput), []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var event proc.Event
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatalf("invalid filtered event: %v: %s", err, line)
+		}
+		seen = append(seen, event.Type)
+	}
+	if len(seen) != 2 || seen[0] != proc.EventStall || seen[1] != proc.EventExit {
+		t.Fatalf("filtered lifecycle types = %v, want [stall exit]", seen)
+	}
+	if countEvents(t, state, "teardown") != 1 || countEvents(t, state, "start") != 1 {
+		t.Fatalf("lifecycle event counts start=%d teardown=%d", countEvents(t, state, "start"), countEvents(t, state, "teardown"))
+	}
+}
+
+// case: S-237.11
+func TestEventsFollowStreamsLaterFilteredRecords(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	follower := exec.Command(runner, "events", "--state", state, "--follow", "--filter", "exit,stall")
+	stdout, err := follower.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := follower.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if follower.Process != nil {
+			_ = follower.Process.Signal(syscall.SIGTERM)
+			_ = follower.Wait()
+		}
+	})
+	type followedEvent struct {
+		event proc.Event
+		err   error
+	}
+	readEvents := make(chan followedEvent, 8)
+	readDone := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			var event proc.Event
+			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+				readEvents <- followedEvent{err: err}
+				continue
+			}
+			readEvents <- followedEvent{event: event}
+		}
+		readDone <- scanner.Err()
+	}()
+	command := exec.Command(runner,
+		"run", "--tag", "followed", "--state", state, "--stall", "100ms",
+		"--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"),
+		"--", "/bin/sh", "-c", "/bin/sleep 0.4; exit 7",
+	)
+	if output, err := command.CombinedOutput(); err == nil {
+		t.Fatalf("followed command returned success: %s", output)
+	}
+	seen := make(map[proc.EventType]int)
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for seen[proc.EventExit] == 0 || seen[proc.EventStall] == 0 {
+		select {
+		case row := <-readEvents:
+			if row.err != nil {
+				t.Fatal(row.err)
+			}
+			if row.event.Type != proc.EventExit && row.event.Type != proc.EventStall {
+				t.Fatalf("filtered follower emitted %q", row.event.Type)
+			}
+			seen[row.event.Type]++
+		case <-deadline.C:
+			t.Fatalf("event follower did not receive later filtered rows: %v", seen)
+		}
+	}
+	if seen[proc.EventExit] != 1 || seen[proc.EventStall] != 1 {
+		t.Fatalf("followed event counts = %v, want one exit and one stall", seen)
+	}
+	if err := follower.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := follower.Wait(); err != nil {
+		t.Fatalf("event follower returned after SIGTERM: %v", err)
+	}
+	if err := <-readDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// case: S-237.12
+func TestPSShowsRunningQueuedBlockedAndStalledTogether(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	var commands []*exec.Cmd
+	t.Cleanup(func() {
+		for _, command := range commands {
+			if command.Process != nil {
+				_ = command.Process.Kill()
+				_ = command.Wait()
+			}
+		}
+		forceKillRecordedTree(t, state)
+	})
+	start := func(args ...string) *exec.Cmd {
+		t.Helper()
+		command := exec.Command(runner, args...)
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		commands = append(commands, command)
+		return command
+	}
+	startWorker := func(tag, pidFile string) *exec.Cmd {
+		return start("run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err"), "--slot-group", "ps-workers", "--slots", "1", "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", pidFile)
+	}
+	activePID := filepath.Join(state, "active.pid")
+	startWorker("active", activePID)
+	if _, err := waitFile(t, activePID, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	startWorker("queued", filepath.Join(state, "queued.pid"))
+	holderPID := filepath.Join(state, "gate-holder.pid")
+	start("gate", "hold", "maintenance", "--tag", "gate-holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "gate-holder.out"), "--stderr", filepath.Join(state, "gate-holder.err"), "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", holderPID)
+	if _, err := waitFile(t, holderPID, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	start("run", "--tag", "blocked", "--state", state, "--stall", "1h", "--wait-gate", "maintenance", "--stdout", filepath.Join(state, "blocked.out"), "--stderr", filepath.Join(state, "blocked.err"), "--", "/bin/sleep", "30")
+	start("run", "--tag", "stalled", "--state", state, "--stall", "100ms", "--stdout", filepath.Join(state, "stalled.out"), "--stderr", filepath.Join(state, "stalled.err"), "--", "/bin/sleep", "30")
+	if !waitUntil(5*time.Second, func() bool {
+		output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
+		if err != nil {
+			return false
+		}
+		return psHasTagStatus(string(output), "active", "RUNNING") &&
+			psHasTagStatus(string(output), "queued", "QUEUED") &&
+			psHasTagStatus(string(output), "gate-holder", "RUNNING") &&
+			psHasTagStatus(string(output), "blocked", "BLOCKED") &&
+			psHasTagStatus(string(output), "stalled", "STALLED")
+	}) {
+		t.Fatalf("ps did not show all live/waiting states together: %s", outputPS(t, runner, state))
+	}
+	output := outputPS(t, runner, state)
+	assertPSRowDetails(t, output, "active", true, "")
+	assertPSRowDetails(t, output, "queued", false, "position=1")
+	assertPSRowDetails(t, output, "gate-holder", true, "")
+	assertPSRowDetails(t, output, "blocked", false, "gate: maintenance")
+	assertPSRowDetails(t, output, "stalled", true, "")
+}
+
+func assertPSRowDetails(t *testing.T, output, tag string, hasChild bool, waitDetail string) {
+	t.Helper()
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		fields := strings.Split(line, "\t")
+		if len(fields) == 0 || fields[0] != tag {
+			continue
+		}
+		if len(fields) < 7 || !strings.HasPrefix(fields[4], "elapsed=") || !strings.HasPrefix(fields[5], "tree=") {
+			t.Fatalf("ps row %q omitted its own tree and elapsed fields: %s", tag, line)
+		}
+		if waitDetail != "" && !strings.Contains(fields[3], waitDetail) {
+			t.Fatalf("ps row %q omitted wait detail %q: %s", tag, waitDetail, line)
+		}
+		treeCount, err := strconv.Atoi(strings.TrimPrefix(fields[5], "tree="))
+		if err != nil {
+			t.Fatalf("ps row %q has invalid tree count: %s", tag, line)
+		}
+		childCount := 0
+		for _, childLine := range lines[i+1:] {
+			if !strings.HasPrefix(childLine, "  └─ ") {
+				if childLine != "" {
+					break
+				}
+				continue
+			}
+			childFields := strings.Split(childLine, "\t")
+			if len(childFields) < 3 || !strings.Contains(childFields[2], "elapsed=") {
+				t.Fatalf("ps child of %q omitted its own elapsed field: %s", tag, childLine)
+			}
+			childCount++
+		}
+		if treeCount != childCount {
+			t.Fatalf("ps row %q advertises tree=%d but prints %d descendants: %s", tag, treeCount, childCount, output)
+		}
+		if hasChild != (childCount > 0) {
+			t.Fatalf("ps row %q has %d descendants, want child=%t: %s", tag, childCount, hasChild, output)
+		}
+		return
+	}
+	t.Fatalf("ps row %q was omitted: %s", tag, output)
+}
+
+func countLostEvents(t *testing.T, state, runID string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var event proc.Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == proc.EventLost && event.RunID == runID {
+			count++
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func psHasTagStatus(output, tag, status string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 3 && fields[0] == tag && fields[2] == status {
+			return true
+		}
+	}
+	return false
+}
+
+func activeTags(t *testing.T, output string) []string {
+	t.Helper()
+	var tags []string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 3 && fields[2] == "RUNNING" && strings.HasPrefix(fields[0], "worker-") {
+			tags = append(tags, fields[0])
+		}
+	}
+	if len(tags) != 2 {
+		t.Fatalf("active worker set = %v, want 2: %s", tags, output)
+	}
+	return tags
+}
+
+func queuedTagAtPosition(t *testing.T, output string, position int) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 4 && strings.HasPrefix(fields[3], fmt.Sprintf("position=%d ", position)) {
+			return fields[0]
+		}
+	}
+	t.Fatalf("queue position %d absent from ps output: %s", position, output)
+	return ""
+}
+
+func tagIndex(tag string) int {
+	var index int
+	if _, err := fmt.Sscanf(tag, "worker-%d", &index); err != nil {
+		panic(err)
+	}
+	return index - 1
+}
+
+func outputPS(t *testing.T, runner, state string) string {
+	t.Helper()
+	output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
+	if err != nil {
+		t.Fatalf("kb-runner ps: %v\n%s", err, output)
+	}
+	return string(output)
+}
+
+func readText(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
+}
+
+func stopSlotProcess(t *testing.T, pidFile string) {
+	t.Helper()
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read process PID from %s: %v", pidFile, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse process PID %q: %v", data, err)
+	}
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+		t.Fatalf("release slot by terminating process %d: %v", pid, err)
 	}
 }
 

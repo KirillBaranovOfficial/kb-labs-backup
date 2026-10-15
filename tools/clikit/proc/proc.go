@@ -13,16 +13,30 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 const (
-	EventSchema = "kb.proc-event/v1"
+	EventSchema = "kb.proc-event/v2"
 	stateEnv    = "KBLABS_CLIPROC_CONFIG"
 	readyEnv    = "KBLABS_CLIPROC_READY_FD"
 	runEnv      = "KBLABS_CLIPROC_RUN"
+)
+
+type EventType string
+
+const (
+	EventQueued   EventType = "queued"
+	EventBlocked  EventType = "blocked"
+	EventStart    EventType = "start"
+	EventStall    EventType = "stall"
+	EventExit     EventType = "exit"
+	EventLost     EventType = "lost"
+	EventTeardown EventType = "teardown"
 )
 
 type Config struct {
@@ -32,23 +46,35 @@ type Config struct {
 	Stall      time.Duration
 	StdoutPath string
 	StderrPath string
+	StdinPath  string
+	SlotGroup  string
+	Slots      int
+	WaitGate   string
+	HoldGate   string
+	MinFree    uint64
 	Command    []string
 	Dir        string
 	Env        []string
 }
 
 type Event struct {
-	Schema    string    `json:"schema"`
-	At        time.Time `json:"at"`
-	Type      string    `json:"type"`
-	RunID     string    `json:"run_id"`
-	Tag       string    `json:"tag"`
-	KeeperPID int       `json:"keeper_pid"`
-	Command   string    `json:"command,omitempty"`
-	ExitCode  *int      `json:"exit_code,omitempty"`
-	Signal    string    `json:"signal,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	Leaves    []Process `json:"leaves,omitempty"`
+	Schema     string    `json:"schema"`
+	At         time.Time `json:"at"`
+	Type       EventType `json:"type"`
+	RunID      string    `json:"run_id"`
+	Tag        string    `json:"tag"`
+	KeeperPID  int       `json:"keeper_pid"`
+	Command    string    `json:"command,omitempty"`
+	ExitCode   *int      `json:"exit_code,omitempty"`
+	Signal     string    `json:"signal,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	Position   int       `json:"position,omitempty"`
+	DurationMS int64     `json:"duration_ms,omitempty"`
+	Leaves     []Process `json:"leaves,omitempty"`
+	Reaped     []Process `json:"reaped,omitempty"`
+	Unverified []Process `json:"unverified,omitempty"`
+	Remaining  []Process `json:"remaining,omitempty"`
 }
 
 type Run struct {
@@ -64,8 +90,13 @@ type Run struct {
 type RunStatus string
 
 const (
-	StatusLive RunStatus = "live"
-	StatusDead RunStatus = "dead"
+	StatusRunning  RunStatus = "running"
+	StatusQueued   RunStatus = "queued"
+	StatusBlocked  RunStatus = "blocked"
+	StatusStalled  RunStatus = "stalled"
+	StatusStarting RunStatus = "starting"
+	StatusDead     RunStatus = "dead"
+	StatusLost     RunStatus = "lost"
 )
 
 type Process struct {
@@ -81,13 +112,21 @@ type Process struct {
 }
 
 type RunInfo struct {
-	RunID     string    `json:"run_id"`
-	Tag       string    `json:"tag"`
-	PID       int       `json:"pid"`
-	StartedAt string    `json:"started_at"`
-	Status    RunStatus `json:"status"`
-	Command   []string  `json:"command"`
-	Tree      []Process `json:"tree"`
+	RunID         string    `json:"run_id"`
+	Tag           string    `json:"tag"`
+	PID           int       `json:"pid"`
+	StartedAt     string    `json:"started_at"`
+	Status        RunStatus `json:"status"`
+	Command       []string  `json:"command"`
+	Tree          []Process `json:"tree"`
+	SlotGroup     string    `json:"slot_group,omitempty"`
+	QueuePosition int       `json:"queue_position,omitempty"`
+	WaitReason    string    `json:"wait_reason,omitempty"`
+	ElapsedMS     int64     `json:"elapsed_ms,omitempty"`
+	ExitCode      *int      `json:"exit_code,omitempty"`
+	Signal        string    `json:"signal,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	DurationMS    int64     `json:"duration_ms,omitempty"`
 }
 
 type Listing struct {
@@ -95,13 +134,66 @@ type Listing struct {
 	Error error
 }
 
+type treeCleanup struct {
+	Reaped     []Process
+	Unverified []Process
+	Remaining  []Process
+	err        error
+}
+
+// processSource is the OS observation and signalling boundary used by every
+// tree, liveness, and cleanup operation. Tests inject a source at this seam.
+type processSource interface {
+	Snapshot(runID string) ([]Process, error)
+	Identity(pid int) (string, bool, error)
+	Signal(pid int, signal syscall.Signal) error
+}
+
+func inspectIdentity(pid int) (string, bool, error) {
+	return osProcessSource{}.Identity(pid)
+}
+
+func ProcessIdentity(pid int) (string, bool, error) {
+	return inspectIdentity(pid)
+}
+
+func ProcessExists(pid int) (bool, error) {
+	_, alive, err := ProcessIdentity(pid)
+	return alive, err
+}
+
+func killTree(root int, runID string) error {
+	return killTreeWithHistory(root, runID, nil).err
+}
+
+func killTreeWithHistory(root int, runID string, observed []Process) treeCleanup {
+	return cleanupTreeWithSource(root, runID, observed, osProcessSource{})
+}
+
 type record struct {
-	RunID     string   `json:"run_id"`
-	Tag       string   `json:"tag"`
-	PID       int      `json:"pid"`
-	StartedAt string   `json:"started_at"`
-	Command   []string `json:"command"`
-	StateDir  string   `json:"state_dir"`
+	RunID         string    `json:"run_id"`
+	Tag           string    `json:"tag"`
+	PID           int       `json:"pid"`
+	StartedAt     string    `json:"started_at"`
+	Command       []string  `json:"command"`
+	StateDir      string    `json:"state_dir"`
+	Status        RunStatus `json:"status,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	SlotGroup     string    `json:"slot_group,omitempty"`
+	Slots         int       `json:"slots,omitempty"`
+	QueueOrder    uint64    `json:"queue_order,omitempty"`
+	EnqueuedAt    time.Time `json:"enqueued_at,omitempty"`
+	WaitReason    string    `json:"wait_reason,omitempty"`
+	WaitGate      string    `json:"wait_gate,omitempty"`
+	HoldGate      string    `json:"hold_gate,omitempty"`
+	MinFree       uint64    `json:"min_free,omitempty"`
+	StartedAtTime time.Time `json:"started_at_time,omitempty"`
+	LastOutputAt  time.Time `json:"last_output_at,omitempty"`
+	StallMS       int64     `json:"stall_ms,omitempty"`
+	ExitCode      *int      `json:"exit_code,omitempty"`
+	Signal        string    `json:"signal,omitempty"`
+	DurationMS    int64     `json:"duration_ms,omitempty"`
+	Observed      []Process `json:"observed,omitempty"`
 }
 
 type keeperConfig struct {
@@ -132,10 +224,22 @@ func Start(ctx context.Context, cfg Config) (*Run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("proc: create run id: %w", err)
 	}
-	parentIdentity, ok := ProcessIdentity(os.Getpid())
+	parentIdentity, ok, err := ProcessIdentity(os.Getpid())
+	if err != nil {
+		return nil, fmt.Errorf("proc: inspect supervisor process identity: %w", err)
+	}
 	if !ok {
 		return nil, errors.New("proc: cannot identify supervisor process")
 	}
+	if err := reserveAdmission(ctx, cfg, runID, os.Getpid(), parentIdentity); err != nil {
+		return nil, err
+	}
+	admissionPending := true
+	defer func() {
+		if admissionPending {
+			cleanupAdmission(cfg.StateDir, runID, "start failed")
+		}
+	}()
 	kc := keeperConfig{Config: cfg, RunID: runID, ParentPID: os.Getpid(), ParentIdentity: parentIdentity}
 	encoded, err := json.Marshal(kc)
 	if err != nil {
@@ -178,10 +282,14 @@ func Start(ctx context.Context, cfg Config) (*Run, error) {
 	case result := <-readyCh:
 		ready, err = result.record, result.err
 	case <-ctx.Done():
-		killErr := cmd.Process.Kill()
+		killErr := cmd.Process.Signal(syscall.SIGTERM)
+		if killErr != nil {
+			killErr = cmd.Process.Kill()
+		}
 		closeErr := readReady.Close()
 		<-readyCh
 		waitErr := cmd.Wait()
+		admissionPending = false
 		return nil, errors.Join(fmt.Errorf("proc: keeper startup canceled: %w", ctx.Err()), killErr, closeErr, waitErr)
 	case <-timer.C:
 		killErr := cmd.Process.Kill()
@@ -196,6 +304,7 @@ func Start(ctx context.Context, cfg Config) (*Run, error) {
 	if err := readReady.Close(); err != nil {
 		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake reader: %w", err), cmd.Process.Kill(), cmd.Wait())
 	}
+	admissionPending = false
 	run := &Run{PID: cmd.Process.Pid, RunID: runID, StartedAt: ready.StartedAt, cmd: cmd, done: make(chan struct{})}
 	go func() {
 		select {
@@ -255,7 +364,7 @@ func KeeperMain() int {
 	return runKeeper(cfg)
 }
 
-// List reads the keeper registry and checks PID identity before reporting a run live.
+// List reads run and queue records under their state lock, then verifies each PID identity.
 func List(stateDir string) Listing {
 	info, err := os.Stat(stateDir)
 	if err != nil {
@@ -264,29 +373,359 @@ func List(stateDir string) Listing {
 	if !info.IsDir() {
 		return Listing{Error: fmt.Errorf("proc: state path %q is not a directory", stateDir)}
 	}
-	paths, err := filepath.Glob(filepath.Join(stateDir, "runs", "*.json"))
-	if err != nil {
-		return Listing{Error: err}
+	var records []record
+	if err := withStateLock(stateDir, func() error {
+		if err := pruneStateLocked(stateDir); err != nil {
+			return err
+		}
+		var readErr error
+		records, readErr = readRecordsLocked(stateDir)
+		return readErr
+	}); err != nil {
+		return Listing{Error: fmt.Errorf("proc: read run registry: %w", err)}
 	}
-	out := Listing{Runs: make([]RunInfo, 0, len(paths))}
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			out.Error = fmt.Errorf("proc: read run record %s: %w", path, err)
-			return out
+	out := Listing{Runs: make([]RunInfo, 0, len(records))}
+	now := time.Now()
+	for _, rec := range records {
+		status := rec.Status
+		identity, live, identityErr := inspectIdentity(rec.PID)
+		if identityErr != nil {
+			return Listing{Error: fmt.Errorf("proc: inspect keeper %d: %w", rec.PID, identityErr)}
 		}
-		var rec record
-		if err := json.Unmarshal(data, &rec); err != nil {
-			out.Error = fmt.Errorf("proc: decode run record %s: %w", path, err)
-			return out
+		if rec.Status == StatusQueued || rec.Status == StatusBlocked || rec.Status == StatusStarting {
+			if !live || identity != rec.StartedAt {
+				continue
+			}
+			if status == StatusStarting {
+				status = StatusQueued
+			}
+		} else if rec.Status == StatusLost {
+			status = StatusLost
+		} else if live && identity == rec.StartedAt {
+			status = StatusRunning
+			if rec.StallMS > 0 && !rec.LastOutputAt.IsZero() && now.Sub(rec.LastOutputAt) >= time.Duration(rec.StallMS)*time.Millisecond {
+				status = StatusStalled
+			}
+		} else {
+			status = StatusDead
 		}
-		info := RunInfo{RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: rec.StartedAt, Status: StatusDead, Command: rec.Command}
-		if current, exists := ProcessIdentity(rec.PID); exists && current == rec.StartedAt {
-			info.Status = StatusLive
-			info.Tree = ProcessTree(rec.PID, rec.RunID)
+		elapsed := rec.DurationMS
+		if status == StatusQueued || status == StatusBlocked {
+			if !rec.EnqueuedAt.IsZero() {
+				elapsed = now.Sub(rec.EnqueuedAt).Milliseconds()
+			}
+		} else if status != StatusDead && !rec.StartedAtTime.IsZero() {
+			elapsed = now.Sub(rec.StartedAtTime).Milliseconds()
+		}
+		position := 0
+		if status == StatusQueued || status == StatusBlocked {
+			position = queuePosition(rec, records)
+		}
+		info := RunInfo{
+			RunID: rec.RunID, Tag: rec.Tag, PID: rec.PID, StartedAt: rec.StartedAt,
+			Status: status, Command: rec.Command, SlotGroup: rec.SlotGroup,
+			QueuePosition: position, WaitReason: rec.WaitReason, ElapsedMS: elapsed,
+			ExitCode: rec.ExitCode, Signal: rec.Signal, DurationMS: rec.DurationMS,
+			Error: rec.Error,
+		}
+		if live && identity == rec.StartedAt && status != StatusQueued && status != StatusBlocked {
+			tree, treeErr := ProcessTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
+			info.Tree = tree
+			if treeErr != nil {
+				observationErr := fmt.Errorf("unverified/failed observation: %w", treeErr)
+				if info.Error == "" {
+					info.Error = observationErr.Error()
+				} else {
+					info.Error = errors.Join(errors.New(info.Error), observationErr).Error()
+				}
+			}
 		}
 		out.Runs = append(out.Runs, info)
 	}
+	return out
+}
+
+func queuePosition(candidate record, records []record) int {
+	position := 1
+	for _, rec := range records {
+		if rec.SlotGroup == candidate.SlotGroup && rec.QueueOrder < candidate.QueueOrder &&
+			(rec.Status == StatusQueued || rec.Status == StatusBlocked) {
+			position++
+		}
+	}
+	return position
+}
+
+func ProcessTree(root int, runID string) ([]Process, error) {
+	return processTreeWithSource(osProcessSource{}, root, runID)
+}
+
+func processTreeWithSource(source processSource, root int, runID string) ([]Process, error) {
+	all, err := source.Snapshot(runID)
+	return processTreeFromSnapshot(all, root), wrapSnapshotError(err)
+}
+
+func wrapSnapshotError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("process table snapshot: %w", err)
+}
+
+func processTreeFromSnapshot(all []Process, root int) []Process {
+	children := make(map[int][]int)
+	byPID := make(map[int]Process, len(all))
+	for _, process := range all {
+		children[process.PPID] = append(children[process.PPID], process.PID)
+		byPID[process.PID] = process
+	}
+	seen := map[int]bool{root: true}
+	queue := []int{root}
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		for _, child := range children[pid] {
+			if !seen[child] {
+				seen[child] = true
+				queue = append(queue, child)
+			}
+		}
+	}
+	rootStart := time.Time{}
+	for _, process := range all {
+		if process.PID == root {
+			rootStart = process.StartedAt
+		}
+		if process.runMarker {
+			seen[process.PID] = true
+		}
+	}
+	verified := make(map[int]bool, len(seen))
+	for pid := range seen {
+		verified[pid] = true
+	}
+	for _, process := range all {
+		if !seen[process.PID] && process.Unverified && process.StartedAt.After(rootStart) {
+			seen[process.PID] = true
+		}
+	}
+	out := make([]Process, 0, len(seen))
+	for pid := range seen {
+		if pid == root {
+			continue
+		}
+		if process, ok := byPID[pid]; ok {
+			if verified[pid] {
+				process.Unverified = false
+			}
+			out = append(out, process)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
+	return out
+}
+
+func ProcessTreeWithHistory(root int, runID string, observed []Process) ([]Process, error) {
+	return processTreeWithHistorySource(osProcessSource{}, root, runID, observed)
+}
+
+func processTreeWithHistorySource(source processSource, root int, runID string, observed []Process) ([]Process, error) {
+	snapshot, err := source.Snapshot(runID)
+	snapshotErr := wrapSnapshotError(err)
+	byPID := make(map[int]Process)
+	tree := processTreeFromSnapshot(snapshot, root)
+	for _, process := range tree {
+		byPID[process.PID] = process
+	}
+	currentProcesses := make(map[int]Process)
+	for _, process := range snapshot {
+		currentProcesses[process.PID] = process
+	}
+	for _, previous := range observed {
+		identity, alive, err := source.Identity(previous.PID)
+		if err != nil {
+			return sortedProcesses(byPID), errors.Join(snapshotErr, fmt.Errorf("inspect observed process %d: %w", previous.PID, err))
+		}
+		if !alive || identity != previous.Identity {
+			continue
+		}
+		current, ok := currentProcesses[previous.PID]
+		if ok && current.Identity != previous.Identity {
+			continue
+		}
+		if !ok {
+			current = previous
+		}
+		current.Unverified = false
+		byPID[current.PID] = current
+	}
+	out := make([]Process, 0, len(byPID))
+	for _, process := range byPID {
+		out = append(out, process)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
+	return out, snapshotErr
+}
+
+func ProcessLeaves(root int, runID string) ([]Process, error) {
+	processes, err := ProcessTree(root, runID)
+	return processLeaves(processes), err
+}
+
+func ProcessLeavesWithHistory(root int, runID string, observed []Process) ([]Process, error) {
+	processes, err := ProcessTreeWithHistory(root, runID, observed)
+	return processLeaves(processes), err
+}
+
+func processLeaves(processes []Process) []Process {
+	parents := make(map[int]bool, len(processes))
+	for _, process := range processes {
+		parents[process.PPID] = true
+	}
+	leaves := make([]Process, 0, len(processes))
+	for _, process := range processes {
+		if !parents[process.PID] {
+			leaves = append(leaves, process)
+		}
+	}
+	return leaves
+}
+
+func cleanupTreeWithSource(root int, runID string, observed []Process, source processSource) treeCleanup {
+	result := treeCleanup{Reaped: make([]Process, 0), Unverified: make([]Process, 0), Remaining: make([]Process, 0)}
+	var failures []error
+	seenFailures := make(map[string]bool)
+	recordFailure := func(err error) {
+		if err != nil && !seenFailures[err.Error()] {
+			seenFailures[err.Error()] = true
+			failures = append(failures, err)
+		}
+	}
+	const cleanupBound = 3 * time.Second
+	const cleanupPoll = 20 * time.Millisecond
+	const termGrace = 250 * time.Millisecond
+	deadline := time.Now().Add(cleanupBound)
+	targets := make(map[string]Process, len(observed))
+	for _, process := range observed {
+		targets[processObservationKey(process)] = process
+	}
+	observedTree := append([]Process(nil), observed...)
+	termSent := make(map[string]time.Time)
+	killSent := make(map[string]bool)
+	emptySnapshots := 0
+	var lastSnapshotErr error
+	snapshotFailureRecorded := false
+	for time.Now().Before(deadline) {
+		tree, snapshotErr := processTreeWithHistorySource(source, root, runID, observedTree)
+		if snapshotErr != nil {
+			if !snapshotFailureRecorded {
+				recordFailure(fmt.Errorf("unverified/failed observation: %w", snapshotErr))
+				snapshotFailureRecorded = true
+			}
+			lastSnapshotErr = snapshotErr
+		} else {
+			lastSnapshotErr = nil
+		}
+		if snapshotErr != nil && len(tree) == 0 && len(targets) == 0 {
+			break
+		}
+		if len(tree) == 0 && snapshotErr == nil {
+			emptySnapshots++
+		} else {
+			emptySnapshots = 0
+		}
+		for _, process := range tree {
+			key := processObservationKey(process)
+			targets[key] = process
+			if !process.Unverified && !containsProcess(observedTree, process) {
+				observedTree = append(observedTree, process)
+			}
+		}
+		allGone := true
+		verifiedLive := false
+		unverifiedFound := false
+		for key, process := range targets {
+			if process.Unverified {
+				allGone = false
+				unverifiedFound = true
+				continue
+			}
+			identity, alive, identityErr := source.Identity(process.PID)
+			if identityErr != nil {
+				allGone = false
+				unverifiedFound = true
+				recordFailure(fmt.Errorf("observe process %d during teardown: %w", process.PID, identityErr))
+				process.Unverified = true
+				targets[key] = process
+				continue
+			}
+			if !alive || identity != process.Identity {
+				continue
+			}
+			allGone = false
+			verifiedLive = true
+			if firstSignal, signaled := termSent[key]; !signaled {
+				if signalErr := source.Signal(process.PID, syscall.SIGTERM); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+					recordFailure(fmt.Errorf("send SIGTERM to process %d: %w", process.PID, signalErr))
+				}
+				termSent[key] = time.Now()
+			} else if time.Since(firstSignal) >= termGrace && !killSent[key] {
+				if signalErr := source.Signal(process.PID, syscall.SIGKILL); signalErr != nil && !errors.Is(signalErr, syscall.ESRCH) {
+					recordFailure(fmt.Errorf("send SIGKILL to process %d: %w", process.PID, signalErr))
+				}
+				killSent[key] = true
+			}
+		}
+		if allGone && emptySnapshots >= 2 && lastSnapshotErr == nil {
+			break
+		}
+		if unverifiedFound && !verifiedLive {
+			break
+		}
+		time.Sleep(cleanupPoll)
+	}
+	for _, process := range targets {
+		if process.Unverified {
+			result.Unverified = append(result.Unverified, process)
+			result.Remaining = append(result.Remaining, process)
+			recordFailure(fmt.Errorf("unverified process %d prevents verified tree cleanup", process.PID))
+			continue
+		}
+		identity, alive, identityErr := source.Identity(process.PID)
+		if identityErr != nil {
+			recordFailure(fmt.Errorf("verify process %d after teardown: %w", process.PID, identityErr))
+			process.Unverified = true
+			result.Remaining = append(result.Remaining, process)
+			continue
+		}
+		if alive && identity == process.Identity {
+			result.Remaining = append(result.Remaining, process)
+		} else {
+			result.Reaped = append(result.Reaped, process)
+		}
+	}
+	if len(result.Remaining) > 0 && !time.Now().Before(deadline) {
+		recordFailure(errors.New("tree cleanup deadline expired with owned processes remaining"))
+	}
+	result.err = errors.Join(failures...)
+	return result
+}
+
+func containsProcess(processes []Process, candidate Process) bool {
+	for _, process := range processes {
+		if processObservationKey(process) == processObservationKey(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedProcesses(processes map[int]Process) []Process {
+	out := make([]Process, 0, len(processes))
+	for _, process := range processes {
+		out = append(out, process)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
 	return out
 }
 
@@ -324,19 +763,22 @@ func decodeReady(r *os.File) (record, error) {
 }
 
 func writeRecord(rec record) error {
-	path := filepath.Join(rec.StateDir, "runs", rec.RunID+".json")
-	data, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return withStateLock(rec.StateDir, func() error {
+		queued, err := readRecordLocked(rec.StateDir, rec.RunID)
+		if err == nil {
+			rec.SlotGroup, rec.Slots, rec.QueueOrder = queued.SlotGroup, queued.Slots, queued.QueueOrder
+			rec.EnqueuedAt, rec.WaitGate, rec.HoldGate, rec.MinFree = queued.EnqueuedAt, queued.WaitGate, queued.HoldGate, queued.MinFree
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if rec.Status == "" {
+			rec.Status = StatusStarting
+		}
+		return writeRecordAtomic(rec)
+	})
 }
 
-func eventFor(rec record, kind string) Event {
+func eventFor(rec record, kind EventType) Event {
 	return Event{Schema: EventSchema, At: time.Now().UTC(), Type: kind, RunID: rec.RunID, Tag: rec.Tag, KeeperPID: rec.PID, Command: commandText(rec.Command)}
 }
 

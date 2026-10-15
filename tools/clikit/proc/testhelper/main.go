@@ -37,6 +37,12 @@ func main() {
 		}
 		launch([]string{"intermediate", os.Args[2], os.Args[3]}, true)
 		waitForFileWithin(os.Args[4], time.Minute)
+	case "double-fork-system-held":
+		if len(os.Args) != 5 {
+			os.Exit(2)
+		}
+		launch([]string{"system-intermediate", os.Args[2], os.Args[3], os.Args[4]}, true)
+		waitForFileWithin(os.Args[4], time.Minute)
 	case "intermediate":
 		if len(os.Args) != 3 && len(os.Args) != 4 {
 			os.Exit(2)
@@ -52,6 +58,27 @@ func main() {
 		if len(os.Args) == 4 {
 			waitForFile(os.Args[3])
 		}
+	case "system-intermediate":
+		if len(os.Args) != 5 {
+			os.Exit(2)
+		}
+		if _, err := unix.Setsid(); err != nil {
+			fail(err)
+		}
+		duration, err := time.ParseDuration(os.Args[2] + "s")
+		if err != nil {
+			fail(err)
+		}
+		cmd := exec.Command("/bin/sleep", duration.String())
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+		if err := cmd.Start(); err != nil {
+			fail(err)
+		}
+		if err := writePID(os.Args[3], cmd.Process.Pid); err != nil {
+			fail(err)
+		}
+		waitForFileWithin(os.Args[4], time.Minute)
 	case "detached":
 		if len(os.Args) != 3 && len(os.Args) != 4 {
 			os.Exit(2)
@@ -136,6 +163,17 @@ func launch(args []string, quiet bool) {
 
 func waitForFile(path string) {
 	waitForFileWithin(path, 5*time.Second)
+}
+
+func writePID(path string, pid int) error {
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, []byte(fmt.Sprintf("%d\n", pid)), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return fmt.Errorf("publish PID file %s: %w", path, err)
+	}
+	return nil
 }
 
 func waitForFileWithin(path string, timeout time.Duration) {
