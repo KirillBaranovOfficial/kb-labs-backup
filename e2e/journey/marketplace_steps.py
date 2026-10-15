@@ -73,7 +73,7 @@ def _json(result: CompletedProcess[str], command: list[str]) -> dict:
 
 def validate_commit_status_response(status: int, payload: object) -> None:
     data = payload.get("data") if isinstance(payload, dict) else None
-    if status != 200 or not isinstance(data, dict) or data.get("scope") != "project":
+    if status != 200 or not isinstance(data, dict) or data.get("scope") != "root":
         raise RuntimeError(f"Commit status route returned an unexpected response: HTTP {status} {payload!r}")
 
 

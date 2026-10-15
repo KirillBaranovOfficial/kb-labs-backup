@@ -7,17 +7,23 @@
  *
  * Usage:
  *   // producer (callTool):
- *   const lines: string[] = [];
- *   await callOutput.run(lines, () => executeCommandV3(...));
- *   return lines.join('\n');
+ *   const output = { text: [], structured: [] };
+ *   await callOutput.run(output, () => executeCommandV3(...));
+ *   return output.text.join('\n');
  *
  *   // consumer (uiProvider in bootstrap):
  *   uiProvider: () => {
- *     const lines = callOutput.getStore();
- *     return lines ? createBufferedUI((s) => lines.push(s)).ui : noopUI;
+ *     const output = callOutput.getStore();
+ *     return output ? createBufferedUI((text, model) => { ... }).ui : noopUI;
  *   }
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type { UIOutput } from '@kb-labs/plugin-contracts';
 
-export const callOutput = new AsyncLocalStorage<string[]>();
+export interface CallOutput {
+  text: string[];
+  structured: UIOutput[];
+}
+
+export const callOutput = new AsyncLocalStorage<CallOutput>();

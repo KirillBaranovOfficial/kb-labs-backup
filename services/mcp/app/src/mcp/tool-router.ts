@@ -21,11 +21,13 @@ import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { callOutput } from './output-capture.js';
+import type { UIOutput } from '@kb-labs/plugin-contracts';
 import type { McpTool } from './tool-builder.js';
 
 export type ToolCallResult = {
   success: true;
   output: string;
+  structured: UIOutput[];
   exitCode: 0;
 } | {
   success: false;
@@ -83,11 +85,11 @@ export async function callTool(
   tenantId: string,
   resolvePlatform: PlatformResolver,
 ): Promise<ToolCallResult> {
-  const lines: string[] = [];
+  const output = { text: [] as string[], structured: [] as UIOutput[] };
   const container = resolvePlatform(tenantId);
   let error: ErrorEnvelope | undefined;
 
-  const exitCode = await callOutput.run(lines, () =>
+  const exitCode = await callOutput.run(output, () =>
     executeCommandV3({
       pluginId: tool.pluginId,
       pluginVersion: tool.version,
@@ -109,12 +111,12 @@ export async function callTool(
     }),
   );
 
-  const output = lines.join('\n');
-  if (exitCode === 0) return { success: true, output, exitCode: 0 };
+  const text = output.text.join('\n');
+  if (exitCode === 0) return { success: true, output: text, structured: output.structured, exitCode: 0 };
   if (!error) throw new Error(`MCP tool ${tool.name} exited ${exitCode} without a normalized error envelope.`);
   return {
     success: false,
-    output,
+    output: text,
     exitCode,
     error,
   };

@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
+import { prepareJourneyUpdatePackages, releasePackageNames } from './journey-update-packages.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
 import { readPlatformReleaseConfig } from '../../tools/kb-create/scripts/platform-release-config.mjs';
 
@@ -41,12 +41,7 @@ const stage = resolve(process.env.KB_JOURNEY_RELEASE_STAGE ?? '/tmp/kb-e2e-relea
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
-const wanted = [
-  ...(registryManifest.core ?? []).map(item => item.name),
-  ...(registryManifest.services ?? []).map(item => item.pkg),
-  ...(registryManifest.plugins ?? []).map(item => item.pkg),
-  ...(registryManifest.adapters ?? []).map(item => item.name),
-].filter(Boolean);
+const wanted = releasePackageNames(registryManifest);
 const wantedSet = new Set(wanted);
 const packages = new Map();
 
@@ -117,9 +112,9 @@ const result = spawnSync(process.execPath, [
 ], { stdio: 'inherit' });
 if (result.status !== 0) process.exit(result.status ?? 1);
 
-// The update journey needs a second sealed release. Give core-runtime and the
-// SDK a journey-only patch package version while retaining their code, so the
-// stable channel and package verification resolve one coherent N+1 release.
+// The update journey needs a second sealed release. Advance every artifact in
+// the release registry manifest while retaining its code, so the stable channel
+// resolves one coherent N+1 release across the selected platform composition.
 const baseVersion = stablePlatformVersion(JSON.parse(readFileSync(output, 'utf8')));
 const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(baseVersion ?? '');
 if (!match) throw new Error(`platform release version is not a stable semantic version: ${baseVersion}`);

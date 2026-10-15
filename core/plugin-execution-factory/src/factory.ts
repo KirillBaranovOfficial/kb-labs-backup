@@ -179,6 +179,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
     const { error: _serializedError, ...executionEnvelope } = executionError;
     const error = normalizePluginHandlerFailure(executionError, {
       pluginId: descriptor.pluginId,
+      pluginVersion: descriptor.pluginVersion,
       command: request.context?.commandPath ?? request.handlerRef,
       correlationId,
       logger: this.logger,

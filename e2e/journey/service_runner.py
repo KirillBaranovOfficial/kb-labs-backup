@@ -814,7 +814,7 @@ def mcp_probe(project_id: str, token: str) -> str | None:
     if not isinstance(tools, list) or not tools:
         return "project-scoped MCP tools/list returned no project tools"
     names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
-    expected = {"kb-labs-commit__commit", "kb-labs-workflow__workflow_run", "kb-labs__mcp_diagnostics"}
+    expected = {"kb-labs-commit__commit_commit", "kb-labs-workflow__workflow_run", "kb-labs__mcp_diagnostics"}
     if not expected <= names:
         return f"project-scoped MCP tools/list omitted expected tools: {sorted(expected - names)}"
     if any(not isinstance(tool, dict) or not isinstance(tool.get("name"), str)

@@ -51,8 +51,11 @@ export async function bootstrap(): Promise<void> {
     hostEnvVar: "KB_MCP_DAEMON_HOST",
     platform: {
       uiProvider: (_hostType: string) => {
-        const lines = callOutput.getStore();
-        return lines ? createBufferedUI((s) => lines.push(s)).ui : noopUI;
+        const output = callOutput.getStore();
+        return output ? createBufferedUI((text, model) => {
+          output.text.push(text);
+          if (model) output.structured.push(model);
+        }).ui : noopUI;
       },
       assemblyHook: makeAssemblyHook(),
     },

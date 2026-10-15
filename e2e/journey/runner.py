@@ -665,7 +665,7 @@ def verify_project_mcp(env: dict[str, str], local: bool):
         listed = mcp_rpc(url, "tools/list", 2, token=token)
         tools = listed.get("result", {}).get("tools", [])
         names = {tool.get("name") for tool in tools}
-        expected = {"kb-labs-commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics"}
+        expected = {"kb-labs-commit__commit_commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics"}
         if not expected.issubset(names):
             raise RuntimeError(f"tools/list missing expected tools: {sorted(expected - names)}")
         called = mcp_rpc(url, "tools/call", 3, {"name": "kb-labs__mcp_diagnostics", "arguments": {}}, token)

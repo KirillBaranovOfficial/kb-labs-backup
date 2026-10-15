@@ -44,6 +44,7 @@ describe('normalizePluginHandlerFailure', () => {
     const expected = cause instanceof ErrorEnvelopeError ? cause.envelope : undefined;
     const envelope = normalizePluginHandlerFailure(cause, {
       pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'typed-correlation',
+      pluginVersion: '1.0.0',
       logger: loggerFor(records), logContext,
     });
     expect(envelope).toEqual({ ...expected, correlationId: 'typed-correlation' });
@@ -59,6 +60,7 @@ describe('normalizePluginHandlerFailure', () => {
     const records: Array<Record<string, unknown>> = [];
     const envelope = normalizePluginHandlerFailure({ code: 'MIND_NOT_FOUND', message: 'Missing' }, {
       pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'malformed-correlation',
+      pluginVersion: '1.0.0',
       logger: loggerFor(records), logContext,
     });
     expect(envelope).toMatchObject({
@@ -66,6 +68,42 @@ describe('normalizePluginHandlerFailure', () => {
       message: expect.stringContaining('@kb-labs/test-plugin'), details: { field: 'hint' },
     });
     expect(records).toHaveLength(1);
+  });
+
+  it('records malformed field type and a bounded redacted preview with plugin provenance', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const logger = loggerFor(records);
+    const secret = 'x58-malformed-hint-secret';
+    logger.registerSensitiveValues([secret]);
+    const envelope = normalizePluginHandlerFailure({
+      code: 'MIND_INVALID',
+      message: 'Invalid mind.',
+      hint: { token: secret, extra: 'x'.repeat(400) },
+    }, {
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '2.120.1',
+      command: 'test open',
+      correlationId: 'malformed-hint-correlation',
+      logger,
+      logContext,
+    });
+
+    expect(envelope).toMatchObject({ code: 'KB_PLUGIN_CONTRACT_VIOLATION', details: { field: 'hint' } });
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      event: 'plugin.handler.failed',
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '2.120.1',
+      command: 'test open',
+      malformedField: 'hint',
+      malformedFieldType: 'object',
+    });
+    const record = JSON.stringify(records[0]);
+    expect(record).toContain('[REDACTED]');
+    expect(record).not.toContain(secret);
+    const preview = records[0]?.malformedFieldPreview;
+    expect(typeof preview).toBe('string');
+    expect((preview as string).length).toBeLessThanOrEqual(256);
   });
 
   it('reports the invalid field from the canonical envelope schema', () => {
@@ -100,6 +138,7 @@ describe('normalizePluginHandlerFailure', () => {
         expect(invalidField, field).toBe(field);
         const envelope = normalizePluginHandlerFailure(malformed, {
           pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'bad-field',
+          pluginVersion: '1.0.0',
           logger: loggerFor(records), logContext,
         });
         expect(envelope).toMatchObject({
@@ -119,6 +158,7 @@ describe('normalizePluginHandlerFailure', () => {
     logger.registerSensitiveValues([secret]);
     const envelope = normalizePluginHandlerFailure(cause, {
       pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
       command: 'test run',
       correlationId: 'failure-correlation-1',
       logger,
@@ -155,6 +195,7 @@ describe('normalizePluginHandlerFailure', () => {
       hint: 'Choose another mind.', details: { credential: secret },
     })), {
       pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'typed-secret-correlation',
+      pluginVersion: '1.0.0',
       logger, logContext,
     });
 
@@ -170,6 +211,7 @@ describe('normalizePluginHandlerFailure', () => {
     cause.stack = 'original-handler-stack';
     normalizePluginHandlerFailure(cause, {
       pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'stack-correlation',
+      pluginVersion: '1.0.0',
       logger: loggerFor(records), logContext,
     });
     expect(records).toHaveLength(1);
@@ -183,6 +225,7 @@ describe('normalizePluginHandlerFailure', () => {
     const records: Array<Record<string, unknown>> = [];
     const envelope = normalizePluginHandlerFailure(error, {
       pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
       command: 'test run',
       correlationId: 'failure-correlation-2',
       logger: loggerFor(records),
