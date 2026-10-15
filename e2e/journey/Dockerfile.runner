@@ -40,11 +40,7 @@ COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-contrac
 COPY e2e/journey/entrypoint.py /usr/local/bin/kb-journey-runner
 ENV PYTHONPATH="/opt/kb-journey/e2e/journey"
 COPY e2e/journey/studio-playwright.config.mjs /opt/kb-studio-playwright/playwright.config.mjs
-COPY e2e/studio/scenarios/default/cases/fresh-host.spec.ts /opt/kb-studio-playwright/fresh-host.spec.ts
-COPY e2e/studio/scenarios/default/cases/studio-first-tier.spec.ts /opt/kb-studio-playwright/studio-first-tier.spec.ts
-COPY e2e/studio/scenarios/default/cases/analytics.spec.ts /opt/kb-studio-playwright/analytics.spec.ts
-COPY e2e/studio/scenarios/default/cases/admin-users.spec.ts /opt/kb-studio-playwright/admin-users.spec.ts
-COPY e2e/studio/scenarios/default/cases/auth.spec.ts /opt/kb-studio-playwright/auth.spec.ts
+COPY .journey/runner-inputs/studio-specs /opt/kb-studio-playwright/specs
 RUN chmod +x /usr/local/share/kb-create/install.sh /usr/local/bin/kb-journey-runner
 
 ENTRYPOINT ["python3", "/usr/local/bin/kb-journey-runner"]

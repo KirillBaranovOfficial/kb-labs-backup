@@ -42,16 +42,7 @@ RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("e2e/journey/entrypoint.py", "/usr/local/bin/kb-journey-runner"),
     RunnerImageResource("e2e/journey/studio-playwright.config.mjs",
                         "/opt/kb-studio-playwright/playwright.config.mjs"),
-    RunnerImageResource("e2e/studio/scenarios/default/cases/fresh-host.spec.ts",
-                        "/opt/kb-studio-playwright/fresh-host.spec.ts"),
-    RunnerImageResource("e2e/studio/scenarios/default/cases/studio-first-tier.spec.ts",
-                        "/opt/kb-studio-playwright/studio-first-tier.spec.ts"),
-    RunnerImageResource("e2e/studio/scenarios/default/cases/analytics.spec.ts",
-                        "/opt/kb-studio-playwright/analytics.spec.ts"),
-    RunnerImageResource("e2e/studio/scenarios/default/cases/admin-users.spec.ts",
-                        "/opt/kb-studio-playwright/admin-users.spec.ts"),
-    RunnerImageResource("e2e/studio/scenarios/default/cases/auth.spec.ts",
-                        "/opt/kb-studio-playwright/auth.spec.ts"),
+    RunnerImageResource(".journey/runner-inputs/studio-specs", "/opt/kb-studio-playwright/specs"),
     RunnerImageResource("tools/clikit/diag/gen/main.go", "/opt/kb-journey/tools/clikit/diag/gen/main.go"),
     RunnerImageResource("tools/kb-create/main.go", "/opt/kb-journey/tools/kb-create/main.go"),
     RunnerImageResource("tools/kb-create/v2/testsupport/wizard-pty/main.go",
@@ -86,7 +77,8 @@ def workspace_resource(*parts: str) -> Path:
 
 def stage_runner_image_inputs() -> tuple[Path, ...]:
     """Stage declared runner inputs whose repository source is generated or ignored."""
-    staged_paths = []
+    staged_paths = list(stage_studio_playwright_specs(
+        workspace_resource(".journey", "runner-inputs", "studio-specs")))
     for resource in RUNNER_IMAGE_RESOURCES:
         if resource.stage_source is None:
             continue
@@ -105,10 +97,82 @@ def stage_runner_image_inputs() -> tuple[Path, ...]:
     return tuple(staged_paths)
 
 
+def stage_studio_playwright_specs(output_dir: Path | None = None) -> tuple[Path, ...]:
+    """Bundle the specs selected by Playwright's own config with workspace imports."""
+    root = resource_root()
+    config_path = workspace_resource("e2e", "studio", "playwright.config.ts")
+    playwright = workspace_resource("e2e", "studio", "node_modules", ".bin", "playwright")
+    if not playwright.is_file():
+        raise FileNotFoundError(
+            f"Studio Playwright CLI is missing at {playwright}. "
+            "Restore workspace dependencies with `corepack pnpm install --frozen-lockfile`."
+        )
+    from invocations import run_harness_command
+
+    listed = run_harness_command([
+        str(playwright), "test", "--list", f"--config={config_path}", "--reporter=json",
+    ])
+    if listed.returncode:
+        detail = listed.stderr.strip() or listed.stdout.strip() or f"exit {listed.returncode}"
+        raise RuntimeError(f"Studio Playwright spec discovery failed: {detail}")
+    inventory = json.loads(listed.stdout)
+    config = inventory.get("config")
+    if not isinstance(config, dict) or not isinstance(config.get("rootDir"), str):
+        raise ValueError("Playwright spec discovery output omitted config.rootDir")
+    source_dir = Path(config["rootDir"])
+    entries: set[Path] = set()
+
+    def visit_suites(suites: object) -> None:
+        if not isinstance(suites, list):
+            return
+        for suite in suites:
+            if not isinstance(suite, dict):
+                raise ValueError("Playwright spec discovery returned an invalid suite")
+            file = suite.get("file")
+            if isinstance(file, str) and file:
+                path = Path(file)
+                entries.add(path if path.is_absolute() else source_dir / path)
+            visit_suites(suite.get("suites"))
+
+    visit_suites(inventory.get("suites"))
+    if not entries:
+        raise FileNotFoundError(f"Playwright config {config_path} selected no Studio spec files")
+    for entry in entries:
+        if not entry.is_file():
+            raise FileNotFoundError(f"Playwright selected missing Studio spec {entry}")
+
+    esbuild_candidates = sorted((root / "node_modules/.pnpm").glob(
+        "esbuild@*/node_modules/esbuild/bin/esbuild"))
+    if not esbuild_candidates:
+        raise FileNotFoundError(
+            "Studio Playwright specs cannot be bundled because workspace esbuild is missing. "
+            "Build the workspace tooling before preparing the journey runner image."
+        )
+
+    destination = output_dir or workspace_resource(".journey", "runner-inputs", "studio-specs")
+    shutil.rmtree(destination, ignore_errors=True)
+    destination.mkdir(parents=True, exist_ok=True)
+    command = [
+        str(esbuild_candidates[-1]),
+        *(str(entry) for entry in sorted(entries)),
+        "--bundle",
+        "--platform=node",
+        "--format=cjs",
+        "--external:@playwright/test",
+        f"--outdir={destination}",
+        f"--outbase={source_dir}",
+    ]
+    result = run_harness_command(command)
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"Studio Playwright spec dependency bundle failed: {detail}")
+    return tuple(sorted(destination.rglob("*.spec.js")))
+
+
 def main() -> int:
     try:
         stage_runner_image_inputs()
-    except FileNotFoundError as error:
+    except (FileNotFoundError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(error, file=sys.stderr)
         return 2
     return 0
