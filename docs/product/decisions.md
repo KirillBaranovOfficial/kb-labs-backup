@@ -4,6 +4,42 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-15
+
+### Human lifecycle translation publishes acknowledged progress
+
+The event daemon is the sole translator from runner lifecycle JSONL to the
+human-facing event stream. It publishes a cursor only after each translated
+event has been appended. A lag notice begins after five seconds so short
+scheduling delays do not look like a stalled translator, while sustained
+backlog becomes visible. A dead daemon is reported through its runner-owned
+`lost` state in `kb-runner ps`; a second heartbeat would duplicate the runner's
+identity-based liveness owner. Every translated human line keeps its existing
+prefix and ends with the source run tag and one-based runner event position,
+so identical prose from separate runs remains tied to a single event. Cases:
+S-237.15.
+
+### D41: resource pressure queues work and reports the wait
+
+When free disk is below a run's admission budget, the run stays queued/blocked
+and visible in `kb-runner ps`; admission does not refuse or fail the run. On
+the blocked transition the human stream emits one `LOW DISK` line with the run,
+required and available bytes, and the `retire-stream.sh <accepted-stream>`
+remedy. Cases: S-237.10, S-237.16.
+
+### Cutover refuses while a ROOT is busy
+
+The orchestrator quiesces a ROOT before replacing its launcher scripts. Cutover
+refuses when any process from the install manifest is running in that ROOT, or
+when the legacy batch lock exists. It checks the manifest inventory before and
+after the atomic per-file replacements; if a launcher starts during installation,
+the new watcher is not started and the operator waits for the run to finish
+before retrying. The recorded event watcher is stopped by its verified identity
+before the initial busy inventory. Completed legacy `.exit` files are imported
+once; in-flight legacy agents are not migrated. The old reap helper remains
+until the post-install inventory passes, then is removed because `kb-runner`
+owns process-tree cleanup. Case: S-237.18.
+
 ## 2026-10-12
 
 ### Bootstrap credentials stop being startup credentials after first-admin completion

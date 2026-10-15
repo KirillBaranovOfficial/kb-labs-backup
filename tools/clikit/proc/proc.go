@@ -43,6 +43,7 @@ type Config struct {
 	HelperPath string
 	StateDir   string
 	Tag        string
+	LatestTag  string
 	Stall      time.Duration
 	StdoutPath string
 	StderrPath string
@@ -58,29 +59,32 @@ type Config struct {
 }
 
 type Event struct {
-	Schema     string    `json:"schema"`
-	At         time.Time `json:"at"`
-	Type       EventType `json:"type"`
-	RunID      string    `json:"run_id"`
-	Tag        string    `json:"tag"`
-	KeeperPID  int       `json:"keeper_pid"`
-	Command    string    `json:"command,omitempty"`
-	ExitCode   *int      `json:"exit_code,omitempty"`
-	Signal     string    `json:"signal,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	Reason     string    `json:"reason,omitempty"`
-	Position   int       `json:"position,omitempty"`
-	DurationMS int64     `json:"duration_ms,omitempty"`
-	Leaves     []Process `json:"leaves,omitempty"`
-	Reaped     []Process `json:"reaped,omitempty"`
-	Unverified []Process `json:"unverified,omitempty"`
-	Remaining  []Process `json:"remaining,omitempty"`
+	Schema        string    `json:"schema"`
+	At            time.Time `json:"at"`
+	Type          EventType `json:"type"`
+	RunID         string    `json:"run_id"`
+	Tag           string    `json:"tag"`
+	KeeperPID     int       `json:"keeper_pid"`
+	Command       string    `json:"command,omitempty"`
+	ExitCode      *int      `json:"exit_code,omitempty"`
+	Signal        string    `json:"signal,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	Reason        string    `json:"reason,omitempty"`
+	Position      int       `json:"position,omitempty"`
+	DiskNeedBytes uint64    `json:"disk_need_bytes,omitempty"`
+	DiskFreeBytes uint64    `json:"disk_free_bytes,omitempty"`
+	DurationMS    int64     `json:"duration_ms,omitempty"`
+	Leaves        []Process `json:"leaves,omitempty"`
+	Reaped        []Process `json:"reaped,omitempty"`
+	Unverified    []Process `json:"unverified,omitempty"`
+	Remaining     []Process `json:"remaining,omitempty"`
 }
 
 type Run struct {
 	PID       int
 	RunID     string
 	StartedAt string
+	stateDir  string
 	cmd       *exec.Cmd
 	once      sync.Once
 	err       error
@@ -102,7 +106,7 @@ const (
 type Process struct {
 	PID        int       `json:"pid"`
 	PPID       int       `json:"ppid"`
-	Command    string    `json:"command"`
+	Command    string    `json:"command"` // OS process command name, never the argument vector.
 	StartedAt  time.Time `json:"started_at"`
 	ElapsedMS  int64     `json:"elapsed_ms"`
 	Identity   string    `json:"identity"`
@@ -170,9 +174,18 @@ func killTreeWithHistory(root int, runID string, observed []Process) treeCleanup
 	return cleanupTreeWithSource(root, runID, observed, osProcessSource{})
 }
 
+func cleanupLostRun(rec record, source processSource) treeCleanup {
+	cleanup := cleanupTreeWithSource(rec.PID, rec.RunID, rec.Observed, source)
+	if len(rec.Observed) == 0 && len(cleanup.Reaped) == 0 && len(cleanup.Unverified) == 0 && len(cleanup.Remaining) == 0 {
+		cleanup.err = errors.Join(cleanup.err, errors.New("unverified/failed observation: lost run has no persisted owned process identity"))
+	}
+	return cleanup
+}
+
 type record struct {
 	RunID         string    `json:"run_id"`
 	Tag           string    `json:"tag"`
+	LatestTag     string    `json:"latest_tag,omitempty"`
 	PID           int       `json:"pid"`
 	StartedAt     string    `json:"started_at"`
 	Command       []string  `json:"command"`
@@ -305,7 +318,7 @@ func Start(ctx context.Context, cfg Config) (*Run, error) {
 		return nil, errors.Join(fmt.Errorf("proc: close keeper handshake reader: %w", err), cmd.Process.Kill(), cmd.Wait())
 	}
 	admissionPending = false
-	run := &Run{PID: cmd.Process.Pid, RunID: runID, StartedAt: ready.StartedAt, cmd: cmd, done: make(chan struct{})}
+	run := &Run{PID: cmd.Process.Pid, RunID: runID, StartedAt: ready.StartedAt, stateDir: cfg.StateDir, cmd: cmd, done: make(chan struct{})}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -324,6 +337,11 @@ func Start(ctx context.Context, cfg Config) (*Run, error) {
 func (r *Run) Wait() error {
 	r.once.Do(func() {
 		r.err = r.cmd.Wait()
+		if r.err != nil {
+			if lostErr := recordObservedKeeperLoss(r.stateDir, r.RunID); lostErr != nil {
+				r.err = errors.Join(r.err, fmt.Errorf("proc: record keeper loss for run %s: %w", r.RunID, lostErr))
+			}
+		}
 		close(r.done)
 	})
 	return r.err
@@ -491,21 +509,8 @@ func processTreeFromSnapshot(all []Process, root int) []Process {
 			}
 		}
 	}
-	rootStart := time.Time{}
 	for _, process := range all {
-		if process.PID == root {
-			rootStart = process.StartedAt
-		}
 		if process.runMarker {
-			seen[process.PID] = true
-		}
-	}
-	verified := make(map[int]bool, len(seen))
-	for pid := range seen {
-		verified[pid] = true
-	}
-	for _, process := range all {
-		if !seen[process.PID] && process.Unverified && process.StartedAt.After(rootStart) {
 			seen[process.PID] = true
 		}
 	}
@@ -515,9 +520,7 @@ func processTreeFromSnapshot(all []Process, root int) []Process {
 			continue
 		}
 		if process, ok := byPID[pid]; ok {
-			if verified[pid] {
-				process.Unverified = false
-			}
+			process.Unverified = false
 			out = append(out, process)
 		}
 	}
@@ -544,7 +547,13 @@ func processTreeWithHistorySource(source processSource, root int, runID string, 
 	for _, previous := range observed {
 		identity, alive, err := source.Identity(previous.PID)
 		if err != nil {
-			return sortedProcesses(byPID), errors.Join(snapshotErr, fmt.Errorf("inspect observed process %d: %w", previous.PID, err))
+			if processGone(err) {
+				continue
+			}
+			previous.Unverified = true
+			byPID[previous.PID] = previous
+			snapshotErr = errors.Join(snapshotErr, fmt.Errorf("inspect observed process %d: %w", previous.PID, err))
+			continue
 		}
 		if !alive || identity != previous.Identity {
 			continue

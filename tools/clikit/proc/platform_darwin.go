@@ -114,6 +114,21 @@ func readProcessIdentity(pid int) (string, bool, error) {
 	return formatStart(info), true, nil
 }
 
+func readProcessArguments(pid int) ([]string, error) {
+	data, err := unix.SysctlRaw("kern.procargs2", pid)
+	if err != nil {
+		if processGone(err) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("query kern.procargs2 for PID %d: %w", pid, err)
+	}
+	argv, err := procargs2Arguments(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse kern.procargs2 for PID %d: %w", pid, err)
+	}
+	return argv, nil
+}
+
 func allProcesses(runID string) ([]Process, error) {
 	return darwinProcessSnapshot(runID)
 }
@@ -121,7 +136,7 @@ func allProcesses(runID string) ([]Process, error) {
 func reapAdopted() error { return nil }
 
 func formatStart(info *unix.KinfoProc) string {
-	return timeIdentity(info.Proc.P_starttime.Sec, int64(info.Proc.P_starttime.Usec))
+	return strconv.FormatInt(info.Proc.P_starttime.Sec, 10) + ":" + strconv.FormatInt(int64(info.Proc.P_starttime.Usec), 10)
 }
 
 func platformExit(err error) (*int, string, string) {

@@ -3,6 +3,7 @@
 package proc
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -85,6 +85,39 @@ func readProcessIdentity(pid int) (string, bool, error) {
 	return stat.Identity, true, nil
 }
 
+func readProcessArguments(pid int) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		if processGone(err) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("read /proc/%d/cmdline: %w", pid, err)
+	}
+	argv, err := parseProcCmdline(data)
+	if err != nil {
+		return nil, fmt.Errorf("read /proc/%d/cmdline: %w", pid, err)
+	}
+	return argv, nil
+}
+
+// parseProcCmdline rejects an empty file: Linux exposes it while a task has no
+// readable mm (including exec/exit transitions), so it is not argv evidence.
+// inventoryEntry settles this error against the same PID/start identity.
+func parseProcCmdline(data []byte) ([]string, error) {
+	if len(data) == 0 {
+		return nil, errors.New("empty cmdline: argv is not observable")
+	}
+	parts := bytes.Split(data, []byte{0})
+	if len(parts[len(parts)-1]) == 0 {
+		parts = parts[:len(parts)-1]
+	}
+	argv := make([]string, len(parts))
+	for index, part := range parts {
+		argv[index] = string(part)
+	}
+	return argv, nil
+}
+
 func reapAdopted() error {
 	var status syscall.WaitStatus
 	for {
@@ -122,6 +155,7 @@ func allProcesses(runID string) ([]Process, error) {
 		return nil, fmt.Errorf("enumerate /proc: %w", err)
 	}
 	var out []Process
+	uid := uint32(os.Getuid())
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil {
@@ -144,17 +178,18 @@ func allProcesses(runID string) ([]Process, error) {
 		if parsed.State == 'Z' {
 			continue
 		}
-		cmdline, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		entryInfo, err := os.Stat(filepath.Join("/proc", entry.Name()))
 		if err != nil {
 			if processGone(err) {
 				continue
 			}
-			return out, fmt.Errorf("read /proc/%d/cmdline: %w", pid, err)
+			return out, fmt.Errorf("inspect /proc/%d owner: %w", pid, err)
 		}
-		command := strings.ReplaceAll(strings.TrimRight(string(cmdline), "\x00"), "\x00", " ")
-		if command == "" {
-			command = parsed.Comm
+		statInfo, ok := entryInfo.Sys().(*syscall.Stat_t)
+		if !ok {
+			return out, fmt.Errorf("inspect /proc/%d owner: unexpected stat type %T", pid, entryInfo.Sys())
 		}
+		command := parsed.Comm
 		started := time.Time{}
 		started = procStartTime(boot, parsed.StartTicks, clockTicks)
 		elapsed := int64(0)
@@ -164,19 +199,17 @@ func allProcesses(runID string) ([]Process, error) {
 				elapsed = 0
 			}
 		}
-		marker := false
-		unverified := false
-		if runID != "" {
-			env, envErr := os.ReadFile(filepath.Join("/proc", entry.Name(), "environ"))
-			var gone bool
-			marker, unverified, gone = processMarkerReadResult(env, envErr, runEnv+"="+runID)
-			if gone {
-				continue
-			}
-		}
-		out = append(out, Process{PID: pid, PPID: parsed.PPID, Command: command, StartedAt: started, ElapsedMS: elapsed, Identity: parsed.Identity, runMarker: marker, Unverified: unverified})
+		out = append(out, Process{PID: pid, PPID: parsed.PPID, Command: command, StartedAt: started, ElapsedMS: elapsed, Identity: parsed.Identity, uid: statInfo.Uid})
 	}
-	return out, nil
+	candidates := processInspectionCandidates(out, syscall.Getpid(), uid)
+	return applyProcessMarkers(out, candidates, runID, func(pid int, runID string) (bool, bool, error) {
+		env, envErr := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "environ"))
+		marker, unverified, gone := processMarkerReadResult(env, envErr, runEnv+"="+runID)
+		if gone {
+			return false, false, envErr
+		}
+		return marker, unverified, nil
+	}), nil
 }
 
 func procClockTicks() (int64, error) {

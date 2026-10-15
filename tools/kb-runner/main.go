@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,7 +36,7 @@ func main() {
 
 func execute(args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
-		return 2, errors.New("usage: kb-runner <run|gate|ps|wait|events> [flags]")
+		return 2, errors.New("usage: kb-runner <run|gate|ps|wait|events|proc> [flags]")
 	}
 	switch args[0] {
 	case "run":
@@ -48,15 +49,49 @@ func execute(args []string, stdout, stderr io.Writer) (int, error) {
 		return gateCommand(args[1:], stdout, stderr)
 	case "events":
 		return eventsCommand(args[1:], stdout)
+	case "proc":
+		return procCommand(args[1:], stdout)
 	default:
 		return 2, fmt.Errorf("kb-runner: unknown command %q; next: kb-runner --help", args[0])
 	}
+}
+
+func procCommand(args []string, output io.Writer) (int, error) {
+	if len(args) == 2 && args[0] == "inventory" && args[1] == "--json" {
+		entries, err := proc.ProcessInventory()
+		if err != nil {
+			return 1, fmt.Errorf("kb-runner proc inventory: %w\nnext: run `kb-runner proc inventory --json` from a session allowed to inspect the host process table", err)
+		}
+		if err := json.NewEncoder(output).Encode(entries); err != nil {
+			return 1, fmt.Errorf("kb-runner proc inventory: write JSON: %w", err)
+		}
+		return 0, nil
+	}
+	if len(args) != 2 || args[0] != "identity" {
+		return 2, errors.New("kb-runner proc: usage: kb-runner proc identity <pid> or proc inventory --json; next: run `kb-runner proc identity <pid>` with a live PID or `kb-runner proc inventory --json`")
+	}
+	pid, err := strconv.Atoi(args[1])
+	if err != nil || pid <= 0 {
+		return 2, fmt.Errorf("kb-runner proc identity: PID %q must be a positive decimal process ID; next: run `kb-runner proc identity <pid>` with a live PID", args[1])
+	}
+	identity, alive, err := proc.ProcessIdentity(pid)
+	if err != nil {
+		return 1, fmt.Errorf("kb-runner proc identity: cannot inspect PID %d: %w\nnext: run `kb-runner proc identity %d` as the process owner", pid, err, pid)
+	}
+	if !alive {
+		return 3, fmt.Errorf("kb-runner proc identity: PID %d is not live\nnext: pass a currently live PID to `kb-runner proc identity <pid>`", pid)
+	}
+	if _, err := fmt.Fprintln(output, identity); err != nil {
+		return 1, fmt.Errorf("kb-runner proc identity: write identity for PID %d: %w", pid, err)
+	}
+	return 0, nil
 }
 
 func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tag := fs.String("tag", "", "run label")
+	latestTag := fs.String("latest-tag", "", "stable stream key used to resolve the newest run record")
 	state := fs.String("state", "", "directory for run records and events")
 	stall := fs.Duration("stall", 0, "report no-output intervals at this duration")
 	stdoutPath := fs.String("stdout", "", "tee stdout to this file")
@@ -96,7 +131,7 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("kb-runner run: locate keeper executable: %w", err)
 	}
-	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, Env: envVars, Command: command})
+	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, Env: envVars, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("kb-runner run: %w\nnext: inspect state directory access with ls -ld %s, then retry: %s", err, shellQuote(*state), shellJoin(os.Args))
 	}
@@ -206,8 +241,32 @@ func eventsCommand(args []string, output io.Writer) (int, error) {
 }
 
 func gateCommand(args []string, stdout, stderr io.Writer) (int, error) {
+	if len(args) >= 2 && args[0] == "status" && args[1] != "" {
+		fs := flag.NewFlagSet("gate status", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		state := fs.String("state", "", "directory containing gate records")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 2, err
+		}
+		if *state == "" {
+			return 2, errors.New("kb-runner gate status: --state is required; next: kb-runner gate status --help")
+		}
+		gate, held, err := proc.GateStatus(*state, args[1])
+		if err != nil {
+			return 1, fmt.Errorf("kb-runner gate status: %w; next: kb-runner ps --state %s", err, shellQuote(*state))
+		}
+		if held {
+			_, err = fmt.Fprintf(stdout, "held\t%s\tpid=%d\tidentity=%s\n", gate.Tag, gate.PID, gate.Identity)
+		} else {
+			_, err = fmt.Fprintln(stdout, "free")
+		}
+		if err != nil {
+			return 1, fmt.Errorf("kb-runner gate status: write output: %w", err)
+		}
+		return 0, nil
+	}
 	if len(args) < 2 || args[0] != "hold" || args[1] == "" {
-		return 2, errors.New("kb-runner gate: usage: kb-runner gate hold <name> [run flags] -- <command>; next: kb-runner gate --help")
+		return 2, errors.New("kb-runner gate: usage: kb-runner gate status <name> --state <dir> or gate hold <name> [run flags] -- <command>; next: kb-runner gate --help")
 	}
 	name := args[1]
 	runArgs := append([]string(nil), args[2:]...)
@@ -219,16 +278,23 @@ func waitCommand(args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tag := fs.String("tag", "", "run tag to await")
+	latestTag := fs.String("latest-tag", "", "stable stream key whose newest run record to await")
 	state := fs.String("state", "", "directory for run records")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
-	if *tag == "" || *state == "" {
-		return 2, errors.New("kb-runner wait: --tag and --state are required; next: kb-runner wait --help")
+	if (*tag == "") == (*latestTag == "") || *state == "" {
+		return 2, errors.New("kb-runner wait: provide exactly one of --tag or --latest-tag, and --state; next: kb-runner wait --help")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	run, err := proc.WaitTag(ctx, *state, *tag)
+	var run proc.RunInfo
+	var err error
+	if *latestTag != "" {
+		run, err = proc.WaitLatestTag(ctx, *state, *latestTag)
+	} else {
+		run, err = proc.WaitTag(ctx, *state, *tag)
+	}
 	if err != nil {
 		return 1, fmt.Errorf("kb-runner wait: %w; next: kb-runner ps --state %s", err, shellQuote(*state))
 	}

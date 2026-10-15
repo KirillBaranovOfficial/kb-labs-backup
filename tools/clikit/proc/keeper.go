@@ -68,7 +68,7 @@ func runKeeper(cfg keeperConfig) int {
 		writeReadyError(ready, errors.New("cannot determine keeper process start identity"))
 		return 1
 	}
-	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, PID: os.Getpid(), StartedAt: startedAt, Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusStarting}
+	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, LatestTag: cfg.LatestTag, PID: os.Getpid(), StartedAt: startedAt, Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusStarting}
 	if err := writeRecord(rec); err != nil {
 		writeReadyError(ready, err)
 		return 1
@@ -136,6 +136,23 @@ func runKeeper(cfg keeperConfig) int {
 	if err := cmd.Start(); err != nil {
 		writeReadyError(ready, err)
 		return keeperError(rec, "start command", err)
+	}
+	commandIdentity, commandAlive, commandIdentityErr := ProcessIdentity(cmd.Process.Pid)
+	if commandIdentityErr != nil {
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			fmt.Fprintln(os.Stderr, "proc: stop command after identity observation failure:", killErr)
+		}
+		if waitErr := cmd.Wait(); waitErr != nil {
+			fmt.Fprintln(os.Stderr, "proc: wait after identity observation failure:", waitErr)
+		}
+		writeReadyError(ready, fmt.Errorf("observe started command PID %d: %w", cmd.Process.Pid, commandIdentityErr))
+		return keeperError(rec, "observe started command", commandIdentityErr)
+	}
+	if commandAlive {
+		rec.Observed = append(rec.Observed, Process{
+			PID: cmd.Process.Pid, PPID: os.Getpid(), Command: filepath.Base(cfg.Command[0]),
+			Identity: commandIdentity,
+		})
 	}
 	if err := errors.Join(stdoutWriter.Close(), stderrWriter.Close()); err != nil {
 		if killErr := cmd.Process.Kill(); killErr != nil {

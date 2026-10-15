@@ -25,6 +25,44 @@ type gateRecord struct {
 	Identity string `json:"identity"`
 }
 
+type GateInfo struct {
+	Name     string
+	Tag      string
+	PID      int
+	Identity string
+}
+
+type admissionDecision struct {
+	Reason        string
+	Status        RunStatus
+	Position      int
+	DiskNeedBytes uint64
+	DiskFreeBytes uint64
+}
+
+func GateStatus(stateDir, name string) (GateInfo, bool, error) {
+	var info GateInfo
+	var held bool
+	err := withStateLock(stateDir, func() error {
+		if err := pruneStateLocked(stateDir); err != nil {
+			return err
+		}
+		gate, exists, err := readGateLocked(stateDir, name)
+		if err != nil || !exists {
+			return err
+		}
+		info = GateInfo{Name: gate.Name, PID: gate.PID, Identity: gate.Identity}
+		rec, err := readRecordLocked(stateDir, gate.RunID)
+		if err != nil {
+			return fmt.Errorf("read gate holder run %s: %w", gate.RunID, err)
+		}
+		info.Tag = rec.Tag
+		held = true
+		return nil
+	})
+	return info, held, err
+}
+
 func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID int, parentIdentity string) error {
 	if cfg.Slots < 0 || (cfg.SlotGroup == "") != (cfg.Slots == 0) {
 		return errors.New("proc: --slot-group and positive --slots must be supplied together")
@@ -44,7 +82,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 			return err
 		}
 		rec := record{
-			RunID: runID, Tag: cfg.Tag, PID: parentPID, StartedAt: parentIdentity,
+			RunID: runID, Tag: cfg.Tag, LatestTag: cfg.LatestTag, PID: parentPID, StartedAt: parentIdentity,
 			Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusQueued,
 			SlotGroup: cfg.SlotGroup, Slots: cfg.Slots, QueueOrder: order,
 			EnqueuedAt: time.Now().UTC(), WaitGate: cfg.WaitGate, HoldGate: cfg.HoldGate, MinFree: cfg.MinFree,
@@ -74,11 +112,11 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 			if err != nil {
 				return err
 			}
-			reason, status, position, err := admissionStateLocked(cfg.StateDir, rec)
+			decision, err := admissionStateLocked(cfg.StateDir, rec)
 			if err != nil {
 				return err
 			}
-			if reason == "" {
+			if decision.Reason == "" {
 				rec.Status = StatusStarting
 				rec.WaitReason = ""
 				if err := writeRecordAtomic(rec); err != nil {
@@ -92,23 +130,25 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 				admitted = true
 				return nil
 			}
-			if rec.Status != status || rec.WaitReason != reason {
-				statusChanged := rec.Status != status
-				rec.Status = status
-				rec.WaitReason = reason
+			if rec.Status != decision.Status || rec.WaitReason != decision.Reason {
+				statusChanged := rec.Status != decision.Status
+				rec.Status = decision.Status
+				rec.WaitReason = decision.Reason
 				if err := writeRecordAtomic(rec); err != nil {
 					return err
 				}
-				if !statusChanged && status == StatusBlocked {
+				if !statusChanged && decision.Status == StatusBlocked {
 					return nil
 				}
 				eventType := EventQueued
-				if status == StatusBlocked {
+				if decision.Status == StatusBlocked {
 					eventType = EventBlocked
 				}
 				event := eventFor(rec, eventType)
-				event.Reason = reason
-				event.Position = position
+				event.Reason = decision.Reason
+				event.Position = decision.Position
+				event.DiskNeedBytes = decision.DiskNeedBytes
+				event.DiskFreeBytes = decision.DiskFreeBytes
 				return appendEvent(cfg.StateDir, event)
 			}
 			return nil
@@ -127,10 +167,10 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 	}
 }
 
-func admissionStateLocked(stateDir string, candidate record) (string, RunStatus, int, error) {
+func admissionStateLocked(stateDir string, candidate record) (admissionDecision, error) {
 	records, err := readRecordsLocked(stateDir)
 	if err != nil {
-		return "", "", 0, err
+		return admissionDecision{}, err
 	}
 	position := 1
 	if candidate.SlotGroup != "" {
@@ -149,42 +189,46 @@ func admissionStateLocked(stateDir string, candidate record) (string, RunStatus,
 		}
 		position += queuedBefore
 		if active >= candidate.Slots {
-			return fmt.Sprintf("slot group %s is full", candidate.SlotGroup), StatusQueued, position, nil
+			return admissionDecision{Reason: fmt.Sprintf("slot group %s is full", candidate.SlotGroup), Status: StatusQueued, Position: position}, nil
 		}
 		if queuedBefore > 0 {
-			return fmt.Sprintf("waiting behind %d earlier run(s) in slot group %s", queuedBefore, candidate.SlotGroup), StatusQueued, position, nil
+			return admissionDecision{Reason: fmt.Sprintf("waiting behind %d earlier run(s) in slot group %s", queuedBefore, candidate.SlotGroup), Status: StatusQueued, Position: position}, nil
 		}
 	}
 	if candidate.WaitGate != "" {
 		if _, exists, err := readGateLocked(stateDir, candidate.WaitGate); err != nil {
-			return "", "", 0, err
+			return admissionDecision{}, err
 		} else if exists {
-			return "gate: " + candidate.WaitGate, StatusBlocked, position, nil
+			return admissionDecision{Reason: "gate: " + candidate.WaitGate, Status: StatusBlocked, Position: position}, nil
 		}
 	}
 	if candidate.HoldGate != "" {
 		if _, exists, err := readGateLocked(stateDir, candidate.HoldGate); err != nil {
-			return "", "", 0, err
+			return admissionDecision{}, err
 		} else if exists {
-			return "gate: " + candidate.HoldGate, StatusBlocked, position, nil
+			return admissionDecision{Reason: "gate: " + candidate.HoldGate, Status: StatusBlocked, Position: position}, nil
 		}
 		for _, rec := range records {
 			if rec.RunID != candidate.RunID && rec.HoldGate == candidate.HoldGate &&
 				(rec.Status == StatusQueued || rec.Status == StatusBlocked) && rec.QueueOrder < candidate.QueueOrder {
-				return "waiting for gate holder " + candidate.HoldGate, StatusBlocked, position, nil
+				return admissionDecision{Reason: "waiting for gate holder " + candidate.HoldGate, Status: StatusBlocked, Position: position}, nil
 			}
 		}
 	}
 	if candidate.MinFree > 0 {
 		free, err := freeDiskBytes(stateDir)
 		if err != nil {
-			return "", "", 0, err
+			return admissionDecision{}, err
 		}
 		if free < candidate.MinFree {
-			return fmt.Sprintf("disk budget: need %d bytes, have %d", candidate.MinFree, free), StatusBlocked, position, nil
+			return admissionDecision{
+				Reason: fmt.Sprintf("disk budget: need %d bytes, have %d", candidate.MinFree, free),
+				Status: StatusBlocked, Position: position,
+				DiskNeedBytes: candidate.MinFree, DiskFreeBytes: free,
+			}, nil
 		}
 	}
-	return "", StatusStarting, position, nil
+	return admissionDecision{Status: StatusStarting, Position: position}, nil
 }
 
 func withStateLock(stateDir string, action func() error) (err error) {
@@ -334,6 +378,12 @@ func pruneStateLocked(stateDir string) error {
 		if rec.Status != StatusQueued && rec.Status != StatusBlocked && rec.Status != StatusStarting && rec.Status != StatusRunning && rec.Status != StatusStalled {
 			continue
 		}
+		if rec.Status == StatusRunning || rec.Status == StatusStalled {
+			if err := markLostLocked(stateDir, rec); err != nil {
+				return fmt.Errorf("prune run %s: %w", rec.RunID, err)
+			}
+			continue
+		}
 		identity, alive, identityErr := inspectIdentity(rec.PID)
 		if identityErr != nil {
 			return fmt.Errorf("inspect keeper %d for run %s: %w", rec.PID, rec.RunID, identityErr)
@@ -346,43 +396,6 @@ func pruneStateLocked(stateDir string) error {
 				return err
 			}
 			continue
-		}
-		if rec.Status == StatusRunning || rec.Status == StatusStalled {
-			cleanup := killTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
-			rec.Status = StatusLost
-			rec.Error = fmt.Sprintf("keeper PID %d identity %s is no longer live", rec.PID, rec.StartedAt)
-			if cleanup.err != nil {
-				rec.Error += "; " + cleanup.err.Error()
-			}
-			if err := writeRecordAtomic(rec); err != nil {
-				return fmt.Errorf("record lost run %s: %w", rec.RunID, err)
-			}
-			lost := eventFor(rec, EventLost)
-			lost.Error = rec.Error
-			if err := appendEvent(stateDir, lost); err != nil {
-				return fmt.Errorf("record lost event for run %s: %w", rec.RunID, err)
-			}
-			teardown := eventFor(rec, EventTeardown)
-			teardown.Reaped = cleanup.Reaped
-			teardown.Unverified = cleanup.Unverified
-			teardown.Remaining = cleanup.Remaining
-			if cleanup.err != nil {
-				teardown.Error = cleanup.err.Error()
-			}
-			if err := appendEvent(stateDir, teardown); err != nil {
-				return fmt.Errorf("record lost teardown for run %s: %w", rec.RunID, err)
-			}
-		}
-		if rec.HoldGate != "" {
-			gate, exists, err := readGateLocked(stateDir, rec.HoldGate)
-			if err != nil {
-				return err
-			}
-			if exists && gate.RunID == rec.RunID {
-				if err := os.Remove(gatePath(stateDir, rec.HoldGate)); err != nil && !os.IsNotExist(err) {
-					return err
-				}
-			}
 		}
 	}
 	paths, err := filepath.Glob(filepath.Join(stateDir, "gates", "*.json"))
@@ -404,6 +417,68 @@ func pruneStateLocked(stateDir string) error {
 		}
 		if !alive || identity != gate.Identity {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// recordObservedKeeperLoss finalizes a keeper that this run's own Wait observed
+// exit. Registry readers use the same locked transition when they discover a
+// stale identity first.
+func recordObservedKeeperLoss(stateDir, runID string) error {
+	return withStateLock(stateDir, func() error {
+		rec, err := readRecordLocked(stateDir, runID)
+		if err != nil {
+			return err
+		}
+		return markLostLocked(stateDir, rec)
+	})
+}
+
+func markLostLocked(stateDir string, rec record) error {
+	if rec.Status != StatusRunning && rec.Status != StatusStalled {
+		return nil
+	}
+	identity, alive, err := inspectIdentity(rec.PID)
+	if err != nil {
+		return fmt.Errorf("inspect keeper %d for run %s: %w", rec.PID, rec.RunID, err)
+	}
+	if alive && identity == rec.StartedAt {
+		return nil
+	}
+	cleanup := cleanupLostRun(rec, osProcessSource{})
+	rec.Status = StatusLost
+	rec.Error = fmt.Sprintf("keeper PID %d identity %s is no longer live", rec.PID, rec.StartedAt)
+	if cleanup.err != nil {
+		rec.Error += "; " + cleanup.err.Error()
+	}
+	if err := writeRecordAtomic(rec); err != nil {
+		return fmt.Errorf("record lost run %s: %w", rec.RunID, err)
+	}
+	lost := eventFor(rec, EventLost)
+	lost.Error = rec.Error
+	if err := appendEvent(stateDir, lost); err != nil {
+		return fmt.Errorf("record lost event for run %s: %w", rec.RunID, err)
+	}
+	teardown := eventFor(rec, EventTeardown)
+	teardown.Reaped = cleanup.Reaped
+	teardown.Unverified = cleanup.Unverified
+	teardown.Remaining = cleanup.Remaining
+	if cleanup.err != nil {
+		teardown.Error = cleanup.err.Error()
+	}
+	if err := appendEvent(stateDir, teardown); err != nil {
+		return fmt.Errorf("record lost teardown for run %s: %w", rec.RunID, err)
+	}
+	if rec.HoldGate != "" {
+		gate, exists, err := readGateLocked(stateDir, rec.HoldGate)
+		if err != nil {
+			return err
+		}
+		if exists && gate.RunID == rec.RunID {
+			if err := os.Remove(gatePath(stateDir, rec.HoldGate)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}
@@ -468,6 +543,14 @@ func completeRecord(stateDir, runID string, code *int, signal string, duration t
 }
 
 func WaitTag(ctx context.Context, stateDir, tag string) (RunInfo, error) {
+	return waitRun(ctx, stateDir, tag, false)
+}
+
+func WaitLatestTag(ctx context.Context, stateDir, tag string) (RunInfo, error) {
+	return waitRun(ctx, stateDir, tag, true)
+}
+
+func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, error) {
 	if ctx == nil {
 		return RunInfo{}, errors.New("proc: wait context is required")
 	}
@@ -484,14 +567,21 @@ func WaitTag(ctx context.Context, stateDir, tag string) (RunInfo, error) {
 				return err
 			}
 			for i := range records {
-				if records[i].Tag != tag {
+				matches := records[i].Tag == tag
+				if latest {
+					matches = records[i].LatestTag == tag
+				}
+				if !matches {
 					continue
 				}
-				if match != nil {
+				if !latest && match != nil {
 					return fmt.Errorf("tag %q identifies more than one run", tag)
 				}
-				copy := records[i]
-				match = &copy
+				if match == nil || records[i].EnqueuedAt.After(match.EnqueuedAt) ||
+					(records[i].EnqueuedAt.Equal(match.EnqueuedAt) && records[i].RunID > match.RunID) {
+					copy := records[i]
+					match = &copy
+				}
 			}
 			return nil
 		})
