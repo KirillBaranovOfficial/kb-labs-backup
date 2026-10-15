@@ -22,18 +22,11 @@ process.on('message', (message) => {
 
 process.on('message', (message) => {
   if (message.type !== 'uiPromptResult') return;
-  if (message.error) {
+  if (message.failure) {
     process.send({
       type: 'error',
       requestId: activeRequestId,
-      error: {
-        message: message.error.message,
-        code: message.error.code,
-        hint: message.error.hint,
-        cause: message.error.cause,
-        details: message.error.details,
-        cataloguedError: message.error,
-      },
+      error: message.failure,
     });
     return;
   }

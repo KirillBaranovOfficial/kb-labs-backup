@@ -1,5 +1,5 @@
 /**
- * @module @kb-labs/core-contracts
+ * @module @kb-labs/core-platform/error-envelope
  *
  * Subprocess runner interface - contract for running handlers in subprocesses.
  */

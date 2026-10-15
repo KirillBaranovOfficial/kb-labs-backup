@@ -93,7 +93,7 @@ export class ErrorEnvelopeError extends Error {
   constructor(public readonly envelope: ErrorEnvelope) {
     super(envelope.message);
     this.name = 'ErrorEnvelopeError';
-    Object.setPrototypeOf(this, ErrorEnvelopeError.prototype);
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 

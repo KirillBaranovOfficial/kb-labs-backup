@@ -5,7 +5,7 @@
  * Simple by default, enterprise when needed.
  */
 
-import type { BackendOptions, ExecutionBackend, ExecutionRequest, RawExecutionBackend } from './types.js';
+import type { BackendOptions, ExecutionBackend, ExecutionDiagnostics, ExecutionRequest, ExecutionResult, RawExecutionBackend } from './types.js';
 import { InProcessBackend } from './backends/in-process.js';
 import { SubprocessBackend } from './backends/subprocess.js';
 import { WorkerPoolBackend } from './backends/worker-pool/backend.js';
@@ -19,6 +19,7 @@ import type { ILogger } from '@kb-labs/core-platform';
 import { normalizePluginHandlerFailure } from './plugin-handler-failure.js';
 import { brandNormalizedExecutionResult, isFactoryNormalizedExecutionResult } from './normalized-result.js';
 import type { NormalizedExecutionResult } from './normalized-result.js';
+import { executionDiagnostics, normalizeExecutionFailure } from './utils.js';
 
 export function ensureHostProcessExecutor(platform: BackendOptions['platform']): void {
   const host = platform as BackendOptions['platform'] & IPlatformAdapters & {
@@ -131,43 +132,60 @@ class NormalizingExecutionBackend implements ExecutionBackend {
   constructor(private readonly backend: DispatchExecutionBackend, private readonly logger: ILogger) {}
 
   async execute(request: ExecutionRequest, options?: Parameters<ExecutionBackend['execute']>[1]): Promise<NormalizedExecutionResult> {
-    let result;
+    let result: ExecutionResult;
     try {
       result = await this.backend.execute(request, options);
     } catch (error) {
+      const failure = normalizeExecutionFailure(error, request);
       result = {
         ok: false as const,
-        error,
+        error: failure.error,
+        diagnostics: failure.diagnostics,
         executionTimeMs: 0,
       };
     }
     if (isFactoryNormalizedExecutionResult(result)) return result;
 
     let returnedFailure = false;
+    let returnedFailureError: unknown;
     if (result.ok) {
       if (isUxResultCandidate(result.data) && result.data.ok === false) {
         returnedFailure = true;
+        returnedFailureError = result.data.error;
+        const failure = normalizeExecutionFailure(result.data.error, request);
         result = {
           ...result,
           ok: false,
-          error: {
-            message: 'Plugin handler returned a failure result.',
-            error: 'error' in result.data ? result.data.error : undefined,
-          },
+          diagnostics: failure.diagnostics,
+          error: failure.error,
         };
       } else {
         return brandNormalizedExecutionResult({ ...result, ok: true as const });
       }
     }
 
+    let executionError = result.error;
+    let executionDiagnostics = result.diagnostics;
+    if (!executionError) {
+      const missingFailure = normalizeExecutionFailure(new Error('Backend returned a failed execution without an error value.'), request);
+      executionError = missingFailure.error;
+      executionDiagnostics ??= missingFailure.diagnostics;
+    }
+
     const descriptor = request.descriptor;
     const correlationId = descriptor.requestId || request.executionId;
     const hostType = descriptor.hostType;
-    const error = normalizePluginHandlerFailure(result.error, {
+    const { diagnostics: _diagnostics, ...normalizedResult } = result;
+    const { error: _serializedError, ...executionEnvelope } = executionError;
+    const error = normalizePluginHandlerFailure(executionError, {
       pluginId: descriptor.pluginId,
       command: request.context?.commandPath ?? request.handlerRef,
       correlationId,
       logger: this.logger,
+      diagnosticStack: executionDiagnostics?.errorStack,
+      serializedError: executionError.error,
+      returnedFailureError,
+      executionEnvelope,
       logContext: {
         applicationId: 'kb-labs',
         serviceId: `${hostType}-plugin-execution`,
@@ -177,13 +195,12 @@ class NormalizingExecutionBackend implements ExecutionBackend {
       returnedFailure,
     });
     return brandNormalizedExecutionResult({
-      ...result,
+      ...normalizedResult,
       ok: false,
       error: {
+        ...error,
+        error: executionError.error,
         envelope: error,
-        code: error.code,
-        message: error.message,
-        details: error.details,
       },
     });
   }
@@ -192,6 +209,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
   stats() { return this.backend.stats(); }
   shutdown() { return this.backend.shutdown(); }
 }
+
 
 interface DispatchExecutionBackend {
   execute(request: ExecutionRequest, options?: Parameters<ExecutionBackend['execute']>[1]): Promise<import('./types.js').ExecutionResult | NormalizedExecutionResult>;

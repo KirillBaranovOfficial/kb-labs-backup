@@ -3,10 +3,10 @@ import type { ErrorEnvelope } from '@kb-labs/core-platform';
 
 // This compile-time assertion keeps structural backend values out of consumers.
 declare const forgedEnvelope: ErrorEnvelope;
-// @ts-expect-error a plain normalized marker cannot replace the private factory brand
 const forgedResult: NormalizedExecutionResult = {
   ok: false,
   executionTimeMs: 0,
+  // @ts-expect-error a plain normalized marker cannot replace the private factory brand
   error: { normalized: true, envelope: forgedEnvelope },
 };
 void forgedResult;

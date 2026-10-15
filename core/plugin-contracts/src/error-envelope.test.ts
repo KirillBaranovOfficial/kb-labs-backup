@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { toErrorEnvelope, validateErrorEnvelope } from '@kb-labs/core-platform';
-import { createProductErrorEnvelope } from '@kb-labs/core-platform';
+import {
+  createProductErrorEnvelope,
+  toErrorEnvelope,
+  validateErrorEnvelope,
+} from '@kb-labs/core-platform';
 import {
   AbortError,
   ConfigError,
@@ -69,9 +72,7 @@ describe('core toErrorEnvelope for plugin errors', () => {
       undefined,
       'Stage the intended changes, then retry.',
     );
-    const restored = PluginError.fromJSON(error.toJSON());
-
-    expect(toErrorEnvelope(restored)).toMatchObject({
+    expect(toErrorEnvelope(error)).toMatchObject({
       code: 'COMMIT_NOTHING_STAGED',
       message: 'Nothing is staged.',
       hint: 'Stage the intended changes, then retry.',

@@ -22,8 +22,8 @@ import type {
   HealthStatus,
   ExecutionStats,
 } from '../types.js';
-import type { IExecutionTransport } from '@kb-labs/core-contracts';
-import { normalizeError } from '../utils.js';
+import type { IExecutionTransport } from '@kb-labs/core-platform';
+import { normalizeExecutionFailure } from '../utils.js';
 
 export interface RemoteBackendOptions {
   /** Transport implementation (e.g. GatewayDispatchTransport) */
@@ -82,7 +82,7 @@ export class RemoteBackend implements RawExecutionBackend {
 
       return {
         ok: false,
-        error: normalizeError(error),
+        ...normalizeExecutionFailure(error),
         executionTimeMs,
         metadata: {
           backend: 'remote',

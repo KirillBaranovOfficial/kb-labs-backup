@@ -57,7 +57,7 @@ interface WithMiddlewareDecls {
 }
 import { localWorkspaceManager } from '../workspace/local.js';
 import type { WorkspaceLease } from '../workspace/types.js';
-import { normalizeError } from '../utils.js';
+import { normalizeExecutionFailure } from '../utils.js';
 import { resolveExecutionTarget } from '../target-resolver.js';
 import {
   AbortError,
@@ -274,7 +274,7 @@ export class InProcessBackend implements RawExecutionBackend {
 
       return {
         ok: false,
-        error: normalizeError(error),
+        ...normalizeExecutionFailure(error, request),
         executionTimeMs,
         metadata: {
           backend: 'in-process',

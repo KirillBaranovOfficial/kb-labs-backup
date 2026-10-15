@@ -5,6 +5,8 @@ import {
   toErrorEnvelope,
   validateErrorEnvelope,
   hasErrorEnvelopeIdentity,
+  serializeError,
+  type SerializedError,
   type ErrorEnvelope,
   type ILogger,
   type PlatformLogContext,
@@ -17,6 +19,10 @@ export interface PluginHandlerFailureContext {
   logger: ILogger;
   logContext: PlatformLogContext;
   returnedFailure?: boolean;
+  diagnosticStack?: string;
+  serializedError?: SerializedError;
+  returnedFailureError?: unknown;
+  executionEnvelope?: ErrorEnvelope;
 }
 
 type FailureReason = 'failed unexpectedly' | 'timed out' | 'execution process crashed';
@@ -24,15 +30,17 @@ type FailureReason = 'failed unexpectedly' | 'timed out' | 'execution process cr
 function recordPluginFailure(
   context: PluginHandlerFailureContext,
   envelope: ErrorEnvelope,
-  error: unknown,
+  error: SerializedError,
   reason: string,
+  diagnosticStack?: string,
 ): void {
   const logger = createContextLogger(context.logger, context.logContext)
     .forOperation('plugin.handler.failed', { correlationId: context.correlationId })
     .forPlugin({ pluginId: context.pluginId });
   const logError = asError(error);
-  if (typeof error === 'object' && error !== null && 'stack' in error && typeof error.stack === 'string') {
-    logError.stack = error.stack;
+  const stack = diagnosticStack ?? error.stack;
+  if (stack) {
+    logError.stack = stack;
   }
   logger.event('error', {
     event: 'plugin.handler.failed',
@@ -42,6 +50,7 @@ function recordPluginFailure(
       command: context.command,
       failureReason: reason,
       correlationId: context.correlationId,
+    serializedError: logger.redactSensitiveValues(context.serializedError ?? error),
     },
     error: logError,
   });
@@ -54,19 +63,17 @@ function failureReason(error: unknown): FailureReason {
     if (reason === 'timed out' || reason === 'execution process crashed') return reason;
   }
   if (error instanceof Error && error.name === 'TimeoutError') return 'timed out';
-  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'TIMEOUT') {
-    return 'timed out';
-  }
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'TIMEOUT') return 'timed out';
   if (error instanceof Error && error.name === 'WorkerCrashedError') return 'execution process crashed';
-  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'WORKER_CRASHED') {
-    return 'execution process crashed';
-  }
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'WORKER_CRASHED') return 'execution process crashed';
   return 'failed unexpectedly';
 }
 
-function asError(error: unknown): Error {
-  if (error instanceof Error) return error;
-  return new Error('Plugin handler returned or threw a non-error value.');
+function asError(error: SerializedError): Error {
+  const logError = new Error(error.message);
+  logError.name = error.name;
+  logError.stack = error.stack;
+  return logError;
 }
 
 /** The platform-owned normaliser for every plugin handler failure surface. */
@@ -75,21 +82,28 @@ export function normalizePluginHandlerFailure(
   context: PluginHandlerFailureContext,
 ): ErrorEnvelope {
   const reason = failureReason(error);
-  const envelopeCandidate = error instanceof ErrorEnvelopeError
-    ? error.envelope
-    : typeof error === 'object' && error !== null && 'envelope' in error
+  const returnedCandidate = context.returnedFailureError;
+  const envelopeCandidate = returnedCandidate !== undefined
+    ? returnedCandidate
+    : context.executionEnvelope
+      ? context.executionEnvelope
+    : error instanceof ErrorEnvelopeError
       ? error.envelope
-    : typeof error === 'object' && error !== null && 'error' in error
-      ? error.error
-      : error;
+      : typeof error === 'object' && error !== null && 'envelope' in error
+        ? error.envelope
+        : typeof error === 'object' && error !== null && 'error' in error
+          ? error.error
+          : error;
   const candidateHasEnvelopeFields = hasErrorEnvelopeIdentity(envelopeCandidate);
   const thinCommandError = typeof envelopeCandidate === 'object' && envelopeCandidate !== null &&
     !Array.isArray(envelopeCandidate) && !(envelopeCandidate instanceof Error) &&
     'code' in envelopeCandidate && typeof envelopeCandidate.code === 'string';
   const validationIssues = candidateHasEnvelopeFields ? validateErrorEnvelope(envelopeCandidate) : [];
   const invalidEnvelopeIssue = validationIssues[0];
-  const typedEnvelope = error instanceof ErrorEnvelopeError ||
-    (candidateHasEnvelopeFields && validationIssues.length === 0) || thinCommandError;
+  const typedEnvelope = returnedCandidate !== undefined
+    ? (candidateHasEnvelopeFields && validationIssues.length === 0) || thinCommandError
+    : error instanceof ErrorEnvelopeError ||
+      (candidateHasEnvelopeFields && validationIssues.length === 0) || thinCommandError;
   const canonicalEnvelope = !invalidEnvelopeIssue && typedEnvelope
     ? toErrorEnvelope(error instanceof ErrorEnvelopeError ? error : envelopeCandidate, { correlationId: context.correlationId })
     : undefined;
@@ -117,9 +131,9 @@ export function normalizePluginHandlerFailure(
   const envelope = createContextLogger(context.logger, context.logContext)
     .redactSensitiveValues(rawEnvelope);
   if (typedEnvelope) {
-    recordPluginFailure(context, envelope, error, 'typed product or platform error');
+    recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), 'typed product or platform error', context.diagnosticStack);
     return envelope;
   }
-  recordPluginFailure(context, envelope, error, reason);
+  recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), reason, context.diagnosticStack);
   return envelope;
 }

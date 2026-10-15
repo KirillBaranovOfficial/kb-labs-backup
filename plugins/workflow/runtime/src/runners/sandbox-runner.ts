@@ -197,6 +197,7 @@ export class SandboxRunner implements Runner {
         pluginId: resolution.value.pluginId,
         handler: resolution.value.handler,
         executionId: executionRequest.executionId,
+        correlationId: executionRequest.descriptor.requestId,
         durationMs: duration,
         errorCode: result.error?.code,
         errorMessage: result.error?.message,
@@ -447,7 +448,6 @@ export class SandboxRunner implements Runner {
         error: {
         message: result.error?.message ?? 'Plugin execution failed',
         code: result.error?.code ?? 'UNKNOWN_ERROR',
-        stack: result.error?.stack,
           details: result.error?.details,
         },
         failure: classifyFailure(result.error, { source: 'execution', phase: 'response' }),

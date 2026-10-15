@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AdapterCredentialsMissingError } from '@kb-labs/core-platform';
+import { AdapterCredentialsMissingError, serializeError } from '@kb-labs/core-platform';
 import { normalizeError } from '../utils.js';
 import {
   ExecutionLayerError,
@@ -68,17 +68,39 @@ describe('ExecutionLayerError', () => {
     expect(err.details).toEqual({ field: 'name' });
   });
 
-  it('toJSON() returns ExecutionError shape', () => {
+  it('uses the platform serialized error contract', () => {
     const err = new ExecutionLayerError('fail', 'TIMEOUT', { ms: 5000 });
-    const json = err.toJSON();
-    expect(json.message).toBe('fail');
-    expect(json.code).toBe('TIMEOUT');
-    expect(json.details).toEqual({ ms: 5000 });
-    expect(typeof json.stack).toBe('string');
+    expect(serializeError(err)).toMatchObject({
+      name: 'ExecutionLayerError',
+      message: 'fail',
+      stack: expect.any(String),
+    });
   });
 });
 
 describe('normalizeError handler boundary', () => {
+  // case: S-203.6
+  it('serializes only declared execution error fields and keeps stack out of the envelope', () => {
+    const cause = new Error('handler exploded');
+    Object.assign(cause, {
+      code: 'MIND_NOT_FOUND',
+      hint: 'Choose a known mind.',
+      details: { id: 'missing' },
+      undocumented: 'must not cross the boundary',
+    });
+
+    const normalized = normalizeError(cause);
+
+    expect(normalized).toMatchObject({
+      code: 'MIND_NOT_FOUND',
+      message: 'handler exploded',
+      hint: 'Choose a known mind.',
+      details: { id: 'missing' },
+    });
+    expect(normalized).not.toHaveProperty('stack');
+    expect(normalized).not.toHaveProperty('undocumented');
+  });
+
   // case: S-203.2
   it('retains a typed plugin product error with its hint and flat details', () => {
     const error = Object.assign(new Error('The plan is invalid.'), {

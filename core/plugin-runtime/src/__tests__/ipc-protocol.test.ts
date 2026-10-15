@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import {
   isParentMessage,
   isChildMessage,
@@ -159,27 +160,28 @@ describe('IPC Protocol', () => {
       const msg: ErrorMessage = {
         type: 'error',
         error: {
-          name: 'PluginError',
-          message: 'Something went wrong',
-          code: 'KB_RUNTIME_UNEXPECTED',
-          stack: 'Error: Something went wrong\n  at ...',
+          ...createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { message: 'Something went wrong' }),
+          error: {
+            name: 'PluginError',
+            message: 'Something went wrong',
+            stack: 'Error: Something went wrong\n  at ...',
+          },
         },
       };
 
       expect(msg.type).toBe('error');
-      expect(msg.error.name).toBe('PluginError');
       expect(msg.error.message).toBe('Something went wrong');
       expect(msg.error.code).toBe('KB_RUNTIME_UNEXPECTED');
-      expect(msg.error.stack).toContain('Error');
+      expect(msg.error.error.name).toBe('PluginError');
+      expect(msg.error.error.stack).toContain('Error');
     });
 
     it('should be recognized as ChildMessage', () => {
       const msg: ErrorMessage = {
         type: 'error',
         error: {
-          name: 'Error',
-          message: 'Test error',
-          code: 'KB_RUNTIME_UNEXPECTED',
+          ...createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { message: 'Test error' }),
+          error: { name: 'Error', message: 'Test error' },
         },
       };
 
@@ -320,11 +322,15 @@ describe('IPC Protocol', () => {
       const msg: ErrorMessage = {
         type: 'error',
         error: {
-          name: 'PermissionError',
-          message: 'Access denied',
-          code: 'KB_PLUGIN_PERMISSION_DENIED',
-          stack: 'Error: Access denied\n  at ...',
-          details: { path: '/forbidden' },
+          ...createErrorEnvelope('KB_PLUGIN_PERMISSION_DENIED', {
+            message: 'Access denied',
+            details: { path: '/forbidden' },
+          }),
+          error: {
+            name: 'PermissionError',
+            message: 'Access denied',
+            stack: 'Error: Access denied\n  at ...',
+          },
         },
       };
 
@@ -332,10 +338,10 @@ describe('IPC Protocol', () => {
       const parsed = JSON.parse(json) as ErrorMessage;
 
       expect(parsed.type).toBe('error');
-      expect(parsed.error.name).toBe('PermissionError');
       expect(parsed.error.message).toBe('Access denied');
       expect(parsed.error.code).toBe('KB_PLUGIN_PERMISSION_DENIED');
-      expect(parsed.error.stack).toContain('Error');
+      expect(parsed.error.error.name).toBe('PermissionError');
+      expect(parsed.error.error.stack).toContain('Error');
       expect(parsed.error.details).toEqual({ path: '/forbidden' });
     });
   });
@@ -367,7 +373,10 @@ describe('IPC Protocol', () => {
         { type: 'result', data: { test: 'data' } },
         {
           type: 'error',
-          error: { name: 'Error', message: 'test', code: 'KB_RUNTIME_UNEXPECTED' },
+          error: {
+            ...createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { message: 'test' }),
+            error: { name: 'Error', message: 'test' },
+          },
         },
       ];
 

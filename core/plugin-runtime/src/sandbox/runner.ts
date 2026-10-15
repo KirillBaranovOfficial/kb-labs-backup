@@ -12,6 +12,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
 import {
   platformContext,
   runtimeContext,
@@ -317,7 +318,8 @@ export async function runInSubprocess<T = unknown>(
         signal?.removeEventListener('abort', abortHandler);
 
         const errorMsg = msg as ErrorMessage;
-        reject(PluginError.fromJSON(errorMsg.error));
+        const { error: serializedError, ...envelope } = errorMsg.error;
+        reject(new SerializedErrorEnvelopeError(envelope, serializedError));
       }
     });
 

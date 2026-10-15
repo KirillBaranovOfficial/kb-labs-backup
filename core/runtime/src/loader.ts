@@ -110,7 +110,7 @@ import type {
   VectorRecord,
   RawMiddlewareDecl,
 } from '@kb-labs/core-platform';
-import type { ExecutionRequest } from '@kb-labs/core-contracts';
+import type { ExecutionRequest } from '@kb-labs/core-platform';
 
 import { ResourceBroker, InMemoryRateLimitBackend } from '@kb-labs/core-resource-broker';
 import type { RateLimitBackend, IResourceBroker } from '@kb-labs/core-resource-broker';

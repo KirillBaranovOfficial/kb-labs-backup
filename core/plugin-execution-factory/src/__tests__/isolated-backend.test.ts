@@ -10,7 +10,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createIsolatedExecutionBackend } from '../isolated-backend.js';
 import type { RemoteJobContext } from '../isolated-backend.js';
-import type { IExecutionTransport } from '@kb-labs/core-contracts';
+import type { IExecutionTransport } from '@kb-labs/core-platform';
 import type { ExecutionRequest } from '../types.js';
 
 const platform = {

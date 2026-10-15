@@ -13,7 +13,7 @@
  * and knows nothing about this implementation.
  */
 
-import type { IExecutionTransport, TransportExecutionResult, ExecutionRequest } from '@kb-labs/core-contracts';
+import type { IExecutionTransport, TransportExecutionResult, ExecutionRequest } from '@kb-labs/core-platform';
 
 export interface RetryOn503Options {
   /** Max retry attempts on HTTP 503 (default: 30) */

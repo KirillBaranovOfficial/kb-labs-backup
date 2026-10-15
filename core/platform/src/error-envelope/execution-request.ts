@@ -1,5 +1,5 @@
 /**
- * @module @kb-labs/core-contracts
+ * @module @kb-labs/core-platform/error-envelope
  *
  * Canonical execution request contracts.
  * This module must not depend on plugin-layer contracts.

@@ -14,11 +14,18 @@ import { isErrorEnvelope, validateErrorEnvelope } from './validate.js';
 
 export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'actions' | 'docs' | 'diagnostics'>;
 
+/** Read a validated platform envelope carried by a typed error wrapper. */
+export function errorEnvelopeFrom(error: unknown): ErrorEnvelope | undefined {
+  if (error instanceof ErrorEnvelopeError) return error.envelope;
+  if (typeof error !== 'object' || error === null) return undefined;
+  if (!('envelope' in error)) return undefined;
+  return isErrorEnvelope(error.envelope) ? error.envelope : undefined;
+}
+
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
-  if (error instanceof ErrorEnvelopeError) {
-    return canonicalizeErrorEnvelope(error.envelope, options);
-  }
+  const typedEnvelope = errorEnvelopeFrom(error);
+  if (typedEnvelope) return canonicalizeErrorEnvelope(typedEnvelope, options);
   const candidate = getErrorRecord(error);
   if (isErrorEnvelope(candidate)) {
     return canonicalizeErrorEnvelope(candidate, options);
