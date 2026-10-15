@@ -30,10 +30,11 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             (sdk / "package.json").write_text(json.dumps({
                 "name": "@kb-labs/sdk",
                 "exports": {".": {"import": "./dist/index.js"}},
+                "dependencies": {"@kb-labs/sdk-runtime-dependency": "1.0.0"},
                 "peerDependencies": {"@kb-labs/shared-testing": "^2.0.0"},
                 "peerDependenciesMeta": {"@kb-labs/shared-testing": {"optional": True}},
             }))
-            (sdk / "dist" / "index.js").write_text('import "@kb-labs/shared-command-kit";\n')
+            (sdk / "dist" / "index.js").write_text('import "@kb-labs/sdk-runtime-dependency";\n')
             plugin = root / "node_modules" / "@kb-labs" / "workflow-entry"
             (plugin / "dist" / "commands").mkdir(parents=True)
             (plugin / "dist" / "setup").mkdir(parents=True)
@@ -42,7 +43,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 "type": "module",
                 "exports": {
                     ".": {"import": "./dist/index.js"},
-                    "./dist/*": "./dist/*",
+                    "./dist/runtime/*": {"node": "./dist/runtime/*"},
+                    "./dist/widgets/*": {"browser": "./dist/widgets/*"},
                 },
             }))
             (plugin / "dist" / "manifest.json").write_text(json.dumps({
@@ -53,6 +55,9 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             (plugin / "dist" / "index.js").write_text('import "@kb-labs/shared-command-kit";\n')
             (plugin / "dist" / "commands" / "handler.js").write_text('import "@kb-labs/shared-command-kit";\n')
             (plugin / "dist" / "setup" / "handler.js").write_text('import "@kb-labs/shared-command-kit";\n')
+            runtime_wildcard = plugin / "dist" / "runtime"
+            runtime_wildcard.mkdir()
+            (runtime_wildcard / "wildcard-runtime.js").write_text('import "@kb-labs/runtime-wildcard-dependency";\n')
             (plugin / "dist" / "widgets").mkdir()
             (plugin / "dist" / "widgets" / "remoteEntry.js").write_text('throw new Error("browser-only remote entry");\n')
             platform_runtime = root / "node_modules" / "@kb-labs" / "core-runtime"
@@ -78,6 +83,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn("@kb-labs/workflow-entry", result.stdout + result.stderr)
             self.assertIn("dist/commands/handler.js", result.stdout + result.stderr)
             self.assertIn("dist/setup/handler.js", result.stdout + result.stderr)
+            self.assertIn("@kb-labs/runtime-wildcard-dependency", result.stdout + result.stderr)
+            self.assertIn("dist/runtime/wildcard-runtime.js", result.stdout + result.stderr)
             self.assertNotIn("browser-only remote entry", result.stdout + result.stderr)
 
             plugin_manifest = plugin / "dist" / "manifest.json"
@@ -87,14 +94,45 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn("bundled plugin @kb-labs/workflow-entry is missing dist/manifest.json", result.stderr)
             plugin_manifest.write_text(json.dumps({"schema": "kb.plugin/3"}))
 
-            helper = root / "node_modules" / "@kb-labs" / "shared-command-kit"
-            (helper / "dist").mkdir(parents=True)
-            (helper / "package.json").write_text(json.dumps({
-                "name": "@kb-labs/shared-command-kit",
+            for name, package_root in (
+                ("@kb-labs/shared-command-kit", root / "node_modules" / "@kb-labs" / "shared-command-kit"),
+                ("@kb-labs/runtime-wildcard-dependency", root / "node_modules" / "@kb-labs" / "runtime-wildcard-dependency"),
+                ("@kb-labs/sdk-runtime-dependency", root / "node_modules" / "@kb-labs" / "sdk-runtime-dependency"),
+            ):
+                (package_root / "dist").mkdir(parents=True)
+                (package_root / "package.json").write_text(json.dumps({
+                    "name": name,
                 "type": "module",
                 "exports": {".": {"import": "./dist/index.js"}},
-            }))
-            (helper / "dist" / "index.js").write_text("export {};\n")
+                }))
+                (package_root / "dist" / "index.js").write_text("export {};\n")
+
+            result = check_installed_runtime_imports(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            runtime_wildcard_file = runtime_wildcard / "wildcard-runtime.js"
+            removed_runtime_wildcard = runtime_wildcard / "wildcard-runtime.mutated"
+            runtime_wildcard_file.rename(removed_runtime_wildcard)
+            result = check_installed_runtime_imports(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("runtime export pattern ./dist/runtime/* matches no JavaScript files", result.stderr)
+            removed_runtime_wildcard.rename(runtime_wildcard_file)
+
+            sdk_dependency_at_root = root / "node_modules" / "@kb-labs" / "sdk-runtime-dependency"
+            sdk_dependency_at_scope = sdk / "node_modules" / "@kb-labs" / "sdk-runtime-dependency"
+            sdk_dependency_at_scope.parent.mkdir(parents=True)
+            sdk_dependency_at_root.rename(sdk_dependency_at_scope)
+            result = check_installed_runtime_imports(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            shared_peer = root / "node_modules" / "@kb-labs" / "shared-command-kit"
+            removed_peer = root / "node_modules" / "@kb-labs" / "shared-command-kit.mutated"
+            shared_peer.rename(removed_peer)
+            result = check_installed_runtime_imports(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("@kb-labs/shared-command-kit", result.stdout + result.stderr)
+            self.assertIn("dist/index.js", result.stdout + result.stderr)
+            removed_peer.rename(shared_peer)
 
             result = check_installed_runtime_imports(root)
             self.assertEqual(result.returncode, 0, result.stderr)

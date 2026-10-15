@@ -1,15 +1,22 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 const platformRoot = realpathSync(resolve(process.argv[2]));
 const nodeModulesRoot = join(platformRoot, 'node_modules');
 const readPackage = packageRoot => JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
+const runtimeConditions = new Set(['node', 'import', 'default']);
 const targetFor = value => {
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return { target: value };
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  return targetFor(value.import ?? value.node ?? value.default);
+  for (const [condition, branch] of Object.entries(value)) {
+    if (!runtimeConditions.has(condition)) continue;
+    const selected = targetFor(branch);
+    if (selected) return selected;
+  }
+  if (Object.hasOwn(value, 'browser')) return { browserOnly: true };
+  throw new Error(`export conditions have no Node runtime target: ${Object.keys(value).join(', ')}`);
 };
 const javascriptFiles = directory => {
   if (!existsSync(directory)) return [];
@@ -80,8 +87,9 @@ for (const packageRoot of packageRoots) {
   const isSdk = packageRoot === sdkRoot;
   for (const [exportName, value] of Object.entries(exportsMap)) {
     if (nonRuntime.includes(exportName)) continue;
-    if (!isSdk && exportName.includes('*')) continue;
-    const target = targetFor(value);
+    const selection = targetFor(value);
+    if (selection?.browserOnly) continue;
+    const target = selection?.target;
     if (!target) throw new Error(`${packageJSON.name} runtime export ${exportName} has no import target`);
     if (!target.includes('*')) {
       if (!target.startsWith('./')) throw new Error(`${packageJSON.name} export ${exportName} has non-package target ${target}`);
@@ -91,9 +99,12 @@ for (const packageRoot of packageRoots) {
       continue;
     }
     const targetDirectory = resolve(packageRoot, target.slice(0, target.indexOf('*')));
-    for (const file of javascriptFiles(targetDirectory)) {
-      const suffix = target.slice(target.indexOf('*') + 1);
-      if (suffix && !file.endsWith(suffix)) continue;
+    const suffix = target.slice(target.indexOf('*') + 1);
+    const files = javascriptFiles(targetDirectory).filter(file => !suffix || file.endsWith(suffix));
+    if (!files.length) {
+      throw new Error(`${packageJSON.name} runtime export pattern ${target} matches no JavaScript files`);
+    }
+    for (const file of files) {
       entrypoints.push({ packageName: packageJSON.name, exportName, file });
     }
   }
@@ -113,11 +124,11 @@ for (const packageRoot of packageRoots) {
     for (const handler of new Set(handlers)) {
       if (!resolvePluginHandlerPath) {
         try {
-          const runtimePackage = join(nodeModulesRoot, '@kb-labs', 'core-runtime', 'package.json');
-          resolvePluginHandlerPath = createRequire(realpathSync(runtimePackage))('@kb-labs/core-discovery').resolveCliHandlerPath;
+          const runtimePackage = realpathSync(join(nodeModulesRoot, '@kb-labs', 'core-runtime', 'package.json'));
+          const resolverURL = import.meta.resolve('@kb-labs/core-discovery', pathToFileURL(runtimePackage));
+          resolvePluginHandlerPath = (await import(resolverURL)).resolveCliHandlerPath;
         } catch (error) {
-          process.stderr.write(`installed runtime handler resolver @kb-labs/core-discovery failed to load from @kb-labs/core-runtime: ${error.message}\n`);
-          process.exit(1);
+          throw new Error(`installed runtime handler resolver @kb-labs/core-discovery failed: ${error.message}`);
         }
       }
       const file = resolvePluginHandlerPath(packageRoot, handler);

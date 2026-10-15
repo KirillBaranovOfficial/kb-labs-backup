@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -11,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -277,8 +279,20 @@ func (registry *packageRegistry) ServeHTTP(writer http.ResponseWriter, request *
 			"dist-tags": map[string]string{"latest": versionNames[len(versionNames)-1]},
 			"versions":  versionData,
 		}
-		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(payload)
+		writeRegistryJSON(writer, payload)
+	}
+}
+
+func writeRegistryJSON(writer http.ResponseWriter, payload any) {
+	var encoded bytes.Buffer
+	if err := json.NewEncoder(&encoded).Encode(payload); err != nil {
+		log.Printf("encode candidate package metadata: %v", err)
+		http.Error(writer, "unable to encode candidate package metadata", http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	if _, err := writer.Write(encoded.Bytes()); err != nil {
+		log.Printf("write candidate package metadata response: %v", err)
 	}
 }
 

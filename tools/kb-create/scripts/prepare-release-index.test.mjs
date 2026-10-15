@@ -19,38 +19,6 @@ after(() => {
   for (const root of temporaryRoots) rmSync(root, { recursive: true, force: true });
 });
 
-// case: S-054.2
-test('seals required SDK peers and recursive platform-member dependencies', () => {
-  const root = temporaryRoot('kb-release-index-runtime-peers-');
-  const stage = join(root, 'stage');
-  const packageRoot = join(root, 'packages');
-  mkdirSync(stage, { recursive: true });
-  const artifacts = [
-    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', {
-      peerDependencies: { '@kb-labs/core-runtime': '^2.0.0', '@kb-labs/core-contracts': '^2.0.0' },
-      dependencies: { '@kb-labs/shared-tool-kit': 'workspace:*', '@kb-labs/perm-presets': 'workspace:*' },
-    }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/core-contracts', '2.0.0', '', {
-      peerDependencies: { '@kb-labs/shared-tool-kit': '^2.0.0' },
-    }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/perm-presets', '2.0.0', ''),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/shared-tool-kit', '2.0.0', ''),
-  ];
-  writeStageManifest(root, packageRoot, stage, artifacts);
-  const binaryManifest = join(root, 'binary-manifest.json');
-  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
-  const output = join(root, 'release-index.json');
-  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
-    '--binary-manifest', binaryManifest, '--platform-member-packages', '@kb-labs/core-contracts', '--output', output], { stdio: 'pipe' });
-  const index = JSON.parse(readFileSync(output, 'utf8'));
-  const members = index.platforms[0].members.map(member => member.package);
-  assert.ok(members.includes('@kb-labs/core-contracts'));
-  assert.ok(members.includes('@kb-labs/shared-tool-kit'), 'SDK runtime dependencies are sealed as platform members');
-  assert.ok(members.includes('@kb-labs/perm-presets'), 'SDK runtime dependencies are sealed as platform members');
-});
-
 // case: S-054.16
 test('seals the SDK runtime peer declared by its installed package contract', () => {
   const root = temporaryRoot('kb-release-index-sdk-runtime-peer-');
@@ -224,7 +192,6 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
   const sdkPackageJSON = JSON.parse(readFileSync(join(sdkWorkspace.path, 'package.json'), 'utf8'));
   const sdkRequiredPeers = Object.keys(sdkPackageJSON.peerDependencies ?? {}).filter(name =>
     sdkPackageJSON.peerDependenciesMeta?.[name]?.optional !== true);
-  const sdkRuntimeDependencies = Object.keys(sdkPackageJSON.dependencies ?? {}).filter(name => name.startsWith('@kb-labs/'));
   const releaseConfig = readPlatformReleaseConfig(join(workspaceRoot, '.kb/kb.config.jsonc'));
   const registryManifest = JSON.parse(readFileSync(join(workspaceRoot, 'e2e/platform/registry-manifest.json'), 'utf8'));
   const version = JSON.parse(readFileSync(join(workspaceRoot, 'core/runtime/package.json'), 'utf8')).version;
@@ -280,7 +247,7 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
     artifactNames.add(packageName);
   }
   const stagedNames = new Set(artifacts.map(artifact => artifact.name));
-  for (const packageName of [...Object.keys(sdkPackageJSON.dependencies ?? {}), ...sdkRequiredPeers]) {
+  for (const packageName of sdkRequiredPeers) {
     if (!packageName.startsWith('@kb-labs/')) continue;
     if (stagedNames.has(packageName)) continue;
     const workspacePackage = workspaceByName.get(packageName);
@@ -322,7 +289,6 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
   const sealedMembers = new Set([index.platforms[0].package,
     ...index.platforms[0].members.map(member => member.package)]);
   for (const peer of sdkRequiredPeers) assert.ok(sealedMembers.has(peer), `SDK required peer ${peer} must be available in the sealed platform`);
-  for (const dependency of sdkRuntimeDependencies) assert.ok(sealedMembers.has(dependency), `SDK runtime dependency ${dependency} must be sealed in the platform`);
 });
 
 test('filesystem adapter contributes the project storage directory default to the release index', () => {

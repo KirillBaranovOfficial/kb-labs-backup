@@ -325,12 +325,7 @@ const dependencyClosureFor = packageName => {
   }
   return closure;
 };
-const sdkRuntimeDependencyPackages = [...dependencyClosureFor(sdk.name)]
-  .filter(packageName => packageName !== sdk.name && byName.has(packageName));
-const platformMemberArtifacts = new Set([
-  ...platformMemberRoots,
-  ...sdkRuntimeDependencyPackages,
-]);
+const platformMemberArtifacts = new Set(platformMemberRoots);
 // Platform members and the SDK are installed into one platform node_modules
 // tree. Derive peer availability from that exact sealed package graph; mere
 // presence in the release stage does not make a peer available to consumers.
