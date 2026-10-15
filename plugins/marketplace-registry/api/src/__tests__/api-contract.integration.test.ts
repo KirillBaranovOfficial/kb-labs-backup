@@ -21,7 +21,7 @@ const gatewayHeaders = (authCtx?: { namespaceId: string; permissions?: string[] 
 
 const noopLog: ILogger = {
   trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(),
-  error: vi.fn(), fatal: vi.fn(), child: () => noopLog,
+  error: vi.fn(), fatal: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), child: () => noopLog,
 };
 
 // ── Registry service mock ──────────────────────────────────────────────────────

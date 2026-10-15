@@ -23,7 +23,8 @@ class MemoryLoggerSink implements ILogger {
   warn(message: string, meta?: Record<string, unknown>) { this.write('warn', message, undefined, meta); }
   error(message: string, error?: Error, meta?: Record<string, unknown>) { this.write('error', message, error, meta); }
   fatal(message: string, error?: Error, meta?: Record<string, unknown>) { this.write('fatal', message, error, meta); }
-  child() { return this; }
+  flush(): Promise<void> { return Promise.resolve(); }
+  child(_bindings: Record<string, unknown>) { return this; }
 
   queryByCorrelationId(correlationId: string): StructuredLogRecord[] {
     return this.records.filter((record) => record.correlationId === correlationId);

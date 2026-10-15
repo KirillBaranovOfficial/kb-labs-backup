@@ -95,6 +95,8 @@ export class ConsoleLogger implements ILogger {
     }
   }
 
+  async flush(): Promise<void> {}
+
   child(bindings: Record<string, unknown>): ILogger {
     // Child logger inherits parent's level
     return new ConsoleLogger({ ...this.bindings, ...bindings }, this.level);

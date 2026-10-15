@@ -14,6 +14,7 @@ const loggerBase: ILogger = {
   warn: () => undefined,
   error: () => undefined,
   fatal: () => undefined,
+  flush: async () => {},
   child: () => loggerBase,
 };
 const logger = createContextLogger(loggerBase, {

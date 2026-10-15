@@ -60,6 +60,7 @@ export class PinoLoggerAdapter implements ILogger {
   private pino: PinoLoggerInstance;
   private logBuffer?: LogRingBuffer;
   private logCallbacks = new Set<(record: LogRecord) => void | Promise<void>>();
+  private pendingDeliveries = new Set<Promise<void>>();
   private bindings: Record<string, unknown> = {};
 
   constructor(config: PinoLoggerConfig = {}) {
@@ -119,13 +120,15 @@ export class PinoLoggerAdapter implements ILogger {
 
     for (const callback of this.logCallbacks) {
       try {
-        void Promise.resolve(callback(record)).catch((error: unknown) => {
+        const delivery = Promise.resolve(callback(record)).catch((error: unknown) => {
           // Delivery extensions are optional. A failed durable sink must not
           // take down the service or recurse through this logger.
           process.stderr.write(
             `[kb-logs] log delivery extension failed: ${error instanceof Error ? error.message : String(error)}\n`,
           );
-        });
+        }).then(() => undefined);
+        this.pendingDeliveries.add(delivery);
+        void delivery.finally(() => this.pendingDeliveries.delete(delivery));
       } catch (error) {
         console.error("[PinoLogger] Error in onLog callback:", error);
       }
@@ -142,6 +145,7 @@ export class PinoLoggerAdapter implements ILogger {
     const instance = Object.create(PinoLoggerAdapter.prototype);
     instance.pino = pinoInstance;
     instance.logCallbacks = this.logCallbacks; // Share callbacks with parent
+    instance.pendingDeliveries = this.pendingDeliveries;
     instance.logBuffer = this.logBuffer; // Share buffer with parent
     instance.bindings = bindings;
     return instance;
@@ -307,6 +311,13 @@ export class PinoLoggerAdapter implements ILogger {
     const mergedBindings = { ...this.bindings, ...bindings };
     const childPino = this.pino.child(bindings);
     return this.constructor_child(childPino, mergedBindings);
+  }
+
+  async flush(): Promise<void> {
+    while (this.pendingDeliveries.size > 0) {
+      await Promise.all([...this.pendingDeliveries]);
+    }
+    await new Promise<void>((resolve) => this.pino.flush(() => resolve()));
   }
 
   /**

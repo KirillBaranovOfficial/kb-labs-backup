@@ -8,7 +8,7 @@ import type { ExecutionBackend, ExecutionResult } from '../../types.js';
 function backendReturning(result: ExecutionResult): ExecutionBackend {
   const logger: ILogger = {
     trace: () => {}, debug: () => {}, info: () => {}, warn: () => {},
-    error: () => {}, fatal: () => {}, child: () => logger,
+    error: () => {}, fatal: () => {}, flush: async () => {}, child: () => logger,
   };
   return createNormalizedExecutionBackend({
     async execute() { return result; },

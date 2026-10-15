@@ -87,6 +87,8 @@ export class LoggerProxy extends RemoteAdapter<ILogger> implements ILogger {
   error(...args: unknown[]): void { this.dispatch('error', args); }
   fatal(...args: unknown[]): void { this.dispatch('fatal', args); }
 
+  async flush(): Promise<void> { await this.callRemote('flush', []); }
+
   child(bindings: Record<string, unknown>): ILogger {
     return new LoggerProxy(this.proxyTransport, { ...this.boundContext, ...bindings });
   }

@@ -187,6 +187,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   if (opts.uxBoundary) {
     const logger: ILogger = {
       info: () => {}, warn: () => {}, error: () => {}, fatal: () => {}, debug: () => {}, trace: () => {},
+      flush: async () => {},
       child: () => logger,
     };
     registerGatewayUxBoundary(app, logger);

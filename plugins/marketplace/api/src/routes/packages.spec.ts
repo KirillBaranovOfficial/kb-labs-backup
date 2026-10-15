@@ -25,6 +25,7 @@ function makeContextLogger(): { logger: IContextLogger; errors: CapturedLog[] } 
     warn: () => undefined,
     error: (message, error, fields) => { errors.push({ message, error, fields }); },
     fatal: () => undefined,
+    flush: async () => {},
     child: () => base,
   };
   return {

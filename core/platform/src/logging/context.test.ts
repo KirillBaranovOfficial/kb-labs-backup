@@ -36,6 +36,7 @@ function captureLogger(records: Array<Record<string, unknown>>): ILogger {
     fatal: (message, error, meta) =>
       write("fatal", message, { ...(meta ?? {}), ...(error ? { error } : {}) }),
     child: () => captureLogger(records),
+    flush: async () => {},
   };
 }
 

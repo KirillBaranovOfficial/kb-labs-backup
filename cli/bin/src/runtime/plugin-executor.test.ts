@@ -199,6 +199,7 @@ describe('plugin executor adapter errors', () => {
         warn() {},
         error() {},
         fatal() {},
+        flush: async () => {},
         child: () => noopLogger,
       } satisfies ILogger,
     });
@@ -256,6 +257,7 @@ describe('plugin executor adapter errors', () => {
         warn() {},
         error() {},
         fatal() {},
+        flush: async () => {},
         child: () => noopLogger,
       } satisfies ILogger,
     });
@@ -354,5 +356,6 @@ const noopLogger: ILogger = {
   warn() {},
   error() {},
   fatal() {},
+  flush: async () => {},
   child: () => noopLogger,
 };

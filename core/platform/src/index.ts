@@ -24,7 +24,7 @@
 // ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
 
-export { AdapterUnavailableError, AdapterCredentialsMissingError, AdapterOperationError, AdapterConfigError, AdapterProjectScopeError, PlatformConfigError, ServicePortConfigError } from "./errors.js";
+export { AdapterUnavailableError, AdapterCredentialsMissingError, AdapterOperationError, AdapterConfigError, AdapterProjectScopeError, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError } from "./errors.js";
 export type { TypedPlatformError } from "./errors.js";
 export { getHostServiceAddress, HostServiceAddressError } from "./host-service-address.js";
 export type { HostServiceEnvironment, HostServiceId } from "./host-service-address.js";
@@ -188,6 +188,7 @@ export {
   type PlatformLogContext,
   type PluginLogContext,
 } from "./logging/context.js";
+export { logUnexpectedCliError } from "./logging/unexpected-error.js";
 export {
   logDiagnosticEvent,
   type DiagnosticLogEvent,

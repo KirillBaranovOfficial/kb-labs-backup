@@ -40,5 +40,31 @@ describe('PinoLoggerAdapter', () => {
       spanId: 'span-2',
     });
   });
+
+  it('waits for asynchronous logger extensions before resolving flush', async () => {
+    const logger = new PinoLoggerAdapter({ level: 'fatal' });
+    let beginDelivery: () => void = () => {};
+    let finishDelivery: () => void = () => {};
+    const started = new Promise<void>((resolve) => { beginDelivery = resolve; });
+    const blocked = new Promise<void>((resolve) => { finishDelivery = resolve; });
+    let completed = false;
+    logger.onLog(async () => {
+      beginDelivery();
+      await blocked;
+      completed = true;
+    });
+
+    logger.info('pending extension delivery');
+    await started;
+    let flushCompleted = false;
+    const flushing = logger.flush().then(() => { flushCompleted = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(completed).toBe(false);
+    expect(flushCompleted).toBe(false);
+
+    finishDelivery();
+    await flushing;
+    expect(completed).toBe(true);
+  });
 });
 

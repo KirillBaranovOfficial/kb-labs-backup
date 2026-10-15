@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
     warn(message: string) { process.stderr.write(`[warn] ${message}\n`); },
     error(message: string) { process.stderr.write(`[error] ${message}\n`); },
     fatal(message: string) { process.stderr.write(`[fatal] ${message}\n`); },
+    flush: async () => {},
     child() { return logger; },
   };
   const corePlatform = {
@@ -279,6 +280,7 @@ const logger = {
   warn(message: string) { process.stderr.write(`[warn] ${message}\n`); },
   error(message: string) { process.stderr.write(`[error] ${message}\n`); },
   fatal(message: string) { process.stderr.write(`[fatal] ${message}\n`); },
+  flush: async () => {},
   child() { return logger; },
 };
 const platform = mocks.platform;

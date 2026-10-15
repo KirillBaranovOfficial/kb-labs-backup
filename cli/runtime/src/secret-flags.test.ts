@@ -16,7 +16,7 @@ describe('secret-typed CLI inputs', () => {
     const base: ILogger = {
       trace: () => {}, debug: () => {}, info: () => {}, warn: () => {},
       error: (message, error, fields) => records.push({ message, error, ...fields }),
-      fatal: () => {}, child: () => base,
+      fatal: () => {}, flush: async () => {}, child: () => base,
     };
     const logger = createContextLogger(base, {
       applicationId: 'kb', serviceId: 'kb', instanceId: 'test', layer: 'cli',

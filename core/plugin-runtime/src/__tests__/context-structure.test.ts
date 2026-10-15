@@ -212,6 +212,7 @@ describe("Context Structure (Runtime Verification)", () => {
         (_message: string, _error?: Error, meta?: Record<string, unknown>) =>
           records.push(meta ?? {}),
       ),
+      flush: vi.fn().mockResolvedValue(undefined),
       child: vi.fn(function (this: typeof logger) {
         return this;
       }),

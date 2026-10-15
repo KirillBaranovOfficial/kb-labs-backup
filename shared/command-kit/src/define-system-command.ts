@@ -12,7 +12,7 @@ import {
 } from './index';
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { formatError } from './errors/index';
-import { createErrorEnvelope, mapErrorEnvelopeToExitCode, toErrorEnvelope, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
+import { createErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
 import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
@@ -397,9 +397,9 @@ export function defineSystemCommand<
       } catch (error) {
         const envelope = toErrorEnvelope(error, { correlationId: ctx.requestId });
         if (envelope.code === 'KB_RUNTIME_UNEXPECTED') {
-          ctx.platform?.logger?.error?.(`Command ${name} failed unexpectedly`, error instanceof Error ? error : new Error(String(error)), {
-            correlationId: envelope.correlationId,
-          });
+          if (ctx.platform?.logger) {
+            logUnexpectedCliError(ctx.platform.logger, error, envelope.correlationId);
+          }
         }
         if (jsonMode) {
           ctx.ui?.json({ ok: false, error: envelope });

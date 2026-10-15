@@ -153,6 +153,20 @@ export class PlatformConfigError extends Error {
   }
 }
 
+/** The install root has no layout contract in its active version. */
+export class PlatformLayoutContractError extends Error {
+  public readonly contractPath: string;
+  public readonly remedy: { operation: 'update'; platformRoot: string };
+
+  constructor(contractPath: string, installRoot: string) {
+    super(`The active platform layout contract is missing at ${contractPath}.`);
+    this.name = 'PlatformLayoutContractError';
+    this.contractPath = contractPath;
+    this.remedy = { operation: 'update', platformRoot: installRoot };
+    Object.setPrototypeOf(this, PlatformLayoutContractError.prototype);
+  }
+}
+
 /** A typed adapter option failed validation before the adapter could start. */
 export class AdapterConfigError extends Error {
   public readonly optionPath: string;

@@ -175,7 +175,7 @@ export async function createServer(
       });
 
   // Add our own logger to server instance
-  (server as { log: ILogger }).log = restLogger;
+  server.log = createPinoCompatibleLogger(restLogger);
 
   // Override child logger factory to return our custom logger with disable flag
   server.setChildLoggerFactory((logger, bindings, opts, rawReq) => {

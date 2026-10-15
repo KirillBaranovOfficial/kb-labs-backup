@@ -61,6 +61,7 @@ function createNoopLogger(): ILogger {
     error: noop,
     fatal: noop,
     trace: noop,
+    flush: async () => {},
     child: () => logger,
   };
   return logger;

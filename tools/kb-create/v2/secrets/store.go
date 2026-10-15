@@ -401,14 +401,7 @@ func (store Store) Environment() (Environment, error) {
 }
 
 func (store Store) path() (string, error) {
-	sharedRecordPath := filepath.FromSlash(contracts.SharedRecordPath())
-	marker := filepath.Join(store.PlatformRoot, filepath.Dir(sharedRecordPath), "platform-layout.json")
-	if _, err := os.Stat(marker); err == nil {
-		return filepath.Join(store.PlatformRoot, sharedRecordPath), nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-	layout, err := versionroot.New(store.PlatformRoot)
+	layout, err := versionroot.ForPlatformPath(store.PlatformRoot)
 	if err != nil {
 		return "", err
 	}

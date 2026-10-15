@@ -11,6 +11,7 @@ it("writes canonical HTTP fields and preserves request correlation", () => {
     warn: (_message, meta) => records.push(meta ?? {}),
     error: (_message, _error, meta) => records.push(meta ?? {}),
     fatal: (_message, _error, meta) => records.push(meta ?? {}),
+    flush: async () => {},
     child: () => base,
   };
 
