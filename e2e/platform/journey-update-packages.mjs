@@ -3,16 +3,26 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
+import registryManifest from './registry-manifest.json' with { type: 'json' };
 
-const VERSIONED_PACKAGES = ['@kb-labs/core-runtime', '@kb-labs/sdk'];
+export function releasePackageNames(manifest = registryManifest) {
+  return [...new Set([
+    ...(manifest.core ?? []).map(item => item.name),
+    ...(manifest.services ?? []).map(item => item.pkg),
+    ...(manifest.plugins ?? []).map(item => item.pkg),
+    ...(manifest.adapters ?? []).map(item => item.name),
+  ].filter(Boolean))];
+}
 
 // Build a release stage for a journey-only platform version from an existing
-// stage: every package is reused unchanged except core-runtime and the SDK,
-// which get the new version. The target holds the same manifest.json the
+// stage: every selected release artifact is reused unchanged except its
+// package version, which advances to the requested update version. The target
+// holds the same manifest.json the
 // release-index preparer reads; generated tarballs are also written to
 // publishDir so the local registry can serve them.
 export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion,
-  { publishDir, failingServicePackage, requiredConfigPackage, requiredConfig } = {}) {
+  { publishDir, failingServicePackage, requiredConfigPackage, requiredConfig, registryManifest: releaseManifest = registryManifest } = {}) {
+  const versionedPackages = new Set(releasePackageNames(releaseManifest));
   const sourceDir = resolve(packagesDir);
   const targetDir = resolve(updatePackagesDir);
   const registryDir = resolve(publishDir ?? packagesDir);
@@ -24,7 +34,9 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
   for (const filename of readdirSync(sourceDir).filter(name => name.endsWith('.tgz'))) {
     const source = join(sourceDir, filename);
     const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', source, 'package/package.json'], { encoding: 'utf8' }));
-    if (VERSIONED_PACKAGES.includes(packageJSON.name)) {
+    if (versionedPackages.has(packageJSON.name)
+        && packageJSON.name !== failingServicePackage
+        && !(packageJSON.name === requiredConfigPackage && requiredConfig)) {
       originals.set(packageJSON.name, { source, filename, packageJSON });
     } else if (packageJSON.name === failingServicePackage) {
       const unpacked = mkdtempSync('/tmp/kb-e2e-update-package-');
@@ -76,7 +88,8 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
     }
   }
 
-  for (const packageName of VERSIONED_PACKAGES) {
+  for (const packageName of versionedPackages) {
+    if (packageName === failingServicePackage || (packageName === requiredConfigPackage && requiredConfig)) continue;
     const original = originals.get(packageName);
     if (!original) throw new Error(`journey update package is not packed: ${packageName}`);
     const unpacked = mkdtempSync('/tmp/kb-e2e-update-package-');

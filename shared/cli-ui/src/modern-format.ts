@@ -322,7 +322,7 @@ export function sideBorderChain(items: SideBorderChainItem[]): string {
   if (items.length === 0) { return ''; }
   if (items.length === 1) {
     const item = items[0]!;
-    return sideBorderBox({ title: item.title, sections: item.sections, status: item.status, timing: item.timing });
+    return sideBorderBox({ title: item.title, sections: item.sections, summary: item.summary, status: item.status, timing: item.timing });
   }
 
   const lines: string[] = [];

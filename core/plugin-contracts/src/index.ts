@@ -72,9 +72,11 @@ export type {
   OutputSectionItem,
   RichOutputSectionItem,
   MessageOptions,
+  UIOutput,
   PluginHandlerUIFacade,
 } from "./ui.js";
-export { InteractiveInputRequiredError, noopUI } from "./ui.js";
+export { InteractiveInputRequiredError, noopUI, renderUIOutputText } from "./ui.js";
+export { uiMessageLevelDefaultTitleCases, uiOutputContractCases } from "./ui-output-contract.js";
 
 // Trace
 export type {

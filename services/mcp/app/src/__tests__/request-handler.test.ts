@@ -10,6 +10,7 @@ import type { Policy } from '@kb-labs/core-policy';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
 import type { McpTool } from '../mcp/tool-builder.js';
 import { callOutput } from '../mcp/output-capture.js';
+import { uiOutputContractCases, renderUIOutputText } from '@kb-labs/plugin-contracts';
 import resultSchema from '../../../../../contracts/ux-result/machine-result.schema.json';
 import successFixture from '../../../../../contracts/ux-result/fixtures/valid/success.json';
 import failureFixture from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
@@ -322,8 +323,10 @@ describe('executeToolCall', () => {
   // case: S-203.1
   it('executes an allowed registry tool and returns a shared success envelope', async () => {
     // Simulate what the execution backend's uiProvider does: write into callOutput store.
+    const output = uiOutputContractCases.message.output;
     executeCommandV3.mockImplementation(async () => {
-      callOutput.getStore()?.push('[info] ran');
+      callOutput.getStore()?.text.push(renderUIOutputText(output));
+      callOutput.getStore()?.structured.push(output);
       return 0;
     });
     const result = await executeToolCall({
@@ -336,9 +339,9 @@ describe('executeToolCall', () => {
       logger: requestLogger,
     });
     expect(result.isError).toBe(false);
-    expect(textOf(result)).toContain('ran');
+    expect(textOf(result)).toContain('message body');
     expectSharedMachineResult(result.structuredContent);
-    expect(result.structuredContent).toMatchObject({ ok: true, data: '[info] ran' });
+    expect(result.structuredContent).toMatchObject({ ok: true, data: renderUIOutputText(output), meta: { ui: [output] } });
     expect(executeCommandV3).toHaveBeenCalledWith(
       expect.objectContaining({ pluginId: 'mind', flags: { q: 'x' }, tenantId: 't1' }),
     );

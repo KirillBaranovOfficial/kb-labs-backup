@@ -162,4 +162,28 @@ describe.each(backends)('%s real failure dispatch', (mode) => {
       await backend.shutdown();
     }
   });
+
+  // case: S-203.6
+  it('turns a returned malformed hint into a valid platform envelope', async () => {
+    const logger = new MemoryLoggerSink();
+    const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
+    const backend = makeBackend(mode, platform, logger);
+    const correlationId = `${mode}-returned-invalid-envelope`;
+
+    try {
+      const result = await backend.execute(makeRequest('returned-invalid-envelope-handler.js', correlationId));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.envelope).toMatchObject({
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        correlationId,
+        details: { field: 'hint' },
+      });
+      expect(validateErrorEnvelope(result.error.envelope)).toEqual([]);
+      expect(logger.queryByCorrelationId(correlationId)).toHaveLength(1);
+    } finally {
+      await backend.shutdown();
+    }
+  });
 });

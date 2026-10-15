@@ -82,7 +82,7 @@ describe('project MCP wire fixture producer', () => {
     }));
     executeCommandV3.mockReset();
     executeCommandV3.mockImplementation(async () => {
-      callOutput.getStore()?.push('output from the external command adapter');
+      callOutput.getStore()?.text.push('output from the external command adapter');
       return 0;
     });
     daemon = new McpDaemonServer({

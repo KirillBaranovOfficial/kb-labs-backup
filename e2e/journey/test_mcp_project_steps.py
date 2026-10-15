@@ -462,7 +462,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         tools = [
             {"name": name}
             for name in (
-                "kb-labs-commit__commit",
+                "kb-labs-commit__commit_commit",
                 "kb-labs-workflow__workflow_run",
                 "kb-labs__mcp_diagnostics",
             )
@@ -489,7 +489,15 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             self.assertIn("force and json", commit_tool_schema("prj_a", "token"))
 
     def test_mutating_step_calls_commit_apply_without_push_and_checks_sha(self):
-        response = {"result": {"isError": False, "content": [{"text": "Created commit a1b2c3d4"}]}}
+        response = {"result": {
+            "isError": False,
+            "content": [{"text": "Created commit a1b2c3d4"}],
+            "structuredContent": {"ok": True, "data": "Created commit a1b2c3d4", "meta": {
+                "ui": [{"kind": "message", "level": "success", "message": "Applied", "options": {
+                    "sections": [{"header": "Commits", "items": ["a1b2c3d4"]}],
+                }}],
+            }},
+        }}
         history = subprocess.CompletedProcess(args=[], returncode=0, stdout="a1b2c3d4\n", stderr="")
         with patch("service_runner.request_mcp", return_value=(200, response, {})) as request, \
              patch("mcp_project_steps.run_command", return_value=history) as git_log:

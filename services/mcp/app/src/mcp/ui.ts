@@ -7,12 +7,13 @@
  * tool call has no prompt responder; required values belong in tool arguments.
  */
 
-import { InteractiveInputRequiredError, noopUI } from '@kb-labs/plugin-contracts';
-import type { UIFacade } from '@kb-labs/plugin-contracts';
+import { InteractiveInputRequiredError, noopUI, renderUIOutputText } from '@kb-labs/plugin-contracts';
+import type { UIOutput, UIFacade } from '@kb-labs/plugin-contracts';
 
 export interface BufferedUI {
   ui: UIFacade;
   getOutput: () => string;
+  getStructuredOutput: () => UIOutput[];
 }
 
 function stringifyError(error: Error | string): string {
@@ -27,14 +28,18 @@ function stringifyError(error: Error | string): string {
  *   and `getOutput()` returns an empty string. When omitted, output is stored in
  *   an internal array and available via `getOutput()`.
  */
-export function createBufferedUI(pushFn?: (text: string) => void): BufferedUI {
+export function createBufferedUI(pushFn?: (text: string, output?: UIOutput) => void): BufferedUI {
   const lines: string[] = [];
+  const structuredOutput: UIOutput[] = [];
   const push = (text: string): void => {
-    if (pushFn) {
-      pushFn(text);
-    } else {
-      lines.push(text);
-    }
+    if (pushFn) pushFn(text);
+    else lines.push(text);
+  };
+  const emit = (output: UIOutput): void => {
+    structuredOutput.push(output);
+    const text = renderUIOutputText(output);
+    if (pushFn) pushFn(text, output);
+    else lines.push(text);
   };
 
   const unavailablePrompt = (message: string): InteractiveInputRequiredError =>
@@ -47,10 +52,10 @@ export function createBufferedUI(pushFn?: (text: string) => void): BufferedUI {
     colors: noopUI.colors,
     symbols: noopUI.symbols,
     write: (text) => push(text),
-    info: (message) => push(`[info] ${message}`),
-    success: (message) => push(`[ok] ${message}`),
-    warn: (message) => push(`[warn] ${message}`),
-    error: (error) => push(`[error] ${stringifyError(error)}`),
+    info: (message, options) => emit({ kind: 'message', level: 'info', message, options }),
+    success: (message, options) => emit({ kind: 'message', level: 'success', message, options }),
+    warn: (message, options) => emit({ kind: 'message', level: 'warn', message, options }),
+    error: (error, options) => emit({ kind: 'message', level: 'error', message: stringifyError(error), options }),
     debug: (message) => push(`[debug] ${message}`),
     spinner: (message) => {
       push(`[spinner] ${message}`);
@@ -61,18 +66,13 @@ export function createBufferedUI(pushFn?: (text: string) => void): BufferedUI {
         stop: () => {},
       };
     },
-    table: (data) => push(JSON.stringify(data)),
-    json: (data) => push(JSON.stringify(data)),
+    table: (data, columns) => emit({ kind: 'table', data, columns }),
+    json: (data, options) => emit({ kind: 'json', data, pretty: options?.pretty }),
     newline: () => push(''),
     divider: () => push('---'),
     box: (content, title) => push(title ? `[${title}]\n${content}` : content),
-    sideBox: (options) => {
-      push(`[${options.title}]`);
-      if (options.summary) {
-        push(JSON.stringify(options.summary));
-      }
-    },
-    chain: (items) => items.forEach((item) => push(`• ${item.title}`)),
+    sideBox: (options) => emit({ kind: 'sideBox', options }),
+    chain: (items) => emit({ kind: 'chain', items }),
     log: (entry) => push(`[${entry.level}] ${entry.message}`),
     confirm: async (message) => { throw unavailablePrompt(message); },
     prompt: async (message) => { throw unavailablePrompt(message); },
@@ -80,5 +80,5 @@ export function createBufferedUI(pushFn?: (text: string) => void): BufferedUI {
     multiSelect: async (message) => { throw unavailablePrompt(message); },
   };
 
-  return { ui, getOutput: () => lines.join('\n') };
+  return { ui, getOutput: () => lines.join('\n'), getStructuredOutput: () => structuredOutput };
 }

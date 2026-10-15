@@ -1603,7 +1603,7 @@ raise SystemExit(1)
 
     def test_mcp_probe_uses_shared_mcp_reader(self):
         tools = [{"name": name, "inputSchema": {"type": "object"}}
-                 for name in ("kb-labs-commit__commit", "kb-labs-workflow__workflow_run", "kb-labs__mcp_diagnostics")]
+                 for name in ("kb-labs-commit__commit_commit", "kb-labs-workflow__workflow_run", "kb-labs__mcp_diagnostics")]
         with patch("service_runner.request_mcp", return_value=(200, {"jsonrpc": "2.0", "result": {"tools": tools}}, {})) as request:
             failure = mcp_probe("prj_test", "token")
         self.assertIsNone(failure)
@@ -1612,7 +1612,7 @@ raise SystemExit(1)
 
     def test_mcp_probe_uses_sanitized_platform_member_manifest_id(self):
         tools = [{"name": name, "inputSchema": {"type": "object"}}
-                 for name in ("kb-labs-commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics")]
+                 for name in ("kb-labs-commit__commit_commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics")]
         with patch("service_runner.request_mcp", return_value=(200, {"result": {"tools": tools}}, {})):
             failure = mcp_probe("prj_test", "token")
         self.assertIn("kb-labs-workflow__workflow_run", failure)

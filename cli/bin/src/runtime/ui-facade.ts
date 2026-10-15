@@ -6,7 +6,7 @@
  */
 
 import { sideBorderBox, sideBorderChain, safeColors, safeSymbols, formatTable, logLine, confirm as promptConfirm, text as promptText, select as promptSelect, multiSelect as promptMultiSelect } from '@kb-labs/shared-cli-ui';
-import type { UIFacade, UILogEntry, MessageOptions, Spinner, SelectChoice, MultiSelectChoice, TableColumn, ChainItem } from '@kb-labs/plugin-contracts';
+import type { UIFacade, UILogEntry, MessageOptions, Spinner, SelectChoice, MultiSelectChoice, TableColumn, ChainItem, UIOutput } from '@kb-labs/plugin-contracts';
 import { AdapterUnavailableError, toErrorEnvelope } from '@kb-labs/core-platform';
 
 // Workspace root — used to shorten absolute paths in stack traces
@@ -43,6 +43,66 @@ interface PresenterDelegate {
   table?: (data: Record<string, unknown>[]) => void;
 }
 
+function renderTTYOutput(output: UIOutput, writeOutput: (text: string) => void, layout?: { wrap?: boolean; width?: number }): void {
+  switch (output.kind) {
+    case 'message': {
+      const sections = output.options?.sections?.map(section => ({ header: section.header, items: section.items })) ?? [];
+      if (output.options?.cause) sections.push({ header: 'Cause', items: [{ text: output.options.cause, dim: true }] });
+      if (output.options?.hint) {
+        const hint: Array<string | { text: string; dim: boolean }> = [output.options.hint];
+        if (output.options.command) hint.push({ text: `$ ${output.options.command}`, dim: true });
+        sections.push({ header: 'Hint', items: hint });
+      } else if (output.options?.command) {
+        sections.push({ header: 'Hint', items: [{ text: `$ ${output.options.command}`, dim: true }] });
+      }
+      const boxOutput = sideBorderBox({
+        title: output.options?.title ?? (output.level === 'error' ? 'Error' : output.level === 'warn' ? 'Warning' : output.level === 'success' ? 'Success' : 'Info'),
+        sections: [{ items: [output.message] }, ...sections],
+        status: output.level === 'warn' ? 'warning' : output.level === 'error' ? 'error' : output.level,
+        ...layout,
+        timing: output.options?.timing,
+        summary: output.options?.summary,
+      });
+      writeOutput(boxOutput);
+      return;
+    }
+    case 'sideBox':
+      writeOutput(sideBorderBox({
+        title: output.options.title,
+        sections: output.options.sections?.map(section => ({ header: section.header, items: section.items })) ?? [],
+        status: output.options.status,
+        timing: output.options.timing,
+        summary: output.options.summary,
+      }));
+      return;
+    case 'chain':
+      writeOutput(sideBorderChain(output.items.map(item => ({
+        title: item.title,
+        sections: item.sections?.map(section => ({ header: section.header, items: section.items })) ?? [],
+        summary: item.summary,
+        status: item.status,
+        timing: item.timing,
+      }))));
+      return;
+    case 'table': {
+      if (output.data.length === 0) return;
+      const columns: TableColumn[] = output.columns ?? Object.keys(output.data[0]!).map(key => ({ header: key, key }));
+      const rows = output.data.map(row => columns.map(column => String(row[column.key] ?? '')));
+      for (const line of formatTable(columns.map(column => ({ header: column.header, width: column.width, align: column.align })), rows, { separator: '' })) {
+        writeOutput(`  ${line}`);
+      }
+      return;
+    }
+    case 'json':
+      console.log(output.pretty ? JSON.stringify(output.data, null, 2) : JSON.stringify(output.data));
+      return;
+    default: {
+      const exhaustive: never = output;
+      throw new Error(`Unsupported UI output: ${String(exhaustive)}`);
+    }
+  }
+}
+
 export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
   const jsonMode = () => process.env.KB_OUTPUT_MODE === 'json';
   const writeOutput = (value: string) => {
@@ -66,39 +126,15 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
     },
 
     info: (msg: string, options?: MessageOptions) => {
-      const sections = options?.sections?.map(s => ({ header: s.header, items: s.items })) ?? [];
-      const boxOutput = sideBorderBox({
-        title: options?.title ?? 'Info',
-        sections: [{ items: [msg] }, ...sections],
-        status: 'info',
-        timing: options?.timing,
-        summary: options?.summary,
-      });
-      writeOutput(boxOutput);
+      renderTTYOutput({ kind: 'message', level: 'info', message: msg, options }, writeOutput);
     },
 
     success: (msg: string, options?: MessageOptions) => {
-      const sections = options?.sections?.map(s => ({ header: s.header, items: s.items })) ?? [];
-      const boxOutput = sideBorderBox({
-        title: options?.title ?? 'Success',
-        sections: [{ items: [msg] }, ...sections],
-        status: 'success',
-        timing: options?.timing,
-        summary: options?.summary,
-      });
-      writeOutput(boxOutput);
+      renderTTYOutput({ kind: 'message', level: 'success', message: msg, options }, writeOutput);
     },
 
     warn: (msg: string, options?: MessageOptions) => {
-      const sections = options?.sections?.map(s => ({ header: s.header, items: s.items })) ?? [];
-      const boxOutput = sideBorderBox({
-        title: options?.title ?? 'Warning',
-        sections: [{ items: [msg] }, ...sections],
-        status: 'warning',
-        timing: options?.timing,
-        summary: options?.summary,
-      });
-      writeOutput(boxOutput);
+      renderTTYOutput({ kind: 'message', level: 'warn', message: msg, options }, writeOutput);
     },
 
     error: (err: Error | string, options?: MessageOptions) => {
@@ -120,51 +156,16 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
         writeResult({ ok: false, error: toErrorEnvelope(err) });
         return;
       }
-      const sections: Array<{ header?: string; items: Array<string | { text: string; dim?: boolean }> }> = [
-        { items: [message] },
-      ];
-
-      if (options?.sections && options.sections.length > 0) {
-        sections.push(...options.sections.map(s => ({ header: s.header, items: s.items })));
-      }
-
-      // Cause — shown muted below the message
-      if (options?.cause) {
-        sections.push({
-          header: 'Cause',
-          items: [{ text: options.cause, dim: true }],
-        });
-      }
-
-      // Stack trace — for unexpected Error objects (not plain strings, no custom sections)
+      const sections = [...(options?.sections ?? [])];
       if (err instanceof Error && err.stack && !options?.sections) {
         const stackLines = formatErrorStack(err);
-        if (stackLines.length > 0) {
-          sections.push({ header: 'Stack', items: stackLines });
-        }
+        if (stackLines.length > 0) sections.push({ header: 'Stack', items: stackLines });
       }
-
-      // Hint — what to do next
-      if (options?.hint) {
-        const hintItems: Array<string | { text: string; dim: boolean }> = [options.hint];
-        if (options.command) {
-          hintItems.push({ text: `$ ${options.command}`, dim: true });
-        }
-        sections.push({ header: 'Hint', items: hintItems });
-      } else if (options?.command) {
-        sections.push({ header: 'Hint', items: [{ text: `$ ${options.command}`, dim: true }] });
-      }
-
-      const boxOutput = sideBorderBox({
-        title: options?.title ?? 'Error',
-        sections,
-        status: 'error',
-        wrap: process.stderr.isTTY === true,
-        width: process.stderr.columns,
-        timing: options?.timing,
-        summary: options?.summary,
-      });
-      console.error(boxOutput);
+      renderTTYOutput(
+        { kind: 'message', level: 'error', message, options: { ...options, sections } },
+        value => console.error(value),
+        { wrap: process.stderr.isTTY === true, width: process.stderr.columns },
+      );
     },
 
     debug: (msg: string) => {
@@ -185,23 +186,16 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
     },
 
     table: (data: Record<string, unknown>[], columns?: TableColumn[]) => {
+      const output: UIOutput = { kind: 'table', data, columns };
       if (presenter?.table) {
-        presenter.table(data);
+        presenter.table(output.data);
         return;
       }
-      if (data.length === 0) {return;}
-      const cols: TableColumn[] = columns ?? Object.keys(data[0]!).map(k => ({ header: k, key: k }));
-      const rows = data.map(row => cols.map(col => String(row[col.key] ?? '')));
-      const lines = formatTable(
-        cols.map(c => ({ header: c.header, width: c.width, align: c.align })),
-        rows,
-        { separator: '' },
-      );
-      for (const line of lines) { writeOutput(`  ${line}`); }
+      renderTTYOutput(output, writeOutput);
     },
 
     json: (data: unknown, options?: { pretty?: boolean }) => {
-      writeResult(data, options?.pretty);
+      renderTTYOutput({ kind: 'json', data, pretty: options?.pretty }, writeOutput);
     },
 
     newline: () => {
@@ -222,27 +216,11 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
     },
 
     sideBox: (options) => {
-      const boxOutput = sideBorderBox({
-        title: options.title,
-        sections: options.sections?.map(s => ({ header: s.header, items: s.items })) ?? [],
-        status: options.status,
-        timing: options.timing,
-        summary: options.summary,
-      });
-      writeOutput(boxOutput);
+      renderTTYOutput({ kind: 'sideBox', options }, writeOutput);
     },
 
     chain: (items: ChainItem[]) => {
-      const chainOutput = sideBorderChain(
-        items.map(item => ({
-          title: item.title,
-          sections: (item.sections ?? []).map(s => ({ header: s.header, items: s.items })),
-          summary: item.summary,
-          status: item.status,
-          timing: item.timing,
-        })),
-      );
-      writeOutput(chainOutput);
+      renderTTYOutput({ kind: 'chain', items }, writeOutput);
     },
 
     confirm: async (message: string, options?) => {

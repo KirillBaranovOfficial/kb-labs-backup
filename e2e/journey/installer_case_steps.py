@@ -1718,7 +1718,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     journey.step("refuse undeclared secret environment inputs before writing state", "platform.install",
                  reject_undeclared_secret_inputs, cases=["S-181.6"],
-                 runners=("agent-secured:commit", "agent:commit"),
+                 runners=("service-local:explore", "service-secured:explore"),
                  requires=("step:apply a secret through an environment reference",))
 
     run_fixture_group(journey, "gateway allocation", lambda: run_gateway_allocation_step(

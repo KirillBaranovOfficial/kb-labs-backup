@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { renderUIOutputText, uiOutputContractCases } from '@kb-labs/plugin-contracts';
 import { createBufferedUI } from '../mcp/ui.js';
 
 describe('createBufferedUI', () => {
@@ -18,6 +19,14 @@ describe('createBufferedUI', () => {
     expect(getOutput()).toBe('[error] kaboom');
   });
 
+  it('includes structured success sections in captured tool output', () => {
+    const { ui, getOutput } = createBufferedUI();
+    ui.success('Commits applied successfully', {
+      sections: [{ header: 'Applied Commits', items: ['abc1234 feat: add feature'] }],
+    });
+    expect(getOutput()).toContain('abc1234 feat: add feature');
+  });
+
   it('captures raw write and json', () => {
     const { ui, getOutput } = createBufferedUI();
     ui.write('raw');
@@ -32,6 +41,15 @@ describe('createBufferedUI', () => {
     sp.succeed('finished');
     expect(getOutput()).toBe('[spinner] working\n[spinner] still working\n[ok] finished');
   });
+
+  for (const [kind, contract] of Object.entries(uiOutputContractCases)) {
+    it(`preserves the shared ${kind} output model and readable text`, () => {
+      const { ui, getOutput, getStructuredOutput } = createBufferedUI();
+      contract.invoke(ui);
+      expect(getStructuredOutput()).toEqual([contract.output]);
+      expect(getOutput()).toBe(renderUIOutputText(contract.output));
+    });
+  }
 
   // case: S-215.1
   it('rejects unanswered prompts instead of returning defaults', async () => {

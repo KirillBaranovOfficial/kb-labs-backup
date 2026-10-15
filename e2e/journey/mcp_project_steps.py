@@ -318,7 +318,7 @@ def local_auth(project_id: str) -> str | None:
         return "local tokenless tools/list did not return the selected project catalog"
     names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
     expected = {
-        "kb-labs-commit__commit",
+        "kb-labs-commit__commit_commit",
         "kb-labs-workflow__workflow_run",
         "kb-labs__mcp_diagnostics",
     }
@@ -368,6 +368,12 @@ def apply_commit_plan(project_id: str, token: str, project_root: str) -> str | N
     commits = re.findall(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", text, flags=re.IGNORECASE)
     if not commits:
         return "commit apply output did not contain a commit SHA"
+    structured = result.get("structuredContent", {})
+    ui_output = structured.get("meta", {}).get("ui", []) if isinstance(structured, dict) else []
+    if not isinstance(ui_output, list) or not any(
+        commit.lower() in json.dumps(item).lower() for commit in commits for item in ui_output
+    ):
+        return "commit apply structured UI output did not preserve the created commit SHA"
     history = run_command(["git", "-C", project_root, "log", "--format=%h", "--all"],
                           env=os.environ, timeout=30)
     if history.returncode != 0:

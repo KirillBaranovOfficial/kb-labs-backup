@@ -71,7 +71,7 @@ class MarketplaceStepTests(unittest.TestCase):
             "message": "Plugin is not installed in this project.",
             "hint": "Run `kb marketplace install @kb-labs/commit-entry` in this project.",
             "correlationId": "request-fixture"}}
-        validate_commit_status_response(200, {"ok": True, "data": {"scope": "project"}})
+        validate_commit_status_response(200, {"ok": True, "data": {"scope": "root"}})
         validate_unmounted_commit_response(404, response)
 
     def test_commit_route_claims_fail_for_fake_unmounted_and_still_mounted_responses(self):
@@ -599,7 +599,7 @@ class MarketplaceStepTests(unittest.TestCase):
                         "@kb-labs/commit" in lock(project)["plugins"],
                     ))
                 if service_path in rest_route_table and "@kb-labs/commit" in lock(project)["plugins"]:
-                    return FakeResponse(200, {"ok": True, "data": {"scope": "project", "hasPlan": False}})
+                    return FakeResponse(200, {"ok": True, "data": {"scope": "root", "hasPlan": False}})
                 error_code = "KB_RUNTIME_RESOURCE_NOT_FOUND" if service_path not in rest_route_table else "KB_PLUGIN_NOT_INSTALLED"
                 message = "Project service was not found." if error_code == "KB_RUNTIME_RESOURCE_NOT_FOUND" else "Plugin is not installed in this project."
                 return FakeResponse(404, {"ok": False, "error": {

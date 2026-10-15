@@ -1212,14 +1212,14 @@ class DispatchRegistryTests(unittest.TestCase):
 
     def test_s181_6_selects_the_installed_secret_input_refusal_step(self):
         resolved = selection_from_coverage(self._coverage(), "S-181.6")
-        self.assertEqual(resolved["runners"], ["agent-secured:commit", "agent:commit"])
+        self.assertEqual(resolved["runners"], ["service-local:explore", "service-secured:explore"])
         self.assertIn("e2e/journey/installer_case_steps.py", resolved["stepSources"])
         root = Path(__file__).resolve().parents[2]
         declarations = _case_declarations("e2e/journey/installer_case_steps.py", root).values()
         refusal = next(declaration for declaration in declarations
                        if declaration["name"] == "refuse undeclared secret environment inputs before writing state")
         self.assertEqual(refusal["cases"], ["S-181.6"])
-        self.assertEqual(refusal["runners"], ["agent-secured:commit", "agent:commit"])
+        self.assertEqual(refusal["runners"], ["service-local:explore", "service-secured:explore"])
         self.assertIn("step:apply a secret through an environment reference", refusal["requires"])
 
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):

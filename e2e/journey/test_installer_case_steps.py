@@ -1738,7 +1738,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             def fail_every_command(args):
                 return subprocess.CompletedProcess(args, 2, '{"ok":false,"error":{"code":"FAKE_FAILURE"}}', "")
 
-            with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "agent:commit"}), \
+            with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}), \
                     patch("installer_case_steps.installer_scenario_resources",
                           return_value=[case_catalog_root()]):
                 journey = run_installer_case_steps(mode="local", launcher="kb-create", stable_index=stable,

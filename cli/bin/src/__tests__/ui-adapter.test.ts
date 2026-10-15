@@ -11,8 +11,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SystemContext } from '@kb-labs/cli-runtime';
-import { noopUI } from '@kb-labs/plugin-contracts';
+import { noopUI, uiMessageLevelDefaultTitleCases, uiOutputContractCases } from '@kb-labs/plugin-contracts';
 import { setJsonMode } from '@kb-labs/shared-cli-ui';
+import { createCLIUIFacade } from '../runtime/ui-facade.js';
 
 // Tests for createCLIUIFacade (from plugin-executor) and createJsonModeUI logic
 
@@ -643,5 +644,66 @@ describe('UI Adapter', () => {
       expect(ui.colors.blue).toBeDefined();
       expect(ui.colors.gray).toBeDefined();
     });
+  });
+});
+
+describe('shared UI output contract in CLI adapter', () => {
+  it.each(Object.entries(uiOutputContractCases))('renders %s output fields for a TTY', (_kind, contract) => {
+    const consoleOutput: string[] = [];
+    const streamOutput: string[] = [];
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation((...values) => consoleOutput.push(values.join(' ')));
+    const streamSpy = vi.spyOn(process.stdout, 'write').mockImplementation((value) => {
+      streamOutput.push(String(value));
+      return true;
+    });
+    try {
+      contract.invoke(createCLIUIFacade());
+      const rendered = `${consoleOutput.join('\n')}\n${streamOutput.join('\n')}`;
+      for (const expected of contract.visibleText) expect(rendered).toContain(expected);
+    } finally {
+      consoleSpy.mockRestore();
+      streamSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    {
+      label: 'with summary',
+      item: { title: 'Singleton', summary: { Count: 1 }, sections: [{ items: ['detail'] }] },
+      lines: ['◆  Singleton', '│', '│  Count:  1', '│', '│  detail', ''],
+    },
+    {
+      label: 'without summary',
+      item: { title: 'Singleton', sections: [{ items: ['detail'] }] },
+      lines: ['◆  Singleton', '│', '│  detail', ''],
+    },
+  ])('renders a singleton chain exactly $label', ({ item, lines }) => {
+    const output: string[] = [];
+    const streamSpy = vi.spyOn(process.stdout, 'write').mockImplementation(value => {
+      output.push(String(value));
+      return true;
+    });
+    try {
+      createCLIUIFacade().chain([item]);
+      expect(output.join('').split('\n')).toEqual(lines);
+    } finally {
+      streamSpy.mockRestore();
+    }
+  });
+
+  it.each(Object.entries(uiMessageLevelDefaultTitleCases))('uses the %s default title for TTY output', (_level, contract) => {
+    const output: string[] = [];
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation((...values) => output.push(values.join(' ')));
+    const streamSpy = vi.spyOn(process.stdout, 'write').mockImplementation(value => {
+      output.push(String(value));
+      return true;
+    });
+    try {
+      contract.invoke(createCLIUIFacade());
+      expect(output.join('\n')).toContain(contract.title);
+    } finally {
+      consoleSpy.mockRestore();
+      streamSpy.mockRestore();
+    }
   });
 });

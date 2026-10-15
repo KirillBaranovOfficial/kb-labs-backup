@@ -18,13 +18,21 @@ import { callTool, type PlatformResolver } from './tool-router.js';
 import type { Permits } from './authz.js';
 import type { McpObservabilityCollector } from '../observability/collector.js';
 import type { PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
+import type { UIOutput } from '@kb-labs/plugin-contracts';
 
 /** How long a per-identity tool listing stays cached. */
 export const TOOLS_CACHE_TTL_MS = 60_000;
 
 /** Build a successful MCP tool result with shared machine data and readable text. */
-export function mcpToolSuccess(data: string): CallToolResult {
-  return { content: [{ type: 'text', text: data }], structuredContent: { ...createUxSuccessResult(data) }, isError: false };
+export function mcpToolSuccess(data: string, ui: UIOutput[] = []): CallToolResult {
+  const machineResult = ui.length > 0
+    ? createUxSuccessResult(data, { ui })
+    : createUxSuccessResult(data);
+  return {
+    content: [{ type: 'text', text: data }],
+    structuredContent: { ...machineResult },
+    isError: false,
+  };
 }
 
 function errorResult(envelope: ErrorEnvelope): CallToolResult {
@@ -277,5 +285,5 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
   if (!result.success) {
     return errorResult(result.error);
   }
-  return mcpToolSuccess(result.output);
+  return mcpToolSuccess(result.output, result.structured);
 }
