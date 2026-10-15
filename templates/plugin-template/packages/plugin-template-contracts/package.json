@@ -18,8 +18,7 @@
     "./schema": {
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js"
-    },
-    "./dist/*": "./dist/*"
+    }
   },
   "files": [
     "dist",

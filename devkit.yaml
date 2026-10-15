@@ -741,6 +741,17 @@ custom_checks:
     on: [check]
     categories: [plugin-entry]
 
+  - name: plugin-package-exports
+    run: node scripts/checks/check-plugin-package-exports.mjs
+    on: [check]
+    scope: package
+    categories: [plugin-entry]
+
+  - name: studio-widget-output-path
+    run: node scripts/checks/check-studio-widget-output-path.mjs
+    on: [check]
+    scope: workspace
+
   # i18n translation guard for @kb-labs/web-site.
   # Blocks CI on: EN↔RU key mismatch, missing keys, hardcoded Cyrillic in .tsx.
   # UNUSED keys are emitted as warnings (autoFixable — devkit fix removes them).

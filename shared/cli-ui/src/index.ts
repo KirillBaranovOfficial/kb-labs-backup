@@ -11,7 +11,6 @@ export * from './command-suggestions';
 export * from './command-discovery';
 export * from './manifest-parser';
 export * from './multi-cli-suggestions';
-export * from './dynamic-command-discovery';
 export * from './artifacts-display';
 export * from './table';
 export * from './debug';
