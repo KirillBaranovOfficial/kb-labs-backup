@@ -174,7 +174,7 @@ func allProcesses(runID string) ([]Process, error) {
 				continue
 			}
 		}
-		out = append(out, Process{PID: pid, PPID: parsed.PPID, Command: command, StartedAt: started, ElapsedMS: elapsed, Identity: parsed.Identity, runMarker: marker, Unverified: unverified})
+		out = append(out, Process{PID: pid, PPID: parsed.PPID, Command: command, StartedAt: started, ElapsedMS: elapsed, Identity: parsed.Identity, runMarker: marker, Unverified: unverified, RSSBytes: uint64(parsed.ResidentPages) * uint64(os.Getpagesize()), CPUSeconds: float64(parsed.UserTicks+parsed.SystemTicks) / float64(clockTicks), MetricsAvailable: true})
 	}
 	return out, nil
 }

@@ -18,6 +18,9 @@ typedef struct {
 	long long start_usec;
 	unsigned int uid;
 	char command[64];
+	unsigned long long rss;
+	unsigned long long cpu_ns;
+	int metrics_available;
 } kb_proc_info;
 
 static kb_proc_info *kb_proc_snapshot(int *count, int *failure, int *failure_pid) {
@@ -59,6 +62,12 @@ static kb_proc_info *kb_proc_snapshot(int *count, int *failure, int *failure_pid
 		out[used].start_usec = info.pbi_start_tvusec;
 		out[used].uid = info.pbi_uid;
 		strncpy(out[used].command, info.pbi_comm, sizeof(out[used].command) - 1);
+		struct rusage_info_v2 usage;
+		if (proc_pid_rusage(pids[i], RUSAGE_INFO_V2, (rusage_info_t *)&usage) == 0) {
+			out[used].rss = usage.ri_resident_size;
+			out[used].cpu_ns = usage.ri_user_time + usage.ri_system_time;
+			out[used].metrics_available = 1;
+		}
 		used++;
 	}
 	free(pids);
@@ -113,7 +122,7 @@ func darwinProcessSnapshot(runID string) ([]Process, error) {
 			PID: pid, PPID: int(info.ppid), Command: C.GoString(&info.command[0]),
 			StartedAt: started, ElapsedMS: max(int64(0), time.Since(started).Milliseconds()),
 			Identity: timeIdentity(int64(info.start_sec), int64(info.start_usec)), runMarker: marker,
-			Unverified: unverified, uid: uint32(info.uid),
+			Unverified: unverified, uid: uint32(info.uid), RSSBytes: uint64(info.rss), CPUSeconds: float64(info.cpu_ns) / 1e9, MetricsAvailable: info.metrics_available != 0,
 		})
 	}
 	if failure != 0 {

@@ -8,12 +8,12 @@ import (
 )
 
 func TestParseProcStatUsesFinalCommDelimiter(t *testing.T) {
-	data := "42 (name ) (with ) delimiters) S 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 987654\n"
+	data := "42 (name ) (with ) delimiters) S 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 987654 4096 42\n"
 	got, err := parseProcStat(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.PID != 42 || got.Comm != "name ) (with ) delimiters" || got.State != 'S' || got.PPID != 7 || got.StartTicks != 987654 || got.Identity == "" {
+	if got.PID != 42 || got.Comm != "name ) (with ) delimiters" || got.State != 'S' || got.PPID != 7 || got.StartTicks != 987654 || got.UserTicks != 17 || got.SystemTicks != 18 || got.ResidentPages != 42 || got.Identity == "" {
 		t.Fatalf("parsed stat = %+v", got)
 	}
 }

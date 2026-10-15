@@ -19,8 +19,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/internal/testutil"
 	"github.com/kb-labs/clikit/proc"
 )
+
+type stableResourceSource struct{}
+
+func (stableResourceSource) Snapshot() proc.ResourceSnapshot {
+	return proc.ResourceSnapshot{
+		PhysicalMemory: 1 << 50, AvailableMemory: 1 << 50,
+		MemoryAvailableKnown: true, LogicalCPUs: 64,
+	}
+}
+
+func startTest(ctx context.Context, cfg proc.Config) (*proc.Run, error) {
+	return proc.StartWithResourceSource(ctx, cfg, stableResourceSource{})
+}
 
 // case: S-237.1
 func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
@@ -118,6 +132,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	var descendantUnverified bool
 	var owned []proc.Process
 	started := make(map[int]string)
+	stdoutReadDone := make(chan struct{})
 	t.Cleanup(func() {
 		if listing := proc.List(state); listing.Error == nil {
 			for _, run := range listing.Runs {
@@ -138,7 +153,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 		}
 		forceKillRecordedTree(t, state)
 		if !waited {
-			if err := cmd.Wait(); err != nil {
+			if err := testutil.WaitAfterPipeRead(cmd, stdoutReadDone); err != nil {
 				t.Logf("wait for killed test supervisor: %v", err)
 			}
 		}
@@ -160,6 +175,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	scanner := bufio.NewScanner(stdout)
 	line := make(chan string, 1)
 	go func() {
+		defer close(stdoutReadDone)
 		if scanner.Scan() {
 			line <- scanner.Text()
 			return
@@ -252,7 +268,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 		events, _ := os.ReadFile(filepath.Join(state, "events.jsonl"))
 		t.Fatalf("supervised tree did not end after supervisor SIGKILL; events: %s; stderr: %s", events, stderr.String())
 	}
-	if err := cmd.Wait(); err != nil {
+	if err := testutil.WaitAfterPipeRead(cmd, stdoutReadDone); err != nil {
 		t.Logf("wait for SIGKILLed test supervisor: %v", err)
 	}
 	waited = true
@@ -262,7 +278,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 func TestSilentLeafEmitsOneStallEvent(t *testing.T) {
 	state := t.TempDir()
 	helper := buildHelper(t)
-	run, err := proc.Start(context.Background(), proc.Config{
+	run, err := startTest(context.Background(), proc.Config{
 		HelperPath: helper, StateDir: state, Tag: "stall", Stall: 250 * time.Millisecond,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "3"},
@@ -310,7 +326,7 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 	helper := buildHelper(t)
 	pidFile := filepath.Join(state, "grandchild.pid")
 	releaseFile := filepath.Join(state, "release-command")
-	run, err := proc.Start(context.Background(), proc.Config{
+	run, err := startTest(context.Background(), proc.Config{
 		HelperPath: helper, StateDir: state, Tag: "darwin-sampled-descendant", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "double-fork-system-held", "30", pidFile, releaseFile},
@@ -369,7 +385,7 @@ func TestListShowsLiveTreeAndDetectsDeadKeeper(t *testing.T) {
 	state := t.TempDir()
 	helper := buildHelper(t)
 	runner := buildRunner(t)
-	run, err := proc.Start(context.Background(), proc.Config{
+	run, err := startTest(context.Background(), proc.Config{
 		HelperPath: helper, StateDir: state, Tag: "list", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "30"},
@@ -406,7 +422,7 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	state := t.TempDir()
 	helper := buildHelper(t)
 	runner := buildRunner(t)
-	run, err := proc.Start(context.Background(), proc.Config{
+	run, err := startTest(context.Background(), proc.Config{
 		HelperPath: helper, StateDir: state, Tag: "events", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/usr/bin/true"},
@@ -467,17 +483,18 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 		t.Fatal(err)
 	}
 	followWaited := false
+	followReadDone := make(chan struct{})
 	t.Cleanup(func() {
 		if !followWaited {
 			if err := follow.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 				t.Logf("stop events --follow test process: %v", err)
 			}
-			if err := follow.Wait(); err != nil {
+			if err := testutil.WaitAfterPipeRead(follow, followReadDone); err != nil {
 				t.Logf("wait for events --follow test process: %v", err)
 			}
 		}
 	})
-	followRun, err := proc.Start(context.Background(), proc.Config{
+	followRun, err := startTest(context.Background(), proc.Config{
 		HelperPath: helper, StateDir: followState, Tag: "follow", Stall: time.Hour,
 		StdoutPath: filepath.Join(followState, "stdout.log"), StderrPath: filepath.Join(followState, "stderr.log"),
 		Command: []string{"/usr/bin/true"},
@@ -490,6 +507,7 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	}
 	lines := make(chan []string, 1)
 	go func() {
+		defer close(followReadDone)
 		scanner := bufio.NewScanner(followStdout)
 		scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 		var records []string
@@ -515,10 +533,11 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	if err := follow.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	if err := follow.Wait(); err != nil {
-		t.Fatalf("stop events --follow: %v; stderr: %s", err, followStderr.String())
-	}
+	waitErr := testutil.WaitAfterPipeRead(follow, followReadDone)
 	followWaited = true
+	if waitErr != nil {
+		t.Fatalf("stop events --follow: %v; stderr: %s", waitErr, followStderr.String())
+	}
 }
 
 func buildHelper(t *testing.T) string {
@@ -778,7 +797,7 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 	helper := buildHelper(t)
 	pidFile := filepath.Join(state, "grandchild.pid")
 	releaseFile := filepath.Join(state, "release-command")
-	run, err := proc.Start(context.Background(), proc.Config{
+	run, err := startTest(context.Background(), proc.Config{
 		HelperPath: helper, StateDir: state, Tag: "double-fork", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{helper, "double-fork-held", "30", pidFile, releaseFile},
@@ -827,7 +846,7 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 	const count = 8
 	runs := make([]*proc.Run, 0, count)
 	for i := 0; i < count; i++ {
-		run, err := proc.Start(context.Background(), proc.Config{
+		run, err := startTest(context.Background(), proc.Config{
 			HelperPath: helper, StateDir: state, Tag: fmt.Sprintf("parallel-%d", i), Stall: time.Hour,
 			StdoutPath: filepath.Join(state, fmt.Sprintf("out-%d", i)), StderrPath: filepath.Join(state, fmt.Sprintf("err-%d", i)),
 			Command: []string{"/bin/sleep", "0.3"},
@@ -849,6 +868,7 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 	}
 	defer f.Close()
 	countLines := 0
+	types := make(map[proc.EventType]int)
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
@@ -857,12 +877,13 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 			t.Fatalf("event line %d is invalid JSON: %v", countLines+1, err)
 		}
 		countLines++
+		types[event.Type]++
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
 	if countLines != count*4 {
-		t.Fatalf("event lines = %d, want %d (queued, start, exit, teardown per keeper)", countLines, count*4)
+		t.Fatalf("event lines = %d, want %d (queued, start, exit, teardown per keeper); event types: %v", countLines, count*4, types)
 	}
 	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
 	if err != nil {
@@ -896,7 +917,7 @@ func TestStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 	}
 	startedResult := make(chan startResult, 1)
 	go func() {
-		_, err := proc.Start(context.Background(), proc.Config{
+		_, err := startTest(context.Background(), proc.Config{
 			HelperPath: badHelper, StateDir: state, Tag: "wrong-helper", Stall: time.Hour,
 			StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 			Command: []string{"/usr/bin/true"},
@@ -935,7 +956,7 @@ func TestStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
 	state := t.TempDir()
 	helper := buildHelper(t)
-	run, err := proc.Start(context.Background(), proc.Config{
+	run, err := startTest(context.Background(), proc.Config{
 		HelperPath: helper, StateDir: state, Tag: "replace-helper", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "stdout.log"), StderrPath: filepath.Join(state, "stderr.log"),
 		Command: []string{"/bin/sleep", "1"},
@@ -957,7 +978,7 @@ func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
 	if err := run.Wait(); err != nil && !teardownHasObservationFailure(t, state, run.RunID) {
 		t.Fatalf("running keeper failed after on-disk helper replacement: %v", err)
 	}
-	_, err = proc.Start(context.Background(), proc.Config{
+	_, err = startTest(context.Background(), proc.Config{
 		HelperPath: helper, StateDir: state, Tag: "replacement-next-run", Stall: time.Hour,
 		StdoutPath: filepath.Join(state, "next-stdout.log"), StderrPath: filepath.Join(state, "next-stderr.log"),
 		Command: []string{"/usr/bin/true"},
@@ -1263,8 +1284,11 @@ func TestMinFreeWaitIsVisibleAndEmitsOneEvent(t *testing.T) {
 	state := t.TempDir()
 	runner := buildRunner(t)
 	started := filepath.Join(state, "command.started")
+	if err := proc.SetQuota(state, "", "", "18446744073709551615"); err != nil {
+		t.Fatal(err)
+	}
 	command := exec.Command(runner,
-		"run", "--tag", "disk-wait", "--state", state, "--stall", "1h", "--min-free", "18446744073709551615",
+		"run", "--tag", "disk-wait", "--state", state, "--stall", "1h",
 		"--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"),
 		"--", "/bin/sh", "-c", `touch "$1"`, "sh", started,
 	)
@@ -1353,10 +1377,13 @@ func TestEventsFollowStreamsLaterFilteredRecords(t *testing.T) {
 	if err := follower.Start(); err != nil {
 		t.Fatal(err)
 	}
+	readerFinished := make(chan struct{})
+	followerWaited := false
 	t.Cleanup(func() {
-		if follower.Process != nil {
+		if follower.Process != nil && !followerWaited {
 			_ = follower.Process.Signal(syscall.SIGTERM)
-			_ = follower.Wait()
+			_ = testutil.WaitAfterPipeRead(follower, readerFinished)
+			followerWaited = true
 		}
 	})
 	type followedEvent struct {
@@ -1366,6 +1393,7 @@ func TestEventsFollowStreamsLaterFilteredRecords(t *testing.T) {
 	readEvents := make(chan followedEvent, 8)
 	readDone := make(chan error, 1)
 	go func() {
+		defer close(readerFinished)
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			var event proc.Event
@@ -1408,8 +1436,10 @@ func TestEventsFollowStreamsLaterFilteredRecords(t *testing.T) {
 	if err := follower.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	if err := follower.Wait(); err != nil {
-		t.Fatalf("event follower returned after SIGTERM: %v", err)
+	waitErr := testutil.WaitAfterPipeRead(follower, readerFinished)
+	followerWaited = true
+	if waitErr != nil {
+		t.Fatalf("event follower returned after SIGTERM: %v", waitErr)
 	}
 	if err := <-readDone; err != nil {
 		t.Fatal(err)
@@ -1447,14 +1477,19 @@ func TestPSShowsRunningQueuedBlockedAndStalledTogether(t *testing.T) {
 	if _, err := waitFile(t, activePID, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	startWorker("queued", filepath.Join(state, "queued.pid"))
 	holderPID := filepath.Join(state, "gate-holder.pid")
 	start("gate", "hold", "maintenance", "--tag", "gate-holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "gate-holder.out"), "--stderr", filepath.Join(state, "gate-holder.err"), "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", holderPID)
 	if _, err := waitFile(t, holderPID, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	start("run", "--tag", "blocked", "--state", state, "--stall", "1h", "--wait-gate", "maintenance", "--stdout", filepath.Join(state, "blocked.out"), "--stderr", filepath.Join(state, "blocked.err"), "--", "/bin/sleep", "30")
 	start("run", "--tag", "stalled", "--state", state, "--stall", "100ms", "--stdout", filepath.Join(state, "stalled.out"), "--stderr", filepath.Join(state, "stalled.err"), "--", "/bin/sleep", "30")
+	if !waitUntil(5*time.Second, func() bool {
+		return psHasTagStatus(outputPS(t, runner, state), "stalled", "STALLED")
+	}) {
+		t.Fatalf("silent command did not become stalled before queued work: %s", outputPS(t, runner, state))
+	}
+	start("run", "--tag", "blocked", "--state", state, "--stall", "1h", "--wait-gate", "maintenance", "--stdout", filepath.Join(state, "blocked.out"), "--stderr", filepath.Join(state, "blocked.err"), "--", "/bin/sleep", "30")
+	startWorker("queued", filepath.Join(state, "queued.pid"))
 	if !waitUntil(5*time.Second, func() bool {
 		output, err := exec.Command(runner, "ps", "--state", state).CombinedOutput()
 		if err != nil {

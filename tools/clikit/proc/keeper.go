@@ -102,6 +102,9 @@ func runKeeper(cfg keeperConfig) int {
 	cmd.Dir = cfg.Dir
 	cmd.Env = append(filteredEnv(os.Environ()), cfg.Env...)
 	configureCommand(cmd, cfg.RunID)
+	if cfg.GrantedCPUs > 0 || cfg.MemoryBytes > 0 {
+		cmd.Env = append(filteredEnv(cmd.Env), fmt.Sprintf("KB_RUNNER_CPUS=%d", cfg.GrantedCPUs), fmt.Sprintf("KB_RUNNER_MEM_BYTES=%d", cfg.MemoryBytes))
+	}
 	if cfg.StdinPath != "" {
 		stdin, err := os.Open(cfg.StdinPath)
 		if err != nil {
@@ -133,9 +136,11 @@ func runKeeper(cfg keeperConfig) int {
 	lastOutput.Store(time.Now().UnixNano())
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
-	if err := cmd.Start(); err != nil {
-		writeReadyError(ready, err)
-		return keeperError(rec, "start command", err)
+	limitsAdvisory, cleanupLimits, startErr := startWithRunLimits(cfg.Config, cfg.RunID, cmd)
+	defer cleanupLimits()
+	if startErr != nil {
+		writeReadyError(ready, startErr)
+		return keeperError(rec, "start command", startErr)
 	}
 	if err := errors.Join(stdoutWriter.Close(), stderrWriter.Close()); err != nil {
 		if killErr := cmd.Process.Kill(); killErr != nil {
@@ -148,12 +153,15 @@ func runKeeper(cfg keeperConfig) int {
 		return keeperError(rec, "close command output pipes", err)
 	}
 	rec.Status = StatusRunning
+	rec.LimitsAdvisory = limitsAdvisory
 	rec.StartedAtTime = time.Now().UTC()
 	rec.LastOutputAt = rec.StartedAtTime
 	rec.StallMS = cfg.Stall.Milliseconds()
 	if err := updateRecord(cfg.StateDir, rec.RunID, func(stored *record) error {
 		rec.SlotGroup, rec.Slots, rec.QueueOrder = stored.SlotGroup, stored.Slots, stored.QueueOrder
-		rec.EnqueuedAt, rec.WaitGate, rec.HoldGate, rec.MinFree = stored.EnqueuedAt, stored.WaitGate, stored.HoldGate, stored.MinFree
+		rec.EnqueuedAt, rec.WaitGate, rec.HoldGate = stored.EnqueuedAt, stored.WaitGate, stored.HoldGate
+		rec.CostKey, rec.MemoryBytes, rec.CPUsMin, rec.CPUsMax, rec.DiskBytes = stored.CostKey, stored.MemoryBytes, stored.CPUsMin, stored.CPUsMax, stored.DiskBytes
+		rec.GrantedCPUs, rec.ResourceNotice = stored.GrantedCPUs, stored.ResourceNotice
 		*stored = rec
 		return nil
 	}); err != nil {
@@ -205,6 +213,10 @@ func runKeeper(cfg keeperConfig) int {
 	go func() { waitDone <- cmd.Wait() }()
 	stall := time.NewTicker(100 * time.Millisecond)
 	defer stall.Stop()
+	metricStarted := time.Now()
+	var previousCPU, cpuUsed float64
+	var metricSamples int
+	var metricsPartial bool
 	var waitErr error
 	var commandExitedAt time.Time
 	var commandFinished bool
@@ -254,6 +266,31 @@ func runKeeper(cfg keeperConfig) int {
 				fmt.Fprintln(os.Stderr, "proc: update run progress:", err)
 				cleanupError = errors.Join(cleanupError, err)
 			}
+			rss, cpu, partial, metricErr := sampleRunMetrics(rec)
+			if metricErr != nil {
+				partial = true
+				fmt.Fprintln(os.Stderr, "proc: sample resource use:", metricErr)
+			}
+			metricsPartial = metricsPartial || partial
+			if rss > rec.PeakRSSBytes {
+				rec.PeakRSSBytes = rss
+			}
+			if metricSamples == 0 {
+				cpuUsed = cpu
+			} else if cpu >= previousCPU {
+				cpuUsed += cpu - previousCPU
+			}
+			previousCPU = cpu
+			metricSamples++
+			if seconds := time.Since(metricStarted).Seconds(); seconds > 0 {
+				rec.AverageCPU = cpuUsed / seconds
+			}
+			rec.MeasurementPartial = metricsPartial
+			emitted, observationErr := recordResourceObservation(cfg.StateDir, rec.RunID, rss, rec.AverageCPU, rec.MeasurementPartial)
+			if observationErr != nil {
+				eventError = errors.Join(eventError, observationErr)
+			}
+			rec.OverBudget = rec.OverBudget || emitted
 			if !stallReported && time.Since(time.Unix(0, lastOutput.Load())) >= cfg.Stall {
 				e := eventFor(rec, EventStall)
 				leaves, leafErr := ProcessLeavesWithHistory(rec.PID, rec.RunID, rec.Observed)
@@ -269,6 +306,9 @@ func runKeeper(cfg keeperConfig) int {
 				stallReported = true
 			}
 		}
+	}
+	if metricSamples == 0 {
+		rec.MeasurementPartial = true
 	}
 	result := killTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
 	cleanup = mergeCleanup(cleanup, result)
@@ -341,7 +381,7 @@ func runKeeper(cfg keeperConfig) int {
 		fmt.Fprintln(os.Stderr, "proc: release held gate:", err)
 		cleanupError = errors.Join(cleanupError, err)
 	}
-	if err := completeRecord(cfg.StateDir, cfg.RunID, code, signal, time.Duration(exitEvent.DurationMS)*time.Millisecond, rec.Observed); err != nil {
+	if err := completeRecord(cfg.StateDir, cfg.RunID, code, signal, time.Duration(exitEvent.DurationMS)*time.Millisecond, rec); err != nil {
 		fmt.Fprintln(os.Stderr, "proc: record completed run:", err)
 		cleanupError = errors.Join(cleanupError, err)
 	}
@@ -361,6 +401,33 @@ func runKeeper(cfg keeperConfig) int {
 		return 1
 	}
 	return 0
+}
+
+func sampleRunMetrics(rec record) (uint64, float64, bool, error) {
+	return sampleRunMetricsWithSource(rec, osProcessSource{})
+}
+
+func sampleRunMetricsWithSource(rec record, source processSource) (uint64, float64, bool, error) {
+	tree, err := processTreeWithHistorySource(source, rec.PID, rec.RunID, rec.Observed)
+	var rss uint64
+	var cpu float64
+	partial := false
+	if len(tree) == 0 {
+		partial = true
+	}
+	for _, process := range tree {
+		if process.Unverified {
+			partial = true
+			continue
+		}
+		if !process.MetricsAvailable {
+			partial = true
+			continue
+		}
+		rss += process.RSSBytes
+		cpu += process.CPUSeconds
+	}
+	return rss, cpu, partial || err != nil, err
 }
 
 func copyOutput(src io.Reader, dst activityWriter) error {
@@ -460,6 +527,8 @@ func saveProgress(rec record, lastOutput int64) error {
 		stored.Status = status
 		stored.LastOutputAt = last
 		stored.Observed = rec.Observed
+		stored.PeakRSSBytes, stored.AverageCPU = rec.PeakRSSBytes, rec.AverageCPU
+		stored.MeasurementPartial, stored.OverBudget = rec.MeasurementPartial, rec.OverBudget
 		return nil
 	})
 }

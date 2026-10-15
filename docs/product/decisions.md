@@ -702,3 +702,14 @@ Receipt schema v3 requires this identity for projects selected by the prior
 install; older receipt schemas are unavailable and must be reinstalled with the
 current launcher rather than guessed or migrated. Cases: S-187.10–S-187.12,
 S-224.3.
+
+## 2026-10-15
+
+### D42 — A run with no active resource-costed reservation may start despite low host availability
+
+When no resource-costed run is active, admission does not wait on the memory
+or CPU quota or live available-memory check because no work under this
+admission system can release memory. The run still waits on elevated host
+pressure, and slots, gates, FIFO, and disk admission remain enforced. When
+another resource-costed run is active, memory/CPU quota and live available
+memory both gate admission. Cases: S-237.17, S-237.26.
