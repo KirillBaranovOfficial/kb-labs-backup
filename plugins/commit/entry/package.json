@@ -15,8 +15,7 @@
       "import": "./dist/manifest.js"
     },
     "./cli": "./dist/cli/index.js",
-    "./lifecycle": "./dist/lifecycle/index.js",
-    "./dist/*": "./dist/*"
+    "./lifecycle": "./dist/lifecycle/index.js"
   },
   "files": [
     "dist",

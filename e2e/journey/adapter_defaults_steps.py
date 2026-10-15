@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from journey_resources import active_platform_root
+from sdk_runtime_import_check import check_installed_runtime_imports
 from service_steps import Journey
 from marketplace_steps import _platform_snapshot
 from platform_update_steps import _changed_paths
@@ -379,32 +380,14 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("fresh install retains optional OpenAI warning metadata", "adapter",
                  assert_optional_openai_requirement_in_install_plan, cases=["S-054.15"])
 
-    def assert_sdk_helper_packages_are_not_installed() -> None:
-        sdk_runtime_peers = {
-            "@kb-labs/core-platform",
-            "@kb-labs/core-runtime",
-            "@kb-labs/core-sys",
-            "@kb-labs/perm-presets",
-            "@kb-labs/shared-cli-ui",
-            "@kb-labs/shared-command-kit",
-            "@kb-labs/shared-tool-kit",
-        }
-        package_root = platform_content_root / "node_modules" / "@kb-labs"
-        missing = sorted(name for name in sdk_runtime_peers if not (package_root / name.removeprefix("@kb-labs/") / "package.json").is_file())
-        if missing:
-            raise RuntimeError(f"installed platform is missing SDK runtime peers: {', '.join(missing)}")
-        helpers = {
-            "shared-testing",
-            "shared-testing-e2e",
-            "shared-testing-platform",
-            "studio-plugin-tools",
-        }
-        installed_helpers = sorted(name for name in helpers if (package_root / name / "package.json").exists())
-        if installed_helpers:
-            raise RuntimeError(f"installed platform contains SDK test/build helpers: {', '.join(installed_helpers)}")
+    def assert_installed_sdk_and_plugin_runtime_imports() -> None:
+        result = check_installed_runtime_imports(platform_content_root)
+        if result.returncode != 0:
+            detail = " ".join(f"{result.stdout} {result.stderr}".split())
+            raise RuntimeError(detail or "installed runtime entrypoint import check exited without output")
 
-    journey.step("installed platform excludes SDK test and build helpers", layout_value('installerStateDirectory'),
-                 assert_sdk_helper_packages_are_not_installed, cases=["S-054.16"])
+    journey.step("import installed SDK and bundled plugin runtime entrypoints", layout_value('installerStateDirectory'),
+                 assert_installed_sdk_and_plugin_runtime_imports, cases=["S-054.16"])
 
     def assert_installed_layout_cli_loads_defaults() -> None:
         rows = rows_for(project_a)

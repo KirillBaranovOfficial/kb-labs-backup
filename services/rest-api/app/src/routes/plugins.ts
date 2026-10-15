@@ -17,7 +17,7 @@ import {
   mountWebSocketChannels,
 } from "@kb-labs/plugin-execution";
 import { createExecutionBackend } from "@kb-labs/plugin-execution-factory";
-import { combineManifestsToRegistry } from "@kb-labs/rest-api-core";
+import { combineManifestsToRegistry, manifestToRegistryEntry } from "@kb-labs/rest-api-core";
 import { platform } from "@kb-labs/core-runtime";
 import {
   logDiagnosticEvent,
@@ -955,7 +955,14 @@ export async function registerPluginSnapshotRoutes(
       const { createReadStream, existsSync, statSync } =
         await import("node:fs");
 
-      const bundleDir = join(entry.pluginRoot, "dist", "widgets");
+      const studioEntry = manifestToRegistryEntry(entry.manifest, entry.pluginRoot);
+      if (!studioEntry) {
+        return reply
+          .code(404)
+          .send({ error: `No widget bundle for ${pluginId}` });
+      }
+
+      const bundleDir = studioEntry.widgetBundleDir;
       const fullPath = join(bundleDir, filePath);
 
       if (!fullPath.startsWith(bundleDir)) {

@@ -28,8 +28,7 @@
     "./studio/widgets/hello": {
       "types": "./dist/studio/widgets/hello-widget.d.ts",
       "import": "./dist/studio/widgets/hello-widget.js"
-    },
-    "./dist/*": "./dist/*"
+    }
   },
   "files": [
     "dist",

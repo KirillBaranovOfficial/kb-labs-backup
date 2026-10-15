@@ -86,8 +86,10 @@ class JourneyImportOrderTests(unittest.TestCase):
                 )
 
     def test_dockerfile_copies_match_the_declared_runner_resources(self):
-        from journey_resources import RUNNER_IMAGE_RESOURCES, resource_root, workspace_resource
+        from journey_resources import RUNNER_IMAGE_RESOURCES, workspace_resource
 
+        # The declared runtime image inputs are the inventory; other workspace
+        # tools can be build-time-only and do not belong in this container.
         declared = {(resource.source, resource.destination) for resource in RUNNER_IMAGE_RESOURCES}
         copied = set(_docker_copy_resources())
         self.assertEqual(
@@ -95,20 +97,6 @@ class JourneyImportOrderTests(unittest.TestCase):
             declared,
             f"Dockerfile.runner COPY resources differ from journey_resources.py; "
             f"undeclared={sorted(copied - declared)}, not_copied={sorted(declared - copied)}",
-        )
-        declared_main_sources = {
-            resource.source for resource in RUNNER_IMAGE_RESOURCES
-            if resource.source.startswith("tools/") and resource.source.endswith("/main.go")
-        }
-        workspace_main_sources = {
-            path.relative_to(resource_root()).as_posix()
-            for path in workspace_resource("tools").rglob("main.go")
-        }
-        self.assertEqual(
-            workspace_main_sources,
-            declared_main_sources,
-            f"runner resources omit tool entrypoints: "
-            f"{sorted(workspace_main_sources - declared_main_sources)}",
         )
 
     def test_copied_runner_tree_resolves_resources_and_imports_its_modules(self):

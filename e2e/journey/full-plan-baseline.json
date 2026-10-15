@@ -2,7 +2,7 @@
   "agent:explore": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -340,7 +340,7 @@
   "agent:commit": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -682,7 +682,7 @@
   "agent-secured:commit": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -1023,7 +1023,7 @@
   "agent-input:commit": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -1361,7 +1361,7 @@
   "agent-relative:commit": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -1699,7 +1699,7 @@
   "human:default": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -2037,7 +2037,7 @@
   "human:nondefault": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -2375,7 +2375,7 @@
   "negative:wrong-node": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -2713,7 +2713,7 @@
   "negative:occupied-port": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -3051,7 +3051,7 @@
   "service-local:explore": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",
@@ -3398,7 +3398,7 @@
   "service-secured:explore": [
     "list fresh-install built-in adapter defaults",
     "fresh install retains optional OpenAI warning metadata",
-    "installed platform excludes SDK test and build helpers",
+    "import installed SDK and bundled plugin runtime entrypoints",
     "installed-layout CLI loads sealed adapter defaults",
     "doctor verifies filesystem default is loaded",
     "doctor reports missing manifests read-only and repairs only with fix",

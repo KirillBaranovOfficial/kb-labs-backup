@@ -9,7 +9,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { builtinModules } from 'node:module';
 import { isPlatformPackage } from '../../../core/plugin-runtime/src/platform-resolve/platform-package.js';
 
 const args = process.argv.slice(2);
@@ -293,98 +292,21 @@ for (const item of stage) {
 const sdkPackageJSON = packageJSONFor(sdk);
 const sdkPlatformRange = sdkPackageJSON.peerDependencies?.[platformPackage];
 if (!sdkPlatformRange) throw new Error(`${sdkPackage} does not declare a peer dependency on ${platformPackage}`);
+const sdkRuntimePeerPackages = Object.entries(sdkPackageJSON.peerDependencies ?? {})
+  .filter(([name]) => name !== platformPackage && sdkPackageJSON.peerDependenciesMeta?.[name]?.optional !== true)
+  .map(([name]) => name);
 
-// Platform members and the SDK share one installed package graph. A runtime
-// peer imported by any of them must therefore be included as a platform member
-// so kb-create pins one copy for every plugin. Validate all published JS imports
-// against exact package metadata while deriving this closure.
+// The SDK package manifest is the owner of its required runtime peers. Include
+// each required peer as a platform member so the installed platform root can
+// provide the shared copy to every plugin. Optional peers remain consumer-owned.
 const platformMemberRoots = new Set([
   ...services.map(service => service.packageName),
   hostPackage,
   ...platformMemberPackages,
   ...configuredPlatformAdapterPackages,
+  ...sdkRuntimePeerPackages,
   sdk.name,
 ]);
-const packageRootFor = specifier => specifier.startsWith('@')
-  ? specifier.split('/').slice(0, 2).join('/')
-  : specifier.split('/')[0];
-const builtinPackageNames = new Set(builtinModules.flatMap(name => [name, name.replace(/^node:/, '')]));
-const runtimeImportsFor = item => {
-  const dist = join(staging, 'node_modules', item.name, 'dist');
-  if (!existsSync(dist)) return [];
-  const allFiles = [];
-  const visit = directory => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) visit(path);
-      else if (/\.(?:c|m)?js$/.test(entry.name)) allFiles.push(path);
-    }
-  };
-  visit(dist);
-  const packageJSON = packageJSONFor(item);
-  const nonRuntimeEntrypoints = packageJSON.kbLabs?.release?.nonRuntimeEntrypoints;
-  let files = allFiles;
-  if (nonRuntimeEntrypoints !== undefined) {
-    if (!Array.isArray(nonRuntimeEntrypoints) || nonRuntimeEntrypoints.some(name => typeof name !== 'string')) {
-      throw new Error(`${item.name} kbLabs.release.nonRuntimeEntrypoints must be an array of export names`);
-    }
-    const exports = packageJSON.exports;
-    if (!exports || typeof exports !== 'object' || Array.isArray(exports)) {
-      throw new Error(`${item.name} declares non-runtime entrypoints without an exports map`);
-    }
-    const unknownEntrypoints = nonRuntimeEntrypoints.filter(name => !Object.hasOwn(exports, name));
-    if (unknownEntrypoints.length) {
-      throw new Error(`${item.name} declares non-runtime entrypoints that are absent from exports: ${unknownEntrypoints.join(', ')}`);
-    }
-    const runtimeEntrypoints = Object.keys(exports).filter(name => !nonRuntimeEntrypoints.includes(name));
-    const targetFor = value => {
-      if (typeof value === 'string') return value;
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-      return targetFor(value.import ?? value.node ?? value.default);
-    };
-    files = runtimeEntrypoints.map(name => {
-      const target = targetFor(exports[name]);
-      if (!target || !target.startsWith('./dist/')) {
-        throw new Error(`${item.name} runtime export ${name} must resolve to a JavaScript file under dist`);
-      }
-      const path = join(dirname(join(staging, 'node_modules', item.name, 'package.json')), target);
-      if (!existsSync(path) || !/\.(?:c|m)?js$/.test(path)) {
-        throw new Error(`${item.name} runtime export ${name} points to a missing JavaScript file: ${target}`);
-      }
-      return path;
-    });
-  }
-  const imports = new Map();
-  const visited = new Set();
-  const patterns = [
-    /^\s*(?:import|export)\s+[^;]*?\s+from\s*["']([^"']+)["']/gm,
-    /^\s*import\s*["']([^"']+)["']/gm,
-    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
-  ];
-  for (let index = 0; index < files.length; index += 1) {
-    const file = files[index];
-    if (visited.has(file)) continue;
-    visited.add(file);
-    const source = readFileSync(file, 'utf8');
-    for (const pattern of patterns) {
-      for (const match of source.matchAll(pattern)) {
-        imports.set(match[1], { specifier: match[1], optional: false, static: true });
-        if (match[1].startsWith('.')) {
-          const base = join(dirname(file), match[1]);
-          const relativeFile = [base, `${base}.js`, `${base}.mjs`, `${base}.cjs`, join(base, 'index.js')].find(existsSync);
-          if (relativeFile && relativeFile.startsWith(dist)) files.push(relativeFile);
-        }
-      }
-    }
-    for (const match of source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) {
-      const before = source.slice(Math.max(0, match.index - 400), match.index);
-      const after = source.slice(match.index + match[0].length, match.index + match[0].length + 400);
-      const optional = before.lastIndexOf('try {') > before.lastIndexOf('}') && /}\s*catch\s*(?:\([^)]*\))?\s*{/.test(after);
-      imports.set(match[1], { specifier: match[1], optional, static: false });
-    }
-  }
-  return [...imports.values()];
-};
 const dependencyClosureCache = new Map();
 const dependencyClosureFor = packageName => {
   if (dependencyClosureCache.has(packageName)) return dependencyClosureCache.get(packageName);
@@ -403,6 +325,7 @@ const dependencyClosureFor = packageName => {
   }
   return closure;
 };
+const platformMemberArtifacts = new Set(platformMemberRoots);
 // Platform members and the SDK are installed into one platform node_modules
 // tree. Derive peer availability from that exact sealed package graph; mere
 // presence in the release stage does not make a peer available to consumers.
@@ -413,9 +336,9 @@ for (const packageName of platformMemberRoots) {
     if (byName.has(dependency)) platformProvidedPackages.add(dependency);
   }
 }
-const packagesToValidate = [...platformProvidedPackages];
-const runtimeImportViolations = [];
-const packagesWithPlatformPeers = new Set([...packagesToValidate, ...stage.map(item => item.name)]);
+const platformPackageClosure = [...platformProvidedPackages];
+const platformPeerViolations = [];
+const packagesWithPlatformPeers = new Set([...platformPackageClosure, ...stage.map(item => item.name)]);
 for (const packageName of packagesWithPlatformPeers) {
   const item = byName.get(packageName);
   if (!item) continue;
@@ -426,54 +349,18 @@ for (const packageName of packagesWithPlatformPeers) {
     .map(([name]) => name));
   for (const peer of peers) {
     if (!isPlatformPackage(peer) || optionalPeers.has(peer) || platformProvidedPackages.has(peer)) continue;
-    runtimeImportViolations.push(`${packageName} declares platform peer ${peer}, which the platform package graph does not provide`);
+    platformPeerViolations.push(`${packageName} declares platform peer ${peer}, which the platform package graph does not provide`);
   }
 }
-for (let index = 0; index < packagesToValidate.length; index += 1) {
-  const packageName = packagesToValidate[index];
+for (const packageName of platformPackageClosure) {
   const item = byName.get(packageName);
   // Preserve the host-specific validation below, which reports the release
   // contract violation with its actionable package role.
   if (!item && packageName === hostPackage) continue;
   if (!item) throw new Error(`platform package ${packageName} is absent from stage manifest`);
-  const packageJSON = packageJSONFor(item);
-  const dependencies = new Set([
-    ...Object.keys(packageJSON.dependencies ?? {}),
-    ...Object.keys(packageJSON.optionalDependencies ?? {}),
-  ]);
-  const dependencyClosure = dependencyClosureFor(packageName);
-  const peers = new Set(Object.keys(packageJSON.peerDependencies ?? {}));
-  const optionalPeers = new Set(Object.entries(packageJSON.peerDependenciesMeta ?? {})
-    .filter(([, metadata]) => metadata?.optional === true)
-    .map(([name]) => name));
-  for (const { specifier, optional, static: staticImport } of runtimeImportsFor(item)) {
-    if (specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('node:')) continue;
-    const dependency = packageRootFor(specifier);
-    if (builtinPackageNames.has(dependency)) continue;
-    if (dependency === packageName) continue;
-    // npm resolves external dependencies through each package's installed
-    // dependency graph. This sealer only owns @kb-labs artifacts and peers.
-    if (!dependency.startsWith('@kb-labs/')) continue;
-    if (optionalPeers.has(dependency)) {
-      if (staticImport) {
-        runtimeImportViolations.push(`${packageName} runtime entrypoint ${specifier} statically imports optional peer ${dependency}`);
-      }
-      continue;
-    }
-    const providedPeer = peers.has(dependency) && platformProvidedPackages.has(dependency);
-    if (peers.has(dependency) && !providedPeer) {
-      runtimeImportViolations.push(`${packageName} runtime import ${specifier} is satisfied only by peer ${dependency}, which the platform package graph does not provide`);
-      continue;
-    }
-    const declaredByPackage = dependencies.has(dependency) || providedPeer;
-    if (optional && !declaredByPackage) continue;
-    if (!declaredByPackage) {
-      runtimeImportViolations.push(`${packageName} runtime import ${specifier} is neither a dependency nor a sealed peer`);
-    }
-  }
 }
-if (runtimeImportViolations.length > 0) {
-  throw new Error(`runtime package import validation failed:\n${runtimeImportViolations.map(violation => `- ${violation}`).join('\n')}`);
+if (platformPeerViolations.length > 0) {
+  throw new Error(`platform peer validation failed:\n${platformPeerViolations.map(violation => `- ${violation}`).join('\n')}`);
 }
 
 const hostItem = byName.get(hostPackage);
@@ -524,12 +411,7 @@ const exportValue = {
       client: { profile: 'client', platformVersion: platform.version, services: [] },
     },
     binaries,
-    members: [...new Set([
-      ...services.map(service => service.packageName),
-      hostPackage,
-      ...platformMemberPackages,
-      ...configuredPlatformAdapterPackages,
-    ])].map(packageName => {
+    members: [...platformMemberArtifacts].filter(packageName => packageName !== sdk.name).map(packageName => {
       const item = byName.get(packageName);
       return item ? component(item, undefined,
         normalizedIdByPackage.get(packageName) ?? idFor(packageName),

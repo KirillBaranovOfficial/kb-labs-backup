@@ -5,8 +5,7 @@
   "type": "module",
   "main": "./manifest.js",
   "exports": {
-    ".": "./manifest.js",
-    "./commands/*": "./dist/commands/*"
+    ".": "./manifest.js"
   },
   "files": ["manifest.js", "dist/commands/*.js"],
   "kb": { "manifest": "./manifest.js" },

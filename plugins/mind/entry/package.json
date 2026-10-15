@@ -13,8 +13,7 @@
     "./plugin-manifest": {
       "types": "./dist/manifest.d.ts",
       "import": "./dist/manifest.js"
-    },
-    "./dist/*": "./dist/*"
+    }
   },
   "files": [
     "dist",
