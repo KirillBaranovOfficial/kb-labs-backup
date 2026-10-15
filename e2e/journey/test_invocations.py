@@ -102,6 +102,20 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
 
 class PtyInvocationTest(unittest.TestCase):
+    def test_unexpected_correlation_parser_reads_json_and_catalog_rendered_human_output(self):
+        correlation_id = "cli-text-correlation-1"
+        catalog_path = Path(__file__).resolve().parents[2] / "core/platform/src/error-envelope/errors.catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        unexpected = next(item for item in catalog["codes"] if item["code"] == "KB_RUNTIME_UNEXPECTED")
+        hint = unexpected["hint"].replace("{correlationId}", correlation_id)
+        human_output = f"{unexpected['message']} [KB_RUNTIME_UNEXPECTED]\nHint: {hint}"
+        machine_output = json.dumps({"ok": False, "error": {
+            "code": "KB_RUNTIME_UNEXPECTED", "correlationId": correlation_id,
+        }})
+
+        self.assertEqual(invocations.parse_unexpected_correlation_id(machine_output), (True, correlation_id))
+        self.assertEqual(invocations.parse_unexpected_correlation_id("", human_output), (True, correlation_id))
+
     def test_invocation_records_kb_environment_and_resolved_shim_with_shared_redaction(self):
         with tempfile.TemporaryDirectory(prefix="journey-kb-shim-evidence-") as temp:
             root = Path(temp)

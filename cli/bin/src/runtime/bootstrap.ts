@@ -681,18 +681,9 @@ function reportInitializationError(
   textPresenterFactory: typeof createTextPresenter,
   correlationId: string,
 ): number {
-  const envelope = isProjectRegistryError(error)
-    ? projectErrorEnvelope(error)
-    : toErrorEnvelope(error);
-  envelope.correlationId = correlationId;
   const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
-  if (global.json) {
-    presenter.json({ ok: false, error: envelope });
-  } else {
-    presenter.error(`${envelope.message} [${envelope.code}]`);
-    presenter.write(`Hint: ${envelope.hint}\n`);
-  }
-  return 1;
+  const envelope = isProjectRegistryError(error) ? projectErrorEnvelope(error) : undefined;
+  return handleExecutionError(error, presenter, { correlationId, envelope });
 }
 
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";

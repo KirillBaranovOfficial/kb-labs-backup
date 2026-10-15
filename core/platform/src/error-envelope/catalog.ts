@@ -82,7 +82,10 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: CreateEnve
     severity: options.severity ?? entry.severity,
     retryable: entry.retryable,
     message: options.message ?? renderTemplate(entry.message, details),
-    hint: options.hint ?? renderTemplate(entry.hint, details),
+    hint: options.hint ?? renderTemplate(entry.hint, {
+      ...details,
+      ...(options.correlationId ? { correlationId: options.correlationId } : {}),
+    }),
   };
   if (options.cause && options.cause !== envelope.message) {
     envelope.cause = options.cause;

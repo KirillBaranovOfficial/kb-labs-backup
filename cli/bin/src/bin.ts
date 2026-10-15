@@ -57,23 +57,37 @@ process.env.CLI_VERSION = __KB_CLI_VERSION__;
 
 (async () => {
   // Import the platform only after the logging environment is bootstrapped.
-  const [{ run }, { platform }, { createCLIUIFacade }] = await Promise.all([
+  const [{ run }, { platform }, { createJsonPresenter, createTextPresenter }, { handleExecutionError }] = await Promise.all([
     import('./index.js'),
     import('@kb-labs/core-runtime'),
-    import('./runtime/ui-facade.js'),
+    import('@kb-labs/cli-runtime'),
+    import('./runtime/execution-error.js'),
   ]);
+
+  const reportUnexpectedError = async (error: Error) => {
+    const presenter = process.env.KB_OUTPUT_MODE === 'json'
+      ? createJsonPresenter()
+      : createTextPresenter();
+    handleExecutionError(error, presenter);
+    try {
+      await platform.shutdown();
+    } catch (shutdownError) {
+      process.stderr.write(
+        `[kb] platform shutdown failed: ${shutdownError instanceof Error ? shutdownError.message : String(shutdownError)}\n`
+      );
+    }
+    process.exit(1);
+  };
 
   // Global handler — any uncaught exception renders as a formatted error box
   // instead of a raw Node.js stack dump.
   process.on('uncaughtException', (err) => {
-    createCLIUIFacade().error(err);
-    process.exit(1);
+    void reportUnexpectedError(err);
   });
 
   process.on('unhandledRejection', (reason) => {
     const err = reason instanceof Error ? reason : new Error(String(reason));
-    createCLIUIFacade().error(err);
-    process.exit(1);
+    void reportUnexpectedError(err);
   });
 
   let code: number | void;

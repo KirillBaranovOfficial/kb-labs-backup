@@ -13,6 +13,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     bin: "src/bin.ts",
+    "runtime/execution-error": "src/runtime/execution-error.ts",
   },
   tsconfig: "tsconfig.build.json", // Используем конфиг без paths, чтобы избежать бандлинга workspace пакетов
   clean: false,
