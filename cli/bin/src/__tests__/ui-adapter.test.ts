@@ -677,17 +677,27 @@ describe('shared UI output contract in CLI adapter', () => {
       item: { title: 'Singleton', sections: [{ items: ['detail'] }] },
       lines: ['◆  Singleton', '│', '│  detail', ''],
     },
-  ])('renders a singleton chain exactly $label', ({ item, lines }) => {
+  ])('renders a singleton chain exactly $label', async ({ item, lines }) => {
     const output: string[] = [];
-    const streamSpy = vi.spyOn(process.stdout, 'write').mockImplementation(value => {
-      output.push(String(value));
-      return true;
-    });
+    const originalNoColor = process.env.NO_COLOR;
     try {
-      createCLIUIFacade().chain([item]);
+      process.env.NO_COLOR = '1';
+      vi.resetModules();
+      const { createCLIUIFacade: createNoColorCLIUIFacade } = await import('../runtime/ui-facade.js');
+      const streamSpy = vi.spyOn(process.stdout, 'write').mockImplementation(value => {
+        output.push(String(value));
+        return true;
+      });
+      try {
+        createNoColorCLIUIFacade().chain([item]);
+      } finally {
+        streamSpy.mockRestore();
+      }
       expect(output.join('').split('\n')).toEqual(lines);
     } finally {
-      streamSpy.mockRestore();
+      if (originalNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = originalNoColor;
+      vi.resetModules();
     }
   });
 
