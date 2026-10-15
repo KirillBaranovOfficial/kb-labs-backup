@@ -164,6 +164,7 @@ describe('AdapterLoader', () => {
     logger = {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn(), debug: vi.fn(), trace: vi.fn(),
       child: vi.fn(() => logger),
+      flush: vi.fn().mockResolvedValue(undefined),
     };
     const createAdapter = vi.fn((_config, deps) => {
       expect(deps.logger).toBe(logger);

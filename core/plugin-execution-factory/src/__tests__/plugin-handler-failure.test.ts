@@ -19,6 +19,7 @@ function loggerFor(records: Array<Record<string, unknown>>): IContextLogger {
     trace: () => {}, debug: () => {}, info: () => {}, warn: () => {},
     error: (message, error, fields) => write('error', message, error, fields),
     fatal: (message, error, fields) => write('fatal', message, error, fields),
+    flush: async () => {},
     child: () => loggerFor(records),
   }, logContext);
 }

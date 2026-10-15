@@ -12,6 +12,7 @@ import re
 import shutil
 import shlex
 import socket
+import stat
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -763,6 +764,72 @@ def run_secondary_root_gateway_isolation_step(*, mode: str, launcher: str, prima
 
     journey.step("verify the secondary root's Gateway while running and stopped", "platform.install",
                  gateway_isolation, cases=["PC-001.12"])
+    return journey
+
+
+def run_stable_layout_contract_refusal_step(*, mode: str, platform_root: Path,
+                                            run_command: CommandRunner) -> Journey:
+    """Verify the installed CLI refuses a stable-root-only layout contract."""
+    journey = Journey(mode, f"stable-layout-contract-refusal-{mode}")
+
+    def refuse_stable_contract() -> None:
+        active_root = active_platform_root(platform_root)
+        contract_suffix = (".kb", "v2", "platform-layout.json")
+        active_contract = active_root.joinpath(*contract_suffix)
+        stable_contract = platform_root.joinpath(*contract_suffix)
+        expected_path = installed_path(platform_root, "currentLink", *contract_suffix)
+        if not active_contract.is_file():
+            raise RuntimeError(f"active version layout contract is missing before fixture setup: {active_contract}")
+        original_active = active_contract.read_bytes()
+        original_active_mode = stat.S_IMODE(active_contract.stat().st_mode)
+        original_stable = stable_contract.read_bytes() if stable_contract.exists() else None
+        original_stable_mode = stat.S_IMODE(stable_contract.stat().st_mode) if original_stable is not None else None
+        stable_parent_existed = stable_contract.parent.exists()
+        stable_kb_parent_existed = stable_contract.parent.parent.exists()
+        root_before = snapshot_tree(platform_root)
+        contract_bytes = workspace_resource("tools", "kb-create", "v2", "contracts", "platform-layout.json").read_bytes()
+        failure: BaseException | None = None
+        try:
+            stable_contract.parent.mkdir(parents=True, exist_ok=True)
+            stable_contract.write_bytes(contract_bytes)
+            active_contract.unlink()
+            result = run_platform_cli(platform_root, ["adapter", "list", "--json"], run_command)
+            _, error = _diagnostic(result, "stable-root-only platform layout contract")
+            if (error.get("code") != "KB_CONFIG_INVALID"
+                    or error.get("details", {}).get("contractPath") != str(expected_path)
+                    or error.get("details", {}).get("remedyOperation") != "update"
+                    or error.get("details", {}).get("remedyPlatformRoot") != str(platform_root)):
+                raise RuntimeError(f"CLI did not diagnose the stable-root-only platform layout contract: {error}")
+        except BaseException as error:
+            failure = error
+
+        restore_error: Exception | None = None
+        try:
+            active_contract.write_bytes(original_active)
+            os.chmod(active_contract, original_active_mode)
+            if original_stable is None:
+                stable_contract.unlink(missing_ok=True)
+            else:
+                stable_contract.write_bytes(original_stable)
+                if original_stable_mode is not None:
+                    os.chmod(stable_contract, original_stable_mode)
+            if not stable_parent_existed:
+                stable_contract.parent.rmdir()
+            if not stable_kb_parent_existed:
+                stable_contract.parent.parent.rmdir()
+            if snapshot_tree(platform_root) != root_before:
+                raise RuntimeError("stable-layout contract fixture did not restore the install root byte-for-byte")
+        except Exception as error:
+            restore_error = error
+        if failure is not None and restore_error is not None:
+            raise RuntimeError(f"{failure}; fixture restoration failed: {restore_error}") from failure
+        if failure is not None:
+            raise failure
+        if restore_error is not None:
+            raise RuntimeError(f"fixture restoration failed: {restore_error}") from restore_error
+
+    journey.step("refuse a stable-root-only layout contract", "cli", refuse_stable_contract,
+                 cases=["S-054.23"])
     return journey
 
 
@@ -1673,6 +1740,9 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                  verify_stable_spellings, cases=["S-181.1"])
     journey.step("plan, apply, and verify canary install", "platform.install",
                  lambda: channel_plan("canary", canary_index, "s181-canary-root"), cases=["S-181.2"])
+
+    run_fixture_group(journey, "stable-root layout contract refusal", lambda: run_stable_layout_contract_refusal_step(
+        mode=mode, platform_root=platform_root, run_command=run_command))
 
     run_fixture_group(journey, "secondary root gateway isolation", lambda: run_secondary_root_gateway_isolation_step(
         mode=mode, launcher=launcher, primary_root=platform_root,

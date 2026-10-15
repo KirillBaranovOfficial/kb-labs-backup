@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { createEmptyLock, createMarketplaceEntry, findWorkspacePackages, writeMarketplaceLock, type MarketplaceAdapterEntry } from '@kb-labs/core-discovery';
+import { computePackageIntegrity, createEmptyLock, createMarketplaceEntry, DiscoveryManager, findWorkspacePackages, writeMarketplaceLock, type MarketplaceAdapterEntry } from '@kb-labs/core-discovery';
 import { ADAPTER_DEFAULTS, loadAdapterManifest } from '@kb-labs/core-platform';
 
 const repositoryRoot = path.resolve(fileURLToPath(import.meta.url), '../../../../..');
@@ -17,7 +17,7 @@ describe('installed default log persistence across CLI processes', () => {
     await Promise.all(temporaryRoots.map(root => rm(root, { recursive: true, force: true })));
   });
 
-  it('flushes a process-level uncaught exception through the built CLI lifecycle and queries it from a second process', async () => {
+  it('drains a failed plugin command through CLI shutdown and queries it from a second process', async () => {
     const tempRoot = await mkdtemp(path.join(tmpdir(), 'kb-log-persistence-platform-'));
     temporaryRoots.push(tempRoot);
     const home = path.join(tempRoot, 'home');
@@ -80,42 +80,60 @@ describe('installed default log persistence across CLI processes', () => {
     }
     await writeMarketplaceLock(platformRoot, { ...createEmptyLock(), adapters });
 
+    const pluginName = '@kb-labs/x57-shutdown-failure-fixture';
+    const pluginRoot = path.join(platformRoot, 'node_modules', pluginName);
+    const pluginDist = path.join(pluginRoot, 'dist');
+    await mkdir(pluginDist, { recursive: true });
+    await writeFile(path.join(pluginRoot, 'package.json'), JSON.stringify({
+      name: pluginName,
+      version: '1.0.0',
+      type: 'module',
+      kb: { manifest: './dist/manifest.js' },
+    }));
+    await writeFile(path.join(pluginDist, 'manifest.json'), JSON.stringify({
+      schema: 'kb.plugin/3',
+      id: pluginName,
+      version: '1.0.0',
+      cli: { commands: [{
+        path: 'x57-shutdown-failure-fixture fail',
+        describe: 'Fail after platform logging is initialized for shutdown persistence coverage.',
+        handler: './handler.js#execute',
+      }] },
+    }));
+    await writeFile(path.join(pluginDist, 'handler.js'), [
+      'export async function execute() {',
+      '  throw new Error("failure after log persistence initialization");',
+      '}',
+    ].join('\n'));
+    const fixturePlugins = { [pluginName]: createMarketplaceEntry({
+      version: '1.0.0',
+      integrity: await computePackageIntegrity(pluginRoot),
+      primaryKind: 'plugin',
+      provides: ['plugin'],
+      source: 'platform',
+      package: pluginName,
+      resolvedPath: path.relative(platformRoot, pluginRoot),
+    }) };
+    await writeMarketplaceLock(platformRoot, { ...createEmptyLock(), adapters, plugins: fixturePlugins });
+    const discovery = await new DiscoveryManager({ root: platformRoot, platformRoot }).discover();
+    expect(discovery.plugins.map(plugin => plugin.id), JSON.stringify(discovery)).toContain(pluginName);
+
     const env = cleanEnvironment(home, platformRoot);
-    const exceptionTrigger = path.join(tempRoot, 'unexpected-exception.mjs');
-    await writeFile(exceptionTrigger, `
-      const originalWrite = process.stderr.write;
-      let exceptionScheduled = false;
-      process.stderr.write = function (...args) {
-        const result = Reflect.apply(originalWrite, this, args);
-        if (!exceptionScheduled && String(args[0]).includes('Adapters initialised:')) {
-          exceptionScheduled = true;
-          process.nextTick(() => {
-            throw new Error('outer database failure', {
-              cause: new Error('inner disk failure'),
-            });
-          });
-        }
-        return result;
-      };
-    `);
     env.KB_LOG_LEVEL = 'info';
-    const produced = spawnSync(process.execPath, [
-      '--import', pathToFileURL(exceptionTrigger).href,
-      cliEntry, 'adapter', 'list', '--json',
-    ], {
+    const produced = spawnSync(process.execPath, [cliEntry, 'x57-shutdown-failure-fixture', 'fail', '--json'], {
       cwd: platformRoot, env, encoding: 'utf8', timeout: 15_000,
     });
-    expect(produced.status, produced.stderr || produced.stdout).toBe(1);
+    expect(produced.status, `${produced.stderr}\n${produced.stdout}`).toBe(1);
     expect(produced.signal).toBeNull();
     const outputEnvelopes = produced.stdout.trim().split('\n').map(line => JSON.parse(line) as {
       ok: boolean;
       error?: { code?: string; correlationId?: string; cause?: unknown; stack?: unknown };
     });
-    const failure = outputEnvelopes.find(envelope => envelope.error?.code === 'KB_RUNTIME_UNEXPECTED');
-    expect(failure).toBeDefined();
-    if (!failure) { throw new Error('built CLI process handler did not render KB_RUNTIME_UNEXPECTED'); }
+    const failure = outputEnvelopes.find(envelope => envelope.error?.code === 'KB_PLUGIN_COMMAND_FAILED');
+    expect(failure, produced.stdout).toBeDefined();
+    if (!failure) { throw new Error('built CLI process handler did not render KB_PLUGIN_COMMAND_FAILED'); }
     expect(failure.ok).toBe(false);
-    expect(failure.error?.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(failure.error?.code).toBe('KB_PLUGIN_COMMAND_FAILED');
     const correlationId = failure.error?.correlationId;
     expect(correlationId).toBeTruthy();
     if (!correlationId) { throw new Error('built CLI error envelope omitted its correlation ID'); }
@@ -134,16 +152,8 @@ describe('installed default log persistence across CLI processes', () => {
     expect(envelope.data?.data).toMatchObject({ source: 'persistence' });
     const record = envelope.data?.data?.logs?.find(log => log.correlationId === correlationId);
     expect(record, JSON.stringify(envelope)).toBeDefined();
-    expect(record).toMatchObject({
-      event: 'cli.unexpected_error',
-      errorClass: 'Error',
-      errorMessage: 'outer database failure',
-      causeChain: [
-        expect.objectContaining({ name: 'Error', message: 'outer database failure' }),
-        expect.objectContaining({ name: 'Error', message: 'inner disk failure' }),
-      ],
-    });
-    expect(record?.stack).toContain('outer database failure');
+    expect(record).toBeDefined();
+    expect(JSON.stringify(record)).toContain('failure after log persistence initialization');
   }, 40_000);
 });
 

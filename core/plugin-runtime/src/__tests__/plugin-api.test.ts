@@ -96,6 +96,7 @@ describe('Plugin API', () => {
         warn: vi.fn(),
         error: vi.fn(),
         fatal: vi.fn(),
+        flush: vi.fn().mockResolvedValue(undefined),
         child: vi.fn(() => mockLogger),
       };
 
@@ -119,6 +120,7 @@ describe('Plugin API', () => {
         warn: vi.fn(),
         error: vi.fn(),
         fatal: vi.fn(),
+        flush: vi.fn().mockResolvedValue(undefined),
         child: vi.fn(() => mockLogger),
       };
 

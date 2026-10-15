@@ -52,7 +52,7 @@ describe('loadPlatformConfig process secret registration', () => {
     const logger = createContextLogger({
       trace: () => {}, debug: () => {}, info: () => {}, warn: () => {},
       error: (message, error, fields) => records.push({ message, error, ...fields }),
-      fatal: () => {}, child: () => { throw new Error('unexpected child logger'); },
+      fatal: () => {}, child: () => { throw new Error('unexpected child logger'); }, flush: async () => {},
     }, { applicationId: 'gateway', serviceId: 'gateway', instanceId: 'test', layer: 'service' });
     const nested = logger.forOperation('gateway.request').forComponent('handler');
     const thrown = new Error(`provider rejected ${secret}`, { cause: { provider: secret } });

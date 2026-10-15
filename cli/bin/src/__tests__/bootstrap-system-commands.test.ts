@@ -28,6 +28,7 @@ const { mockExecuteCli, mockCommandRegistry, mockPlatform } = vi.hoisted(() => {
       warn: vi.fn(),
       error: vi.fn(),
       fatal: vi.fn(),
+      flush: vi.fn().mockResolvedValue(undefined),
       child: vi.fn(),
     },
     llm: {} as any,

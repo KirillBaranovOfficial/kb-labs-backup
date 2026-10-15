@@ -30,6 +30,7 @@ describe('RedisCacheAdapter error visibility', () => {
     const logger = {
       error: vi.fn(), info: vi.fn(), warn: vi.fn(), fatal: vi.fn(), debug: vi.fn(), trace: vi.fn(),
       child: vi.fn<(...args: Parameters<ILogger['child']>) => ILogger>(),
+      flush: vi.fn().mockResolvedValue(undefined),
     } satisfies ILogger;
     const cache = createAdapter({}, { logger });
     const connectionError = new Error('connection lost');

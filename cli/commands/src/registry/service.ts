@@ -35,11 +35,14 @@ function validateSegments(segs: readonly string[]): string | null {
 
 const noopLogger: ILogger = {
   debug: () => {},
+  trace: () => {},
   info:  () => {},
   warn:  () => {},
   error: () => {},
+  fatal: () => {},
+  flush: async () => {},
   child: () => noopLogger,
-} as unknown as ILogger;
+};
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 

@@ -880,6 +880,9 @@ export class PlatformContainer {
       }
     }
 
+    // Drain fire-and-forget logger extensions before closing their adapters.
+    await this.logger.flush();
+
     // Gracefully close adapters in reverse load order so dependents are closed before dependencies.
     const adaptersInReverseLoadOrder = Array.from(this.adapters.entries()).reverse();
     for (const [adapterId, adapter] of adaptersInReverseLoadOrder) {

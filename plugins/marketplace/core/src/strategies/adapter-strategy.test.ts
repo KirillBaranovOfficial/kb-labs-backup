@@ -43,6 +43,7 @@ describe('AdapterStrategy', () => {
   function logger(): ILogger {
     return {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn(), debug: vi.fn(), trace: vi.fn(),
+      flush: vi.fn().mockResolvedValue(undefined),
       child: () => logger(),
     };
   }

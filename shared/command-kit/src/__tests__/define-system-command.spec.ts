@@ -764,6 +764,18 @@ describe('defineSystemCommand', () => {
       await command.run(mockCtx, [], { json: true });
 
       expect(mockUI.json).toHaveBeenCalled();
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'CLI command failed unexpectedly',
+        expect.objectContaining({ message: 'Handler error' }),
+        expect.objectContaining({
+          event: 'cli.unexpected_error',
+          correlationId: 'test-request-id',
+          errorClass: 'Error',
+          errorMessage: 'Handler error',
+          causeChain: [expect.objectContaining({ name: 'Error', message: 'Handler error' })],
+          stack: expect.any(String),
+        }),
+      );
       const jsonCall = mockUI.json.mock.calls[0]?.[0];
       expect(jsonCall.ok).toBe(false);
       expect(jsonCall.error).toMatchObject({

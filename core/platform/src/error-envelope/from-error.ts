@@ -6,7 +6,7 @@
  * command-kit or plugin-contracts.
  */
 
-import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, getAdapterConfigurationCommand, PlatformConfigError, ServicePortConfigError, type TypedPlatformError } from '../errors.js';
+import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, getAdapterConfigurationCommand, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError, type TypedPlatformError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
 import { createErrorDetailsContractViolation, createErrorEnvelope, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
 import { ErrorEnvelopeError, type ErrorEnvelope, type ProductErrorCode } from './types.js';
@@ -76,6 +76,18 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
       cause: error.detail,
       message,
       hint,
+    });
+  }
+  if (error instanceof PlatformLayoutContractError) {
+    return createErrorEnvelope('KB_CONFIG_INVALID', {
+      ...options,
+      details: {
+        contractPath: error.contractPath,
+        remedyOperation: error.remedy.operation,
+        remedyPlatformRoot: error.remedy.platformRoot,
+      },
+      message: error.message,
+      hint: `Run \`kb-create ${error.remedy.operation} --platform-root ${JSON.stringify(error.remedy.platformRoot)}\` to restore it, then retry the command.`,
     });
   }
   if (error instanceof AdapterProjectScopeError) {

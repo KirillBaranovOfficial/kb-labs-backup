@@ -54,6 +54,7 @@ describe('SQLiteAnalytics', () => {
     const logger = {
       error: vi.fn(), info: vi.fn(), warn: vi.fn(), fatal: vi.fn(), debug: vi.fn(), trace: vi.fn(),
       child: vi.fn(),
+      flush: vi.fn().mockResolvedValue(undefined),
     };
     const adapter = new SQLiteAnalytics({ dbPath: databasePath, logger });
     try {

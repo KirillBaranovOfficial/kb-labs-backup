@@ -4,6 +4,7 @@ import {
   createContextLogger,
   createErrorEnvelope,
   createProcessRootLogContext,
+  logUnexpectedCliError,
   toErrorEnvelope,
   type ErrorEnvelope,
 } from '@kb-labs/core-platform';
@@ -54,7 +55,6 @@ export function handleExecutionError(
     envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
       correlationId: envelope.correlationId,
     });
-    const cause = error instanceof Error ? error : new Error(String(error));
     const logger = createContextLogger(
       platform.logger,
       createProcessRootLogContext({
@@ -66,17 +66,7 @@ export function handleExecutionError(
     ).forComponent('cli-error-boundary').forOperation('cli.command.failed', {
       correlationId: envelope.correlationId,
     });
-    logger.event('error', {
-      event: 'cli.unexpected_error',
-      message: 'CLI command failed unexpectedly',
-      error: cause,
-      fields: {
-        errorClass: cause.name,
-        errorMessage: cause.message,
-        causeChain: errorCauseChain(cause),
-        stack: cause.stack ?? '',
-      },
-    });
+    logUnexpectedCliError(logger, error, envelope.correlationId);
   }
   if (presenter.isJSON && typeof presenter.json === 'function') {
     presenter.json({ ok: false, error: envelope });
@@ -84,24 +74,4 @@ export function handleExecutionError(
     presenter.error(`${envelope.message} [${envelope.code}]${envelope.hint ? `\nHint: ${envelope.hint}` : ''}`);
   }
   return mapErrorEnvelopeToExitCode(envelope.code);
-}
-
-
-function errorCauseChain(error: Error): Array<{ name: string; message: string; stack?: string }> {
-  const chain: Array<{ name: string; message: string; stack?: string }> = [];
-  const seen = new Set<Error>();
-  let current: unknown = error;
-  while (current instanceof Error && !seen.has(current)) {
-    seen.add(current);
-    chain.push({
-      name: current.name,
-      message: current.message,
-      ...(current.stack ? { stack: current.stack } : {}),
-    });
-    current = current.cause;
-  }
-  if (current !== undefined && !(current instanceof Error)) {
-    chain.push({ name: 'Cause', message: String(current) });
-  }
-  return chain;
 }

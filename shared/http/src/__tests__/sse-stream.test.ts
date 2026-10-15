@@ -13,6 +13,7 @@ function makeLogger(
     warn: (message, fields) => records.push({ message, fields }),
     error: (message, _error, fields) => records.push({ message, fields }),
     fatal: (message, _error, fields) => records.push({ message, fields }),
+    flush: async () => {},
     child: () => logger,
   };
   return logger;

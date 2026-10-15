@@ -16,6 +16,7 @@ function makeLogger(): ILogger {
     warn: vi.fn(),
     error: vi.fn(),
     fatal: vi.fn(),
+    flush: vi.fn().mockResolvedValue(undefined),
     child: vi.fn().mockImplementation(() => makeLogger()),
   };
   return log;

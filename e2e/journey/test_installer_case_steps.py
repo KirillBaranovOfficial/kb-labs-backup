@@ -23,6 +23,7 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
                                   run_invalid_request_step,
                                   run_offline_plan_step, run_repeat_plan_readonly_step,
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
+                                  run_stable_layout_contract_refusal_step,
                                   run_gateway_allocation_step, run_port_conflict_step,
                                   assert_root_offset, run_json_install_project_step,
                                   installer_primary_host_guard, run_fixture_group,
@@ -1008,6 +1009,95 @@ class InstallerCaseStepsTest(unittest.TestCase):
         adapter_calls = [args for args in calls if args[0].endswith("/.kb/v2/bin/kb")]
         self.assertEqual(len(adapter_calls), 2)
 
+    # case: S-054.23
+    def test_stable_layout_contract_refusal_restores_both_contract_paths(self):
+        with tempfile.TemporaryDirectory(prefix="journey-stable-layout-refusal-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir(parents=True)
+            executable = root / ".kb/v2/bin/kb"
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            move_test_platform_into_container(root)
+            active = active_platform_root(root)
+            contract_suffix = (".kb", "v2", "platform-layout.json")
+            active_contract = active.joinpath(*contract_suffix)
+            stable_contract = root.joinpath(*contract_suffix)
+            contract_source = Path(__file__).parents[2] / "tools/kb-create/v2/contracts/platform-layout.json"
+            original_active = contract_source.read_bytes()
+            active_contract.parent.mkdir(parents=True, exist_ok=True)
+            active_contract.write_bytes(original_active)
+            os.chmod(active_contract, 0o640)
+            root_before = installer_case_steps.snapshot_tree(root)
+            expected_path = root / "current" / Path(*contract_suffix)
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                envelope = {"ok": False, "error": {
+                    "code": "KB_CONFIG_INVALID",
+                    "message": "fixture failure",
+                    "details": {
+                        "contractPath": str(expected_path),
+                        "remedyOperation": "update",
+                        "remedyPlatformRoot": str(root),
+                    },
+                }}
+                return subprocess.CompletedProcess(args, 1, json.dumps(envelope), "")
+
+            journey = run_stable_layout_contract_refusal_step(
+                mode="local", platform_root=root, run_command=run_command)
+
+            self.assertEqual(journey.steps[0].cases, ["S-054.23"])
+            self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+            self.assertEqual(installer_case_steps.snapshot_tree(root), root_before)
+            self.assertEqual(active_contract.stat().st_mode & 0o777, 0o640)
+            self.assertFalse(stable_contract.exists())
+            self.assertFalse(stable_contract.parent.exists())
+            self.assertEqual(calls[0][1:], ["adapter", "list", "--json"])
+
+    def test_stable_layout_refusal_restores_existing_stable_contract_mode(self):
+        with tempfile.TemporaryDirectory(prefix="journey-stable-layout-mode-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir(parents=True)
+            executable = root / ".kb/v2/bin/kb"
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            move_test_platform_into_container(root)
+            active = active_platform_root(root)
+            contract_suffix = (".kb", "v2", "platform-layout.json")
+            active_contract = active.joinpath(*contract_suffix)
+            stable_contract = root.joinpath(*contract_suffix)
+            contract_source = Path(__file__).parents[2] / "tools/kb-create/v2/contracts/platform-layout.json"
+            active_contract.parent.mkdir(parents=True, exist_ok=True)
+            active_contract.write_bytes(contract_source.read_bytes())
+            stable_contract.parent.mkdir(parents=True, exist_ok=True)
+            stable_contract.write_bytes(b"pre-existing stable-root bytes\n")
+            os.chmod(stable_contract, 0o640)
+            root_before = installer_case_steps.snapshot_tree(root)
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                expected_path = root / "current" / Path(*contract_suffix)
+                envelope = {"ok": False, "error": {
+                    "code": "KB_CONFIG_INVALID",
+                    "message": "fixture failure",
+                    "details": {
+                        "contractPath": str(expected_path),
+                        "remedyOperation": "update",
+                        "remedyPlatformRoot": str(root),
+                    },
+                }}
+                return subprocess.CompletedProcess(args, 1, json.dumps(envelope), "")
+
+            journey = run_stable_layout_contract_refusal_step(
+                mode="local", platform_root=root, run_command=run_command)
+
+            self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+            self.assertEqual(installer_case_steps.snapshot_tree(root), root_before)
+            self.assertEqual(stable_contract.read_bytes(), b"pre-existing stable-root bytes\n")
+            self.assertEqual(stable_contract.stat().st_mode & 0o777, 0o640)
+
     def test_gateway_allocation_step_checks_default_allocation_and_explicit_override(self):
         with tempfile.TemporaryDirectory(prefix="journey-gateway-allocation-") as temp:
             parent = Path(temp)
@@ -1659,7 +1749,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
             expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
-                        "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2",
+                        "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2", "S-054.23",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
                         "S-187.4", "S-187.5", "S-187.6", "S-187.9", "S-187.11", "S-187.12", "S-124.14"}

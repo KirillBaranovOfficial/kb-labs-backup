@@ -269,6 +269,10 @@ function createSilentLogger(): ILogger {
     info: noop,
     warn: noop,
     error: noop,
+    fatal: noop,
     debug: noop,
-  } as unknown as ILogger;
+    trace: noop,
+    flush: async () => {},
+    child: () => createSilentLogger(),
+  };
 }

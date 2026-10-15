@@ -293,6 +293,10 @@ class ContextLogger implements IContextLogger {
     return this.base.onLog?.(callback) ?? (() => {});
   }
 
+  public flush(): Promise<void> {
+    return this.base.flush();
+  }
+
   /**
    * Preserve Pino's `(fields, message)` convention at the adapter boundary.
    * ILogger's public contract remains `(message, fields)`, but Fastify and

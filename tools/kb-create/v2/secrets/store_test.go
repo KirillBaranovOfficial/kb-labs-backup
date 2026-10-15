@@ -162,6 +162,51 @@ func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 	}
 }
 
+func TestStoreUsesVersionrootSharedPathDespiteStableContractMarker(t *testing.T) {
+	installRoot := t.TempDir()
+	versionRoot := filepath.Join(installRoot, "versions", "v1")
+	for _, root := range []string{
+		filepath.Join(versionRoot, ".kb", "v2"),
+		filepath.Join(installRoot, ".kb", "v2"),
+	} {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatalf("create layout contract directory: %v", err)
+		}
+	}
+	contract := contracts.PlatformLayoutDocument()
+	if err := os.WriteFile(filepath.Join(versionRoot, ".kb", "v2", "platform-layout.json"), contract, 0o600); err != nil {
+		t.Fatalf("write active version contract: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(installRoot, ".kb", "v2", "platform-layout.json"), contract, 0o600); err != nil {
+		t.Fatalf("write stable-root marker fixture: %v", err)
+	}
+	if err := os.Symlink(filepath.Join("versions", "v1"), filepath.Join(installRoot, "current")); err != nil {
+		t.Fatalf("create current link: %v", err)
+	}
+
+	layout, err := versionroot.ForPlatformPath(installRoot)
+	if err != nil {
+		t.Fatalf("resolve install layout: %v", err)
+	}
+	want, err := layout.SharedRuntimePath(contracts.SharedRecordPath())
+	if err != nil {
+		t.Fatalf("resolve layout-owned shared path: %v", err)
+	}
+	store := Store{PlatformRoot: installRoot}
+	if err := store.Put("fixture", "value"); err != nil {
+		t.Fatalf("store secret: %v", err)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("secret record missing from versionroot-owned shared path %s: %v", want, err)
+	}
+	stablePath := filepath.Join(installRoot, filepath.FromSlash(contracts.SharedRecordPath()))
+	if _, err := os.Stat(stablePath); err == nil {
+		t.Fatalf("secret record followed stable-root marker to %s", stablePath)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("inspect stable-root path: %v", err)
+	}
+}
+
 func TestStoreRejectsUnknownRecordFieldWithCataloguedDiagnosis(t *testing.T) {
 	store := Store{PlatformRoot: t.TempDir()}
 	store.atomicWrite = func(path string, _ []byte, mode os.FileMode) error {

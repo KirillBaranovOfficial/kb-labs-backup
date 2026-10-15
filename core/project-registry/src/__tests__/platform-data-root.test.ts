@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 import { resolvePlatformDataPath } from '../state-dir.js';
 import { resolvePlatformDataRoot } from '../platform-data-root.js';
 
@@ -46,12 +47,53 @@ describe('resolvePlatformDataRoot', () => {
     await expect(resolvePlatformDataRoot(activeRoot, false)).resolves.toBe(await realpath(dataRoot));
   });
 
+  // case: S-054.1
+  it('resolves installed data from the stable install root through its current version link', async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-platform-data-stable-root-'));
+    const installRoot = path.join(tempRoot, 'install');
+    const versionRoot = path.join(installRoot, 'versions', 'v1');
+    const dataRoot = path.join(installRoot, 'state', 'data');
+    const contract = path.join(versionRoot, '.kb/v2/platform-layout.json');
+    await mkdir(path.dirname(contract), { recursive: true });
+    await mkdir(dataRoot, { recursive: true });
+    const layoutContract = await readFile(new URL('../../../../tools/kb-create/v2/contracts/platform-layout.json', import.meta.url));
+    await writeFile(contract, layoutContract);
+    const projectedData = path.join(versionRoot, '.kb/data');
+    await mkdir(path.dirname(projectedData), { recursive: true });
+    await symlink(path.relative(path.dirname(projectedData), dataRoot), projectedData, 'dir');
+    await symlink(path.relative(installRoot, versionRoot), path.join(installRoot, 'current'), 'dir');
+    await expect(resolvePlatformDataRoot(installRoot, false)).resolves.toBe(await realpath(dataRoot));
+  });
+
+  // case: S-054.23
+  it('refuses a stable-root-only contract and names the active version path and repair command', async () => {
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-platform-data-unsupported-stable-contract-'));
+    const installRoot = path.join(tempRoot, 'install');
+    const stableContract = path.join(installRoot, '.kb/v2/platform-layout.json');
+    await mkdir(path.join(installRoot, 'versions'), { recursive: true });
+    await mkdir(path.dirname(stableContract), { recursive: true });
+    await writeFile(stableContract, await readFile(new URL('../../../../tools/kb-create/v2/contracts/platform-layout.json', import.meta.url)));
+    await mkdir(path.join(installRoot, '.kb/data'), { recursive: true });
+
+    const error = await resolvePlatformDataRoot(installRoot, false).catch((reason: unknown) => reason);
+    expect(toErrorEnvelope(error)).toMatchObject({
+      code: 'KB_CONFIG_INVALID',
+      details: {
+        contractPath: path.join(installRoot, 'current/.kb/v2/platform-layout.json'),
+        remedyOperation: 'update',
+        remedyPlatformRoot: installRoot,
+      },
+    });
+  });
+
   it('fails when an installed root has no layout contract', async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-platform-data-missing-contract-'));
     const installRoot = path.join(tempRoot, 'install');
-    await mkdir(installRoot, { recursive: true });
+    await mkdir(path.join(installRoot, 'versions'), { recursive: true });
 
-    await expect(resolvePlatformDataRoot(installRoot, false))
-      .rejects.toThrow(`Cannot read platform data-root layout contract at ${path.join(installRoot, '.kb/v2/platform-layout.json')}`);
+    await expect(resolvePlatformDataRoot(installRoot, false)).rejects.toMatchObject({
+      contractPath: path.join(installRoot, 'current/.kb/v2/platform-layout.json'),
+      remedy: { operation: 'update', platformRoot: installRoot },
+    });
   });
 });

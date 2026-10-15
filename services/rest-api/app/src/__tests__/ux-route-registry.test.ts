@@ -142,6 +142,29 @@ describe('REST production route declarations', () => {
     else process.env.KB_TENANT_DEFAULT_TIER = originalTenantTier;
   });
 
+  it('adapts root Fastify log objects into platform logger message and fields', async () => {
+    const info = vi.fn();
+    const logger = {
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info,
+      warn: vi.fn(),
+      error: vi.fn(),
+      fatal: vi.fn(),
+      flush: async () => {},
+      child() { return logger; },
+    };
+    platform.setAdapter('logger', logger);
+
+    const app = await createServer(restApiConfigSchema.parse({ port: 5050 }), process.cwd(), registry);
+    apps.push(app);
+
+    const fields = { requestId: 'root-log-request', route: '/health' };
+    app.log.info(fields);
+
+    expect(info).toHaveBeenCalledWith(JSON.stringify(fields), fields);
+  });
+
   // case: S-203.1, S-203.2, S-203.3
   it('discovers production registrations and requires closed request and response schemas or an explicit raw declaration', async () => {
     process.env.KB_TENANT_DEFAULT_TIER = 'enterprise';

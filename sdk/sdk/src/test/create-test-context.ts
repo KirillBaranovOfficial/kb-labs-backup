@@ -85,6 +85,7 @@ function createMockLogger(): Logger {
     error: noop,
     fatal: noop,
     trace: noop,
+    flush: async () => {},
     child: () => createMockLogger(),
   };
 }

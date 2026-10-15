@@ -54,6 +54,24 @@ describe('DocumentLogPersistence (sqlite-backed)', () => {
     expect(fetched!.message).toBe('hello world');
   });
 
+  it('flushes buffered records at shutdown regardless of severity', async () => {
+    const levels = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const;
+    const records = levels.map((level) => record({ id: `shutdown-${level}`, level }));
+    const shutdownPersistence = new DocumentLogPersistence({
+      documentDatabase: docs,
+      collection: 'shutdown_logs_test',
+      batchSize: 100,
+      flushInterval: 60_000,
+      retention: { cleanupIntervalMs: 60_000 },
+    });
+    await shutdownPersistence.writeBatch(records);
+
+    await shutdownPersistence.close();
+
+    const result = await shutdownPersistence.query({}, { limit: 100 });
+    expect(result.logs.map((log) => log.id).sort()).toEqual(records.map((log) => log.id).sort());
+  });
+
   it('writeBatch persists all entries', async () => {
     const batch = [
       record({ id: 'a', level: 'info', message: 'one' }),

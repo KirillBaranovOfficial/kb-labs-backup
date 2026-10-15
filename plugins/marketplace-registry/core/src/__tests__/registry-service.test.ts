@@ -45,6 +45,7 @@ function createMemoryCache(): ICache {
 const noopLogger: ILogger = {
   trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(),
   error: vi.fn(), fatal: vi.fn(),
+  flush: vi.fn().mockResolvedValue(undefined),
   child: () => noopLogger,
 };
 

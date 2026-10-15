@@ -345,11 +345,7 @@ export class DocumentLogPersistence implements ILogPersistence {
       clearInterval(this.retentionTimer);
       this.retentionTimer = null;
     }
-    try {
-      await this.flush();
-    } catch {
-      /* swallow — we tried */
-    }
+    await this.flush();
   }
 
   // ──────────────────────────────────────────────────────────────────────────
