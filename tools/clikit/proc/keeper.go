@@ -60,15 +60,48 @@ func runKeeper(cfg keeperConfig) int {
 		writeReadyError(ready, err)
 		return 1
 	}
+	runDirectory := filepath.Join(cfg.StateDir, "runs", cfg.RunID)
+	if err := os.Mkdir(runDirectory, 0o700); err != nil {
+		writeReadyError(ready, fmt.Errorf("create run directory: %w", err))
+		return 1
+	}
+	runDirectoryInfo, err := os.Lstat(runDirectory)
+	if err != nil {
+		writeReadyError(ready, fmt.Errorf("inspect newly created run directory; it was left untouched because its identity could not be verified: %w", err))
+		return 1
+	}
+	runDirectoryIdentity, err := resourceIdentity(runDirectory, runDirectoryInfo)
+	if err != nil {
+		writeReadyError(ready, fmt.Errorf("identify newly created run directory; it was left untouched because its identity could not be verified: %w", err))
+		return 1
+	}
+	scratch := filepath.Join(cfg.StateDir, "runs", cfg.RunID, "scratch")
+	if err := os.Mkdir(scratch, 0o700); err != nil {
+		cleanupErr := removeOwnedPathRelative(cfg.StateDir, runDirectory, runDirectoryIdentity, "")
+		writeReadyError(ready, errors.Join(fmt.Errorf("create run scratch directory: %w", err), cleanupErr))
+		return 1
+	}
+	scratchInfo, err := os.Lstat(scratch)
+	if err != nil {
+		writeReadyError(ready, fmt.Errorf("inspect run scratch directory: %w", err))
+		return 1
+	}
+	scratchIdentity, err := resourceIdentity(scratch, scratchInfo)
+	if err != nil {
+		writeReadyError(ready, fmt.Errorf("identify run scratch directory: %w", err))
+		return 1
+	}
+	cfg.Keep = resolveKeepPaths(scratch, cfg.Keep)
+	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, PID: os.Getpid(), Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusStarting, Scratch: scratch, ScratchDevice: scratchIdentity.Device, ScratchInode: scratchIdentity.Inode, Keep: append([]string(nil), cfg.Keep...)}
 	startedAt, ok, identityErr := ProcessIdentity(os.Getpid())
 	if identityErr != nil {
-		return keeperError(record{StateDir: cfg.StateDir, RunID: cfg.RunID, Tag: cfg.Tag}, "inspect keeper process identity", identityErr)
+		return keeperError(rec, "inspect keeper process identity", identityErr)
 	}
 	if !ok {
 		writeReadyError(ready, errors.New("cannot determine keeper process start identity"))
-		return 1
+		return keeperError(rec, "inspect keeper process identity", errors.New("cannot determine keeper process start identity"))
 	}
-	rec := record{RunID: cfg.RunID, Tag: cfg.Tag, PID: os.Getpid(), StartedAt: startedAt, Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusStarting}
+	rec.StartedAt = startedAt
 	if err := writeRecord(rec); err != nil {
 		writeReadyError(ready, err)
 		return 1
@@ -101,7 +134,7 @@ func runKeeper(cfg keeperConfig) int {
 	cmd := exec.Command(cfg.Command[0], cfg.Command[1:]...)
 	cmd.Dir = cfg.Dir
 	cmd.Env = append(filteredEnv(os.Environ()), cfg.Env...)
-	configureCommand(cmd, cfg.RunID)
+	configureCommand(cmd, cfg.RunID, cfg.StateDir, scratch)
 	if cfg.StdinPath != "" {
 		stdin, err := os.Open(cfg.StdinPath)
 		if err != nil {
@@ -130,7 +163,8 @@ func runKeeper(cfg keeperConfig) int {
 	defer stderrPipe.Close()
 	defer stderrWriter.Close()
 	var lastOutput atomic.Int64
-	lastOutput.Store(time.Now().UnixNano())
+	rec.StartedAtTime = time.Now().UTC()
+	lastOutput.Store(rec.StartedAtTime.UnixNano())
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
 	if err := cmd.Start(); err != nil {
@@ -148,7 +182,6 @@ func runKeeper(cfg keeperConfig) int {
 		return keeperError(rec, "close command output pipes", err)
 	}
 	rec.Status = StatusRunning
-	rec.StartedAtTime = time.Now().UTC()
 	rec.LastOutputAt = rec.StartedAtTime
 	rec.StallMS = cfg.Stall.Milliseconds()
 	if err := updateRecord(cfg.StateDir, rec.RunID, func(stored *record) error {
@@ -326,6 +359,31 @@ func runKeeper(cfg keeperConfig) int {
 	if cleanupError != nil {
 		reapEvent.Error = cleanupError.Error()
 	}
+	reapEvent.Resources = cleanupResources(cfg.StateDir, cfg.RunID)
+	if resourceErr := resourceOutcomesError(reapEvent.Resources); resourceErr != nil {
+		cleanupError = errors.Join(cleanupError, resourceErr)
+		if reapEvent.Error == "" {
+			reapEvent.Error = cleanupError.Error()
+		} else {
+			reapEvent.Error = errors.Join(errors.New(reapEvent.Error), resourceErr).Error()
+		}
+	}
+	scratchOutcome, scratchErr := cleanupScratchOutcome(cfg.StateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, cfg.Keep)
+	if scratch != "" {
+		reapEvent.Resources = append(reapEvent.Resources, scratchOutcome)
+	}
+	if scratchErr != nil {
+		err := scratchErr
+		cleanupError = errors.Join(cleanupError, fmt.Errorf("remove run scratch: %w", err))
+		if dirtyErr := markRunDirty(cfg.StateDir, cfg.RunID, "scratch cleanup failed: "+err.Error()); dirtyErr != nil {
+			cleanupError = errors.Join(cleanupError, dirtyErr)
+		}
+		if reapEvent.Error == "" {
+			reapEvent.Error = cleanupError.Error()
+		} else {
+			reapEvent.Error = errors.Join(errors.New(reapEvent.Error), cleanupError).Error()
+		}
+	}
 	if eventError != nil {
 		if reapEvent.Error == "" {
 			reapEvent.Error = eventError.Error()
@@ -407,6 +465,18 @@ func keeperError(rec record, action string, err error) int {
 	}
 	reapEvent := eventFor(rec, EventTeardown)
 	reapEvent.Error = e.Error
+	reapEvent.Resources = cleanupResources(rec.StateDir, rec.RunID)
+	scratch := rec.Scratch
+	if scratch == "" {
+		scratch = filepath.Join(rec.StateDir, "runs", rec.RunID, "scratch")
+	}
+	scratchOutcome, scratchErr := cleanupScratchOutcome(rec.StateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
+	reapEvent.Resources = append(reapEvent.Resources, scratchOutcome)
+	if scratchErr != nil {
+		if dirtyErr := markRunDirty(rec.StateDir, rec.RunID, "scratch cleanup failed: "+scratchErr.Error()); dirtyErr != nil {
+			fmt.Fprintln(os.Stderr, "proc: mark scratch cleanup failure dirty:", dirtyErr)
+		}
+	}
 	if appendErr := appendEvent(rec.StateDir, reapEvent); appendErr != nil {
 		fmt.Fprintln(os.Stderr, "proc: record teardown:", appendErr)
 	}

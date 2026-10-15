@@ -55,26 +55,28 @@ type Config struct {
 	Command    []string
 	Dir        string
 	Env        []string
+	Keep       []string
 }
 
 type Event struct {
-	Schema     string    `json:"schema"`
-	At         time.Time `json:"at"`
-	Type       EventType `json:"type"`
-	RunID      string    `json:"run_id"`
-	Tag        string    `json:"tag"`
-	KeeperPID  int       `json:"keeper_pid"`
-	Command    string    `json:"command,omitempty"`
-	ExitCode   *int      `json:"exit_code,omitempty"`
-	Signal     string    `json:"signal,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	Reason     string    `json:"reason,omitempty"`
-	Position   int       `json:"position,omitempty"`
-	DurationMS int64     `json:"duration_ms,omitempty"`
-	Leaves     []Process `json:"leaves,omitempty"`
-	Reaped     []Process `json:"reaped,omitempty"`
-	Unverified []Process `json:"unverified,omitempty"`
-	Remaining  []Process `json:"remaining,omitempty"`
+	Schema     string            `json:"schema"`
+	At         time.Time         `json:"at"`
+	Type       EventType         `json:"type"`
+	RunID      string            `json:"run_id"`
+	Tag        string            `json:"tag"`
+	KeeperPID  int               `json:"keeper_pid"`
+	Command    string            `json:"command,omitempty"`
+	ExitCode   *int              `json:"exit_code,omitempty"`
+	Signal     string            `json:"signal,omitempty"`
+	Error      string            `json:"error,omitempty"`
+	Reason     string            `json:"reason,omitempty"`
+	Position   int               `json:"position,omitempty"`
+	DurationMS int64             `json:"duration_ms,omitempty"`
+	Leaves     []Process         `json:"leaves,omitempty"`
+	Reaped     []Process         `json:"reaped,omitempty"`
+	Unverified []Process         `json:"unverified,omitempty"`
+	Remaining  []Process         `json:"remaining,omitempty"`
+	Resources  []ResourceOutcome `json:"resources,omitempty"`
 }
 
 type Run struct {
@@ -97,6 +99,7 @@ const (
 	StatusStarting RunStatus = "starting"
 	StatusDead     RunStatus = "dead"
 	StatusLost     RunStatus = "lost"
+	StatusDirty    RunStatus = "dirty"
 )
 
 type Process struct {
@@ -194,6 +197,10 @@ type record struct {
 	Signal        string    `json:"signal,omitempty"`
 	DurationMS    int64     `json:"duration_ms,omitempty"`
 	Observed      []Process `json:"observed,omitempty"`
+	Scratch       string    `json:"scratch,omitempty"`
+	ScratchDevice uint64    `json:"scratch_device,omitempty"`
+	ScratchInode  uint64    `json:"scratch_inode,omitempty"`
+	Keep          []string  `json:"keep,omitempty"`
 }
 
 type keeperConfig struct {
@@ -399,8 +406,8 @@ func List(stateDir string) Listing {
 			if status == StatusStarting {
 				status = StatusQueued
 			}
-		} else if rec.Status == StatusLost {
-			status = StatusLost
+		} else if rec.Status == StatusLost || rec.Status == StatusDirty {
+			status = rec.Status
 		} else if live && identity == rec.StartedAt {
 			status = StatusRunning
 			if rec.StallMS > 0 && !rec.LastOutputAt.IsZero() && now.Sub(rec.LastOutputAt) >= time.Duration(rec.StallMS)*time.Millisecond {
@@ -414,7 +421,7 @@ func List(stateDir string) Listing {
 			if !rec.EnqueuedAt.IsZero() {
 				elapsed = now.Sub(rec.EnqueuedAt).Milliseconds()
 			}
-		} else if status != StatusDead && !rec.StartedAtTime.IsZero() {
+		} else if status != StatusDead && status != StatusDirty && !rec.StartedAtTime.IsZero() {
 			elapsed = now.Sub(rec.StartedAtTime).Milliseconds()
 		}
 		position := 0
@@ -740,7 +747,7 @@ func newID() (string, error) {
 func filteredEnv(env []string) []string {
 	out := make([]string, 0, len(env)+1)
 	for _, item := range env {
-		if strings.HasPrefix(item, stateEnv+"=") || strings.HasPrefix(item, readyEnv+"=") || strings.HasPrefix(item, runEnv+"=") {
+		if strings.HasPrefix(item, stateEnv+"=") || strings.HasPrefix(item, readyEnv+"=") || strings.HasPrefix(item, runEnv+"=") || strings.HasPrefix(item, resourceStateEnv+"=") {
 			continue
 		}
 		out = append(out, item)
@@ -784,7 +791,7 @@ func eventFor(rec record, kind EventType) Event {
 
 func commandText(command []string) string { return strings.Join(command, " ") }
 
-func configureCommand(cmd *exec.Cmd, runID string) {
-	cmd.Env = append(filteredEnv(cmd.Env), runEnv+"="+runID)
+func configureCommand(cmd *exec.Cmd, runID, stateDir, scratch string) {
+	cmd.Env = append(filteredEnv(cmd.Env), runEnv+"="+runID, resourceStateEnv+"="+stateDir, "KB_RUNNER_SCRATCH="+scratch, "TMPDIR="+scratch, "TMP="+scratch, "TEMP="+scratch)
 	configureCommandPlatform(cmd)
 }

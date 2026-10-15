@@ -349,10 +349,23 @@ func pruneStateLocked(stateDir string) error {
 		}
 		if rec.Status == StatusRunning || rec.Status == StatusStalled {
 			cleanup := killTreeWithHistory(rec.PID, rec.RunID, rec.Observed)
+			resources, resourceErr := cleanupResourcesLocked(stateDir, rec.RunID)
+			resourceErr = errors.Join(resourceErr, resourceOutcomesError(resources))
+			if rec.Scratch != "" {
+				scratchOutcome, scratchErr := cleanupScratchOutcome(rec.StateDir, rec.Scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
+				resources = append(resources, scratchOutcome)
+				if scratchErr != nil {
+					resourceErr = errors.Join(resourceErr, fmt.Errorf("remove run scratch: %w", scratchErr))
+				}
+			}
 			rec.Status = StatusLost
 			rec.Error = fmt.Sprintf("keeper PID %d identity %s is no longer live", rec.PID, rec.StartedAt)
 			if cleanup.err != nil {
 				rec.Error += "; " + cleanup.err.Error()
+			}
+			if resourceErr != nil {
+				rec.Status = StatusDirty
+				rec.Error += "; resource cleanup: " + resourceErr.Error()
 			}
 			if err := writeRecordAtomic(rec); err != nil {
 				return fmt.Errorf("record lost run %s: %w", rec.RunID, err)
@@ -366,6 +379,7 @@ func pruneStateLocked(stateDir string) error {
 			teardown.Reaped = cleanup.Reaped
 			teardown.Unverified = cleanup.Unverified
 			teardown.Remaining = cleanup.Remaining
+			teardown.Resources = resources
 			if cleanup.err != nil {
 				teardown.Error = cleanup.err.Error()
 			}
@@ -431,11 +445,23 @@ func cleanupAdmission(stateDir, runID, reason string) {
 				}
 			}
 		}
-		if err := os.Remove(filepath.Join(stateDir, "runs", runID+".json")); err != nil && !os.IsNotExist(err) {
-			return err
+		scratch := rec.Scratch
+		if scratch == "" {
+			scratch = filepath.Join(stateDir, "runs", runID, "scratch")
 		}
+		scratchOutcome, scratchErr := cleanupScratchOutcome(stateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
 		event := eventFor(rec, EventTeardown)
 		event.Reason = reason
+		event.Resources = append(event.Resources, scratchOutcome)
+		if scratchErr != nil {
+			event.Error = scratchErr.Error()
+			rec.Status, rec.Error = StatusDirty, scratchErr.Error()
+			if err := writeRecordAtomic(rec); err != nil {
+				return errors.Join(scratchErr, err)
+			}
+		} else if err := os.Remove(filepath.Join(stateDir, "runs", runID+".json")); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		return appendEvent(stateDir, event)
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "proc: remove incomplete admission %s: %v\n", runID, err)
@@ -457,7 +483,9 @@ func updateRecord(stateDir, runID string, update func(*record) error) error {
 
 func completeRecord(stateDir, runID string, code *int, signal string, duration time.Duration, observed []Process) error {
 	return updateRecord(stateDir, runID, func(rec *record) error {
-		rec.Status = StatusDead
+		if rec.Status != StatusDirty && rec.Status != StatusLost {
+			rec.Status = StatusDead
+		}
 		rec.ExitCode = code
 		rec.Signal = signal
 		rec.DurationMS = duration.Milliseconds()

@@ -35,7 +35,7 @@ func main() {
 
 func execute(args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
-		return 2, errors.New("usage: kb-runner <run|gate|ps|wait|events> [flags]")
+		return 2, errors.New("usage: kb-runner <run|gate|ps|wait|events|own|gc> [flags]")
 	}
 	switch args[0] {
 	case "run":
@@ -48,6 +48,10 @@ func execute(args []string, stdout, stderr io.Writer) (int, error) {
 		return gateCommand(args[1:], stdout, stderr)
 	case "events":
 		return eventsCommand(args[1:], stdout)
+	case "own":
+		return ownCommand(args[1:], stdout)
+	case "gc":
+		return gcCommand(args[1:], stdout)
 	default:
 		return 2, fmt.Errorf("kb-runner: unknown command %q; next: kb-runner --help", args[0])
 	}
@@ -69,6 +73,8 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 	minFree := fs.String("min-free", "", "minimum free bytes on the state filesystem")
 	var envVars stringListFlag
 	fs.Var(&envVars, "env", "add environment entry KEY=VALUE (repeatable)")
+	var keepPaths pathListFlag
+	fs.Var(&keepPaths, "keep", "keep this output path after run cleanup (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
@@ -96,7 +102,8 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("kb-runner run: locate keeper executable: %w", err)
 	}
-	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, Env: envVars, Command: command})
+	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
+	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, Env: envVars, Keep: keepPaths, Command: command})
 	if err != nil {
 		return 1, fmt.Errorf("kb-runner run: %w\nnext: inspect state directory access with ls -ld %s, then retry: %s", err, shellQuote(*state), shellJoin(os.Args))
 	}
@@ -130,14 +137,42 @@ func (values *stringListFlag) Set(value string) error {
 	return nil
 }
 
+type pathListFlag []string
+
+func (values *pathListFlag) String() string { return strings.Join(*values, ",") }
+func (values *pathListFlag) Set(value string) error {
+	if value == "" {
+		return errors.New("kept path cannot be empty")
+	}
+	*values = append(*values, value)
+	return nil
+}
+
 func psCommand(args []string, output io.Writer) (int, error) {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
 	state := fs.String("state", "", "directory containing run records")
+	leftovers := fs.Bool("leftovers", false, "list every uncleaned owned resource")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
 	if *state == "" {
 		return 2, errors.New("kb-runner ps: --state is required; next: kb-runner ps --help")
+	}
+	if *leftovers {
+		entries, err := proc.Leftovers(*state)
+		if err != nil {
+			return 1, fmt.Errorf("kb-runner ps: list leftovers: %w\nnext: check state access with ls -ld %s", err, shellQuote(*state))
+		}
+		if len(entries) == 0 {
+			_, err := fmt.Fprintln(output, "No resource leftovers.")
+			return 0, err
+		}
+		for _, entry := range entries {
+			if _, err := fmt.Fprintf(output, "%s\t%s\t%s\t%s\n", entry.Resource.Kind, entry.Resource.ID, entry.Outcome, entry.Error); err != nil {
+				return 1, err
+			}
+		}
+		return 0, nil
 	}
 	listing := proc.List(*state)
 	if listing.Error != nil {
@@ -262,4 +297,119 @@ func shellJoin(args []string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func ownCommand(args []string, output io.Writer) (int, error) {
+	if len(args) < 2 {
+		return 2, errors.New("kb-runner own: usage: own path --create dir|file PATH or own docker-compose NAME -f FILE... -- COMPOSE-ARGV...; next: call own from a command started by kb-runner run")
+	}
+	runID := os.Getenv("KBLABS_CLIPROC_RUN")
+	state := os.Getenv("KBLABS_CLIPROC_STATE")
+	if runID == "" || state == "" {
+		return 2, errors.New("kb-runner own: no active run marker; run this command inside kb-runner run so the resource has a cleanup owner\nnext: kb-runner run --help")
+	}
+	resource := proc.Resource{Kind: proc.ResourceKind(args[0])}
+	var ownErr error
+	switch resource.Kind {
+	case proc.ResourcePath:
+		if len(args) != 4 || args[1] != "--create" {
+			return 2, errors.New("kb-runner own path: usage: own path --create dir|file PATH; next: create external paths through this exclusive ownership command")
+		}
+		ownErr = proc.CreateOwnedPath(state, runID, args[3], proc.OwnedPathType(args[2]))
+		resource.ID = args[3]
+	case proc.ResourceCompose:
+		if len(args) < 5 {
+			return 2, errors.New("kb-runner own docker-compose: usage: own docker-compose NAME -f FILE... -- COMPOSE-ARGV...; next: pass the same Compose prefix used to create the project")
+		}
+		resource.ID = args[1]
+		separator := -1
+		for i := 2; i < len(args); {
+			if args[i] == "--" {
+				separator = i
+				break
+			}
+			if args[i] != "-f" || i+1 >= len(args) {
+				return 2, fmt.Errorf("kb-runner own docker-compose: expected -f FILE before --, got %q", args[i])
+			}
+			resource.Files = append(resource.Files, args[i+1])
+			i += 2
+		}
+		if separator < 0 || separator+1 >= len(args) {
+			return 2, errors.New("kb-runner own docker-compose: compose argv prefix is required after --")
+		}
+		resource.ComposePrefix = append([]string(nil), args[separator+1:]...)
+		ownErr = proc.RegisterResource(state, runID, resource)
+	default:
+		if len(args) != 2 {
+			return 2, errors.New("kb-runner own: resource kind takes one id")
+		}
+		resource.ID = args[1]
+		ownErr = proc.RegisterResource(state, runID, resource)
+	}
+	if ownErr != nil {
+		return 1, ownFailure(args, state, resource, ownErr)
+	}
+	_, err := fmt.Fprintf(output, "owned %s %s\n", resource.Kind, resource.ID)
+	return 0, err
+}
+
+func ownFailure(args []string, state string, resource proc.Resource, ownErr error) error {
+	var unsupported *proc.PathXattrUnsupportedError
+	if errors.As(ownErr, &unsupported) {
+		invocation := shellJoin(append([]string{"kb-runner", "own"}, args...))
+		return fmt.Errorf("kb-runner own: %w\nnext: inspect the mount with `df -P %s`, choose a mount that supports user xattrs, then rerun: `%s`", ownErr, shellQuote(unsupported.Path), invocation)
+	}
+	return fmt.Errorf("kb-runner own: %w\nnext: %s; correct the resource or cleanup root, then retry", ownErr, ownershipNextCommand(state, resource))
+}
+
+func ownershipNextCommand(state string, resource proc.Resource) string {
+	switch resource.Kind {
+	case proc.ResourcePath:
+		return "ls -ld " + shellQuote(resource.ID) + " " + shellQuote(filepath.Join(state, "cleanup-roots.json"))
+	case proc.ResourceCompose:
+		args := append([]string(nil), resource.ComposePrefix...)
+		args = append(args, "-p", resource.ID)
+		for _, file := range resource.Files {
+			args = append(args, "-f", file)
+		}
+		args = append(args, "config", "--format", "json")
+		return shellJoin(args)
+	case proc.ResourceContainer:
+		return "docker inspect " + shellQuote(resource.ID)
+	case proc.ResourceNetwork:
+		return "docker network inspect " + shellQuote(resource.ID)
+	case proc.ResourceVolume:
+		return "docker volume inspect " + shellQuote(resource.ID)
+	default:
+		return "kb-runner own --help"
+	}
+}
+
+func gcCommand(args []string, output io.Writer) (int, error) {
+	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
+	state := fs.String("state", "", "directory containing run records")
+	if err := fs.Parse(args); err != nil {
+		return 2, err
+	}
+	if *state == "" {
+		return 2, errors.New("kb-runner gc: --state is required; next: kb-runner gc --help")
+	}
+	outcomes, err := proc.GarbageCollect(*state)
+	if err != nil {
+		return 1, fmt.Errorf("kb-runner gc: cleanup failed: %w\nnext: inspect remaining entries with kb-runner ps --state %s --leftovers", err, shellQuote(*state))
+	}
+	for _, outcome := range outcomes {
+		if _, err := fmt.Fprintf(output, "%s\t%s\t%s", outcome.Resource.Kind, outcome.Resource.ID, outcome.Outcome); err != nil {
+			return 1, err
+		}
+		if outcome.Error != "" {
+			if _, err := fmt.Fprintf(output, "\t%s", outcome.Error); err != nil {
+				return 1, err
+			}
+		}
+		if _, err := fmt.Fprintln(output); err != nil {
+			return 1, err
+		}
+	}
+	return 0, nil
 }
