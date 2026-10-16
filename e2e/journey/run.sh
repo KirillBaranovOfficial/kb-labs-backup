@@ -64,6 +64,7 @@ fi
 if (( COMPOSE_AVAILABLE )); then
   COMPOSE+=("${COMPOSE_FILES[@]}")
 fi
+source "$ROOT/e2e/journey/candidate-services.sh"
 
 if [[ -n "$compose_action" ]]; then
   if (( ! COMPOSE_AVAILABLE )); then
@@ -105,6 +106,10 @@ cleanup() {
     fi
   done
   if (( COMPOSE_AVAILABLE )); then
+    if ! journey_stop_container_services "${COMPOSE[@]}"; then
+      echo "Journey candidate services cleanup failed; run 'e2e/journey/run.sh --down' to remove the journey stack." >&2
+      (( status != 0 )) || status=1
+    fi
     if [[ -n "${RUN_STARTED_AT:-}" ]]; then
       if ! bash e2e/journey/teardown-compose.sh "$status" .journey/reports "$RUN_STARTED_AT" "${COMPOSE[@]}"; then
         status=1
@@ -203,17 +208,9 @@ mkdir -p .journey/reports
 rm -f .journey/reports/journey-summary.md
 find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
 "${COMPOSE[@]}" build publisher runner idp-stub
-"${COMPOSE[@]}" up -d --wait verdaccio
-if "${COMPOSE[@]}" exec -T verdaccio sh -s -- /verdaccio/storage < e2e/journey/storage_has_packages.sh >/dev/null 2>&1; then
-  echo "WARNING: reusing non-empty Verdaccio storage; existing package versions must match the local tarballs."
-fi
-publisher_id=$("${COMPOSE[@]}" run -d --name "journey-publisher-$$" publisher)
+journey_start_container_services "${COMPOSE[@]}"
 start_project_container_monitors
-publisher_exit=$(docker wait "$publisher_id")
-if [[ "$publisher_exit" != "0" ]]; then
-  echo "Journey package publisher container exited $publisher_exit. Next: cat .journey/reports/container-outcomes.json" >&2
-  exit 1
-fi
+journey_wait_container_publisher
 
 run_journey() {
   local runner_selector="$1" front_door="$2" scenario="$3" variant="$4"
