@@ -1,5 +1,6 @@
 import {
   GATEWAY_SERVICE_NETWORK,
+  PlatformAuditStore,
   createErrorEnvelope,
   ErrorEnvelopeError,
   logDiagnosticEvent,
@@ -30,7 +31,6 @@ import {
   ApiTokensStore,
   InvitesStore,
   PasswordResetStore,
-  AuthAuditStore,
   loadIdentityProviders,
   createPasswordPolicy,
   createUserAuthService,
@@ -204,7 +204,7 @@ export async function startGateway(
     const apiTokens = new ApiTokensStore(docs);
     const invites = new InvitesStore(docs);
     const passwordResets = new PasswordResetStore(docs);
-    const authAudit = new AuthAuditStore(docs);
+    const authAudit = new PlatformAuditStore(docs);
 
     // Identity providers are loaded from config (ADR-0020, DD-3). An
     // empty/absent `auth.providers` registers the built-in email-password

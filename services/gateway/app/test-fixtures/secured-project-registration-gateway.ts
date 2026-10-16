@@ -4,7 +4,6 @@ import { createInMemoryDocumentDatabase } from '@kb-labs/sdk/testing';
 import type { ICache, ILogger } from '@kb-labs/core-platform';
 import {
   ApiTokensStore,
-  AuthAuditStore,
   CredentialsStore,
   ensureBootstrapAdmin,
   evaluateAuthReadiness,
@@ -20,6 +19,7 @@ import {
   SessionsStore,
   UsersStore,
 } from '@kb-labs/gateway-auth';
+import { PlatformAuditStore } from '@kb-labs/core-platform';
 import { createAuthMiddleware } from '../src/auth/middleware.js';
 import { registerAuthHealthRoute } from '../src/auth/health-route.js';
 import { registerUserAuthRoutes } from '../src/auth/user-routes.js';
@@ -61,7 +61,7 @@ async function run(): Promise<void> {
   const apiTokens = new ApiTokensStore(docs);
   const invites = new InvitesStore(docs);
   const passwordResets = new PasswordResetStore(docs);
-  const authAudit = new AuthAuditStore(docs);
+  const authAudit = new PlatformAuditStore(docs);
   const providers = new ProviderRegistry();
   providers.register(createEmailPasswordProvider({ users, credentials, tenantId: TENANT_ID, bcryptCost: 4 }));
   const pdp = createStubPDP({ memberships });

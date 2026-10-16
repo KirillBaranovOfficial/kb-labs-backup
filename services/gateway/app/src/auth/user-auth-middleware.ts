@@ -100,7 +100,7 @@ export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
       if (resolvedTenant !== null && resolvedTenant !== apiToken.tenantId) {return sendUnauthorized(request, reply, 'invalid');}
       request.userAuthContext = { type: 'user', source: 'api-token', userId: apiToken.userId, tenantId: apiToken.tenantId, familyId: apiToken.tokenId };
       const permissions = await deps.pdp.enumeratePermissions({ userId: apiToken.userId, tenantId: apiToken.tenantId, type: 'user' });
-      request.authContext = { type: 'user', userId: apiToken.userId, namespaceId: apiToken.tenantId, tier: 'free', permissions };
+      request.authContext = { type: 'user', userId: apiToken.userId, tokenId: apiToken.tokenId, namespaceId: apiToken.tenantId, tier: 'free', permissions };
       return;
     }
 

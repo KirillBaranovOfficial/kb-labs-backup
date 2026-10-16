@@ -46,7 +46,6 @@ import type {
   ApiTokensStore,
   InvitesStore,
   MembershipsStore,
-  AuthAuditStore,
   ProviderRegistry,
   IPolicyDecisionPoint,
   JwtConfig,
@@ -55,6 +54,7 @@ import type {
   TenantResolver,
   OAuthStateStore,
 } from '@kb-labs/gateway-auth';
+import type { PlatformAuditStore } from '@kb-labs/core-platform';
 import { registerOAuthRoutes } from './oauth-routes.js';
 import { sendAuthError } from './error-response.js';
 import { authRejectionEnvelope, gatewayRequestUrl } from './tokens.js';
@@ -132,7 +132,7 @@ export interface UserAuthRouteDeps {
   sessions: SessionsStore;
   apiTokens: ApiTokensStore;
   invites: InvitesStore;
-  authAudit: AuthAuditStore;
+  authAudit: PlatformAuditStore;
   providers: ProviderRegistry;
   pdp: IPolicyDecisionPoint;
   /** Resolves the tenant from the Host header — used to prevent tenantId bypass via body. */

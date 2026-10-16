@@ -6,6 +6,17 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ## 2026-10-16
 
+### D49 — MCP tool calls are durably audited with user and token identity
+
+Every MCP `tools/call` admitted in secured mode carries the authenticated user
+and API token identifiers into one durable platform audit record. The record
+contains project, tool, outcome, correlation ID, and timestamp, but no tool
+arguments or secrets. Local mode has no token identifier and records a null
+token ID. Audit records share the platform audit collection with Gateway auth
+events; analytics remain a separate signal. A secured forwarded identity
+without its token ID is refused before tool dispatch. Permissions remain the
+stub defined in the existing project MCP decision. Cases: S-253.3.
+
 ### Worker pool health includes startup and replacement recovery
 
 The shared `kb.health/1` execution component reports resolved execution mode,

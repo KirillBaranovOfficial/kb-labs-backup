@@ -9,6 +9,7 @@ const secret = 'test-internal-secret';
 const auth = {
   type: 'user' as const,
   userId: 'user-7',
+  tokenId: 'token-9',
   namespaceId: 'tenant-4',
   tier: 'pro' as const,
   permissions: ['projects:read', 'users:write'],
@@ -42,6 +43,12 @@ describe('forwarded gateway identity codec', () => {
       ...forwardedIdentityHeaders(auth, secret),
       'x-kb-auth-permissions': '{"permission":"users:write"}',
     }, secret)).toEqual({ kind: 'rejected' });
+  });
+
+  it('round trips the API token identifier as part of the forwarded identity', () => {
+    const headers = forwardedIdentityHeaders(auth, secret);
+    expect(headers['x-kb-auth-token-id']).toBe('token-9');
+    expect(readForwardedIdentity(headers, secret)).toEqual({ kind: 'identity', auth });
   });
 
   it('strips client-supplied secret and identity headers', () => {

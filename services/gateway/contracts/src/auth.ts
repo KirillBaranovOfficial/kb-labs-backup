@@ -6,6 +6,7 @@ export const AuthContextTypeSchema = z.enum(['user', 'cli', 'machine']);
 export const AuthContextSchema = z.object({
   type: AuthContextTypeSchema,
   userId: z.string(),
+  tokenId: z.string().min(1).optional(),
   namespaceId: z.string(),
   tier: z.enum(['free', 'pro', 'enterprise']),
   permissions: z.array(z.string()),

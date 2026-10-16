@@ -23,14 +23,16 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { can, type Policy, type Identity } from '@kb-labs/core-policy';
-import type { ICache, ILogger } from '@kb-labs/core-platform';
+import { PlatformAuditStore, isErrorCode, type ICache, type ILogger } from '@kb-labs/core-platform';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { createDaemonServer, getListenOptions, type ObservabilityCollectorLike } from '@kb-labs/shared-http';
@@ -87,6 +89,7 @@ export class McpDaemonServer {
   private readonly opts: McpDaemonServerOptions;
   private readonly resolvePlatform: PlatformResolver;
   private readonly collector: McpObservabilityCollector;
+  private readonly audit: PlatformAuditStore;
   private app: FastifyInstance | undefined;
   private registry: IEntityRegistry | undefined;
 
@@ -94,6 +97,7 @@ export class McpDaemonServer {
     this.opts = opts;
     this.resolvePlatform = opts.resolvePlatform ?? (() => opts.platform);
     this.collector = new McpObservabilityCollector();
+    this.audit = new PlatformAuditStore(opts.platform.documentDatabase);
   }
 
   /** Build a per-request permits predicate bound to the identity (PDP seam). */
@@ -194,7 +198,8 @@ export class McpDaemonServer {
       const authHeader = request.headers.authorization;
       const forwardedIdentity = readForwardedIdentity(request.headers, process.env.GATEWAY_INTERNAL_SECRET);
       const authCtx = forwardedIdentity.kind === 'identity' ? forwardedIdentity.auth : null;
-      if (rejectsUnauthenticatedRequest(this.opts.authMode ?? 'secured', Boolean(authCtx))) {
+      const securedTokenIdentity = (this.opts.authMode ?? 'secured') === 'local' || Boolean(authCtx?.tokenId);
+      if (rejectsUnauthenticatedRequest(this.opts.authMode ?? 'secured', securedTokenIdentity)) {
         const unauthenticated = mcpUnauthenticatedResponse(
           this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL ?? '<url>',
         );
@@ -248,31 +253,63 @@ export class McpDaemonServer {
       }));
 
       mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
-        if (params.name === DIAGNOSTICS_TOOL.name) {
-          if (!permits) {
-            return mcpToolError('KB_AUTH_REQUIRED', { tool: params.name });
+        let result: CallToolResult;
+        try {
+          if (params.name === DIAGNOSTICS_TOOL.name) {
+            if (!permits) {
+              result = mcpToolError('KB_AUTH_REQUIRED', { tool: params.name });
+            } else {
+              const validationError = validateToolArguments(
+                DIAGNOSTICS_TOOL.inputSchema,
+                (params.arguments ?? {}) as Record<string, unknown>,
+              );
+              result = validationError
+                ? invalidMcpToolArguments(validationError)
+                : mcpToolSuccess(renderManifestDiagnostics(this.collector.getManifestDiagnostics()));
+            }
+          } else {
+            result = await executeToolCall({
+              name: params.name,
+              args: (params.arguments ?? {}) as Record<string, unknown>,
+              visibleTools,
+              permits,
+              tenantId,
+              resolvePlatform: this.resolvePlatform,
+              analytics: this.opts.platform.analytics,
+              collector: this.collector,
+              logger: reqLogger,
+              gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL,
+            });
           }
-          const validationError = validateToolArguments(
-            DIAGNOSTICS_TOOL.inputSchema,
-            (params.arguments ?? {}) as Record<string, unknown>,
-          );
-          if (validationError) {
-            return invalidMcpToolArguments(validationError);
-          }
-          return mcpToolSuccess(renderManifestDiagnostics(this.collector.getManifestDiagnostics()));
+        } catch (error) {
+          result = unexpectedMcpResult(error, reqLogger);
         }
-        return executeToolCall({
-          name: params.name,
-          args: (params.arguments ?? {}) as Record<string, unknown>,
-          visibleTools,
-          permits,
-          tenantId,
-          resolvePlatform: this.resolvePlatform,
-          analytics: this.opts.platform.analytics,
-          collector: this.collector,
-          logger: reqLogger,
-          gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL,
-        });
+
+        const errorContent = result.structuredContent?.error;
+        const errorCode = typeof errorContent === 'object' && errorContent !== null
+          && 'code' in errorContent && typeof errorContent.code === 'string' && isErrorCode(errorContent.code)
+          ? errorContent.code
+          : undefined;
+        const correlationId = typeof errorContent === 'object' && errorContent !== null
+          && 'correlationId' in errorContent && typeof errorContent.correlationId === 'string'
+          ? errorContent.correlationId
+          : randomUUID();
+
+        try {
+          await this.audit.record({
+            kind: 'mcp.tool.call',
+            actorUserId: authCtx?.userId ?? null,
+            tokenId: authCtx?.tokenId ?? null,
+            tenantId,
+            project: this.opts.projectRoot,
+            tool: params.name,
+            outcome: result.isError ? errorCode ?? 'KB_RUNTIME_UNEXPECTED' : 'success',
+            correlationId,
+          });
+        } catch (error) {
+          return unexpectedMcpResult(error, reqLogger);
+        }
+        return result;
       });
 
       // 4. Streamable HTTP transport (stateless). Pass Fastify's parsed body —

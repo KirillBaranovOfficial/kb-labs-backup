@@ -11,6 +11,7 @@ import {
 } from "@kb-labs/shared-http";
 import {
   logDiagnosticEvent,
+  type PlatformAuditStore,
   type ICache,
   type ILogger,
   type IServiceTransport,
@@ -26,7 +27,6 @@ import {
   type SessionsStore,
   type ApiTokensStore,
   type InvitesStore,
-  type AuthAuditStore,
   type ProviderRegistry,
   type IPolicyDecisionPoint,
   type TenantResolver,
@@ -90,7 +90,7 @@ export interface UserAuthServerDeps {
   sessions: SessionsStore;
   apiTokens: ApiTokensStore;
   invites: InvitesStore;
-  authAudit: AuthAuditStore;
+  authAudit: PlatformAuditStore;
   providers: ProviderRegistry;
   pdp: IPolicyDecisionPoint;
   tenantResolver: TenantResolver;
