@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// case: S-179.18
+// case: S-179.18, S-179.38
 func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 	root := t.TempDir()
 	writeRunFixture(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)
@@ -112,13 +112,16 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 	var failure struct {
 		OK    bool `json:"ok"`
 		Error struct {
-			Code string `json:"code"`
+			Code    string            `json:"code"`
+			Hint    string            `json:"hint"`
+			Details map[string]string `json:"details"`
 		} `json:"error"`
 		Data struct {
 			Results []struct {
 				Package string `json:"package"`
 				Cached  bool   `json:"cached"`
 				OK      bool   `json:"ok"`
+				LogPath string `json:"logPath"`
 			} `json:"results"`
 			Summary struct {
 				Scheduled int `json:"scheduled"`
@@ -132,9 +135,21 @@ func TestBuiltBinaryReportsFailureRetriesAndCachedRecovery(t *testing.T) {
 	if err := json.Unmarshal(output, &failure); err != nil {
 		t.Fatalf("decode failed-run JSON %q: %v", output, err)
 	}
-	if failure.OK || failure.Error.Code != "KB_RUNTIME_COMMAND_FAILED" || len(failure.Data.Results) != 1 ||
+	if failure.OK || failure.Error.Code != "KB_DEVKIT_TASK_FAILED" || len(failure.Data.Results) != 1 ||
 		failure.Data.Results[0].Package != "@fixture/core" || failure.Data.Results[0].Cached || failure.Data.Results[0].OK {
 		t.Fatalf("second failed-run JSON = %+v", failure)
+	}
+	failed := failure.Data.Results[0]
+	expected := renderCatalogEnvelope(t, "KB_DEVKIT_TASK_FAILED", map[string]any{
+		"package": failed.Package, "task": "build", "logPath": failed.LogPath,
+	})
+	if failed.LogPath == "" || failure.Error.Details["package"] != failed.Package ||
+		failure.Error.Details["task"] != "build" || failure.Error.Details["logPath"] != failed.LogPath ||
+		failure.Error.Code != "KB_DEVKIT_TASK_FAILED" || failure.Error.Hint != expected.Hint {
+		t.Fatalf("task failure diagnosis = %+v, logPath=%q", failure.Error, failed.LogPath)
+	}
+	if log, err := exec.Command("cat", failed.LogPath).Output(); err != nil || !strings.Contains(string(log), "command exited with code 1") {
+		t.Fatalf("read failed task log with its recovery action at %q = %q, error = %v", failed.LogPath, log, err)
 	}
 	assertCounts(failure.Data.Summary, 3, 0, 0, 1, 2)
 	if readRunCount() != 2 {

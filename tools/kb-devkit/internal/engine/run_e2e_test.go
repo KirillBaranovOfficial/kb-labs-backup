@@ -139,7 +139,7 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	}
 }
 
-// case: S-179.23
+// case: S-179.23, S-179.37
 func TestRunSummaryPartitionsScheduledTasksAndCountsBlockedDependents(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceRoot(t, root, []string{"packages/*"})
@@ -245,6 +245,56 @@ func TestRunE2ERespectsCrossPackageDependencies(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "packages", "app", "build.txt")); err != nil {
 		t.Fatalf("app build artifact missing: %v", err)
+	}
+}
+
+// case: S-179.37
+func TestRunAffectedDependencyChainCompletesBeforeDependentTasks(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	coreDir := filepath.Join(root, "packages", "core")
+	runtimeDir := filepath.Join(root, "packages", "runtime")
+	appDir := filepath.Join(root, "packages", "app")
+	writePkg(t, coreDir, `{"name":"@fixture/core"}`)
+	writePkg(t, runtimeDir, `{"name":"@fixture/runtime","dependencies":{"@fixture/core":"workspace:*"}}`)
+	writePkg(t, appDir, `{"name":"@fixture/app","dependencies":{"@fixture/runtime":"workspace:*"}}`)
+
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "core", Category: config.CategoryConfig{Match: []string{"packages/core"}, Preset: "node-lib"}},
+		{Name: "runtime", Category: config.CategoryConfig{Match: []string{"packages/runtime"}, Preset: "node-lib"}},
+		{Name: "applications", Category: config.CategoryConfig{Match: []string{"packages/app"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {
+			{Categories: []string{"core"}, Command: `sh -c "mkdir -p dist && printf core > dist/ready"`},
+			{Categories: []string{"runtime"}, Command: `sh -c "test -f ../core/dist/ready && mkdir -p dist && printf runtime > dist/ready"`, Deps: []string{"^build"}},
+			{Categories: []string{"applications"}, Command: `sh -c "test -f ../runtime/dist/ready"`, Deps: []string{"^build"}},
+		},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	selected := ws.FilterByName([]string{"@fixture/runtime", "@fixture/app"})
+	var completed []string
+	result, err := Run(ws, cfg, RunOptions{
+		Tasks:       []string{"build"},
+		Packages:    selected,
+		WSRoot:      root,
+		CacheRoot:   filepath.Join(root, ".kb", "devkit-cache"),
+		Concurrency: 3,
+		OnResult: func(result TaskResult, _, _ int) {
+			completed = append(completed, result.Package)
+		},
+	})
+	if err != nil || !result.OK {
+		t.Fatalf("affected dependency build = %+v, error = %v", result, err)
+	}
+	want := []string{"@fixture/core", "@fixture/runtime", "@fixture/app"}
+	if len(completed) != len(want) {
+		t.Fatalf("completed tasks = %v, want %v", completed, want)
+	}
+	for i := range want {
+		if completed[i] != want[i] {
+			t.Fatalf("completed task order = %v, want %v", completed, want)
+		}
 	}
 }
 

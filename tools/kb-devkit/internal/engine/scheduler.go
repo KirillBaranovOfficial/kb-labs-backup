@@ -75,6 +75,19 @@ type BlockedTask struct {
 	Dependents int    `json:"dependents"`
 }
 
+// TaskGraphError reports a declared workspace task dependency that cannot be
+// represented because its package has no matching task variant.
+type TaskGraphError struct {
+	Package        string
+	Task           string
+	Dependency     string
+	DependencyTask string
+}
+
+func (e *TaskGraphError) Error() string {
+	return "workspace task dependency has no matching task variant"
+}
+
 // Run builds the (package × task) DAG and executes it in topological order.
 // Packages in the same layer with no inter-task dependencies run in parallel.
 func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (RunResult, error) {
@@ -108,7 +121,7 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	}
 	manifests := cache.NewManifestStore(cacheRoot)
 	states := cache.NewStateStore(cacheRoot)
-	executor := NewExecutor(objects, manifests, states, opts.WSRoot, opts.LiveOutput)
+	executor := NewExecutor(objects, manifests, states, opts.WSRoot, cacheRoot, opts.LiveOutput)
 
 	// Build DAG of (pkg, task) nodes — only for packages with a matching variant.
 	nodes, err := buildDAG(pkgs, opts.Tasks, cfg, ws)
@@ -375,11 +388,16 @@ func buildDAG(
 			if strings.HasPrefix(dep, "^") {
 				// ^build = run 'build' for every workspace dependency first.
 				depTask := strings.TrimPrefix(dep, "^")
+				if !containsTask(taskNames, depTask) {
+					continue
+				}
 				for _, depPkgName := range pkgDeps[k.pkg] {
 					if _, exists := pkgByName[depPkgName]; exists {
 						depKey := nodeKey{depPkgName, depTask}
 						if _, hasNode := nodes[depKey]; hasNode {
 							deps = append(deps, depKey)
+						} else {
+							return nil, &TaskGraphError{Package: k.pkg, Task: k.task, Dependency: depPkgName, DependencyTask: depTask}
 						}
 					}
 				}

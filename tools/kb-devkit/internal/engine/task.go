@@ -24,15 +24,18 @@ type TaskDef struct {
 
 // TaskResult is the outcome of running one (package, task) pair.
 type TaskResult struct {
-	Package  string
-	Task     string
-	OK       bool
-	Cached   bool
-	Elapsed  time.Duration
-	ExitCode int
-	Stdout   string
-	Stderr   string
-	Error    string
+	Package      string
+	Task         string
+	OK           bool
+	Cached       bool
+	Elapsed      time.Duration
+	ExitCode     int
+	Stdout       string
+	Stderr       string
+	Error        string
+	LogPath      string `json:"logPath,omitempty"`
+	LogError     string `json:"logError,omitempty"`
+	LogDirectory string `json:"logDirectory,omitempty"`
 }
 
 // ResolveTaskDef returns the TaskDef for a specific (task name, package category) pair.
