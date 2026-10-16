@@ -5,7 +5,7 @@
  * Simple by default, enterprise when needed.
  */
 
-import type { BackendOptions, ExecutionBackend, ExecutionDiagnostics, ExecutionRequest, ExecutionResult, RawExecutionBackend } from './types.js';
+import type { BackendOptions, ExecutionBackend, ExecutionDiagnostics, ExecutionRequest, ExecutionResult, NormalizedHealthStatus, RawExecutionBackend } from './types.js';
 import { InProcessBackend } from './backends/in-process.js';
 import { SubprocessBackend } from './backends/subprocess.js';
 import { WorkerPoolBackend } from './backends/worker-pool/backend.js';
@@ -207,7 +207,7 @@ class NormalizingExecutionBackend implements ExecutionBackend {
     });
   }
 
-  async health() {
+  async health(): Promise<NormalizedHealthStatus> {
     return { ...(await this.backend.health()), executionMode: this.executionMode };
   }
   stats() { return this.backend.stats(); }

@@ -19,16 +19,16 @@ cleaned up, and pool capacity returns for later work.
 
 - [ ] `platform.execution.mode` is `worker-pool`.
 - [ ] A fixture can crash, hang past its timeout, spawn a detached child, and exit before sending its ready message.
-- [ ] The fixture records execution, worker, and child process IDs; pool state is visible in `kb platform status` and Studio.
+- [ ] The fixture records execution, worker, and child process IDs; pool state is visible in `kb health` over `kb.health/1` and in Studio.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
 | S-242.1 | Run `kb fixture execution crash --json`, then submit `kb fixture execution healthy --json` | The failed request returns catalogued `WORKER_CRASHED` with its execution ID, not `KB_RUNTIME_UNEXPECTED`. The worker exits, capacity is restored, and the healthy call succeeds. |
-| S-242.2 | Run `kb fixture execution spawn-detached-child --timeout-ms=300 --json` | The failed call returns the catalogued timeout code. The worker and every descendant exit; capacity returns and the healthy call succeeds. |
+| S-242.2 | Run `kb fixture execution spawn-detached-child --timeout-ms=300 --json` | The failed call returns the catalogued timeout code. The worker and every observed descendant exit before capacity returns. If process enumeration fails, a process identity is missing or changes for an observed PID, or a descendant survives the bounded wait, `kb health` reports the worker tree as unverified and execution health as degraded; the root worker is still killed and an unverified descendant is not signaled. |
 | S-242.3 | Run `kb fixture execution crash --json` 50 times, then run `kb fixture execution healthy --json` and inspect process and pool state | Each failed call returns catalogued `WORKER_CRASHED`; no failed worker or descendant remains. The healthy call succeeds and the pool reports its available capacity. |
-| S-242.4 | Start a fixture worker that exits before its ready message, then run `kb fixture execution healthy --json` | The failed startup leaves no worker transport or half-started pool. Pool startup is retried, health is `degraded` while no worker is available, and the healthy call succeeds after a worker is available. |
+| S-242.4 | Fail transport initialization and worker startup before readiness, then submit `kb fixture execution healthy --json` during recovery | Transport initialization, pool creation, and initial worker startup run in one serialized lifecycle phase with bounded backoff. The failed startup leaves no transport or half-started pool. Health is `degraded` while no worker is available, and the healthy call succeeds after startup recovers. Requests during backoff fail fast with catalogued `WORKER_UNAVAILABLE`; its hint names the recorded diagnostic code and directs the user to `kb health`. The execution health record and structured warning include the catalogued failure code, a sanitized cause message, retry attempt, and retry delay. Concurrent requests do not trigger overlapping transport initialization or additional startup attempts within one backoff window. |
 
 ## Decision notes
 

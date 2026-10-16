@@ -28,6 +28,24 @@ describe('mapErrorEnvelopeToExitCode', () => {
   });
 });
 
+describe('correlation-aware catalog hints', () => {
+  it('uses a no-correlation hint variant when the error has no correlation ID', () => {
+    const envelope = createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+      details: { command: 'test run', plugin: '@kb-labs/test-plugin', failureReason: 'failed unexpectedly' },
+    });
+
+    expect(envelope.hint).toBe('Run `kb logs query` to inspect the failure details and stack, then fix the reported plugin issue.');
+    expect(envelope.hint).not.toContain('unknown');
+  });
+
+  it('uses the timeout no-correlation hint variant when no ID is available', () => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_TIMEOUT');
+
+    expect(envelope.hint).toBe('Run `kb logs query` to inspect the timeout, then retry or increase the timeout.');
+    expect(envelope.hint).not.toContain('unknown');
+  });
+});
+
 function loadFixtures(kind: 'valid' | 'invalid'): Array<{ name: string; value: unknown }> {
   const dir = join(fixtureDir, kind);
   return readdirSync(dir)
@@ -89,8 +107,12 @@ describe('errors.catalog.json lint', () => {
     expect(isErrorCode('KB_PERMISSION_DENIED')).toBe(false);
   });
 
+  // case: S-243.5
   it('defines the HTTP status for a project runtime timeout', () => {
-    expect(getCatalogEntry('KB_RUNTIME_TIMEOUT')).toMatchObject({ httpStatus: 504 });
+    expect(getCatalogEntry('KB_RUNTIME_TIMEOUT')).toMatchObject({
+      httpStatus: 504,
+      hint: 'Run \"kb logs query --correlation-id {correlationId}\" to inspect the timeout, then retry or increase the timeout.',
+    });
   });
 
   it('keeps installer index errors separate from publisher sealing errors', () => {

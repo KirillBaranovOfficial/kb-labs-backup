@@ -116,6 +116,17 @@ export interface GitInfo {
   dirty: boolean;
 }
 
+export interface HealthContributorResult {
+  status: 'healthy' | 'degraded';
+  details?: Record<string, unknown>;
+  lastError?: string;
+}
+
+export interface HealthContributor {
+  id: string;
+  getHealth(): Promise<HealthContributorResult>;
+}
+
 export interface SystemHealthSnapshot {
   schema: 'kb.health/1';
   ts: string;
@@ -143,6 +154,8 @@ export interface SystemHealthSnapshot {
     restRoutes?: number;
     studioWidgets?: number;
     lastError?: string;
+    status?: 'healthy' | 'degraded';
+    details?: Record<string, unknown>;
   }>;
   meta?: Record<string, unknown>;
 }
@@ -205,6 +218,7 @@ export interface DiagnosticReport {
 // ---------------------------------------------------------------------------
 
 export interface RegistryOptions {
+  healthContributors?: HealthContributor[];
   /** Workspace root directory (default: process.cwd()) */
   root?: string;
   /**

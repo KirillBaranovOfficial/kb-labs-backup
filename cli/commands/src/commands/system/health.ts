@@ -1,4 +1,4 @@
-import { createRegistry } from '@kb-labs/core-registry';
+import { createHealthContributor, createRegistry, type SystemHealthSnapshot } from '@kb-labs/core-registry';
 import { generateExamples } from '../../utils/generate-examples';
 import {
   defineSystemCommand,
@@ -9,14 +9,8 @@ type HealthFlags = {
   json: { type: 'boolean'; description?: string };
 };
 
-type HealthSnapshot = {
-  status: string;
-  version: { kbLabs?: string; cli?: string; rest?: string; git?: { sha: string; dirty?: boolean } };
-  registry: { total: number; withRest: number; withStudio: number; errors: number; generatedAt: string; expiresAt?: string; partial?: boolean; stale?: boolean };
-  uptimeSec: number;
-};
-
-type HealthResult = HealthSnapshot;
+type HealthSnapshot = SystemHealthSnapshot;
+type HealthResult = SystemHealthSnapshot;
 
 export const health = defineSystemCommand<HealthFlags, HealthResult>({
   name: 'health',
@@ -41,8 +35,12 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
     finishEvent: 'HEALTH_FINISHED',
   },
   async handler(ctx, _argv, _flags) {
+    const executionBackend = ctx.executionBackend;
     const cliApi = await createRegistry({
       cache: { ttlMs: 5000 },
+      healthContributors: executionBackend
+        ? [createHealthContributor('execution', () => executionBackend.health())]
+        : [],
     });
 
     try {
@@ -93,6 +91,15 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
           `Stale: ${snapshot.registry.stale ? 'yes' : 'no'}`,
         ],
       },
+      ...(snapshot.components.filter(component => component.id === 'execution').map(component => ({
+        header: 'Execution',
+        items: [
+          `Health: ${component.status ?? 'unknown'}`,
+          `Workers: ${formatWorkers(component.details?.workers)}`,
+          `Mode: ${String(component.details?.executionMode ?? 'unknown')}`,
+          `Last failure: ${formatFailure(component.details?.lastStartFailure)}`,
+        ],
+      }))),
       {
         header: 'System',
         items: [`Uptime: ${snapshot.uptimeSec}s`],
@@ -106,3 +113,15 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
     }
   },
 });
+
+function formatWorkers(value: unknown): string {
+  if (!value || typeof value !== 'object') return 'n/a';
+  const workers = value as Record<string, unknown>;
+  return `total ${String(workers.total ?? 0)}, idle ${String(workers.idle ?? 0)}, busy ${String(workers.busy ?? 0)}, queued ${String(workers.queued ?? 0)}, queue limit ${String(workers.queueLimit ?? 0)}`;
+}
+
+function formatFailure(value: unknown): string {
+  if (!value || typeof value !== 'object') return 'none';
+  const failure = value as Record<string, unknown>;
+  return `${String(failure.code ?? 'unknown')} at ${String(failure.at ?? 'unknown time')}`;
+}

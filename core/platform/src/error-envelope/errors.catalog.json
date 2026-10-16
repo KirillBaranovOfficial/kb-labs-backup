@@ -2013,7 +2013,8 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The operation did not finish in time.",
-      "hint": "Retry or increase the timeout."
+      "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the timeout, then retry or increase the timeout.",
+      "hintWithoutCorrelationId": "Run `kb logs query` to inspect the timeout, then retry or increase the timeout."
     },
     {
       "code": "KB_RUNTIME_UNEXPECTED",
@@ -2024,7 +2025,8 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "An unexpected error occurred.",
-      "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack."
+      "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack.",
+      "hintWithoutCorrelationId": "Run `kb logs query` to inspect the failure details and stack."
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_API_FAILURE",
@@ -2377,6 +2379,7 @@
       "retryable": false,
       "message": "Plugin command {command} in {plugin} {failureReason}.",
       "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack, then fix the reported plugin issue.",
+      "hintWithoutCorrelationId": "Run `kb logs query` to inspect the failure details and stack, then fix the reported plugin issue.",
       "processExitClass": "operation-failure"
     },
     {
@@ -2388,6 +2391,72 @@
       "message": "WebSocket connection {connectionId} is unknown or closed.",
       "hint": "Reconnect the WebSocket client to obtain an active connection, then retry the operation.",
       "processExitClass": "operation-failure"
+    },
+    {
+      "code": "ACQUIRE_TIMEOUT",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "httpStatus": 503,
+      "message": "No worker became available within {acquireTimeoutMs} ms.",
+      "hint": "Run `kb health` to inspect worker pool capacity, then retry when a worker is available."
+    },
+    {
+      "code": "QUEUE_FULL",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "httpStatus": 429,
+      "message": "The worker pool queue is full ({queueSize}/{maxQueueSize}).",
+      "hint": "Run `kb health` to inspect worker pool capacity, then retry when a worker is available."
+    },
+    {
+      "code": "WORKER_CRASHED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "httpStatus": 500,
+      "message": "A worker process crashed.",
+      "hint": "Run `kb health` to inspect worker pool health, then retry after workers recover."
+    },
+    {
+      "code": "WORKER_START_FAILED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "httpStatus": 503,
+      "message": "A worker could not be started.",
+      "hint": "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after the recorded delay."
+    },
+    {
+      "code": "WORKER_TREE_UNVERIFIED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "httpStatus": 500,
+      "message": "The worker process tree could not be verified after termination.",
+      "hint": "Run `kb health` to inspect worker pool health and unverified process trees."
+    },
+    {
+      "code": "WORKER_UNAVAILABLE",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "httpStatus": 503,
+      "message": "No worker is available and worker startup is failing.",
+      "hint": "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after workers recover."
     }
   ]
 }

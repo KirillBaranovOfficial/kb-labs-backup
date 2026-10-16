@@ -11,6 +11,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
 import { registerEnvelopeMiddleware } from '../envelope';
+import { assertNoStackTraceLeak } from '../../__tests__/helpers/safe-error-envelope';
 
 const TEST_CONFIG: RestApiConfig = {
   port: 3000,
@@ -172,7 +173,7 @@ describe('registerEnvelopeMiddleware', () => {
       expect(body.error.code).toBe('KB_RUNTIME_UNEXPECTED');
       expect(body.error.correlationId).toBeDefined();
       expect(body.error.message).not.toContain('Unexpected error');
-      expect(JSON.stringify(body)).not.toContain('stack');
+      assertNoStackTraceLeak(body);
     });
 
     it('should not expose internal error details', async () => {

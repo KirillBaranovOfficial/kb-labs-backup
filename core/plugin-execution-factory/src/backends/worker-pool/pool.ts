@@ -9,13 +9,14 @@ import { EventEmitter } from 'node:events';
 import type { WorkerPoolConfig, UIPromptMessage } from './types.js';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { Worker } from './worker.js';
+import type { ProcessTableSource, ProcessTreeResult } from './process-tree.js';
 import type { ExecutionRequest, ExecutionResult, PlatformTransportFactory } from '../../types.js';
-import { AbortError, QueueFullError } from '../../errors.js';
+import { AbortError, QueueFullError, WorkerUnavailableError } from '../../errors.js';
 import { normalizeExecutionFailure } from '../../utils.js';
 
 // Modular components
 import { PoolStatsTracker } from './pool-stats.js';
-import { PoolLifecycleManager } from './pool-lifecycle.js';
+import { WorkerLifecycleManager, createWorkerFailureRecord } from './pool-lifecycle.js';
 import { PoolQueueManager } from './pool-queue.js';
 import { PoolExecutor } from './pool-executor.js';
 
@@ -28,6 +29,7 @@ export interface PoolEvents {
   workerRecycled: [worker: Worker];
   queueFull: [queueSize: number];
   healthCheckFailed: [worker: Worker];
+  treeUnverified: [worker: Worker, result: ProcessTreeResult];
 }
 
 /**
@@ -47,7 +49,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
 
   // Modular managers
   private readonly statsTracker: PoolStatsTracker;
-  private readonly lifecycleManager: PoolLifecycleManager;
+  private readonly lifecycleManager: WorkerLifecycleManager;
   private readonly queueManager: PoolQueueManager;
   private readonly executor: PoolExecutor;
 
@@ -56,6 +58,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
     config: Partial<WorkerPoolConfig> = {},
     platform?: PlatformServices,
     platformTransport?: PlatformTransportFactory,
+    processTableSource?: ProcessTableSource,
   ) {
     super();
 
@@ -79,12 +82,28 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
     this.statsTracker = new PoolStatsTracker();
 
     // Initialize lifecycle manager
-    this.lifecycleManager = new PoolLifecycleManager(
+    this.lifecycleManager = new WorkerLifecycleManager(
       this.workers,
       this.config,
       workerScript,
       {
-        onWorkerSpawned: (worker) => this.emit('workerSpawned', worker),
+        onWorkerSpawned: (worker) => {
+          worker.on('treeUnverified', (w, result) => {
+            if (!result.verified) {
+              this.statsTracker.stats.treeUnverifiedWorkers++;
+              this.statsTracker.stats.lastStartFailure = {
+                code: 'WORKER_TREE_UNVERIFIED',
+                message: result.reason,
+                at: new Date().toISOString(),
+                attempt: 0,
+                retryInMs: 0,
+              };
+            }
+            this.emit('treeUnverified', w, result);
+            platform?.logger.warn('Worker process tree could not be verified after termination', { workerId: w.id, code: 'WORKER_TREE_UNVERIFIED', reason: result.verified ? 'verified' : result.reason, descendants: result.descendants, error: result.verified ? undefined : result.error });
+          });
+          this.emit('workerSpawned', worker);
+        },
         onWorkerExited: (worker, code) => this.emit('workerExited', worker, code),
         onWorkerRecycled: (worker) => this.emit('workerRecycled', worker),
         onHealthCheckFailed: (worker) => this.emit('healthCheckFailed', worker),
@@ -92,9 +111,13 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
         onWorkersRecycled: () => {
           this.statsTracker.stats.workersRecycled++;
         },
+        onWorkerStartFailure: (failure) => {
+          this.queueManager?.clearQueue(new WorkerUnavailableError(failure));
+        },
       },
       platform,
       platformTransport,
+      processTableSource,
     );
 
     // Initialize queue manager
@@ -102,8 +125,8 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
       onTrackQueueWaitTime: (waitTimeMs) =>
         this.statsTracker.trackQueueWaitTime(waitTimeMs),
       onGetAvailableWorker: () => this.executor.getAvailableWorker(),
-      onExecuteOnWorker: (worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint) =>
-        this.executor.executeOnWorker(worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint),
+      onExecuteOnWorker: (worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal) =>
+        this.executor.executeOnWorker(worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal),
       onAcquireTimeout: () => {
         this.statsTracker.stats.acquireTimeouts++;
       },
@@ -126,7 +149,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
       onQueueFullRejection: () => {
         this.statsTracker.stats.queueFullRejections++;
       },
-      onRecycleWorker: (worker) => this.lifecycleManager.recycleWorker(worker),
+      onRecycleWorker: (worker) => this.lifecycleManager.scheduleRecycle(worker),
     });
   }
 
@@ -134,7 +157,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
    * Start the pool.
    */
   async start(): Promise<void> {
-    await this.lifecycleManager.start();
+    await this.lifecycleManager.startInitialWorkers();
   }
 
   /**
@@ -210,7 +233,21 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
           options?.onUIPrompt,
           options?.onLoggerLog,
           options?.uiPromptHint,
+          options?.signal,
         );
+      }
+
+      // Capacity maintenance owns every spawn attempt. Requests with no
+      // available worker fail promptly while that shared recovery runs.
+      if (this.workers.size === 0) {
+        this.lifecycleManager.scheduleCapacityRecovery(1);
+        const failure = this.lifecycleManager.getLastStartFailure()
+          ?? createWorkerFailureRecord(new Error('No worker capacity is available'), 1, 0);
+        return {
+          ok: false,
+          ...normalizeExecutionFailure(new WorkerUnavailableError(failure), request),
+          executionTimeMs: performance.now() - startTime,
+        };
       }
 
       // Check queue capacity
@@ -229,11 +266,10 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
         };
       }
 
-      // Scale up if possible
+      // Ask the lifecycle owner for one more slot when all current workers are busy.
+      // Concurrent requests coalesce into the same bounded maintenance task.
       if (this.workers.size < this.config.max) {
-        this.lifecycleManager.spawnWorker().catch(() => {
-          // Ignore spawn errors during scaling
-        });
+        this.lifecycleManager.scheduleCapacityRecovery(this.workers.size + 1);
       }
 
       // Queue the request
@@ -256,10 +292,13 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
    * Get pool statistics.
    */
   getStats() {
-    return this.statsTracker.getStats(
+    return {
+      ...this.statsTracker.getStats(
       this.workers,
       this.queueManager.getQueueLength()
-    );
+      ),
+      lastStartFailure: this.lifecycleManager.getLastStartFailure() ?? this.statsTracker.stats.lastStartFailure,
+    };
   }
 
   /**

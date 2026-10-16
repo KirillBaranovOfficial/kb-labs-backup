@@ -5,7 +5,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { createErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope, isErrorCode } from '@kb-labs/core-platform';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import type { ExecutionDiagnostics, ExecutionError, ExecutionRequest } from './types.js';
 import { TimeoutError, AbortError, WorkerCrashedError, isExecutionLayerError } from './errors.js';
@@ -89,7 +89,7 @@ export function normalizeError(error: unknown): ExecutionError {
   return { ...normalizeErrorEnvelope(error), error: serializeError(error) };
 }
 
-function normalizeErrorEnvelope(error: unknown): ErrorEnvelope {
+function normalizeErrorEnvelope(error: unknown, correlationId?: string): ErrorEnvelope {
   if (error instanceof ErrorEnvelopeError) {
     return toErrorEnvelope(error);
   }
@@ -97,11 +97,22 @@ function normalizeErrorEnvelope(error: unknown): ErrorEnvelope {
     if (error instanceof AbortError) {
       return createErrorEnvelope('KB_PLUGIN_ABORTED', { cause: error.message });
     }
-    const details = error instanceof TimeoutError
-      ? { failureReason: 'timed out' }
-      : error.code === 'WORKER_CRASHED'
-        ? { failureReason: 'execution process crashed' }
-        : undefined;
+    if (error instanceof TimeoutError) {
+      const details = Object.fromEntries(
+        Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
+      );
+      return createErrorEnvelope('KB_RUNTIME_TIMEOUT', {
+        details,
+        ...(correlationId ? { correlationId } : {}),
+      });
+    }
+    if (isErrorCode(error.code)) {
+      const details = Object.fromEntries(
+        Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
+      );
+      return createErrorEnvelope(error.code, { details });
+    }
+    const details = error instanceof TimeoutError ? { failureReason: 'timed out' } : undefined;
     return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', details ? { details } : {});
   }
   if (error instanceof Error) {
@@ -135,7 +146,7 @@ export function normalizeExecutionFailure(error: unknown, request?: ExecutionReq
     : error instanceof WorkerCrashedError
       ? 'execution process crashed'
       : undefined;
-  const canonicalEnvelope = normalizeErrorEnvelope(error);
+  const canonicalEnvelope = normalizeErrorEnvelope(error, correlationId);
   const isUncataloguedHandlerFailure = canonicalEnvelope.code === 'KB_RUNTIME_UNEXPECTED' && (
     (error instanceof Error && !(error instanceof ErrorEnvelopeError)) ||
     error instanceof SerializedErrorEnvelopeError

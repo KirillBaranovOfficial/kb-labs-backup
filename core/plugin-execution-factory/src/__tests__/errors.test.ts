@@ -6,7 +6,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { AdapterCredentialsMissingError, serializeError } from '@kb-labs/core-platform';
-import { normalizeError } from '../utils.js';
+import { normalizeError, normalizeExecutionFailure } from '../utils.js';
+import type { ExecutionRequest } from '../types.js';
 import {
   ExecutionLayerError,
   isExecutionLayerError,
@@ -30,7 +31,7 @@ describe('isKnownErrorCode()', () => {
       'TIMEOUT', 'ABORTED', 'PERMISSION_DENIED',
       'HANDLER_CONTRACT_ERROR', 'HANDLER_NOT_FOUND', 'WORKSPACE_ERROR',
       'VALIDATION_ERROR', 'UNKNOWN_ERROR',
-      'QUEUE_FULL', 'ACQUIRE_TIMEOUT', 'WORKER_CRASHED', 'WORKER_UNHEALTHY',
+      'QUEUE_FULL', 'ACQUIRE_TIMEOUT', 'WORKER_CRASHED', 'WORKER_START_FAILED', 'WORKER_UNHEALTHY', 'WORKER_UNAVAILABLE',
     ];
     for (const code of codes) {
       expect(isKnownErrorCode(code)).toBe(true);
@@ -78,7 +79,53 @@ describe('ExecutionLayerError', () => {
   });
 });
 
+describe('pool execution error envelopes', () => {
+  it('preserves catalogued queue errors and their catalog hints', () => {
+    const normalized = normalizeError(new QueueFullError(4, 4));
+
+    expect(normalized.code).toBe('QUEUE_FULL');
+    expect(normalized.details).toEqual({ queueSize: '4', maxQueueSize: '4' });
+    expect(normalized.hint).toBe('Run `kb health` to inspect worker pool capacity, then retry when a worker is available.');
+
+    expect(normalizeError(new AcquireTimeoutError(5000))).toMatchObject({
+      code: 'ACQUIRE_TIMEOUT',
+      details: { acquireTimeoutMs: '5000' },
+      hint: 'Run `kb health` to inspect worker pool capacity, then retry when a worker is available.',
+    });
+    expect(normalizeError(new WorkerCrashedError('worker-1'))).toMatchObject({
+      code: 'WORKER_CRASHED',
+      details: { workerId: 'worker-1' },
+      hint: 'Run `kb health` to inspect worker pool health, then retry after workers recover.',
+    });
+  });
+});
+
 describe('normalizeError handler boundary', () => {
+  it('normalizes an execution timeout with the request correlation ID', () => {
+    const correlationId = 'failure-correlation-42';
+    const request: ExecutionRequest = {
+      executionId: 'failure-execution-42',
+      handlerRef: 'handler.js',
+      pluginRoot: '/plugin',
+      input: {},
+      descriptor: {
+        hostType: 'cli',
+        pluginId: '@kb-labs/test-plugin',
+        pluginVersion: '1.0.0',
+        requestId: correlationId,
+        permissions: {},
+        hostContext: { host: 'cli', argv: [], flags: {} },
+      } as ExecutionRequest['descriptor'],
+    };
+
+    const normalized = normalizeExecutionFailure(new TimeoutError('handler timed out', 50), request).error;
+
+    expect(normalized.code).toBe('KB_RUNTIME_TIMEOUT');
+    expect(normalized.correlationId).toBe(correlationId);
+    expect(normalized.hint).toContain(`--correlation-id ${correlationId}`);
+    expect(normalized.hint).not.toContain('unknown');
+  });
+
   // case: S-203.6
   it('serializes only declared execution error fields and keeps stack out of the envelope', () => {
     const cause = new Error('handler exploded');
@@ -132,11 +179,11 @@ describe('normalizeError handler boundary', () => {
   });
 
   // case: S-203.2, S-203.3
-  it('normalizes an execution timeout for the unexpected plugin failure boundary', () => {
-    expect(normalizeError(new TimeoutError('Timed out after 50ms', 50))).toMatchObject({
-      code: 'KB_RUNTIME_UNEXPECTED',
-      hint: expect.stringContaining('correlationId'),
-    });
+  it('uses the no-correlation hint for standalone execution timeouts', () => {
+    const normalized = normalizeError(new TimeoutError('Timed out after 50ms', 50));
+    expect(normalized.code).toBe('KB_RUNTIME_TIMEOUT');
+    expect(normalized.hint).toBe('Run `kb logs query` to inspect the timeout, then retry or increase the timeout.');
+    expect(normalized.hint).not.toContain('unknown');
   });
 
   // case: S-203.2

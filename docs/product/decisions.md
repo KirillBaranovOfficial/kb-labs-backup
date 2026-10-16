@@ -4,6 +4,17 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-16
+
+### Worker pool health includes startup and replacement recovery
+
+The shared `kb.health/1` execution component reports resolved execution mode,
+pool capacity, and the latest worker start or replacement failure. Health is
+degraded when no worker is available, startup has failed, or replacement
+failure leaves fewer live workers than the configured minimum. A failed pool
+start is retried before the pool serves work; a half-started pool is not
+published. Cases: S-241.
+
 ## 2026-10-13
 
 ### Installation identity is validated at the shared boundary

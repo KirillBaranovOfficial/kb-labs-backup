@@ -15,6 +15,7 @@ import type {
   SystemHealthSnapshot,
   SystemHealthOptions,
   GitInfo,
+  HealthContributor,
 } from '../types.js';
 
 export interface HealthDeps {
@@ -23,6 +24,24 @@ export interface HealthDeps {
   getManifest: (pluginId: string) => ManifestV3 | undefined;
   root: string;
   platformVersion: string;
+  healthContributors: HealthContributor[];
+}
+
+
+export function createHealthContributor<TMode extends string>(
+  id: string,
+  getBackendHealth: () => Promise<{ healthy: boolean; details?: Record<string, unknown>; executionMode: TMode }>,
+): HealthContributor {
+  return {
+    id,
+    async getHealth() {
+      const health = await getBackendHealth();
+      return {
+        status: health.healthy ? 'healthy' : 'degraded',
+        details: { ...health.details, executionMode: health.executionMode },
+      };
+    },
+  };
 }
 
 export class HealthAggregator {
@@ -51,7 +70,11 @@ export class HealthAggregator {
       return { id: plugin.id, version: plugin.version, restRoutes, studioWidgets };
     });
 
-    const degraded = snapshot.partial || snapshot.stale;
+    const contributedHealth = await Promise.all(this.deps.healthContributors.map(async contributor => {
+      const health = await contributor.getHealth();
+      return { id: contributor.id, ...health };
+    }));
+    const degraded = snapshot.partial || snapshot.stale || contributedHealth.some(component => component.status === 'degraded');
 
     const version: SystemHealthSnapshot['version'] = {
       kbLabs: process.env.KB_LABS_VERSION || this.deps.platformVersion,
@@ -77,7 +100,7 @@ export class HealthAggregator {
         stale: snapshot.stale,
       },
       status: degraded ? 'degraded' : 'healthy',
-      components,
+      components: [...components, ...contributedHealth],
       meta: opts?.meta,
     };
   }
