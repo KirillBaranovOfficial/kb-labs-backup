@@ -22,17 +22,19 @@ import (
 )
 
 func main() {
+	command.Exit(executeCommand())
+}
+
+func executeCommand() diag.ExitStatus {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "digest":
-			command.Exit(executeDigest(os.Args[2:]))
-			return
+			return executeDigest(os.Args[2:])
 		case "provenance":
-			command.Exit(executeProvenance(os.Args[2:]))
-			return
+			return executeProvenance(os.Args[2:])
 		}
 	}
-	command.Exit(execute())
+	return execute()
 }
 
 func executeProvenance(args []string) diag.ExitStatus {
