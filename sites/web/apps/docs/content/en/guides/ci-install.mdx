@@ -47,12 +47,12 @@ shared installation. Non-interactive uninstall requires `--yes`.
 
 ## Installation prerequisites and recovery
 
-The launcher requires Node.js 24.x, 1.20 GiB available memory, and 2 GiB free
+The launcher requires Node.js <NodePolicy />.x, 1.20 GiB available memory, and 2 GiB free
 disk. It manages pnpm itself. If an install fails with one of these codes:
 
 | Error code | Recovery |
 | --- | --- |
-| `KB_INSTALL_NODE_VERSION` | Install Node 24, then rerun apply; with nvm: `nvm install 24 && nvm use 24`. |
+| `KB_NODE_VERSION_UNSUPPORTED` | Run the version-switch command shown in the diagnostic, then rerun apply. |
 | `KB_INSTALL_MEMORY_INSUFFICIENT` | Free memory or use a runner with more memory, then rerun apply. |
 | `KB_INSTALL_NO_DISK_SPACE` | Free disk space or move `--platform-root` to a filesystem with at least 2 GiB free. |
 | `KB_INSTALL_PACKAGE_MANAGER_KILLED` | Free memory or use a larger runner, then rerun apply. |

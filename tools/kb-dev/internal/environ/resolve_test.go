@@ -1,10 +1,13 @@
 package environ
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 )
 
 func TestResolve(t *testing.T) {
@@ -113,8 +116,8 @@ func TestValidateNodeUsesResolvedServiceBinary(t *testing.T) {
 		version string
 		wantErr bool
 	}{
-		{name: "Node 24", version: "v24.18.0"},
-		{name: "Node 20", version: "v20.18.0", wantErr: true},
+		{name: "supported Node major", version: fmt.Sprintf("v%d.18.0", sharedtoolchain.SupportedNodeMajor)},
+		{name: "older Node major", version: "v20.18.0", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			nodePath := filepath.Join(dir, tc.name+"-node")

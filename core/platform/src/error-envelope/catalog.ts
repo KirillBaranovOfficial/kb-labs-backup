@@ -15,7 +15,7 @@ import type {
   ErrorEnvelope,
   PlatformDiagnostic,
 } from './types.js';
-import { catalogRequiredTemplateParameters, catalogStructuredDetailFields, catalogTemplateParameterNames } from './error-codes.generated.js';
+import { catalogRequiredHintTemplateParameters, catalogRequiredMessageTemplateParameters, catalogStructuredDetailFields, catalogTemplateParameterNames } from './error-codes.generated.js';
 import type { CatalogHintTemplateParameters, CatalogMessageTemplateParameters, CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from './error-codes.generated.js';
 
 // The JSON is validated structurally by the catalog lint test; the cast keeps
@@ -135,7 +135,11 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOp
     ...Object.keys(details).filter((key) => !allowedDetails.has(key)),
     ...Object.keys(options.templateValues ?? {}).filter((key) => !parameterNames.includes(key)),
   ];
-  for (const name of catalogRequiredTemplateParameters[code]) {
+  const requiredParameters = [
+    ...(!options.message ? catalogRequiredMessageTemplateParameters[code] : []),
+    ...(!options.hint ? catalogRequiredHintTemplateParameters[code] : []),
+  ];
+  for (const name of requiredParameters) {
     if (templateValues[name] === undefined || templateValues[name].trim() === '') violationFields.push(name);
   }
   if (violationFields.length > 0) {

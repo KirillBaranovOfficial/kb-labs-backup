@@ -13,7 +13,6 @@ presets:
         "@kb-labs/devkit": "*"
       required_fields: [name, version, type, engines, exports]
       engines:
-        node: ">=24.0.0"
         pnpm: ">=9.0.0"
     tsconfig:
       must_extend_pattern: "@kb-labs/devkit/tsconfig/"

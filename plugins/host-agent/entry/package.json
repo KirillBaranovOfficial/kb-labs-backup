@@ -48,7 +48,7 @@
     "@kb-labs/cli-runtime": "workspace:*"
   },
   "engines": {
-    "node": ">=24.0.0",
+    "node": "24.x",
     "pnpm": ">=9.0.0"
   },
   "kb": {

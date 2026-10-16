@@ -33,7 +33,9 @@
       "processExitClass": "operation-failure",
       "message": "Service {service} is not configured.",
       "hint": "Run `{command}` to bind an installed adapter for this capability.",
-      "structuredDetailFields": ["adapter"]
+      "structuredDetailFields": [
+        "adapter"
+      ]
     },
     {
       "code": "KB_ADAPTER_NOT_INSTALLED",
@@ -95,7 +97,11 @@
       "processExitClass": "operation-failure",
       "message": "Permission denied: {permission}",
       "hint": "Ask your administrator for the permission needed to perform this operation.",
-      "structuredDetailFields": ["requestStage", "httpStatus", "remoteCorrelationId"]
+      "structuredDetailFields": [
+        "requestStage",
+        "httpStatus",
+        "remoteCorrelationId"
+      ]
     },
     {
       "code": "KB_AUTH_GATEWAY_UNREACHABLE",
@@ -116,7 +122,12 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The credentials are invalid.",
-      "hint": "Retry, or reset your credentials."
+      "hint": "Retry, or reset your credentials.",
+      "structuredDetailFields": [
+        "httpStatus",
+        "remoteCorrelationId",
+        "requestStage"
+      ]
     },
     {
       "code": "KB_AUTH_INVALID_CURRENT_PASSWORD",
@@ -192,7 +203,9 @@
       "processExitClass": "operation-failure",
       "message": "Authentication is required.",
       "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
-      "structuredDetailFields": ["reason"]
+      "structuredDetailFields": [
+        "reason"
+      ]
     },
     {
       "code": "KB_AUTH_TOKEN_REISSUE_REQUIRED",
@@ -226,7 +239,10 @@
       "processExitClass": "operation-failure",
       "message": "The saved Gateway session was revoked.",
       "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
-      "structuredDetailFields": ["reason"]
+      "structuredDetailFields": [
+        "reason",
+        "remoteCorrelationId"
+      ]
     },
     {
       "code": "KB_AUTH_TOKEN_EXPIRED",
@@ -238,7 +254,9 @@
       "processExitClass": "operation-failure",
       "message": "Your session token has expired and could not be refreshed.",
       "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
-      "structuredDetailFields": ["reason"]
+      "structuredDetailFields": [
+        "reason"
+      ]
     },
     {
       "code": "KB_AUTH_USER_INACTIVE",
@@ -250,7 +268,9 @@
       "processExitClass": "operation-failure",
       "message": "The user account for this Gateway session is inactive.",
       "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
-      "structuredDetailFields": ["reason"]
+      "structuredDetailFields": [
+        "reason"
+      ]
     },
     {
       "code": "KB_RUNTIME_RUN_DIRTY",
@@ -281,7 +301,10 @@
       "processExitClass": "operation-failure",
       "message": "The run scratch directory could not be safely created.",
       "hint": "Inspect the leftover path with `ls -ld -- {path}`, resolve the removal refusal described in the reason, remove the obstruction safely, then retry the run.",
-      "structuredDetailFields": ["creationError", "removalError"]
+      "structuredDetailFields": [
+        "creationError",
+        "removalError"
+      ]
     },
     {
       "code": "KB_RUNTIME_WAIT_NOT_FINISHED",
@@ -324,7 +347,14 @@
       "processExitClass": "operation-failure",
       "message": "Configuration value {path} is invalid.",
       "hint": "Provide a valid value for {path} (see the cause) and retry; \"kb config get {path}\" shows the current one.",
-      "structuredDetailFields": ["exitCode", "hostStartupCode", "launcherLog", "log", "nextCommand", "stderrTail"]
+      "structuredDetailFields": [
+        "exitCode",
+        "hostStartupCode",
+        "launcherLog",
+        "log",
+        "nextCommand",
+        "stderrTail"
+      ]
     },
     {
       "code": "KB_CONFIG_LLM_KEY_INVALID",
@@ -488,7 +518,10 @@
       "processExitClass": "operation-failure",
       "message": "A workspace task failed and its log could not be saved.",
       "hint": "Check write access to {logDirectory}, then rerun `kb-devkit run {task} --packages {package}`.",
-      "structuredDetailFields": ["logError", "logPath"]
+      "structuredDetailFields": [
+        "logError",
+        "logPath"
+      ]
     },
     {
       "code": "KB_DEVKIT_TASK_GRAPH_INVALID",
@@ -499,7 +532,9 @@
       "processExitClass": "input-refusal",
       "message": "The workspace task graph is incomplete.",
       "hint": "Add a {dependencyTask} variant for {dependency} in devkit.yaml, then rerun `kb-devkit run {task}`.",
-      "structuredDetailFields": ["package"]
+      "structuredDetailFields": [
+        "package"
+      ]
     },
     {
       "code": "KB_DEVKIT_STANDARDS_VIOLATIONS",
@@ -540,7 +575,10 @@
       "processExitClass": "operation-failure",
       "message": "The KB Labs host is already running.",
       "hint": "Use `{nextCommand}` to inspect or stop the already-running host.",
-      "structuredDetailFields": ["pid", "platformRoot"]
+      "structuredDetailFields": [
+        "pid",
+        "platformRoot"
+      ]
     },
     {
       "code": "KB_HOST_CONTROL_UNAUTHORIZED",
@@ -591,7 +629,12 @@
       "processExitClass": "operation-failure",
       "message": "The recorded host process identity is stale and the process cannot be safely signalled.",
       "hint": "Check the recorded Gateway health URL to identify the live listener. Do not signal an unverified process. After confirming it is unrelated or stopping it through its owner, remove only the named stale record and retry; a still-held Gateway port is reported as KB_INSTALL_PORT_IN_USE.",
-      "structuredDetailFields": ["gatewayUrl", "pid", "platformRoot", "record"]
+      "structuredDetailFields": [
+        "gatewayUrl",
+        "pid",
+        "platformRoot",
+        "record"
+      ]
     },
     {
       "code": "KB_HOST_SERVICE_ADDRESS_INVALID",
@@ -643,7 +686,29 @@
       "processExitClass": "operation-failure",
       "message": "The host process failed while starting.",
       "hint": "Read the reason in the log and report the correlationId if it is unclear.",
-      "structuredDetailFields": ["log", "launcherLog", "launcherLogError", "stderrTail", "hostStartupCode", "waited", "readinessURL", "readinessStatus", "readinessError", "exitCode", "signal", "exitStatus", "expectedPid", "pid", "command", "failureKind", "supervisorLog", "supervisorStderrTail", "supervisorExit", "controlRecord", "nextCommand"]
+      "structuredDetailFields": [
+        "log",
+        "launcherLog",
+        "launcherLogError",
+        "stderrTail",
+        "hostStartupCode",
+        "waited",
+        "readinessURL",
+        "readinessStatus",
+        "readinessError",
+        "exitCode",
+        "signal",
+        "exitStatus",
+        "expectedPid",
+        "pid",
+        "command",
+        "failureKind",
+        "supervisorLog",
+        "supervisorStderrTail",
+        "supervisorExit",
+        "controlRecord",
+        "nextCommand"
+      ]
     },
     {
       "code": "KB_HOST_STATE_DIR_UNWRITABLE",
@@ -724,7 +789,10 @@
       "processExitClass": "operation-failure",
       "message": "The operation did not reach a verified installation.",
       "hint": "Inspect the local log and the diagnostic dossier, fix the reported prerequisite, or run \"kb-create doctor --fix\".",
-      "structuredDetailFields": ["diagnosticPath", "logPath"]
+      "structuredDetailFields": [
+        "diagnosticPath",
+        "logPath"
+      ]
     },
     {
       "code": "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH",
@@ -785,7 +853,13 @@
       "processExitClass": "input-refusal",
       "message": "Selected components are incompatible.",
       "hint": "Choose compatible versions or pass an explicit supported provider.",
-      "structuredDetailFields": ["id", "kind", "requiredRange", "selectedVersion", "target"]
+      "structuredDetailFields": [
+        "id",
+        "kind",
+        "requiredRange",
+        "selectedVersion",
+        "target"
+      ]
     },
     {
       "code": "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED",
@@ -796,7 +870,13 @@
       "processExitClass": "operation-failure",
       "message": "The release index uses schema {schema}, which this launcher does not support.",
       "hint": "Update the launcher (kb-create update, or download the current launcher) and retry.",
-      "structuredDetailFields": ["actual", "expected", "gate", "path", "supported"]
+      "structuredDetailFields": [
+        "actual",
+        "expected",
+        "gate",
+        "path",
+        "supported"
+      ]
     },
     {
       "code": "KB_INSTALL_INPUT_REQUIRED",
@@ -807,7 +887,10 @@
       "processExitClass": "input-refusal",
       "message": "A required installation input is missing.",
       "hint": "Supply the missing input as a flag, in the request JSON, or through the wizard.",
-      "structuredDetailFields": ["field", "registry"]
+      "structuredDetailFields": [
+        "field",
+        "registry"
+      ]
     },
     {
       "code": "KB_INSTALL_INTERRUPTED",
@@ -838,7 +921,10 @@
       "processExitClass": "operation-failure",
       "message": "The platform root is not in the supported versioned layout.",
       "hint": "Reinstall the platform into a fresh writable path with `kb-create install --platform-root NEW_ROOT`.",
-      "structuredDetailFields": ["nextCommand", "platformRoot"]
+      "structuredDetailFields": [
+        "nextCommand",
+        "platformRoot"
+      ]
     },
     {
       "code": "KB_INSTALL_LOG_UNAVAILABLE",
@@ -891,14 +977,14 @@
       "hint": "Install the required version or use the bundled runtime."
     },
     {
-      "code": "KB_INSTALL_NODE_VERSION",
-      "area": "install",
+      "code": "KB_NODE_VERSION_UNSUPPORTED",
+      "area": "runtime",
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "Node.js {version} is unsupported; KB Labs requires Node.js 24.x.",
-      "hint": "Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`)."
+      "message": "Node.js {actualVersion} is unsupported; KB Labs requires major {requiredMajor}.",
+      "hint": "Switch to Node.js {requiredMajor}: run `nvm install {requiredMajor} && nvm use {requiredMajor}`, then rerun your command."
     },
     {
       "code": "KB_INSTALL_NO_DISK_SPACE",
@@ -989,7 +1075,13 @@
       "processExitClass": "operation-failure",
       "message": "Port {port} is used by another application.",
       "hint": "Inspect port {port} with `lsof -nP -iTCP:{port} -sTCP:LISTEN`, then rerun `kb-create {operation}`.",
-      "structuredDetailFields": ["address", "command", "pid", "platformRoot", "purpose"]
+      "structuredDetailFields": [
+        "address",
+        "command",
+        "pid",
+        "platformRoot",
+        "purpose"
+      ]
     },
     {
       "code": "KB_INSTALL_PROJECT_REGISTRATION_FAILED",
@@ -1000,7 +1092,14 @@
       "processExitClass": "operation-failure",
       "message": "The platform is installed, but the selected project is not registered.",
       "hint": "Complete the project registration commands for this installation.",
-      "structuredDetailFields": ["causeCode", "httpStatus", "platformRoot", "projectRoot", "remoteCorrelationId", "requestStage"]
+      "structuredDetailFields": [
+        "causeCode",
+        "httpStatus",
+        "platformRoot",
+        "projectRoot",
+        "remoteCorrelationId",
+        "requestStage"
+      ]
     },
     {
       "code": "KB_INSTALL_PROJECT_SELECTION_CHANGED",
@@ -1091,7 +1190,12 @@
       "processExitClass": "operation-failure",
       "message": "The release index is corrupted or its signature does not match.",
       "hint": "Retry the command; if it persists report the correlationId (this is a KB Labs problem).",
-      "structuredDetailFields": ["actual", "expected", "gate", "path"]
+      "structuredDetailFields": [
+        "actual",
+        "expected",
+        "gate",
+        "path"
+      ]
     },
     {
       "code": "KB_INSTALL_RELEASE_INDEX_UNREADABLE",
@@ -1102,7 +1206,11 @@
       "processExitClass": "input-refusal",
       "message": "The release index at {path} cannot be read.",
       "hint": "Check the --index path and file permissions.",
-      "structuredDetailFields": ["actual", "expected", "gate"]
+      "structuredDetailFields": [
+        "actual",
+        "expected",
+        "gate"
+      ]
     },
     {
       "code": "KB_INSTALL_RESOURCE_CHECK_FAILED",
@@ -1143,7 +1251,9 @@
       "processExitClass": "input-refusal",
       "message": "A secret input could not be stored.",
       "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable.",
-      "structuredDetailFields": ["requirement"]
+      "structuredDetailFields": [
+        "requirement"
+      ]
     },
     {
       "code": "KB_INSTALL_SECRET_STATE_CHANGED",
@@ -1203,7 +1313,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Runtime preflight failed: the installed toolchain is not supported.",
-      "hint": "Use Node.js 24.x and pnpm 11.x, or update the runtime and retry."
+      "hint": "Use the supported Node.js major and pnpm 11.x, or update the runtime and retry."
     },
     {
       "code": "KB_INSTALL_UNSUPPORTED_PLATFORM",
@@ -1352,7 +1462,9 @@
       "processExitClass": "operation-failure",
       "message": "Plugin command violated the command result contract.",
       "hint": "Return command data from the handler, or return a typed failure with a catalogued code, message, and hint.",
-      "structuredDetailFields": ["field"]
+      "structuredDetailFields": [
+        "field"
+      ]
     },
     {
       "code": "KB_PLUGIN_CRASHED",
@@ -1691,7 +1803,9 @@
       "processExitClass": "operation-failure",
       "message": "Installed package {package} differs at {field}: expected {expected}, actual {actual} (path {packagePath}; digest version {digestVersion}).",
       "hint": "Inspect {packagePath}; compare {field}, expected {expected} and actual {actual} using {digestVersion}, then rerun kb-create install.",
-      "structuredDetailFields": ["actualPresent"]
+      "structuredDetailFields": [
+        "actualPresent"
+      ]
     },
     {
       "code": "KB_RELEASE_BASELINE_DRIFT",
@@ -1772,7 +1886,10 @@
       "processExitClass": "operation-failure",
       "message": "The release index could not be sealed.",
       "hint": "Fix the release inputs named in the cause, then rerun release-index preparation.",
-      "structuredDetailFields": ["gate", "rule"]
+      "structuredDetailFields": [
+        "gate",
+        "rule"
+      ]
     },
     {
       "code": "KB_RELEASE_PLAN_INVALID",
@@ -1907,7 +2024,9 @@
       "processExitClass": "operation-failure",
       "message": "The command could not complete.",
       "hint": "Run `{binary} --help` to review available commands, then rerun the command.",
-      "structuredDetailFields": ["command"],
+      "structuredDetailFields": [
+        "command"
+      ],
       "runtimeTemplateParameters": {
         "binary": "required"
       }
@@ -2039,7 +2158,13 @@
       "processExitClass": "operation-failure",
       "message": "The Gateway returned an invalid UX result.",
       "hint": "Run \"kb-create doctor\" to check the Gateway, then retry the command.",
-      "structuredDetailFields": ["requestStage", "httpStatus", "remoteCorrelationId", "remoteCode", "fields"]
+      "structuredDetailFields": [
+        "requestStage",
+        "httpStatus",
+        "remoteCorrelationId",
+        "remoteCode",
+        "fields"
+      ]
     },
     {
       "code": "KB_RUNTIME_INPUT_INVALID",
@@ -2051,7 +2176,9 @@
       "processExitClass": "input-refusal",
       "message": "The provided input is invalid.",
       "hint": "Correct the reported fields and retry.",
-      "structuredDetailFields": ["field"]
+      "structuredDetailFields": [
+        "field"
+      ]
     },
     {
       "code": "KB_RUNTIME_UNKNOWN_COMMAND",
@@ -2077,7 +2204,9 @@
       "processExitClass": "input-refusal",
       "message": "The request body exceeds {limit}.",
       "hint": "Reduce the request body to {limit} and resend it.",
-      "structuredDetailFields": ["limitBytes"]
+      "structuredDetailFields": [
+        "limitBytes"
+      ]
     },
     {
       "code": "KB_RUNTIME_JOB_CANCEL_FAILED",
@@ -2254,7 +2383,10 @@
       "message": "An unexpected error occurred.",
       "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack.",
       "hintWithoutCorrelationId": "Run `kb logs query` to inspect the failure details and stack.",
-      "structuredDetailFields": ["dep", "remoteCorrelationId"],
+      "structuredDetailFields": [
+        "dep",
+        "remoteCorrelationId"
+      ],
       "runtimeTemplateParameters": {
         "correlationId": "optional"
       }
@@ -2531,7 +2663,10 @@
       "processExitClass": "operation-failure",
       "message": "The update could not be applied; the previous version {version} was restored.",
       "hint": "Inspect the local log and the diagnostic dossier, fix the reported cause and run \"kb-create update\" again.",
-      "structuredDetailFields": ["diagnosticPath", "logPath"]
+      "structuredDetailFields": [
+        "diagnosticPath",
+        "logPath"
+      ]
     },
     {
       "code": "KB_UPDATE_DOWNGRADE_REFUSED",
@@ -2562,7 +2697,20 @@
       "processExitClass": "operation-failure",
       "message": "The host did not become healthy after the update; recovery restored the last healthy version or needs attention.",
       "hint": "Inspect the installed and running versions with `kb-create doctor --platform-root ROOT`, then report the correlationId.",
-      "structuredDetailFields": ["version", "attemptedRoot", "recoveryRoot", "recoveryStage", "runningVersion", "snapshotId", "logPath", "nextCommand", "failureReason", "restoredHealthy", "snapshot", "hostRestart"]
+      "structuredDetailFields": [
+        "version",
+        "attemptedRoot",
+        "recoveryRoot",
+        "recoveryStage",
+        "runningVersion",
+        "snapshotId",
+        "logPath",
+        "nextCommand",
+        "failureReason",
+        "restoredHealthy",
+        "snapshot",
+        "hostRestart"
+      ]
     },
     {
       "code": "KB_UPDATE_INCOMPATIBLE",
