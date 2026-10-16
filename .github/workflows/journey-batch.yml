@@ -1,12 +1,13 @@
 name: Journey batch
 
 on:
+  push:
+    branches: ['batch/**']
   workflow_dispatch:
     inputs:
       baseline:
-        description: Baseline label used for the affected build gate
+        description: Optional baseline label recorded in batch metadata; the build compares against the default branch
         required: false
-        default: main
         type: string
   pull_request:
     paths:
@@ -44,6 +45,7 @@ jobs:
     timeout-minutes: 180
     env:
       KB_JOURNEY_CI: '1'
+      JOURNEY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -62,8 +64,8 @@ jobs:
           corepack pnpm install --frozen-lockfile
       - name: Run shared journey batch
         env:
-          BATCH_BASELINE: ${{ inputs.baseline || 'main' }}
-          KB_DEVKIT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          BATCH_BASELINE: ${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}
+          KB_DEVKIT_BASE_REF: ${{ github.event.pull_request.base.sha || env.JOURNEY_DEFAULT_BRANCH }}
         run: e2e/journey/batch.sh .journey/batch/${{ github.run_id }} "$BATCH_BASELINE"
       - name: Add batch summary
         if: always()

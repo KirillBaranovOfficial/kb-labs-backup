@@ -43,15 +43,18 @@ exit 0
 ''')
         self._script(self.bin / "git", '''#!/bin/sh
 printf 'git %s\\n' "$*" >> "$CALLS"
-if [ "$1" = rev-parse ]; then echo deadbeef; exit 0; fi
+if [ "$1" = rev-parse ]; then echo deadbeefdeadbeefdeadbeefdeadbeefdeadbeef; exit 0; fi
+if [ "$1" = ls-remote ]; then
+  if [ -n "${REMOTE_REF_SHA:-}" ]; then printf '%s\\trefs/heads/batch/batch-test\\n' "$REMOTE_REF_SHA"; fi
+  exit 0
+fi
 if [ "$1" = push ] && [ "${GIT_FAIL:-}" = push ]; then exit 1; fi
 exit 0
 ''')
         self._script(self.bin / "gh", '''#!/bin/sh
 printf 'gh %s\\n' "$*" >> "$CALLS"
 case "$1 $2" in
-  'workflow run') [ "${GH_FAIL:-}" = dispatch ] && exit 1; exit 0 ;;
-  'run list') echo 98765; exit 0 ;;
+  'run list') [ "${GH_FAIL:-}" = appearance ] && exit 0; echo 98765; exit 0 ;;
   'run watch') [ "${GH_FAIL:-}" = watch ] && exit 1; exit 0 ;;
   'run download')
     name=; destination=
@@ -69,6 +72,10 @@ case "$1 $2" in
     ;;
 esac
 exit 2
+''')
+        self._script(self.bin / "sleep", '''#!/bin/sh
+printf 'sleep %s\\n' "$*" >> "$CALLS"
+exit 0
 ''')
         self._script(self.bin / "colima", '''#!/bin/sh
 printf 'colima %s\\n' "$*" >> "$CALLS"
@@ -111,12 +118,13 @@ exit 0
         )
 
     # case: S-262.3
-    def test_remote_dispatch_downloads_each_mode_into_summary_layout(self):
+    def test_remote_push_finds_run_by_branch_and_sha_then_downloads_modes(self):
         result = self._run("--remote", "batch-test", "j28")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         calls = self.calls.read_text()
-        self.assertIn("git push backup HEAD:refs/heads/batch/batch-test", calls)
-        self.assertIn("gh workflow run journey-batch.yml --repo KirillBaranovOfficial/kb-labs-backup --ref batch/batch-test -f baseline=j28", calls)
+        self.assertIn("git push --force-with-lease=refs/heads/batch/batch-test: backup HEAD:refs/heads/batch/batch-test", calls)
+        self.assertIn("gh run list --repo KirillBaranovOfficial/kb-labs-backup --workflow journey-batch.yml --branch batch/batch-test --commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", calls)
+        self.assertNotIn("gh workflow run", calls)
         self.assertIn("gh run watch 98765 --repo KirillBaranovOfficial/kb-labs-backup --exit-status", calls)
         for mode in ("local", "secured"):
             self.assertIn(f"gh run download 98765 --repo KirillBaranovOfficial/kb-labs-backup --name journey-{mode}", calls)
@@ -125,6 +133,24 @@ exit 0
             self.assertTrue((destination / "batch.log").is_file())
             self.assertTrue((destination / "invocations/.single-run").is_file())
         self.assertFalse(any("docker" in row or "colima" in row for row in calls.splitlines()))
+
+    # case: S-262.3
+    def test_remote_push_uses_force_with_lease_for_existing_tag_ref(self):
+        env = dict(self.env)
+        env["REMOTE_REF_SHA"] = "0123456789abcdef0123456789abcdef01234567"
+        result = subprocess.run(
+            ["sh", str(self.root / "prompts/journey-batch.sh"), "--remote", "batch-test", "j28"],
+            cwd=self.root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn(
+            "git push --force-with-lease=refs/heads/batch/batch-test:0123456789abcdef0123456789abcdef01234567 backup HEAD:refs/heads/batch/batch-test",
+            self.calls.read_text(),
+        )
 
     # case: S-262.3
     def test_remote_workflow_failure_names_run_and_recovery_command(self):
@@ -139,6 +165,17 @@ exit 0
             self.assertTrue((destination / "step.json").is_file())
             self.assertTrue((destination / "batch.log").is_file())
         self.assertFalse(any("docker" in row or "colima" in row for row in calls))
+
+    # case: S-262.3
+    def test_remote_run_appearance_timeout_names_commit_scoped_lookup(self):
+        result = self._run("--remote", "batch-missing", "j28", failure="appearance")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no journey workflow run appeared for batch/batch-missing at deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", result.stderr)
+        self.assertIn("gh run list --repo KirillBaranovOfficial/kb-labs-backup --workflow journey-batch.yml --branch batch/batch-missing --commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", result.stderr)
+        calls = self.calls.read_text().splitlines()
+        self.assertEqual(sum(row.startswith("gh run list ") for row in calls), 12)
+        self.assertEqual(sum(row.startswith("sleep 5") for row in calls), 11)
+        self.assertFalse(any("gh workflow run" in row for row in calls))
 
 
 if __name__ == "__main__":
