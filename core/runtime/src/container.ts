@@ -25,7 +25,7 @@ import type {
   RawMiddlewareDecl,
 } from '@kb-labs/core-platform';
 import type { ExecutionBackend } from '@kb-labs/plugin-execution-factory';
-import type { IDocumentDatabase, IKVStore, IProcessExecutor } from '@kb-labs/core-platform/adapters';
+import type { IDocumentDatabase, IKVStore, IProcessExecutor, IWebSocketHostOperations } from '@kb-labs/core-platform/adapters';
 
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import type { EnvironmentManager } from './environment-manager.js';
@@ -515,6 +515,11 @@ export class PlatformContainer {
     return this.adapters.get('notifier') as INotifier | undefined;
   }
 
+  /** Host WebSocket operations used by plugin handler runtime. */
+  get websocket(): IWebSocketHostOperations | undefined {
+    return this.adapters.get('websocket') as IWebSocketHostOperations | undefined;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // SERVICES (derived from adapters, lazy-initialized)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -693,7 +698,7 @@ export class PlatformContainer {
     }
     this._executionBackend = backend;
     this.logger.debug('ExecutionBackend initialized', {
-      mode: backend.constructor.name,
+      mode: backend.executionMode,
     });
   }
 

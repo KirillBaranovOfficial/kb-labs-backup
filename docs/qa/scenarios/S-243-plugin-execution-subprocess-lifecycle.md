@@ -28,7 +28,7 @@ and receive a stable exit result.
 | S-243.2 | Run `kb fixture execution typed-failure --json` | The CLI prints the catalogued error envelope and exits with code `1`. |
 | S-243.3 | Run `kb fixture execution hold --json` and press Ctrl+C | The CLI reports the catalogued cancellation code, exits nonzero, and the child process and descendants exit. |
 | S-243.4 | Start workflow `plugin-execution-cancel` and run `kb workflow runs cancel RUN_ID --json` | The step is cancelled with the same catalogued cancellation code as CLI cancellation; the subprocess and descendants exit. |
-| S-243.5 | Run the fixture command past its configured timeout | The caller receives the catalogued timeout code; the subprocess, descendants, and per-execution IPC server close. |
+| S-243.5 | Run the fixture command past its configured timeout | The caller receives catalogued `KB_RUNTIME_TIMEOUT` with its generic catalogue-owned hint, not worker-pool capacity guidance; the subprocess, descendants, and per-execution IPC server close. |
 
 ## Decision notes
 

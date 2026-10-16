@@ -157,6 +157,8 @@ export interface ErrorCatalogEntry {
   message: string;
   /** Template; `{name}` placeholders are filled from `details`. */
   hint: string;
+  /** Hint used when the error has no correlation ID to fill its normal hint. */
+  hintWithoutCorrelationId?: string;
   deprecated?: boolean;
 }
 

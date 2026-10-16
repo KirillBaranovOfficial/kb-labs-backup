@@ -78,6 +78,13 @@ workspace:
       language: typescript
       preset: adapter-lib
 
+    # Runtime is the sole platform owner permitted to construct the backend.
+    core-runtime:
+      match:
+        - "core/runtime"
+      language: typescript
+      preset: runtime-core
+
     # TypeScript libraries — full ruleset
     ts-lib:
       match:
@@ -119,6 +126,7 @@ workspace:
 presets:
   # Playwright e2e suite — minimal preset, only requires `e2e` script
   e2e-suite:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -132,6 +140,7 @@ presets:
 
   # Plugin entry packages — node-lib + required test:cli script
   plugin-entry:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -176,6 +185,7 @@ presets:
       check_version_consistency: true
 
   node-lib:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -218,6 +228,13 @@ presets:
       check_circular: true
       check_version_consistency: true
 
+  # The execution backend constructor is a runtime-owned capability.
+  runtime-core:
+    extends: node-lib
+    dependencies:
+      allowed_kb_imports:
+        - "@kb-labs/plugin-execution-factory/construct"
+
   # Adapter packages — extends node-lib with an SDK-only dependency boundary.
   # An adapter author may import only from @kb-labs/sdk (and its sub-paths);
   # all platform internals (core-*, cli-*, shared-*, plugin-*, etc.) are
@@ -250,6 +267,7 @@ presets:
         - "@kb-labs/adapters-*"
 
   node-app:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -272,6 +290,7 @@ presets:
 
   # SPA apps (Rspack / Vite) — no tsup, no exports, paths allowed
   spa-app:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -291,6 +310,7 @@ presets:
   # Next.js/Nuxt apps and their utility packages.
   # Only 'build' is universally required — apps have 'dev', utility packages don't.
   site:
+    extends: backend-construction-boundary
     language: typescript
     package_json:
       required_scripts:
@@ -310,6 +330,12 @@ presets:
         - Makefile
     go:
       min_version: "1.22"
+
+  # All TypeScript package presets inherit the runtime-only construction boundary.
+  backend-construction-boundary:
+    dependencies:
+      forbidden_kb_imports:
+        - "@kb-labs/plugin-execution-factory/construct"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # STRUCTURE CHECKS — plugin/core package conventions

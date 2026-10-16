@@ -1,21 +1,17 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
-import { createErrorEnvelope, serializeError, type ILogger } from '@kb-labs/core-platform';
-import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory';
+import { createErrorEnvelope, serializeError } from '@kb-labs/core-platform';
 import { mountRoutes } from '../route-mounter.js';
 import type { ExecutionBackend, ExecutionResult } from '../../types.js';
 
 function backendReturning(result: ExecutionResult): ExecutionBackend {
-  const logger: ILogger = {
-    trace: () => {}, debug: () => {}, info: () => {}, warn: () => {},
-    error: () => {}, fatal: () => {}, flush: async () => {}, child: () => logger,
-  };
-  return createNormalizedExecutionBackend({
-    async execute() { return result; },
-    async health() { return { healthy: true, backend: 'in-process' }; },
+  return {
+    async execute() { return result as unknown as Awaited<ReturnType<ExecutionBackend['execute']>>; },
+    async health() { return { healthy: true, backend: 'in-process', executionMode: 'in-process' }; },
     async stats() { return { totalExecutions: 0, successCount: 0, errorCount: 0, avgExecutionTimeMs: 0 }; },
     async shutdown() {},
-  }, logger);
+    executionMode: 'in-process',
+  };
 }
 
 const manifest = {

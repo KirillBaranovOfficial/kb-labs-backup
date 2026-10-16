@@ -130,6 +130,12 @@ func mergePresets(base, child Preset) Preset {
 	if len(child.Deps.ForbiddenKbDeps) > 0 {
 		result.Deps.ForbiddenKbDeps = child.Deps.ForbiddenKbDeps
 	}
+	if len(child.Deps.AllowedKbImports) > 0 {
+		result.Deps.AllowedKbImports = child.Deps.AllowedKbImports
+	}
+	if len(child.Deps.ForbiddenKbImports) > 0 {
+		result.Deps.ForbiddenKbImports = child.Deps.ForbiddenKbImports
+	}
 
 	// Go
 	if child.Go.MinVersion != "" {

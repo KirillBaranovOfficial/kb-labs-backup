@@ -11,6 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./construct": {
+      "types": "./dist/construct.d.ts",
+      "import": "./dist/construct.js"
     }
   },
   "files": [

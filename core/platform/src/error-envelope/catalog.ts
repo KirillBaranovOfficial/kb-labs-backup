@@ -82,7 +82,9 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: CreateEnve
     severity: options.severity ?? entry.severity,
     retryable: entry.retryable,
     message: options.message ?? renderTemplate(entry.message, details),
-    hint: options.hint ?? renderTemplate(entry.hint, {
+    hint: options.hint ?? renderTemplate(!options.correlationId && entry.hintWithoutCorrelationId
+      ? entry.hintWithoutCorrelationId
+      : entry.hint, {
       ...details,
       ...(options.correlationId ? { correlationId: options.correlationId } : {}),
     }),

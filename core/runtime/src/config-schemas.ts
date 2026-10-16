@@ -15,7 +15,8 @@
  */
 
 import { z } from 'zod';
-import { flattenZodIssues } from '@kb-labs/core-config';
+import { flattenZodIssues, registerZodEnumIssueHint } from '@kb-labs/core-config';
+import { RESOLVED_EXECUTION_MODES, ROADMAP_EXECUTION_MODES } from '@kb-labs/core-contracts';
 
 // ── ContainerExecutionConfig ──────────────────────────────────────────────────
 
@@ -43,8 +44,30 @@ export const ExecutionRetryConfigSchema = z.object({
 
 // ── ExecutionConfig ───────────────────────────────────────────────────────────
 
+const SUPPORTED_EXECUTION_MODES = ['auto', ...RESOLVED_EXECUTION_MODES] as const;
+const EXECUTION_MODE_HINT = `Supported modes are ${SUPPORTED_EXECUTION_MODES.join(', ')}. Run \`kb config set platform.execution.mode in-process --scope platform\`.`;
+
+registerZodEnumIssueHint(SUPPORTED_EXECUTION_MODES, (issue) => (
+  isRoadmapExecutionMode(issue.received) ? EXECUTION_MODE_HINT : undefined
+));
+
+const executionModeErrorMap: z.ZodErrorMap = (issue, ctx) => {
+  if (issue.code === z.ZodIssueCode.invalid_enum_value) {
+    return {
+      message: isRoadmapExecutionMode(issue.received)
+        ? 'remote execution is not supported in this release'
+        : ctx.defaultError,
+    };
+  }
+  return { message: ctx.defaultError };
+};
+
+function isRoadmapExecutionMode(value: unknown): boolean {
+  return ROADMAP_EXECUTION_MODES.some((mode) => mode === value);
+}
+
 export const ExecutionConfigSchema = z.object({
-  mode: z.enum(['auto', 'in-process', 'subprocess', 'worker-pool', 'remote', 'container']).optional(),
+  mode: z.enum(SUPPORTED_EXECUTION_MODES, { errorMap: executionModeErrorMap }).optional(),
 
   workerPool: z.object({
     min: z.number().int().nonnegative().optional(),
@@ -57,10 +80,6 @@ export const ExecutionConfigSchema = z.object({
       topN: z.number().int().positive().optional(),
       maxHandlers: z.number().int().positive().optional(),
     }).optional(),
-  }).optional(),
-
-  remote: z.object({
-    endpoint: z.string().url().optional(),
   }).optional(),
 
   container: ContainerExecutionConfigSchema.optional(),
@@ -82,17 +101,8 @@ export const ExecutionConfigSchema = z.object({
     });
   }
 
-  // If mode=remote, remote.endpoint must be present
-  if (cfg.mode === 'remote' && !cfg.remote?.endpoint) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['remote', 'endpoint'],
-      message: 'execution.remote.endpoint is required when mode is "remote"',
-    });
-  }
 });
 
-export type ExecutionConfigInput = z.input<typeof ExecutionConfigSchema>;
 export type ExecutionConfigParsed = z.output<typeof ExecutionConfigSchema>;
 
 /**
@@ -218,6 +228,7 @@ export interface PlatformConfigIssue {
   /** Dotted path of the offending value (empty for the document root). */
   path: string;
   message: string;
+  hint?: string;
 }
 
 /** Validate a parsed user config document; returns every issue with its field path. */

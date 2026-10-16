@@ -32,6 +32,8 @@ export interface SystemHealthSnapshot {
     restRoutes?: number;
     studioWidgets?: number;
     lastError?: string;
+    status?: 'healthy' | 'degraded';
+    details?: Record<string, unknown>;
     meta?: Record<string, unknown>;
   }>;
   meta?: Record<string, unknown>;

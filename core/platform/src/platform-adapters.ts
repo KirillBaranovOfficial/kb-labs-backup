@@ -21,6 +21,7 @@ import type { ISnapshotManager } from './snapshot/snapshot-provider.js';
 import type { INotifier } from './adapters/notifier.js';
 import type { IServiceTransport } from './adapters/service-transport.js';
 import type { IProcessExecutor } from './adapters/process-executor.js';
+import type { IWebSocketHostOperations } from './adapters/websocket.js';
 
 /**
  * Plugin-visible adapter surface.
@@ -89,6 +90,8 @@ export interface IPluginAdapters {
  * this type at bootstrap. Plugin governance always returns IPluginAdapters.
  */
 export interface IPlatformAdapters extends IPluginAdapters {
+  /** Host-owned WebSocket operations used to rehydrate WS handler senders. */
+  readonly websocket?: IWebSocketHostOperations;
   /** Platform-internal governed process executor. */
   readonly processExecutor?: IProcessExecutor;
   /**

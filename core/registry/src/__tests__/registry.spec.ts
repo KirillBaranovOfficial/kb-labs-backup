@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { EntityRegistry } from '../registry.js';
+import { createHealthContributor } from '../health/health-aggregator.js';
 import { writeMarketplaceLock, createEmptyLock, createMarketplaceEntry } from '@kb-labs/core-discovery';
 
 async function createPluginDir(tmpDir: string, id: string, opts?: {
@@ -291,6 +292,22 @@ describe('EntityRegistry', () => {
     const registry = new EntityRegistry({ root: tmpDir });
     await registry.initialize();
     expect(registry.getManifest('@kb-labs/unknown')).toBeNull();
+    await registry.dispose();
+  });
+
+  it('adds execution health contributors to the shared snapshot and degrades the aggregate', async () => {
+    const registry = new EntityRegistry({
+      root: tmpDir,
+      healthContributors: [createHealthContributor('execution', async () => ({
+        healthy: false,
+        executionMode: 'worker-pool',
+        details: { workers: { total: 0, idle: 0, busy: 0, queued: 0, queueLimit: 10 } },
+      }))],
+    });
+    await registry.initialize();
+    const snapshot = await registry.getSystemHealth();
+    expect(snapshot.status).toBe('degraded');
+    expect(snapshot.components).toContainEqual({ id: 'execution', status: 'degraded', details: { workers: { total: 0, idle: 0, busy: 0, queued: 0, queueLimit: 10 }, executionMode: 'worker-pool' } });
     await registry.dispose();
   });
 

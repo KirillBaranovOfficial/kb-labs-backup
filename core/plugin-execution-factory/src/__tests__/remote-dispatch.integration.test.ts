@@ -112,7 +112,7 @@ describe('RemoteBackend + GatewayDispatchTransport integration', () => {
 
     expect(result.ok).toBe(true);
     expect(result.data).toEqual({ output: 'handler-result' });
-    expect(result.metadata?.['backend']).toBe('remote');
+    expect(result.metadata?.['backend']).toBeUndefined();
   });
 
   it('remaps handlerRef before sending to transport', async () => {

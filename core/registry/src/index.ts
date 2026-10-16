@@ -49,7 +49,7 @@ export { SnapshotManager } from './snapshot/snapshot-manager.js';
 // Health
 // ---------------------------------------------------------------------------
 
-export { HealthAggregator, resetGitInfoCache } from './health/health-aggregator.js';
+export { HealthAggregator, createHealthContributor, resetGitInfoCache } from './health/health-aggregator.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -94,6 +94,8 @@ export type {
   RegistrySnapshotManifestEntry,
   // Health
   SystemHealthSnapshot,
+  HealthContributor,
+  HealthContributorResult,
   SystemHealthOptions,
   GitInfo,
   // Generators

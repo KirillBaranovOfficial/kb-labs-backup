@@ -5,7 +5,7 @@
  * Handles IPC communication, health checks, and lifecycle.
  */
 
-import { fork, execFileSync, type ChildProcess } from 'node:child_process';
+import { fork, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import type {
@@ -30,7 +30,8 @@ import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { InteractiveInputRequiredError } from '@kb-labs/plugin-contracts';
 import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
 import { normalizeExecutionFailure } from '../../utils.js';
-import { WorkerCrashedError, TimeoutError } from '../../errors.js';
+import { AbortError, WorkerCrashedError, TimeoutError } from '../../errors.js';
+import { terminateProcessTree, systemProcessTable, type ProcessTableSource, type ProcessTreeResult } from './process-tree.js';
 
 /**
  * Worker events.
@@ -41,6 +42,7 @@ export interface WorkerEvents {
   error: [executionId: string, error: Error];
   exit: [worker: Worker, code: number | null, signal: string | null];
   healthUpdate: [worker: Worker, healthy: boolean];
+  treeUnverified: [worker: Worker, result: ProcessTreeResult];
 }
 
 /**
@@ -61,81 +63,13 @@ export interface WorkerOptions {
 
   /** Timeout for health check response (ms) */
   healthCheckTimeoutMs?: number;
+
+  /** Process table provider used to verify descendant cleanup. */
+  processTableSource?: ProcessTableSource;
 }
 
 const DEFAULT_STARTUP_TIMEOUT = 10_000;
 const DEFAULT_HEALTH_CHECK_TIMEOUT = 5_000;
-
-/**
- * Find every live descendant of `rootPid` by walking `ps`'s pid/ppid table,
- * regardless of process-group membership (a descendant may have been
- * spawned `detached: true` into its own group — see kill()'s doc comment).
- * Returns descendants ordered deepest-first, so killing in that order tears
- * down leaves before their parents.
- *
- * Best-effort: `ps` failing (unsupported platform, sandboxing, etc.) yields
- * an empty list rather than throwing — the caller still SIGKILLs the root
- * PID itself either way.
- */
-function listDescendantPids(rootPid: number): number[] {
-  let table: string;
-  try {
-    table = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' });
-  } catch {
-    return [];
-  }
-
-  const childrenByParent = new Map<number, number[]>();
-  for (const line of table.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) { continue; }
-    const [pidStr, ppidStr] = trimmed.split(/\s+/);
-    const pid = Number(pidStr);
-    const ppid = Number(ppidStr);
-    if (!Number.isFinite(pid) || !Number.isFinite(ppid)) { continue; }
-    const siblings = childrenByParent.get(ppid) ?? [];
-    siblings.push(pid);
-    childrenByParent.set(ppid, siblings);
-  }
-
-  const generations: number[][] = [];
-  let frontier = childrenByParent.get(rootPid) ?? [];
-  while (frontier.length > 0) {
-    generations.push(frontier);
-    const next: number[] = [];
-    for (const pid of frontier) {
-      next.push(...(childrenByParent.get(pid) ?? []));
-    }
-    frontier = next;
-  }
-
-  // Flatten deepest generation first so children die before their parents.
-  const result: number[] = [];
-  for (let i = generations.length - 1; i >= 0; i--) {
-    result.push(...generations[i]!);
-  }
-  return result;
-}
-
-/**
- * SIGKILL `rootPid` and every live descendant of it (see
- * listDescendantPids for why this can't just be a process-group kill).
- * Best-effort per PID — a process that already exited (ESRCH) is ignored.
- */
-function killProcessTree(rootPid: number): void {
-  for (const pid of listDescendantPids(rootPid)) {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // Already exited between the ps snapshot and the kill — fine.
-    }
-  }
-  try {
-    process.kill(rootPid, 'SIGKILL');
-  } catch {
-    // Already exited.
-  }
-}
 
 /**
  * Worker - manages a single worker subprocess.
@@ -153,7 +87,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
   private process: ChildProcess | null = null;
   private _state: WorkerState = 'stopped';
   private _info: WorkerInfo;
-  private readonly options: Required<Omit<WorkerOptions, 'platform' | 'platformTransport'>> & Pick<WorkerOptions, 'platform' | 'platformTransport'>;
+  private readonly options: Required<Omit<WorkerOptions, 'platform' | 'platformTransport' | 'processTableSource'>> & Pick<WorkerOptions, 'platform' | 'platformTransport' | 'processTableSource'>;
 
   // Pending request tracking
   private pendingRequests = new Map<string, {
@@ -166,6 +100,8 @@ export class Worker extends EventEmitter<WorkerEvents> {
     uiPromptHint?: string;
     request: ExecutionRequest;
     startedAt: number;
+    signal?: AbortSignal;
+    abortHandler?: () => void;
     /**
      * Last log/loggerLog line seen from the worker for this request, tracked
      * regardless of whether a caller supplied onLog/onLoggerLog — this is
@@ -181,6 +117,8 @@ export class Worker extends EventEmitter<WorkerEvents> {
 
   // Platform transport server (forwards adapter:call from child to real adapters)
   private transportServer: PlatformTransportServer | null = null;
+  private termination: Promise<ProcessTreeResult> | null = null;
+  private _treeUnverified = false;
 
   constructor(options: WorkerOptions) {
     super();
@@ -189,6 +127,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
       workerScript: options.workerScript,
       platform: options.platform,
       platformTransport: options.platformTransport,
+      processTableSource: options.processTableSource ?? systemProcessTable,
       startupTimeoutMs: options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT,
       healthCheckTimeoutMs: options.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT,
     };
@@ -208,6 +147,8 @@ export class Worker extends EventEmitter<WorkerEvents> {
   get state(): WorkerState {
     return this._state;
   }
+
+  get treeUnverified(): boolean { return this._treeUnverified; }
 
   /**
    * Get worker info.
@@ -269,12 +210,18 @@ export class Worker extends EventEmitter<WorkerEvents> {
         // Handle worker exit
         this.process.on('exit', (code, signal) => {
           clearTimeout(startupTimeout);
-          this.handleExit(code, signal);
+          const termination = this.termination;
+          if (!termination) { this.handleExit(code, signal); return; }
+          termination.then(() => {
+            this.termination = null;
+            this.handleExit(code, signal);
+          });
         });
 
         // Handle errors
         this.process.on('error', (error) => {
           clearTimeout(startupTimeout);
+          this.stopTransportServer();
           this._state = 'stopped';
           this._info.healthy = false;
           this._info.lastError = error.message;
@@ -316,6 +263,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
         this.process.once('message', onReady);
       } catch (error) {
         clearTimeout(startupTimeout);
+        this.kill();
         this._state = 'stopped';
         reject(error);
       }
@@ -332,6 +280,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     uiPromptHint?: string,
+    signal?: AbortSignal,
   ): Promise<ExecutionResult> {
     if (this._state !== 'idle') {
       throw new Error(`Worker ${this.id} is not available (state: ${this._state})`);
@@ -339,6 +288,9 @@ export class Worker extends EventEmitter<WorkerEvents> {
 
     if (!this.process) {
       throw new Error(`Worker ${this.id} has no process`);
+    }
+    if (signal?.aborted) {
+      throw new AbortError('Execution aborted');
     }
 
     const executionId = request.executionId;
@@ -408,6 +360,8 @@ export class Worker extends EventEmitter<WorkerEvents> {
       this.pendingRequests.set(executionId, {
         resolve: (result) => {
           clearTimeout(timeoutId);
+          const pending = this.pendingRequests.get(executionId);
+          if (pending?.abortHandler) { signal?.removeEventListener('abort', pending.abortHandler); }
           this.pendingRequests.delete(executionId);
           this._state = 'idle';
           this._info.currentExecutionId = undefined;
@@ -416,6 +370,8 @@ export class Worker extends EventEmitter<WorkerEvents> {
         },
         reject: (error) => {
           clearTimeout(timeoutId);
+          const pending = this.pendingRequests.get(executionId);
+          if (pending?.abortHandler) { signal?.removeEventListener('abort', pending.abortHandler); }
           this.pendingRequests.delete(executionId);
           this._state = 'idle';
           this._info.currentExecutionId = undefined;
@@ -428,7 +384,20 @@ export class Worker extends EventEmitter<WorkerEvents> {
         uiPromptHint,
         request,
         startedAt,
+        signal,
+        ...(signal ? { abortHandler: () => {
+          const pending = this.pendingRequests.get(executionId);
+          pending?.reject(new AbortError('Execution aborted'));
+          this.kill();
+        } } : {}),
       });
+
+      if (signal) {
+        const pending = this.pendingRequests.get(executionId);
+        if (pending?.abortHandler) {
+          signal.addEventListener('abort', pending.abortHandler, { once: true });
+        }
+      }
 
       // Send execute message
       const message: ExecuteMessage = {
@@ -555,30 +524,49 @@ export class Worker extends EventEmitter<WorkerEvents> {
    * levels down something else also happens to `detached: true`.
    */
   kill(): void {
-    this.transportServer?.stop();
-    this.transportServer = null;
+    this.stopTransportServer();
 
     if (this.process) {
       const pid = this.process.pid;
       if (pid) {
-        killProcessTree(pid);
+        if (!this.termination) {
+          this.termination = terminateProcessTree(pid, this.options.processTableSource).then(result => {
+            if (!result.verified) {
+              this._treeUnverified = true;
+              this.emit('treeUnverified', this, result);
+            }
+            return result;
+          }).catch(error => {
+            const result: ProcessTreeResult = { verified: false, descendants: [], reason: 'enumeration-failed', error: error instanceof Error ? error.message : String(error) };
+            this._treeUnverified = true;
+            this.emit('treeUnverified', this, result);
+            return result;
+          });
+        }
       } else {
         // No PID to walk a tree from (process failed to spawn) — fall back
         // to the plain single-handle kill.
         this.process.kill('SIGKILL');
       }
-      this.process = null;
     }
 
     // Reject all pending requests
     for (const [_id, pending] of this.pendingRequests) {
       clearTimeout(pending.timeoutId);
+      if (pending.abortHandler) { pending.signal?.removeEventListener('abort', pending.abortHandler); }
       pending.reject(new WorkerCrashedError(this.id));
     }
     this.pendingRequests.clear();
 
+    // Keep the worker unavailable until ChildProcess emits exit. The lifecycle
+    // manager removes it and restores min capacity from that event.
     this._state = 'stopped';
     this._info.healthy = false;
+  }
+
+  private stopTransportServer(): void {
+    this.transportServer?.stop();
+    this.transportServer = null;
   }
 
   /**
@@ -696,7 +684,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
    * Handle worker process exit.
    */
   private handleExit(code: number | null, signal: string | null): void {
-    const wasRunning = this._state !== 'stopped';
+    const wasRunning = this._state !== 'stopped' || this.process !== null;
     this._state = 'stopped';
     this._info.healthy = false;
     this.process = null;
@@ -704,6 +692,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
     // Reject all pending requests
     for (const [_id, pending] of this.pendingRequests) {
       clearTimeout(pending.timeoutId);
+      if (pending.abortHandler) { pending.signal?.removeEventListener('abort', pending.abortHandler); }
       pending.reject(new WorkerCrashedError(this.id, code ?? undefined, signal ?? undefined));
     }
     this.pendingRequests.clear();

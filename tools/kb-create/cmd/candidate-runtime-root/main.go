@@ -21,6 +21,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -49,8 +51,7 @@ func main() {
 	installRoot := flag.String("root", "", "temporary installer root")
 	flag.Parse()
 	if err := run(*indexPath, *packageDirectory, *installRoot); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		command.Exit(diag.ExitCode(diag.FromError(err)))
 	}
 }
 

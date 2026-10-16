@@ -25,7 +25,7 @@ export class PoolExecutor {
   private onQueueFullRejection: () => void;
 
   // Other callbacks
-  private onRecycleWorker: (worker: Worker) => Promise<void>;
+  private onRecycleWorker: (worker: Worker) => void;
 
   constructor(
     workers: Map<string, Worker>,
@@ -36,7 +36,7 @@ export class PoolExecutor {
       onErrorCount: () => void;
       onWorkerCrash: () => void;
       onQueueFullRejection: () => void;
-      onRecycleWorker: (worker: Worker) => Promise<void>;
+      onRecycleWorker: (worker: Worker) => void;
     }
   ) {
     this.workers = workers;
@@ -83,11 +83,12 @@ export class PoolExecutor {
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     uiPromptHint?: string,
+    signal?: AbortSignal,
   ): Promise<ExecutionResult> {
     this.onTotalRequests();
 
     try {
-      const result = await worker.execute(request, timeoutMs, onLog, onUIPrompt, onLoggerLog, uiPromptHint);
+      const result = await worker.execute(request, timeoutMs, onLog, onUIPrompt, onLoggerLog, uiPromptHint, signal);
 
       if (result.ok) {
         this.onSuccessCount();

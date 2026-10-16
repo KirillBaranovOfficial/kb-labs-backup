@@ -56,6 +56,17 @@ describe('createIsolatedExecutionBackend', () => {
   });
 
   describe('with strictIsolation', () => {
+    it('reports container as the platform execution mode while routing through isolation', async () => {
+      const backend = createIsolatedExecutionBackend({
+        localBackend: { platform, mode: 'in-process' },
+        executionMode: 'container',
+        strictIsolation: { buildTransport: () => makeTransport() },
+      });
+
+      expect(backend.executionMode).toBe('container');
+      await backend.shutdown();
+    });
+
     it('routes to remote when request.target.environmentId is present', async () => {
       const transport = makeTransport('remote-result');
       const buildTransport = vi.fn().mockReturnValue(transport);
@@ -73,7 +84,7 @@ describe('createIsolatedExecutionBackend', () => {
       });
       expect(transport.execute).toHaveBeenCalledOnce();
       expect(result.ok).toBe(true);
-      expect(result.metadata?.['backend']).toBe('remote');
+      expect(result.metadata?.['backend']).toBe(backend.executionMode);
     });
 
     it('routes to local when no environmentId', async () => {

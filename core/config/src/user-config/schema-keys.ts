@@ -219,6 +219,20 @@ export interface FlatIssue {
   /** Dotted path of the offending value (empty for the document root). */
   path: string;
   message: string;
+  hint?: string;
+}
+
+type InvalidEnumIssue = Extract<z.ZodIssue, { code: 'invalid_enum_value' }>;
+type ZodEnumIssueHintResolver = (issue: InvalidEnumIssue) => string | undefined;
+
+const zodEnumIssueHintResolvers = new WeakMap<readonly (string | number)[], ZodEnumIssueHintResolver>();
+
+/** Attach structured user guidance to invalid values from this exact enum options tuple. */
+export function registerZodEnumIssueHint(
+  options: readonly string[],
+  resolveHint: ZodEnumIssueHintResolver,
+): void {
+  zodEnumIssueHintResolvers.set(options, resolveHint);
 }
 
 /**
@@ -240,7 +254,12 @@ export function flattenZodIssues(error: z.ZodError): FlatIssue[] {
           continue;
         }
       }
-      out.push({ path: issue.path.join('.'), message: issue.message });
+      const hint = issue.code === 'custom' && typeof issue.params?.hint === 'string'
+        ? issue.params.hint
+        : issue.code === 'invalid_enum_value'
+          ? zodEnumIssueHintResolvers.get(issue.options)?.(issue)
+          : undefined;
+      out.push({ path: issue.path.join('.'), message: issue.message, ...(hint ? { hint } : {}) });
     }
   };
   visit(error.issues);

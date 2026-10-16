@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { createErrorEnvelope, ErrorEnvelopeError } from '../error-envelope/index.js';
 import {
   serialize,
   deserialize,
@@ -222,6 +223,16 @@ describe('serializer', () => {
       expect((result as Error).message).toBe('test message');
       expect((result as Error).stack).toBe('Error: test\n at...');
       expect((result as any).code).toBe('TEST_CODE');
+    });
+
+    it('preserves catalogued ErrorEnvelopeError across adapter call serialization', () => {
+      const envelope = createErrorEnvelope('KB_RUNTIME_WS_CONNECTION_UNAVAILABLE', {
+        details: { connectionId: 'connection-1' },
+      });
+      const result = deserialize(serialize(new ErrorEnvelopeError(envelope)));
+
+      expect(result).toBeInstanceOf(ErrorEnvelopeError);
+      expect((result as ErrorEnvelopeError).envelope).toEqual(envelope);
     });
 
     it('should round-trip Error', () => {

@@ -11,6 +11,7 @@ import {
   FlagValidationError,
 } from './index';
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
+import type { PlatformContainer } from '@kb-labs/core-runtime';
 import { formatError } from './errors/index';
 import { createErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
 import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
@@ -33,6 +34,11 @@ interface FlagDefinition {
 /**
  * Command definition for system commands
  */
+export type SystemCommandContext = PluginContextV3 & {
+  /** Internal system-command access to the already initialized execution backend. */
+  executionBackend?: PlatformContainer['executionBackend'];
+};
+
 export interface Command {
   name: string;
   scope: 'platform' | 'project';
@@ -46,7 +52,7 @@ export interface Command {
   aliases?: string[];
   flags?: FlagDefinition[];
   examples?: string[];
-  run: (ctx: PluginContextV3, argv: string[], flags: Record<string, unknown>) => Promise<number>;
+  run: (ctx: SystemCommandContext, argv: string[], flags: Record<string, unknown>) => Promise<number>;
 }
 
 export type SystemCommandJsonTest =
@@ -186,9 +192,9 @@ export interface SystemCommandConfig<
     includeFlags?: boolean;
   };
   /** Command handler - receives PluginContextV3 and must return TResult */
-  handler: (ctx: PluginContextV3, argv: TArgv, flags: InferFlags<TFlags>) => Promise<number | TResult> | number | TResult;
+  handler: (ctx: SystemCommandContext, argv: TArgv, flags: InferFlags<TFlags>) => Promise<number | TResult> | number | TResult;
   /** Optional formatter - receives TResult with inferred flags */
-  formatter?: (result: TResult, ctx: PluginContextV3, flags: InferFlags<TFlags>, argv?: TArgv) => void;
+  formatter?: (result: TResult, ctx: SystemCommandContext, flags: InferFlags<TFlags>, argv?: TArgv) => void;
 }
 
 /**
@@ -327,7 +333,7 @@ export function defineSystemCommand<
     aliases: aliases || [],
     flags: flags ? convertFlagSchema(flags) : [],
     examples: examples || [],
-    run: async (ctx: PluginContextV3, argv: string[], rawFlags: Record<string, unknown>) => {
+    run: async (ctx: SystemCommandContext, argv: string[], rawFlags: Record<string, unknown>) => {
       const jsonMode = Boolean(rawFlags.json);
 
       // Log command start

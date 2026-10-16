@@ -91,6 +91,7 @@ describe('IPC adapter routes', () => {
       documentDatabase: adapters['database.document'],
       kvStore: adapters['database.kv'],
       processExecutor: adapters.processExecutor,
+      websocket: adapters.websocket,
     } as unknown as IPlatformAdapters;
 
     for (const adapterType of Object.keys(IPC_ADAPTER_ROUTES) as AdapterType[]) {

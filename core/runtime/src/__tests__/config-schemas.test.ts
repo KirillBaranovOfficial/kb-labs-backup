@@ -125,21 +125,10 @@ describe('ExecutionConfig cross-field rules', () => {
     expect(() => validateExecutionConfig({ mode: 'in-process' })).not.toThrow();
   });
 
-  it('requires remote.endpoint when mode=remote', () => {
+  it('rejects remote mode during config validation', () => {
     expect(() => validateExecutionConfig({ mode: 'remote' })).toThrow(
-      /execution.remote.endpoint is required/,
+      /remote execution is not supported in this release/,
     );
-    expect(() =>
-      validateExecutionConfig({ mode: 'remote', remote: {} }),
-    ).toThrow(/execution.remote.endpoint is required/);
-  });
-
-  it('accepts mode=remote with endpoint', () => {
-    const result = validateExecutionConfig({
-      mode: 'remote',
-      remote: { endpoint: 'http://remote:9000' },
-    });
-    expect(result.remote?.endpoint).toBe('http://remote:9000');
   });
 });
 

@@ -28,6 +28,8 @@ export type {
   WSSender,
   WSLifecycleEvent,
   WSInput,
+  WSConnectionReference,
+  WSInputReference,
 } from "./ws-types.js";
 export type {
   EventStreamSender,

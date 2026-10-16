@@ -4,11 +4,12 @@
  * Worker pool backend exports.
  */
 
-export { WorkerPoolBackend, type WorkerPoolBackendOptions } from './backend.js';
+export { WorkerPoolBackend } from './backend.js';
 export { WorkerPool, type PoolEvents } from './pool.js';
 export { Worker, type WorkerEvents, type WorkerOptions } from './worker.js';
 export type {
   WorkerPoolConfig,
+  WorkerPoolBackendOptions,
   WorkerState,
   WorkerInfo,
   WorkerPoolStats,

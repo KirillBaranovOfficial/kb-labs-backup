@@ -183,6 +183,11 @@ type DepsRules struct {
 	// ForbiddenKbDeps is a denylist of @kb-labs/* dependencies. Reported even
 	// if AllowedKbDeps would otherwise permit them — denylist wins.
 	ForbiddenKbDeps []string `yaml:"forbidden_kb_deps"`
+
+	// AllowedKbImports and ForbiddenKbImports constrain complete import specifiers.
+	// Unlike dependency patterns, these match one exact package subpath.
+	AllowedKbImports   []string `yaml:"allowed_kb_imports"`
+	ForbiddenKbImports []string `yaml:"forbidden_kb_imports"`
 }
 
 // GoRules defines rules for Go packages.

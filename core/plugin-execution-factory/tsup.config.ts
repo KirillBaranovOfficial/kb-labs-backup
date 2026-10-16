@@ -4,6 +4,6 @@ import nodePreset from '@kb-labs/devkit/tsup/node';
 export default defineConfig({
   ...nodePreset,
   tsconfig: 'tsconfig.build.json',
-  entry: ['src/index.ts', 'src/backends/worker-pool/worker-script.ts'],
+  entry: ['src/index.ts', 'src/construct.ts', 'src/backends/worker-pool/worker-script.ts'],
   dts: true,
 });

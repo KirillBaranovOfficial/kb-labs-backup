@@ -20,7 +20,8 @@
 
 import type { IExecutionTransport, IHostResolver } from '@kb-labs/core-platform';
 import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
-import type { BackendOptions, ExecutionBackend, ExecutionRequest, ExecuteOptions, ExecutionResult, RawExecutionBackend } from './types.js';
+import type { BackendOptions, ExecutionBackend, ExecutionRequest, ExecuteOptions, ExecutionResult } from './types.js';
+import type { RemoteExecutionBackend } from './backends/remote.js';
 import { RemoteBackend } from './backends/remote.js';
 import { createExecutionBackend, createNormalizedExecutionBackend } from './factory.js';
 import { normalizeExecutionFailure } from './utils.js';
@@ -95,6 +96,8 @@ export interface StrictIsolationOptions {
 export interface IsolatedBackendOptions {
   /** BackendOptions for local execution (platform, mode, workerPool, etc.) */
   localBackend: BackendOptions;
+  /** The platform-level mode when strict isolation routes execution to containers. */
+  executionMode?: ExecutionBackend['executionMode'];
 
   /**
    * When present, enables remote execution via RoutingBackend.
@@ -131,6 +134,7 @@ export function createIsolatedExecutionBackend(options: IsolatedBackendOptions):
       workspaceRootOnHost,
     }),
     options.localBackend.platform.logger,
+    options.executionMode ?? localBackend.executionMode,
     provisionEnvironment,
     hostResolver,
     buildTransportForHost
@@ -150,11 +154,12 @@ export function createIsolatedExecutionBackend(options: IsolatedBackendOptions):
  */
 function buildRoutingBackend(
   localBackend: ExecutionBackend,
-  remoteFactory: (ctx: RemoteJobContext) => RawExecutionBackend,
+  remoteFactory: (ctx: RemoteJobContext) => RemoteExecutionBackend,
   logger: BackendOptions['platform']['logger'],
+  executionMode: ExecutionBackend['executionMode'],
   provisionEnvironment?: StrictIsolationOptions['provisionEnvironment'],
   hostResolver?: IHostResolver,
-  hostBackendFactory?: (hostId: string, namespaceId: string) => RawExecutionBackend,
+  hostBackendFactory?: (hostId: string, namespaceId: string) => RemoteExecutionBackend,
   fallbackPolicy?: 'local' | 'error',
 ): ExecutionBackend {
   const router = {
@@ -211,5 +216,5 @@ function buildRoutingBackend(
     stats: () => localBackend.stats(),
     shutdown: async () => localBackend.shutdown(),
   };
-  return createNormalizedExecutionBackend(router, logger);
+  return createNormalizedExecutionBackend(router, logger, executionMode);
 }

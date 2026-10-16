@@ -228,3 +228,4 @@ export type {
   ProcessTerminationReason,
   ProcessUsage,
 } from "./process-executor.js";
+export type { IWebSocketHostOperations } from "./websocket.js";

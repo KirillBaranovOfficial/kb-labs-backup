@@ -63,6 +63,15 @@ describe('validatePlatformUserConfig', () => {
     )
   })
 
+  it('rejects roadmap-only remote mode with the supported modes and exact config command', () => {
+    expect(validatePlatformUserConfig({ platform: { execution: { mode: 'remote' } } })).toEqual([
+      expect.objectContaining({
+        path: 'platform.execution.mode',
+        hint: 'Supported modes are auto, in-process, subprocess, worker-pool, container. Run `kb config set platform.execution.mode in-process --scope platform`.',
+      }),
+    ])
+  })
+
   it('validates numeric core limits', () => {
     expect(validatePlatformUserConfig({ platform: { core: { jobs: { maxConcurrent: 0 } } } })[0]?.path).toBe(
       'platform.core.jobs.maxConcurrent',

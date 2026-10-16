@@ -5,9 +5,29 @@
  * These are internal types - not exposed in public API.
  */
 
-import type { ExecutionRequest, ExecutionResult } from '../../types.js';
+import type {
+  ExecutionRequest,
+  ExecutionResult,
+  HostType,
+  PlatformTransportFactory,
+  WorkerPoolOptions,
+} from '../../types.js';
+import type { WorkerFailureDiagnostic } from '../../errors.js';
 import type { ExecutionError } from '@kb-labs/core-platform';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
+import type { PlatformServices, UIFacade } from '@kb-labs/plugin-contracts';
+import type { ProcessTableSource } from './process-tree.js';
+
+export interface WorkerPoolBackendOptions extends WorkerPoolOptions {
+  platform: PlatformServices;
+  platformTransport?: PlatformTransportFactory;
+  uiProvider?: (hostType: HostType) => UIFacade;
+  workerScript?: string;
+  processTableSource?: ProcessTableSource;
+  maxQueueSize?: number;
+  acquireTimeoutMs?: number;
+  healthCheckIntervalMs?: number;
+}
 
 // ============================================================================
 // Worker Pool Configuration
@@ -347,6 +367,9 @@ export interface WorkerPoolStats {
   /** Total workers (all states) */
   totalWorkers: number;
 
+  /** Workers whose descendant process tree could not be verified after kill. */
+  treeUnverifiedWorkers: number;
+
   /** Workers in each state */
   workersByState: Record<WorkerState, number>;
 
@@ -379,4 +402,6 @@ export interface WorkerPoolStats {
 
   /** P99 wait time in queue (ms) */
   p99QueueWaitMs?: number;
+  /** Most recent worker startup or replacement failure, when recovery is pending. */
+  lastStartFailure?: WorkerFailureDiagnostic;
 }

@@ -77,6 +77,7 @@ export {
 
 // Platform governance
 export { createGovernedPlatformServices } from './platform/governed.js';
+export { createWSSender, rehydrateWSInput } from './ws/sender.js';
 export { resolveAdapterMiddlewares } from './platform/middleware-loader.js';
 export type { RawMiddlewareDecl } from './platform/middleware-loader.js';
 export type { LoadedMiddleware, PlatformConfig } from './platform/pipeline.js';

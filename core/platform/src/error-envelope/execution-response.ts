@@ -6,6 +6,7 @@
 
 import type { ExecutionTarget } from './execution-request.js';
 import { ErrorEnvelopeError, type ErrorEnvelope } from './types.js';
+import type { ResolvedExecutionMode } from '@kb-labs/core-contracts';
 
 /** JSON-safe exception detail used only beside public error envelopes. */
 export interface SerializedError {
@@ -90,7 +91,9 @@ export type ExecutionErrorCode =
   | 'QUEUE_FULL'
   | 'ACQUIRE_TIMEOUT'
   | 'WORKER_CRASHED'
+  | 'WORKER_START_FAILED'
   | 'WORKER_UNHEALTHY'
+  | 'WORKER_UNAVAILABLE'
   | 'NO_HOST_AVAILABLE';
 
 /** Wire failure shared by subprocess and worker IPC: canonical user envelope plus private diagnostics. */
@@ -106,7 +109,7 @@ export interface ExecutionMetadata {
   workspaceId?: string;
   memoryUsedMB?: number;
   handlerWasWarmed?: boolean;
-  backend?: 'in-process' | 'subprocess' | 'worker-pool' | 'remote';
+  backend?: ResolvedExecutionMode;
   executionMeta?: ExecutionMeta;
   target?: ExecutionTarget;
   [key: string]: unknown;

@@ -49,6 +49,7 @@ export function createProxyPlatform(
   const { transport } = options;
   const logger = options.logger ?? new LoggerProxy(transport);
   const processExecutor = new ProcessExecutorProxy(transport);
+  const websocket = platformAdapterTransportPolicy.websocket.proxy(transport);
 
   // Proxy adapters — forward all calls via transport
   const cache = platformAdapterTransportPolicy.cache.proxy(transport);
@@ -83,6 +84,7 @@ export function createProxyPlatform(
   // Return strict IPlatformAdapters — compile error if field missing
   return {
     logger,
+    websocket,
     llm,
     embeddings,
     vectorStore,

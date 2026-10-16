@@ -16,7 +16,6 @@ import {
   mountEventStreams,
   mountWebSocketChannels,
 } from "@kb-labs/plugin-execution";
-import { createExecutionBackend } from "@kb-labs/plugin-execution-factory";
 import { combineManifestsToRegistry, manifestToRegistryEntry } from "@kb-labs/rest-api-core";
 import { platform } from "@kb-labs/core-runtime";
 import {
@@ -158,14 +157,9 @@ export async function registerPluginRoutes(
 
     emitRegistrySnapshotDiagnostics(snapshot);
 
-    // Use platform's unified ExecutionBackend (initialized in bootstrap.ts)
+    // Every REST plane uses the single backend initialized by the platform.
     const backend = platform.executionBackend;
-    // Realtime handlers must always run in-process: their senders hold closures over
-    // the live ws socket and connectionRegistry — both bound to this host.
-    // Worker-pool serialization strips its methods (close/getConnectionId
-    // become undefined in the worker), so defineWebSocket's createTypedSender
-    // crashes with "Cannot read properties of undefined (reading 'bind')".
-    const wsBackend = createExecutionBackend({ platform, mode: 'in-process' });
+    const wsBackend = backend;
 
     // Filter plugins that have routes, realtime streams or channels to mount
     const mountableManifests = manifests.filter(
@@ -500,6 +494,7 @@ export async function registerPluginRoutes(
 
             const wsResult = await mountWebSocketChannels(server, manifest, {
               backend: wsBackend,
+              hostPlatform: platform,
               pluginRoot: pluginDistRoot,
               workspaceRoot,
               basePath: wsBasePath,
