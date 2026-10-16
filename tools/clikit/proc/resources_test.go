@@ -623,6 +623,191 @@ func TestCleanupOwnedDirectoryRemovesSymlinkWithoutFollowingItsTarget(t *testing
 	}
 }
 
+// case: S-237.41
+func TestCleanupOwnedDirectoryRestoresWritePermissionForReadOnlyContents(t *testing.T) {
+	state := t.TempDir()
+	owned := filepath.Join(state, "owned")
+	module := filepath.Join(owned, "go", "pkg", "mod", "example")
+	if err := os.MkdirAll(module, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(owned, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return os.Chmod(path, 0o700)
+			}
+			return nil
+		})
+	})
+	file := filepath.Join(module, "decode_test.go")
+	if err := os.WriteFile(file, []byte("package example\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	for _, directory := range []string{module, filepath.Dir(module), filepath.Dir(filepath.Dir(module)), owned} {
+		if err := os.Chmod(directory, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := os.Lstat(owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := resourceIdentity(owned, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := removeOwnedPathRelative(state, owned, identity, "", nil); err != nil {
+		t.Fatalf("remove owned read-only tree: %v", err)
+	}
+	if _, err := os.Lstat(owned); !os.IsNotExist(err) {
+		t.Fatalf("owned read-only tree remains: %v", err)
+	}
+}
+
+// case: S-237.41
+func TestCleanupKeptDirectoryRestoresModeWhenTraversalFails(t *testing.T) {
+	state := t.TempDir()
+	owned := filepath.Join(state, "owned")
+	if err := os.Mkdir(owned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(owned, "kept-parent")
+	if err := os.Symlink(t.TempDir(), child); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(owned, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(owned, 0o700) })
+
+	rootFD, err := unix.Open(state, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Close(rootFD) })
+	ownedFD, err := unix.Open(owned, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Close(ownedFD) })
+
+	keep := filepath.Join(child, "preserved")
+	err = removeDirectoryContents(rootFD, ownedFD, owned, []string{keep}, unixOwnedDirectoryModeOps{})
+	var refusal *OwnedPathRefusalError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("child traversal error = %v, want kept-path refusal", err)
+	}
+	info, statErr := os.Stat(owned)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if got := info.Mode().Perm(); got != 0o555 {
+		t.Fatalf("kept directory mode after child failure = %#o, want %#o (traversal error: %v)", got, 0o555, err)
+	}
+
+	restoreErr := errors.New("injected mode restoration report")
+	secondOwnedFD, err := unix.Open(owned, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Close(secondOwnedFD) })
+	err = removeDirectoryContents(rootFD, secondOwnedFD, owned, []string{keep}, reportingOwnedDirectoryModeOps{restoreErr: restoreErr})
+	if !errors.As(err, &refusal) || !errors.Is(err, restoreErr) {
+		t.Fatalf("traversal and restoration errors = %v, want both causes", err)
+	}
+	info, statErr = os.Stat(owned)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if got := info.Mode().Perm(); got != 0o555 {
+		t.Fatalf("kept directory mode after joined errors = %#o, want %#o", got, 0o555)
+	}
+}
+
+type reportingOwnedDirectoryModeOps struct{ restoreErr error }
+
+func (ops reportingOwnedDirectoryModeOps) Fchmod(fd int, mode uint32) error {
+	if err := unix.Fchmod(fd, mode); err != nil {
+		return err
+	}
+	if mode&0o700 != 0o700 {
+		return ops.restoreErr
+	}
+	return nil
+}
+
+// case: S-237.47
+func TestPruneStartingKeeperRemovesItsScratch(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runID, err := newID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch, err := runScratchPath(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(scratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(scratch); err != nil {
+			t.Errorf("remove test-owned scratch %s: %v", scratch, err)
+		}
+	})
+	info, err := os.Lstat(scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := resourceIdentity(scratch, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{
+		RunID: runID, Tag: "starting-keeper-loss", PID: os.Getpid(), StartedAt: "replaced-keeper-identity",
+		StateDir: state, Status: StatusStarting, Scratch: scratch,
+		ScratchDevice: identity.Device, ScratchInode: identity.Inode,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pruneStateLocked(state); err != nil {
+		t.Fatalf("prune lost starting keeper: %v", err)
+	}
+	if _, err := os.Lstat(scratch); !os.IsNotExist(err) {
+		t.Fatalf("starting keeper scratch remains at %s: %v", scratch, err)
+	}
+	stored, err := readRecordLockedForTest(state, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != StatusLost && stored.Status != StatusDirty {
+		t.Fatalf("starting keeper status = %s, want lost or dirty", stored.Status)
+	}
+	eventData, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var teardown Event
+	for _, line := range strings.Split(strings.TrimSpace(string(eventData)), "\n") {
+		var event Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == EventTeardown {
+			teardown = event
+		}
+	}
+	if teardown.Type != EventTeardown || len(teardown.Resources) != 1 || teardown.Resources[0].Resource.Kind != "scratch" || teardown.Resources[0].Outcome != ResourceRemoved {
+		t.Fatalf("starting keeper teardown did not report scratch removal: %+v", teardown)
+	}
+}
+
 // case: S-237.49
 func TestHangingDockerCleanupIsStalledAndBounded(t *testing.T) {
 	state := t.TempDir()

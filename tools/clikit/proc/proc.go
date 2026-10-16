@@ -386,14 +386,12 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 		ready, err = result.record, result.err
 	case <-ctx.Done():
 		killErr := cmd.Process.Signal(syscall.SIGTERM)
-		if killErr != nil {
-			killErr = cmd.Process.Kill()
-		}
+		cleanupErr := killTree(cmd.Process.Pid, runID)
+		killErr = errors.Join(killErr, cmd.Process.Kill())
 		closeErr := readReady.Close()
 		<-readyCh
 		waitErr := cmd.Wait()
-		admissionPending = false
-		return nil, errors.Join(fmt.Errorf("proc: keeper startup canceled: %w", ctx.Err()), killErr, closeErr, waitErr)
+		return nil, errors.Join(fmt.Errorf("proc: keeper startup canceled: %w", ctx.Err()), cleanupErr, killErr, closeErr, waitErr)
 	case <-timer.C:
 		killErr := cmd.Process.Kill()
 		closeErr := readReady.Close()

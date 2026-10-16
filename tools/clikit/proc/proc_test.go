@@ -155,6 +155,126 @@ func TestRunScratchEnvironmentIsRemovedAndKeptOutputSurvives(t *testing.T) {
 	skipOnTeardownObservationFailure(t, state, runID)
 }
 
+// case: S-237.41
+func TestRunScratchRemovesReadOnlyGoModuleContent(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	command := exec.Command(runner, "run", "--tag", "readonly-scratch", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--", "/bin/sh", "-ec", `mkdir -p "$TMPDIR/go/pkg/mod/example"; printf source > "$TMPDIR/go/pkg/mod/example/decode_test.go"; chmod 0444 "$TMPDIR/go/pkg/mod/example/decode_test.go"; chmod 0555 "$TMPDIR/go/pkg/mod/example" "$TMPDIR/go/pkg/mod" "$TMPDIR/go"`)
+	output, err := command.CombinedOutput()
+	runID := outputRunID(t, state, "readonly-scratch")
+	scratch := scratchForRun(t, state, runID)
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(scratch, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return os.Chmod(path, 0o700)
+			}
+			return nil
+		})
+		if err := os.RemoveAll(scratch); err != nil {
+			t.Errorf("remove test-owned scratch %s: %v", scratch, err)
+		}
+	})
+	if _, err := os.Lstat(scratch); !os.IsNotExist(err) {
+		t.Fatalf("read-only scratch remains at %s: %v", scratch, err)
+	}
+	assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
+	if err != nil {
+		skipOnTeardownObservationFailure(t, state, runID)
+		t.Fatalf("read-only scratch run failed: %v\n%s", err, output)
+	}
+	listing := proc.List(state)
+	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusDead {
+		t.Fatalf("read-only scratch cleanup status = %+v", listing)
+	}
+}
+
+// case: S-237.41
+func TestCanceledKeeperStartupRemovesRegisteredScratch(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	stdoutFIFO := filepath.Join(state, "stdout.fifo")
+	if err := syscall.Mkfifo(stdoutFIFO, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan error, 1)
+	go func() {
+		_, err := proc.StartWithHostResourceSource(ctx, proc.Config{
+			HelperPath: runner, StateDir: state, Tag: "canceled-startup", Stall: time.Hour,
+			StdoutPath: stdoutFIFO, StderrPath: filepath.Join(state, "stderr.log"),
+			Command: []string{"/bin/sleep", "30"},
+		}, stableHostResourceSource{})
+		started <- err
+	}()
+	t.Cleanup(cancel)
+
+	type runRecord struct {
+		Scratch string `json:"scratch"`
+	}
+	deadline := time.NewTimer(5 * time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
+	var scratch string
+waitForScratch:
+	for {
+		paths, err := filepath.Glob(filepath.Join(state, "runs", "*.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var record runRecord
+			if err := json.Unmarshal(data, &record); err != nil {
+				t.Fatal(err)
+			}
+			if record.Scratch != "" {
+				scratch = record.Scratch
+				break waitForScratch
+			}
+		}
+		select {
+		case err := <-started:
+			t.Fatalf("keeper startup completed before scratch registration: %v", err)
+		case <-deadline.C:
+			t.Fatal("keeper did not register scratch before the FIFO output open blocked")
+		case <-ticker.C:
+		}
+	}
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(scratch, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return os.Chmod(path, 0o700)
+			}
+			return nil
+		})
+		if err := os.RemoveAll(scratch); err != nil {
+			t.Errorf("remove test-owned scratch %s: %v", scratch, err)
+		}
+	})
+	cancel()
+	select {
+	case err := <-started:
+		if err == nil {
+			t.Fatal("canceled keeper startup returned no error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled keeper startup did not return promptly")
+	}
+	if _, err := os.Lstat(scratch); !os.IsNotExist(err) {
+		t.Fatalf("canceled startup left scratch %s: %v", scratch, err)
+	}
+}
+
 func TestRunScratchAllowsUnixSocketNameUnderDeepStateDirectory(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is unavailable")
