@@ -111,6 +111,34 @@ describe('QA case claim scanning', () => {
     expect(scanned.diagnostics).toEqual([expect.objectContaining({ file: expect.stringContaining('invalid.spec.ts'), message: 'claim references unknown case S-999' })]);
   });
 
+  // case: S-262.1
+  it('scans Python unittest claims from comments immediately above test functions', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const testSource = join(directory, 'e2e/journey');
+    mkdirSync(testSource, { recursive: true });
+    writeFileSync(join(testSource, 'test_batch.py'), [
+      '# case: S-010.1',
+      '# case: S-010.2',
+      'def test_batch():',
+      '    pass',
+      '',
+      '# case: S-010.1-.2',
+      'def test_batch_range():',
+      '    pass',
+    ].join('\n'));
+
+    const scanned = scanQACaseClaims(directory, [testCase]);
+
+    expect(scanned.diagnostics).toEqual([]);
+    expect(scanned.claims).toEqual([
+      expect.objectContaining({ id: 'S-010.1', stepId: 'S-010.1', kind: 'unit', testName: 'test_batch' }),
+      expect.objectContaining({ id: 'S-010.2', stepId: 'S-010.2', kind: 'unit', testName: 'test_batch' }),
+      expect.objectContaining({ id: 'S-010.1', stepId: 'S-010.1', kind: 'unit', testName: 'test_batch_range' }),
+      expect.objectContaining({ id: 'S-010.2', stepId: 'S-010.2', kind: 'unit', testName: 'test_batch_range' }),
+    ]);
+  });
+
   it('rejects journey case ids outside literal claim declarations and ignores comments and docstrings', () => {
     const directory = fixture();
     const testCase = parsedCase(directory);
