@@ -157,16 +157,14 @@ function createDefaultIPCServerFactory(): IPCServerFactory {
       const { UnixSocketServer, createSocketPath } = await import('@kb-labs/core-ipc');
       const socketPath = createSocketPath(`subprocess-${executionId}`);
       const authToken = randomBytes(32).toString('hex');
-      const serverConfig: UnixSocketServerConfig = { socketPath };
-      (serverConfig as unknown as Record<string, unknown>).authToken = authToken;
+      const serverConfig: UnixSocketServerConfig = { socketPath, authToken };
       const server = new UnixSocketServer(platformContainer, serverConfig);
       return new UnixSocketIPCServer(server, socketPath, authToken);
     } else {
       const { UnixSocketServer, createSocketPath } = await import('@kb-labs/core-ipc');
       const socketPath = createSocketPath(`subprocess-${executionId}`);
       const authToken = randomBytes(32).toString('hex');
-      const serverConfig: UnixSocketServerConfig = { socketPath };
-      (serverConfig as unknown as Record<string, unknown>).authToken = authToken;
+      const serverConfig: UnixSocketServerConfig = { socketPath, authToken };
       const server = new UnixSocketServer(platformContainer, serverConfig);
       return new UnixSocketIPCServer(server, socketPath, authToken);
     }

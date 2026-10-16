@@ -11,6 +11,7 @@ import type {
   PIIRedactionConfig,
 } from "@kb-labs/core-platform";
 import type { AdapterSlot } from "@kb-labs/core-platform";
+import type { ResolvedExecutionMode } from "@kb-labs/core-contracts";
 import type {
   RateLimitConfig,
   RateLimitPreset,
@@ -175,7 +176,7 @@ export interface WorkflowsConfig {
 
 /**
  * Execution backend configuration.
- * Determines how plugins execute (in-process, worker-pool, remote).
+ * Determines how plugins execute.
  */
 export interface ExecutionConfig {
   /**
@@ -183,10 +184,9 @@ export interface ExecutionConfig {
    * - 'auto' (default): Auto-detect from environment (EXECUTION_MODE, KUBERNETES_SERVICE_HOST)
    * - 'in-process': Same process, no isolation (dev mode, fast iteration)
    * - 'worker-pool': Worker pool with fault isolation (production, single-node)
-   * - 'remote': Remote executor service (Phase 3, distributed fleet)
    * @default 'auto'
    */
-  mode?: "auto" | "in-process" | "worker-pool" | "remote" | "container";
+  mode?: "auto" | ResolvedExecutionMode;
 
   /**
    * Container execution options (used when mode=container).
@@ -240,14 +240,6 @@ export interface ExecutionConfig {
       /** Max handlers to warmup (safety limit) @default 20 */
       maxHandlers?: number;
     };
-  };
-
-  /**
-   * Remote executor options (used when mode=remote, Phase 3).
-   */
-  remote?: {
-    /** Remote executor service endpoint (gRPC or HTTP) */
-    endpoint?: string;
   };
 }
 

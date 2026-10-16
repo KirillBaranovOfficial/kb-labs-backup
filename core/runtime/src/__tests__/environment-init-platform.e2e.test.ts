@@ -26,7 +26,7 @@ const createExecutionBackendMock = vi.fn(() => ({
   shutdown: shutdownMock,
 }));
 
-vi.mock('@kb-labs/plugin-execution-factory', () => ({
+vi.mock('@kb-labs/plugin-execution-factory/construct', () => ({
   createExecutionBackend: createExecutionBackendMock,
 }));
 

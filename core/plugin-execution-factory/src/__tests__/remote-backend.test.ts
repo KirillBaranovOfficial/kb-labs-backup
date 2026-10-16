@@ -64,20 +64,20 @@ describe('RemoteBackend', () => {
       expect(passedRequest.pluginRoot).toBe('/workspace');
     });
 
-    it('includes backend:remote in metadata on success', async () => {
+    it('does not expose a roadmap-only mode in public metadata', async () => {
       const backend = new RemoteBackend({ transport: makeTransport() });
       const result = await backend.execute(makeRequest({ target: { environmentId: 'env_1' } }));
 
-      expect(result.metadata?.['backend']).toBe('remote');
+      expect(result.metadata?.['backend']).toBeUndefined();
       expect((result.metadata?.['target'] as Record<string, unknown>)?.['environmentId']).toBe('env_1');
     });
 
-    it('includes backend:remote in metadata on failure', async () => {
+    it('does not expose a roadmap-only mode in failure metadata', async () => {
       const backend = new RemoteBackend({
         transport: { execute: vi.fn().mockRejectedValue(new Error('err')) },
       });
       const result = await backend.execute(makeRequest());
-      expect(result.metadata?.['backend']).toBe('remote');
+      expect(result.metadata?.['backend']).toBeUndefined();
     });
   });
 

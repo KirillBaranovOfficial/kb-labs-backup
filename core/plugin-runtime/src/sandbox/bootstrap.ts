@@ -11,6 +11,8 @@ import { PluginError } from '@kb-labs/plugin-contracts';
 import { serializeError, toErrorEnvelope } from '@kb-labs/core-platform';
 import { createBaseStdoutUI, NOOP_PROMPTS, setJsonMode } from '@kb-labs/shared-cli-ui';
 import { createPluginContextV3 } from '../context/index.js';
+import { rehydrateWSInput } from '../ws/sender.js';
+import type { WSInputReference } from '@kb-labs/plugin-contracts';
 import { executeCleanup, type EventEmitterFn } from '../api/index.js';
 import { applySandboxPatches, type SandboxMode } from './harden.js';
 import { setGlobalContext, clearGlobalContext } from './context-holder.js';
@@ -49,6 +51,10 @@ process.on('message', async (msg: ParentMessage) => {
   const executeMsg = msg as ExecuteMessage;
   const { descriptor, handlerPath, input, socketPath, cwd, outdir } = executeMsg;
 
+  // Establish the host IPC connection before the sandbox filters process.env;
+  // the auth token is runtime infrastructure, not a plugin-visible variable.
+  const platform = await connectToPlatform(socketPath);
+
   // Read sandbox mode from environment
   const sandboxMode = (process.env.KB_SANDBOX_MODE || 'enforce') as SandboxMode;
 
@@ -58,9 +64,6 @@ process.on('message', async (msg: ParentMessage) => {
     permissions: descriptor.permissions,
     mode: sandboxMode, // Read from KB_SANDBOX_MODE env var
   });
-
-  // Connect to platform services via RPC (Unix socket to parent process)
-  const platform = await connectToPlatform(socketPath);
 
   // Detect --json mode from flags (V3: always { flags, argv })
   const inputFlags = 'flags' in (input as object) ? (input as { flags: Record<string, unknown> }).flags : {};
@@ -143,7 +146,10 @@ process.on('message', async (msg: ParentMessage) => {
       );
     }
 
-    const handlerResult = await handler.execute(context, input);
+    const handlerInput = descriptor.hostType === 'ws'
+      ? rehydrateWSInput(input as WSInputReference, platform.websocket)
+      : input;
+    const handlerResult = await handler.execute(context, handlerInput);
 
     // Send raw handler result to parent — no host-specific wrapping.
     // Host layer (CLI, REST, Workflow) is responsible for interpreting the data.

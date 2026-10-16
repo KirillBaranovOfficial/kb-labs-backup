@@ -15,11 +15,9 @@
  */
 
 import type {
-  RawExecutionBackend,
   ExecutionRequest,
   ExecutionResult,
   ExecuteOptions,
-  HealthStatus,
   ExecutionStats,
 } from '../types.js';
 import type { IExecutionTransport } from '@kb-labs/core-platform';
@@ -37,7 +35,21 @@ export interface RemoteBackendOptions {
   workspaceRootOnHost?: string;
 }
 
-export class RemoteBackend implements RawExecutionBackend {
+interface RemoteHealthStatus {
+  healthy: boolean;
+  backend: 'remote';
+  details?: Record<string, unknown>;
+}
+
+/** Internal remote transport contract; it is not part of the package API. */
+export interface RemoteExecutionBackend {
+  execute(request: ExecutionRequest, options?: ExecuteOptions): Promise<ExecutionResult>;
+  health(): Promise<RemoteHealthStatus>;
+  stats(): Promise<ExecutionStats>;
+  shutdown(): Promise<void>;
+}
+
+export class RemoteBackend implements RemoteExecutionBackend {
   private readonly transport: IExecutionTransport;
   private readonly workspaceRootOnHost?: string;
 
@@ -72,7 +84,6 @@ export class RemoteBackend implements RawExecutionBackend {
         data,
         executionTimeMs,
         metadata: {
-          backend: 'remote',
           target: request.target,
         },
       };
@@ -85,7 +96,6 @@ export class RemoteBackend implements RawExecutionBackend {
         ...normalizeExecutionFailure(error),
         executionTimeMs,
         metadata: {
-          backend: 'remote',
           target: request.target,
         },
       };
@@ -122,7 +132,7 @@ export class RemoteBackend implements RawExecutionBackend {
     this._stats.avgExecutionTimeMs = sum / this.executionTimes.length;
   }
 
-  async health(): Promise<HealthStatus> {
+  async health(): Promise<RemoteHealthStatus> {
     return {
       healthy: true,
       backend: 'remote',

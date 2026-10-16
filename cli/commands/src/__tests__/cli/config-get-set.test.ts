@@ -398,6 +398,23 @@ describe('config set', () => {
       });
     });
 
+    it('rejects remote execution mode with supported modes and the exact next command without writing it', async () => {
+      const { code, out } = await run(
+        configSet,
+        ['platform.execution.mode', 'remote'],
+        { scope: 'platform' },
+      );
+      const envelope = (out.json[0] as { error: { code: string; hint: string } }).error;
+
+      expect(code).toBe(1);
+      expect(envelope.code).toBe('KB_CONFIG_INVALID');
+      expect(envelope.hint).toContain('auto, in-process, subprocess, worker-pool, container');
+      expect(envelope.hint).toContain(
+        'kb config set platform.execution.mode in-process --scope platform',
+      );
+      expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toBe(PLATFORM_CONFIG);
+    });
+
     it('rejects JSON-looking values that do not parse', async () => {
       const { out } = await run(configSet, ['plugins.commit.list', '[1,']);
       expect((out.json[0] as { error: { code: string } }).error.code).toBe('KB_CONFIG_INVALID');

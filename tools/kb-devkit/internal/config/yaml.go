@@ -172,6 +172,8 @@ type yamlDeps struct {
 	CheckVersionConsistency bool     `yaml:"check_version_consistency"`
 	AllowedKbDeps           []string `yaml:"allowed_kb_deps"`
 	ForbiddenKbDeps         []string `yaml:"forbidden_kb_deps"`
+	AllowedKbImports        []string `yaml:"allowed_kb_imports"`
+	ForbiddenKbImports      []string `yaml:"forbidden_kb_imports"`
 }
 
 type yamlGo struct {
@@ -494,6 +496,8 @@ func mapPreset(v yamlPreset) Preset {
 			CheckVersionConsistency: v.Deps.CheckVersionConsistency,
 			AllowedKbDeps:           v.Deps.AllowedKbDeps,
 			ForbiddenKbDeps:         v.Deps.ForbiddenKbDeps,
+			AllowedKbImports:        v.Deps.AllowedKbImports,
+			ForbiddenKbImports:      v.Deps.ForbiddenKbImports,
 		},
 		Go: GoRules{
 			MinVersion: v.Go.MinVersion,

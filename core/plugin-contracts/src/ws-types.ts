@@ -53,12 +53,12 @@ export interface WSSender {
    * @param code - WebSocket close code (default: 1000 = normal closure)
    * @param reason - Human-readable close reason
    */
-  close(code?: number, reason?: string): void;
+  close(code?: number, reason?: string): Promise<void>;
 
   /**
    * Get the unique connection ID for this client
    */
-  getConnectionId(): string;
+  getConnectionId(): Promise<string>;
 }
 
 /**
@@ -92,3 +92,13 @@ export interface WSInput {
   /** WebSocket sender interface (present for all events except 'disconnect') */
   sender?: WSSender;
 }
+
+/** Serializable reference carried across an execution backend boundary. */
+export interface WSConnectionReference {
+  connectionId: string;
+}
+
+/** WebSocket event data before handler-runtime sender rehydration. */
+export type WSInputReference = Omit<WSInput, 'sender'> & {
+  connection: WSConnectionReference;
+};

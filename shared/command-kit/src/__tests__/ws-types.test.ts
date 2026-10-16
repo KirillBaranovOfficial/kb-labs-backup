@@ -154,7 +154,7 @@ describe('MessageRouter', () => {
       broadcast: vi.fn(),
       sendTo: vi.fn(),
       close: vi.fn(),
-      getConnectionId: vi.fn(() => 'conn-123'),
+      getConnectionId: vi.fn(async () => 'conn-123'),
     };
   });
 

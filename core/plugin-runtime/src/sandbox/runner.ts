@@ -27,6 +27,8 @@ import type {
 import { PluginError, TimeoutError, AbortError, createExecutionMeta } from '@kb-labs/plugin-contracts';
 import type { ParentMessage, ChildMessage, ResultMessage, ErrorMessage } from './ipc-protocol.js';
 import { createPluginContextV3 } from '../context/index.js';
+import { rehydrateWSInput } from '../ws/sender.js';
+import type { WSInputReference } from '@kb-labs/plugin-contracts';
 import { executeCleanup, type PluginInvokerFn, type EventEmitterFn } from '../api/index.js';
 import type { LoadedMiddleware } from '../platform/pipeline.js';
 
@@ -148,9 +150,12 @@ export async function runInProcess<T = unknown>(
     // Execute handler within platform + runtime contexts (AsyncLocalStorage).
     // platformContext → usePlatform()/useLLM()/etc. return governed platform
     // runtimeContext → useEnv()/useFS()/useFetch() return sandboxed shims
+    const handlerInput = descriptor.hostType === 'ws'
+      ? rehydrateWSInput(input as WSInputReference, platform.websocket)
+      : input;
     const data = await platformContext.run(context.platform, () =>
       runtimeContext.run(context.runtime, () =>
-        handler.execute(context, input)
+        handler.execute(context, handlerInput)
       )
     ) as T;
 

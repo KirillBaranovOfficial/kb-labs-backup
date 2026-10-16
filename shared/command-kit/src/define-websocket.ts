@@ -256,7 +256,7 @@ export function defineWebSocket<TConfig = unknown, TIncoming = unknown, TOutgoin
               } catch (error) {
                 // Log validation error and send error message to client
                 context.platform.logger.error('Invalid WebSocket message received', error as Error, {
-                  connectionId: sender.getConnectionId(),
+                  connectionId: await sender.getConnectionId(),
                   message: input.message,
                 });
                 // Send error response to client

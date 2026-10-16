@@ -48,6 +48,8 @@ export interface SerializableError {
   message: string;
   stack?: string;
   code?: string;
+  /** Catalogued platform envelope preserved across adapter:call boundaries. */
+  envelope?: import('../error-envelope/types.js').ErrorEnvelope;
 }
 
 /**
@@ -114,7 +116,8 @@ export type AdapterType =
   | 'artifacts'
   | 'database.document'
   | 'database.kv'
-  | 'processExecutor';
+  | 'processExecutor'
+  | 'websocket';
 
 /**
  * Execution context for adapter calls.

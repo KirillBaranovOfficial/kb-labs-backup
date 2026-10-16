@@ -39,7 +39,11 @@ import type {
   ExecutionErrorCode as CoreExecutionErrorCode,
   ExecutionMetadata as CoreExecutionMetadata,
 } from '@kb-labs/core-platform';
-import type { HealthStatus as CoreHealthStatus, ExecutionStats as CoreExecutionStats } from '@kb-labs/core-contracts';
+import type {
+  HealthStatus as CoreHealthStatus,
+  ResolvedExecutionMode,
+  ExecutionStats as CoreExecutionStats,
+} from '@kb-labs/core-contracts';
 import type { NormalizedExecutionFailure, NormalizedExecutionResult } from './normalized-result.js';
 
 // Re-export runtime types for convenience (consumers use these, not custom types)
@@ -197,7 +201,7 @@ export type ExecutionMetadata = CoreExecutionMetadata;
  * Implementations:
  * - InProcessBackend (Level 0)
  * - WorkerPoolBackend (Level 1)
- * - RemoteExecutionBackend (Level 2)
+ * - Container routing through the factory-owned isolation backend
  */
 interface CoreExecutionBackendLifecycle {
   health(): Promise<HealthStatus>;
@@ -211,7 +215,17 @@ export interface RawExecutionBackend extends CoreExecutionBackendLifecycle {
   start?(): Promise<void>;
 }
 
-export interface ExecutionBackend extends CoreExecutionBackendLifecycle {
+export type { ResolvedExecutionMode } from '@kb-labs/core-contracts';
+
+export type NormalizedHealthStatus = CoreHealthStatus & {
+  /** Concrete local mode selected by the platform execution backend. */
+  executionMode: ResolvedExecutionMode;
+};
+
+export interface ExecutionBackend extends Omit<CoreExecutionBackendLifecycle, 'health'> {
+  health(): Promise<NormalizedHealthStatus>;
+  /** Concrete execution mode selected by the backend owner. */
+  readonly executionMode: ResolvedExecutionMode;
   /**
    * Execute plugin request with plugin-typed descriptor.
    */
@@ -304,9 +318,8 @@ export interface BackendOptions {
    * - 'in-process': Always use InProcessBackend (same process, no isolation)
    * - 'subprocess': Always use SubprocessBackend (single subprocess, process isolation)
    * - 'worker-pool': Always use WorkerPoolBackend (pool of workers, production-ready)
-   * - 'remote': Always use RemoteExecutionBackend (remote executor service)
    */
-  mode?: 'auto' | 'in-process' | 'subprocess' | 'worker-pool' | 'remote';
+  mode?: 'auto' | Exclude<ResolvedExecutionMode, 'container'>;
 
   /**
    * Platform services.
@@ -347,10 +360,6 @@ export interface BackendOptions {
    */
   workerPool?: WorkerPoolOptions;
 
-  /**
-   * Remote executor options (only for remote mode).
-   */
-  remote?: RemoteOptions;
 }
 
 /**
@@ -445,24 +454,4 @@ export interface PlatformTransportFactory {
 export interface PlatformTransportServer {
   start(): void;
   stop(): void;
-}
-
-/**
- * Remote executor options.
- */
-export interface RemoteOptions {
-  /**
-   * Transport implementation for remote execution.
-   * Injected externally — backend does not know what's behind it.
-   * Example: GatewayDispatchTransport from @kb-labs/gateway-core.
-   */
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  transport: import('@kb-labs/core-platform').IExecutionTransport;
-
-  /**
-   * Absolute path on host that maps to /workspace inside container.
-   * Used for handlerRef remapping before the request is sent.
-   * E.g. '/home/user/projects/kb-labs'
-   */
-  workspaceRootOnHost?: string;
 }

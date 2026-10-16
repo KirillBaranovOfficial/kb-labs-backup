@@ -6,6 +6,7 @@
 
 import type { ExecutionTarget } from './execution-request.js';
 import { ErrorEnvelopeError, type ErrorEnvelope } from './types.js';
+import type { ResolvedExecutionMode } from '@kb-labs/core-contracts';
 
 /** JSON-safe exception detail used only beside public error envelopes. */
 export interface SerializedError {
@@ -106,7 +107,7 @@ export interface ExecutionMetadata {
   workspaceId?: string;
   memoryUsedMB?: number;
   handlerWasWarmed?: boolean;
-  backend?: 'in-process' | 'subprocess' | 'worker-pool' | 'remote';
+  backend?: ResolvedExecutionMode;
   executionMeta?: ExecutionMeta;
   target?: ExecutionTarget;
   [key: string]: unknown;

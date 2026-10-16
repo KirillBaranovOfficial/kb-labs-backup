@@ -7,12 +7,25 @@
 /**
  * Health status for execution backend.
  */
+export const RESOLVED_EXECUTION_MODES = [
+  'in-process',
+  'subprocess',
+  'worker-pool',
+  'container',
+] as const;
+
+/** Execution modes intentionally unavailable until the roadmap release. */
+export const ROADMAP_EXECUTION_MODES = ['remote'] as const;
+
+/** Concrete local execution mode reported by a plane. */
+export type ResolvedExecutionMode = (typeof RESOLVED_EXECUTION_MODES)[number];
+
 export interface HealthStatus {
   /** Backend is healthy */
   healthy: boolean;
 
   /** Backend type */
-  backend: "in-process" | "subprocess" | "worker-pool" | "remote";
+  backend: ResolvedExecutionMode;
 
   /** Additional health details */
   details?: Record<string, unknown>;

@@ -2378,6 +2378,16 @@
       "message": "Plugin command {command} in {plugin} {failureReason}.",
       "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack, then fix the reported plugin issue.",
       "processExitClass": "operation-failure"
+    },
+    {
+      "code": "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "WebSocket connection {connectionId} is unknown or closed.",
+      "hint": "Reconnect the WebSocket client to obtain an active connection, then retry the operation.",
+      "processExitClass": "operation-failure"
     }
   ]
 }

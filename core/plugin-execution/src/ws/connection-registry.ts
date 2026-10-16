@@ -7,6 +7,8 @@
 
 import type { WebSocket } from 'ws';
 import type { WSMessage } from '@kb-labs/plugin-contracts';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
+import type { IWebSocketHostOperations } from '@kb-labs/core-platform/adapters';
 
 /**
  * Connection metadata
@@ -22,6 +24,13 @@ export interface ConnectionInfo {
   tenantId?: string;
   /** Custom metadata */
   metadata: Record<string, unknown>;
+  telemetry?: {
+    logger: {
+      info(fields: Record<string, unknown>, message?: string): void;
+      warn(fields: Record<string, unknown>, message?: string): void;
+    };
+    stats: { outboundMessages: number; outboundBytes: number; droppedMessages: number };
+  };
 }
 
 export interface DeliveryResult {
@@ -35,6 +44,82 @@ export interface DeliveryResult {
 export class ConnectionRegistry {
   private connections = new Map<string, ConnectionInfo>();
   private channelConnections = new Map<string, Set<string>>();
+
+  private requireOpen(connectionId: string): ConnectionInfo {
+    const connection = this.connections.get(connectionId);
+    if (!connection) {
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_WS_CONNECTION_UNAVAILABLE', {
+        details: { connectionId },
+      }));
+    }
+    if (connection.socket.readyState !== 1) {
+      if (connection.telemetry) {
+        connection.telemetry.stats.droppedMessages += 1;
+        connection.telemetry.logger.warn({
+          event: 'websocket.message.dropped',
+          'messaging.direction': 'outbound',
+          reason: 'socket_not_open',
+        }, '[ws] message dropped');
+      }
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_WS_CONNECTION_UNAVAILABLE', {
+        details: { connectionId },
+      }));
+    }
+    return connection;
+  }
+
+  /** Host-call adapter exposed to the execution runtime through adapter:call. */
+  readonly hostOperations: IWebSocketHostOperations = {
+    send: async (connectionId, message) => {
+      const connection = this.requireOpen(connectionId);
+      const wsMessage = message as WSMessage;
+      const payload = JSON.stringify(wsMessage);
+      connection.socket.send(payload);
+      if (connection.telemetry) {
+        const payloadBytes = Buffer.byteLength(payload);
+        connection.telemetry.stats.outboundMessages += 1;
+        connection.telemetry.stats.outboundBytes += payloadBytes;
+        connection.telemetry.logger.info({
+          event: 'websocket.message.sent',
+          'messaging.direction': 'outbound',
+          'messaging.message_type': wsMessage.type,
+          'messaging.message_id': wsMessage.messageId,
+          payloadBytes,
+        }, '[ws] message sent');
+      }
+    },
+    broadcast: async (connectionId, message, excludeSelf = true) => {
+      const connection = this.requireOpen(connectionId);
+      const result = this.broadcast(connection.channelPath, message as WSMessage, excludeSelf ? connectionId : undefined);
+      connection.telemetry?.logger.info({
+        event: 'websocket.broadcast.sent',
+        'messaging.direction': 'outbound',
+        'messaging.message_type': (message as WSMessage).type,
+        recipients: result.sent,
+        droppedRecipients: result.dropped,
+      }, '[ws] broadcast sent');
+    },
+    sendTo: async (connectionId, connectionIds, message) => {
+      const connection = this.requireOpen(connectionId);
+      const result = this.sendTo(connectionIds, message as WSMessage);
+      connection.telemetry?.logger.info({
+        event: 'websocket.message.sent_to',
+        'messaging.direction': 'outbound',
+        'messaging.message_type': (message as WSMessage).type,
+        recipients: result.sent,
+        droppedRecipients: result.dropped,
+      }, '[ws] targeted messages sent');
+    },
+    close: async (connectionId, code, reason) => {
+      const connection = this.requireOpen(connectionId);
+      this.unregister(connectionId);
+      connection.socket.close(code || 1000, reason);
+    },
+    getConnectionId: async (connectionId) => {
+      this.requireOpen(connectionId);
+      return connectionId;
+    },
+  };
 
   /**
    * Register a new connection

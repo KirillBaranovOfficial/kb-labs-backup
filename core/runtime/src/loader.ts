@@ -1019,7 +1019,7 @@ export async function initPlatform(
       if (execution.mode === 'container' && execution.container) {
         // ── Container mode: RoutingBackend with remote dispatch via Gateway ──
         // Dynamic imports — pyramid rule: core-runtime (L4) cannot depend on gateway-* (L7) at compile-time.
-        const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory');
+        const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory/construct');
         const { GatewayDispatchTransport } = await import('@kb-labs/gateway-core');
         const containerCfg = execution.container;
         const { dispatchEndpoint } = getHostGatewayAddresses();
@@ -1120,19 +1120,21 @@ export async function initPlatform(
         };
 
         const backend = createIsolatedExecutionBackend({
-          localBackend: { platform, uiProvider },
+          localBackend: { platform, mode: 'in-process', uiProvider },
+          executionMode: 'container',
           strictIsolation,
         });
 
         platform.initExecutionBackend(backend);
 
         platform.logger.info('ExecutionBackend initialized: container mode via Gateway', {
+          mode: backend.executionMode,
           dispatchEndpoint,
         });
       } else if (execution.workspaceAgent?.enabled) {
         // ── Standard mode + Workspace Agent routing ──
         // Local backend (in-process/worker-pool) with workspace-agent dispatch via Gateway.
-        const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory');
+        const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory/construct');
         const { GatewayHostResolver, GatewayDispatchTransport } = await import('@kb-labs/gateway-core');
 
         const agentCfg = execution.workspaceAgent;
@@ -1164,10 +1166,11 @@ export async function initPlatform(
           fallbackPolicy: agentCfg.fallback ?? 'local' as const,
         };
 
+        const localExecutionMode = execution.mode === 'container' ? 'auto' : execution.mode ?? 'auto';
         const backend = createIsolatedExecutionBackend({
           localBackend: {
             platform,
-            mode: (execution.mode ?? 'auto') as 'auto' | 'in-process' | 'subprocess' | 'worker-pool',
+            mode: localExecutionMode,
             uiProvider,
             workerPool: execution.workerPool ? {
               min: execution.workerPool.min,
@@ -1183,17 +1186,18 @@ export async function initPlatform(
         platform.initExecutionBackend(backend);
 
         platform.logger.info('ExecutionBackend initialized: workspace-agent routing via Gateway', {
+          mode: backend.executionMode,
           gatewayUrl,
           fallback: agentCfg.fallback ?? 'local',
         });
       } else {
         // ── Standard mode: in-process | worker-pool ──
-        const { createExecutionBackend } = await import('@kb-labs/plugin-execution-factory');
+        const { createExecutionBackend } = await import('@kb-labs/plugin-execution-factory/construct');
 
-        const factoryMode = (execution.mode ?? 'auto') as 'auto' | 'in-process' | 'subprocess' | 'worker-pool';
+        const localExecutionMode = execution.mode === 'container' ? 'auto' : execution.mode ?? 'auto';
         const executionBackend = createExecutionBackend({
           platform: platform,
-          mode: factoryMode,
+          mode: localExecutionMode,
           uiProvider,
           workerPool: execution.workerPool ? {
             min: execution.workerPool.min,
@@ -1212,7 +1216,7 @@ export async function initPlatform(
         platform.initExecutionBackend(executionBackend);
 
         platform.logger.debug('initPlatform initialized ExecutionBackend', {
-          mode: factoryMode,
+          mode: executionBackend.executionMode,
           hasWorkerPool: !!execution.workerPool,
         });
       }
@@ -1329,7 +1333,7 @@ export async function initPlatform(
     // would expose ctx.api.shell without a broker-backed executor.
     if (_assemblyBroker && !platform.processExecutor) {
       try {
-        const { ensureHostProcessExecutor } = await import('@kb-labs/plugin-execution-factory');
+        const { ensureHostProcessExecutor } = await import('@kb-labs/plugin-execution-factory/construct');
         ensureHostProcessExecutor(platform);
       } catch (error) {
         platform.logger.warn('Failed to initialize governed process executor', {

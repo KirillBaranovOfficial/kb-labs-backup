@@ -13,16 +13,31 @@ import { platform } from '@kb-labs/core-runtime';
 import { resolveWorkspaceRoot } from '@kb-labs/core-workspace';
 import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 
+const { mountWebSocketChannelsMock, mountedBackend, routeBackend } = vi.hoisted(() => {
+  const mountedBackend = { value: undefined as unknown };
+  const routeBackend = { value: undefined as unknown };
+  const mountWebSocketChannelsMock = vi.fn(async (_server: unknown, _manifest: unknown, options: { backend: unknown }) => {
+    mountedBackend.value = options.backend;
+    return { mounted: 1, errors: [] };
+  });
+  return { mountWebSocketChannelsMock, mountedBackend, routeBackend };
+});
+
+vi.mock('@kb-labs/plugin-execution', () => ({
+  mountEventStreams: vi.fn().mockResolvedValue({ mounted: 0, errors: [] }),
+  mountWebSocketChannels: mountWebSocketChannelsMock,
+}));
+
 // Mock dependencies
 vi.mock('@kb-labs/plugin-execution/http', () => ({
-  mountRoutes: vi.fn().mockResolvedValue(undefined),
+  mountRoutes: vi.fn(async (_server: unknown, _manifest: unknown, options: { backend: unknown }) => {
+    routeBackend.value = options.backend;
+  }),
 }));
 
 vi.mock('@kb-labs/core-runtime', () => ({
   platform: {
-    executionBackend: {
-      type: 'mock-backend',
-    },
+    executionBackend: { type: 'mock-backend' },
     shutdown: vi.fn().mockResolvedValue(undefined),
     logger: {
       trace: vi.fn(),
@@ -233,6 +248,29 @@ describe('registerPluginRoutes', () => {
     await registerPluginRoutes(app, BASE_CONFIG, '/mock/repo', registry, readiness);
 
     expect(readiness.pluginRoutesCount).toBe(1);
+  });
+
+  it('mounts REST WebSocket channels through the platform execution backend', async () => {
+    const manifest = createMockManifest({
+      ws: {
+        basePath: '/v1/ws/plugins/test-plugin',
+        channels: [{ path: '/events', handler: './handlers/events.js' }],
+      },
+    });
+    const registry = { snapshot: () => createMockSnapshot([{
+      pluginId: manifest.id,
+      manifest,
+      pluginRoot: '/mock/plugins/test',
+    }]) } as unknown as IEntityRegistry;
+
+    await registerPluginRoutes(app, BASE_CONFIG, '/mock/repo', registry, readiness);
+
+    expect(mountWebSocketChannelsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      manifest,
+      expect.anything(),
+    );
+    expect(mountedBackend.value).toBe(routeBackend.value);
   });
 
   it('mounts platform-scope routes in single-root development discovery', async () => {

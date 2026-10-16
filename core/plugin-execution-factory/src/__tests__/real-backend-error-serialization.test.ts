@@ -103,7 +103,7 @@ function makeBackend(mode: (typeof backends)[number], platform: PlatformServices
     max: 1,
     workerScript,
   });
-  return createNormalizedExecutionBackend(rawBackend, logger);
+  return createNormalizedExecutionBackend(rawBackend, logger, mode);
 }
 
 function makeRequest(handler: FailureFixture, correlationId: string): ExecutionRequest {
@@ -126,6 +126,19 @@ function makeRequest(handler: FailureFixture, correlationId: string): ExecutionR
   };
 }
 
+describe.each(backends)('%s real health mode', (mode) => {
+  it('reports its resolved execution mode', async () => {
+    const logger = new MemoryLoggerSink();
+    const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
+    const backend = makeBackend(mode, platform, logger);
+    try {
+      await expect(backend.health()).resolves.toMatchObject({ executionMode: mode });
+    } finally {
+      await backend.shutdown();
+    }
+  });
+});
+
 describe.each(backends)('%s real failure dispatch', (mode) => {
   it.each(failures)('validates the $label envelope and retains its stack in the correlated log', async (failure) => {
     const logger = new MemoryLoggerSink();
@@ -134,8 +147,11 @@ describe.each(backends)('%s real failure dispatch', (mode) => {
     const correlationId = `${mode}-${failure.handler}`;
 
     try {
+      expect(backend.executionMode).toBe(mode);
+      await expect(backend.health()).resolves.toMatchObject({ executionMode: mode });
       const result = await backend.execute(makeRequest(failure.handler, correlationId));
 
+      expect(result.metadata?.backend).toBe(mode);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error.code, `${mode} ${failure.handler} returned ${result.error.error.name}: ${result.error.error.message}`).toBe(failure.expectedCode);
