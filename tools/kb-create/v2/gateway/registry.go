@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -67,16 +68,32 @@ func (r Registry) Read() ([]Root, error) {
 }
 
 func (r Registry) unavailable(reason error) error {
+	return r.Unavailable(reason.Error(), reason, "", "")
+}
+
+// Unavailable constructs the canonical diagnostic for an unusable Gateway index.
+// Callers may provide a more specific message and hint when the failure is
+// discovered through another lifecycle operation.
+func (r Registry) Unavailable(reason string, cause error, message, hint string) *diag.Diag {
 	root := r.OperationRoot
 	if root == "" {
 		root = "<affected-platform-root>"
 	}
 	remove := contracts.ShellCommand("rm", "--", r.Path)
 	repair := contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root)
-	failure := contracts.NewDiag(contracts.CodeGatewayIndexUnavailable,
-		fmt.Sprintf("The Gateway address index at %s cannot be used: %s.", r.Path, reason),
-		fmt.Sprintf("Remove the derived index with `%s`, then run `%s` to rebuild it from the installation receipt.", remove, repair), reason)
-	failure.Meta = map[string]any{"path": r.Path, "reason": reason.Error()}
+	if message == "" {
+		message = fmt.Sprintf("The Gateway address index at %s cannot be used: %s.", r.Path, reason)
+	}
+	if hint == "" {
+		hint = fmt.Sprintf("Remove the derived index with `%s`, then run `%s` to rebuild it from the installation receipt.", remove, repair)
+	}
+	failure := contracts.NewDiag(contracts.CodeGatewayIndexUnavailable, message, hint, cause)
+	failure.Meta = map[string]any{
+		"path":          r.Path,
+		"reason":        reason,
+		"removeCommand": remove,
+		"repairCommand": repair,
+	}
 	return failure
 }
 

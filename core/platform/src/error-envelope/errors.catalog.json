@@ -1142,7 +1142,8 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "A secret input could not be stored.",
-      "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable."
+      "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable.",
+      "structuredDetailFields": ["requirement"]
     },
     {
       "code": "KB_INSTALL_SECRET_STATE_CHANGED",
@@ -2570,9 +2571,8 @@
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "The update is incompatible with installed {kind} {component} at {version}; its declared compatibility range is {range}.",
-      "hint": "Update or remove {kind} {component} first, then rerun `kb-create update`.",
-      "structuredDetailFields": ["id", "requiredRange", "selectedVersion"]
+      "message": "The update is incompatible with installed {kind} {id} at {selectedVersion}; its declared compatibility range is {requiredRange}.",
+      "hint": "Update or remove {kind} {id} first, then rerun `kb-create update`."
     },
     {
       "code": "KB_UPDATE_NO_SNAPSHOT",
