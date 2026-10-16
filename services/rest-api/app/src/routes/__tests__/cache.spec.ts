@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
+import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
 import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerCacheRoutes } from '../cache';
@@ -17,6 +19,12 @@ const BASE_CONFIG: RestApiConfig = {
   plugins: [],
   mockMode: false,
 };
+
+const internalSecret = 'cache-route-test-internal-secret';
+const operatorHeaders = forwardedIdentityHeaders({
+  type: 'user', userId: 'operator-test', namespaceId: 'tenant-test', tier: 'enterprise',
+  permissions: Object.values(PERMISSIONS),
+}, internalSecret);
 
 function createMockSnapshot(rev: number): RegistrySnapshot {
   return {
@@ -42,6 +50,7 @@ describe('registerCacheRoutes', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.stubEnv('GATEWAY_INTERNAL_SECRET', internalSecret);
     app = Fastify({ logger: false });
     registerEnvelopeMiddleware(app, BASE_CONFIG);
 
@@ -56,6 +65,7 @@ describe('registerCacheRoutes', () => {
 
   afterEach(async () => {
     await app.close();
+    vi.unstubAllEnvs();
   });
 
   describe('POST /api/v1/cache/invalidate', () => {
@@ -76,6 +86,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -109,6 +120,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -132,6 +144,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -149,6 +162,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(500);
@@ -175,6 +189,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(500);
@@ -193,6 +208,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(500);
@@ -222,6 +238,7 @@ describe('registerCacheRoutes', () => {
         const responsePromise = app.inject({
           method: 'POST',
           url: '/api/v1/cache/invalidate',
+          headers: operatorHeaders,
         });
 
         // Drain any pending microtasks so the mock refresh runs and the clock advance
@@ -249,6 +266,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
       const after = new Date();
 
@@ -274,6 +292,7 @@ describe('registerCacheRoutes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/cache/invalidate',
+        headers: operatorHeaders,
       });
 
       expect(response.statusCode).toBe(200);

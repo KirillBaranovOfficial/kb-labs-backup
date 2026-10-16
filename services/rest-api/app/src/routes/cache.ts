@@ -12,6 +12,7 @@ import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { normalizeBasePath } from './path-helpers';
 import { restDomainOperationMetrics } from '../middleware/metrics.js';
 import { noBodySchema } from './route-schema.js';
+import { requireRestOperator } from './operator-authorization.js';
 
 /**
  * Register cache management routes
@@ -27,7 +28,7 @@ export async function registerCacheRoutes(
    * POST /api/v1/cache/invalidate
    * Force cache invalidation and registry refresh
    */
-  server.post(`${basePath}/cache/invalidate`, { schema: {
+  server.post(`${basePath}/cache/invalidate`, { preHandler: requireRestOperator, schema: {
     querystring: { type: 'object', additionalProperties: false },
     body: noBodySchema,
     response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { invalidated: { const: true }, timestamp: { type: 'string', format: 'date-time' }, previousRev: { type: 'integer' }, newRev: { type: 'integer' }, pluginsDiscovered: { type: 'integer' } }, required: ['invalidated', 'timestamp', 'previousRev', 'newRev', 'pluginsDiscovered'], additionalProperties: false }, meta: { type: 'object', properties: { requestId: { type: 'string' }, durationMs: { type: 'number' }, apiVersion: { type: 'string' } }, required: ['requestId', 'durationMs', 'apiVersion'], additionalProperties: false } }, required: ['ok', 'data', 'meta'], additionalProperties: false } }),

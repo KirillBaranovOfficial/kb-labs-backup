@@ -25,15 +25,15 @@ Confirm that authenticated Gateway traffic is rate-limited by its configured res
 | # | Action | Expected |
 |---|---|---|
 | S-255.1 | Send requests to one Gateway resource beyond its configured request limit | Requests admitted by the broker reach their route; rejected requests return HTTP 429 with `Retry-After`, `error: "rate_limited"`, and the resource identifier. |
-| S-255.2 | In secured mode with the default Gateway configuration, send requests for tenant A beyond its per-tenant limit, then send one request for tenant B | The per-tenant pressure limit is active by default in secured mode; tenant A receives HTTP 429 with its tenant resource identifier after its limit is reached, and tenant B is governed by its separate tenant resource. **This is a failing claim today:** the tenant limit defaults to disabled. |
+| S-255.2 | In secured mode with the default Gateway configuration, send requests for tenant A beyond its default limit of 600 requests per minute, then send one request for tenant B | The per-tenant pressure limit is active by default in secured mode; tenant A receives HTTP 429 with its tenant resource identifier after its limit is reached, and tenant B is governed by its separate tenant resource. |
 | S-255.3 | Read a project-scoped workflow or analytics resource through `/api/v1/projects/<PROJECT_A>/<SERVICE>/...`, then request it through the equivalent project B route | Project A receives only project A's resource; project B receives only its own resource or the route's catalogued not-found response, never project A's data. |
 | S-255.4 | Send the same project resource request without credentials in secured mode | Gateway returns HTTP 401 with the catalogued `KB_AUTH_REQUIRED` envelope before the project service is reached. |
-| S-255.5 | Send a request whose body is larger than the Gateway's explicit default byte limit | Gateway rejects it with HTTP 413 and the catalogued error envelope before forwarding it. **This is a failing claim today:** the Fastify Gateway is created without an explicit `bodyLimit`. |
-| S-255.6 | Send a body below the Gateway default but above a lower limit declared by the target route schema | The route rejects the request under its lower schema limit; the shared Gateway default remains the upper byte bound. |
+| S-255.5 | Send a request whose body is larger than the Gateway's explicit default byte limit of 1 MiB | Gateway rejects it with HTTP 413 and error code `KB_RUNTIME_PAYLOAD_TOO_LARGE` before forwarding it; the error message and hint identify the enforced 1 MiB limit. |
+| S-255.6 | Send a body below the 1 MiB Gateway default but above a lower limit declared by the target route schema | The route rejects the request under its lower schema limit; the shared Gateway default remains the upper byte bound. |
 
 ## Decision note
 
-**D51:** Gateway has an explicit default request-body byte limit; a route schema may set a lower limit. Requests over the applicable limit receive HTTP 413 with the catalogued error envelope. Per-tenant pressure is enabled by default in secured mode. The current server does not set Fastify `bodyLimit`, and the tenant-pressure schema defaults to disabled, so S-255.2 and S-255.5 are failing claims today.
+**D51:** Gateway has an explicit default request-body byte limit of 1 MiB; a route schema may set a lower limit. Requests over the applicable limit receive HTTP 413 with `KB_RUNTIME_PAYLOAD_TOO_LARGE`; the catalogued message and hint identify the enforced limit when the boundary knows it, and avoid naming a size when it does not. Secured mode has an independent default tenant budget of 600 requests per minute; operators can explicitly disable it or configure a different limit.
 
 ## Source
 

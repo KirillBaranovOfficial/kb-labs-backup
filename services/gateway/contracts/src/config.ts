@@ -44,9 +44,9 @@ export const PressureRouteOverrideSchema = z.object({
 
 export const PressureTenantConfigSchema = z.object({
   /** When true, applies per-tenant limits keyed by AuthContext.namespaceId. */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().optional(),
   /** Limits applied to each tenant. Resource id = "gateway:tenant:<namespaceId>". */
-  limits: RateLimitConfigSchema,
+  limits: RateLimitConfigSchema.default({ requestsPerMinute: 600, safetyMargin: 1 }),
 });
 
 export const PressureConfigSchema = z.object({
@@ -211,3 +211,24 @@ export type AuthConfig = z.infer<typeof AuthConfigSchema>;
 export type StudioHostingConfig = z.infer<typeof StudioHostingConfigSchema>;
 export type TenantsConfig = z.infer<typeof TenantsConfigSchema>;
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
+
+/**
+ * Resolve pressure defaults at the shared Gateway config boundary. Secured
+ * gateways always get an independent tenant request budget unless the
+ * operator explicitly configures or disables that layer.
+ */
+export function resolveGatewayPressureConfig(
+  config: GatewayConfig,
+  authEnabled: boolean,
+): PressureConfig | undefined {
+  if (!config.pressure && !authEnabled) {
+    return undefined;
+  }
+
+  const pressure = config.pressure ?? PressureConfigSchema.parse({});
+  const perTenant = pressure.perTenant ?? (authEnabled ? { enabled: true } : undefined);
+  return PressureConfigSchema.parse({
+    ...pressure,
+    ...(perTenant ? { perTenant: { ...perTenant, enabled: perTenant.enabled ?? authEnabled } } : {}),
+  });
+}

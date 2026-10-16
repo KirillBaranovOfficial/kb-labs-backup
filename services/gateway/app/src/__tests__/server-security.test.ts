@@ -9,6 +9,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { ICache, ILogger, IServiceTransport } from '@kb-labs/core-platform';
+import { platform } from '@kb-labs/core-runtime';
+import { InMemoryRateLimitBackend, ResourceBroker } from '@kb-labs/core-resource-broker';
+import { GatewayConfigSchema } from '@kb-labs/gateway-contracts';
 import { createServer } from '../server.js';
 
 // ── Minimal stubs ──────────────────────────────────────────────────────────────
@@ -57,7 +60,7 @@ let app: FastifyInstance;
 beforeAll(async () => {
   const logger = makeLogger();
   const cache = makeCache();
-  app = await createServer(minimalConfig as any, cache, logger, jwtConfig, undefined, stubTransport);
+  app = await createServer(GatewayConfigSchema.parse(minimalConfig), cache, logger, jwtConfig, undefined, stubTransport);
   await app.ready();
 });
 
@@ -129,5 +132,60 @@ describe('H12 — CORS does not reflect arbitrary origin', () => {
 
     const corsHeader = res.headers['access-control-allow-origin'];
     expect(corsHeader).not.toBe('https://attacker.evil.com');
+  });
+});
+
+describe('S-255.5 — Gateway request body limit', () => {
+  it('rejects request bodies larger than 1 MiB before route dispatch with the error envelope', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/auth/token',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ payload: 'x'.repeat(1024 * 1024) }),
+    });
+
+    expect(res.statusCode).toBe(413);
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE',
+      message: 'The request body exceeds 1 MiB.',
+      hint: 'Reduce the request body to 1 MiB and resend it.',
+      details: { limitBytes: '1048576' },
+    } });
+  });
+});
+
+describe('S-255.2 — secured default tenant pressure through createServer', () => {
+  it('exhausts tenant A default budget while admitting tenant B independently', async () => {
+    platform.reset();
+    platform.initResourceBroker(new ResourceBroker(new InMemoryRateLimitBackend()));
+    const cache = makeCache();
+    await cache.set('host:token:tenant-a-token', { hostId: 'agent-a', namespaceId: 'tenant-a' });
+    await cache.set('host:token:tenant-b-token', { hostId: 'agent-b', namespaceId: 'tenant-b' });
+    const securedConfig = GatewayConfigSchema.parse({ access: { mode: 'secured' } });
+    const server = await createServer(securedConfig, cache, makeLogger(), jwtConfig, undefined, stubTransport);
+    try {
+      await server.ready();
+      for (let request = 0; request < 600; request++) {
+        const response = await server.inject({
+          method: 'POST', url: '/platform/v1/unknown/method', payload: { args: [] },
+          headers: { authorization: 'Bearer tenant-a-token' },
+        });
+        expect(response.statusCode, `tenant A request ${request + 1}`).toBe(404);
+      }
+      const tenantADenied = await server.inject({
+        method: 'POST', url: '/platform/v1/unknown/method', payload: { args: [] },
+        headers: { authorization: 'Bearer tenant-a-token' },
+      });
+      const tenantBAdmitted = await server.inject({
+        method: 'POST', url: '/platform/v1/unknown/method', payload: { args: [] },
+        headers: { authorization: 'Bearer tenant-b-token' },
+      });
+
+      expect(tenantADenied.statusCode).toBe(429);
+      expect(tenantBAdmitted.statusCode).toBe(404);
+    } finally {
+      await server.close();
+      platform.reset();
+    }
   });
 });

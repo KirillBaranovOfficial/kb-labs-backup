@@ -16,6 +16,7 @@ import {
   type IServiceTransport,
 } from "@kb-labs/core-platform";
 import type { GatewayConfig } from "@kb-labs/gateway-contracts";
+import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
 import type { ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
 import { HostRegistrationSchema } from "@kb-labs/gateway-contracts";
 import {
@@ -154,11 +155,18 @@ export async function createServer(
   // Studio hosting (task 2.3): validated first so a missing bundle fails startup
   // with KB_HOST_STUDIO_ASSETS_MISSING before anything is bound.
   const studioEnabled = config.studio?.enabled === true;
+  const access = resolveAccess(config);
+  const pressureConfig = resolveGatewayPressureConfig(config, access.authEnabled);
+  const pressureGatewayConfig = pressureConfig
+    ? { ...config, pressure: pressureConfig }
+    : config;
   const studioStatic = studioEnabled
     ? await createStudioStatic(config)
     : undefined;
+  const bodyLimitBytes = 1024 * 1024;
   const app = Fastify({
     logger: false,
+    bodyLimit: bodyLimitBytes,
     ajv: { customOptions: { removeAdditional: false } },
     // CD-10: gateway sits behind nginx; parse X-Forwarded-For for real client IPs.
     trustProxy: true,
@@ -170,7 +178,7 @@ export async function createServer(
         }
       : {}),
   });
-  registerGatewayUxBoundary(app, gatewayLogger);
+  registerGatewayUxBoundary(app, gatewayLogger, { bodyLimitBytes });
   if (routeObserver) {
     app.addHook("onRoute", (route) => {
       if (route.url) {
@@ -186,7 +194,7 @@ export async function createServer(
   // Install the deny-by-default gate before OpenAPI, observability, Studio,
   // proxy, project, and plugin routes are registered.
   app.addHook("onRequest", createAuthMiddleware(cache, jwtConfig, {
-    authEnabled: resolveAccess(config).authEnabled,
+    authEnabled: access.authEnabled,
     studioEnabled,
     internalSecret: process.env.GATEWAY_INTERNAL_SECRET,
     webhookManifests,
@@ -228,13 +236,14 @@ export async function createServer(
 
   // ── Pressure control (ADR-0056) ────────────────────────────────────
   // Registered BEFORE upstream proxies so 429 is returned before the request
-  // is forwarded. No-op when `config.pressure` is absent or disabled.
+  // is forwarded. Secured mode supplies the default tenant budget; pressure
+  // stays inactive without config in local mode.
   if (
-    config.pressure &&
-    config.pressure.enabled !== false &&
+    pressureConfig &&
+    pressureConfig.enabled !== false &&
     platform.hasResourceBroker
   ) {
-    const deps = { broker: platform.resourceBroker, logger, config };
+    const deps = { broker: platform.resourceBroker, logger, config: pressureGatewayConfig };
     app.addHook("onRequest", createPressureOnRequest(deps));
     app.addHook("onResponse", createPressureOnResponse());
   }
@@ -361,7 +370,9 @@ export async function createServer(
   await app.register(async function gatewayRoutes(scope) {
     // Per-tenant pressure (ADR-0056). Runs after auth so AuthContext is set.
     if (
-      config.pressure?.perTenant?.enabled === true &&
+      access.authEnabled &&
+      pressureConfig?.enabled !== false &&
+      pressureConfig?.perTenant?.enabled === true &&
       platform.hasResourceBroker
     ) {
       scope.addHook(
@@ -369,7 +380,7 @@ export async function createServer(
         createPressurePreHandler({
           broker: platform.resourceBroker,
           logger,
-          config,
+          config: pressureGatewayConfig,
         }),
       );
     }
