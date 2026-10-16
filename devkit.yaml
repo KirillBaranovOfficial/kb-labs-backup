@@ -763,6 +763,16 @@ custom_checks:
     on: [check]
     scope: workspace
 
+  - name: ci-clean-machine-lanes
+    run: node scripts/ci/ci-clean-machine-lanes-check.mjs
+    on: [check]
+    scope: workspace
+
+  - name: go-module-suite
+    run: node scripts/ci/go-module-suite-gate.mjs
+    on: [check]
+    scope: workspace
+
   - name: test-pyramid
     run: node scripts/checks/check-test-pyramid.mjs
     on: [check]
