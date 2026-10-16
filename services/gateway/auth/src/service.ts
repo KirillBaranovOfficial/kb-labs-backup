@@ -156,6 +156,7 @@ export class AuthService {
     return { ok: true, payload: {
       type: 'machine',
       userId: payload.payload.sub,
+      tokenId: payload.payload.jti,
       namespaceId: payload.payload.namespaceId,
       tier: payload.payload.tier,
       permissions: payload.payload.permissions ?? ['host:connect'],

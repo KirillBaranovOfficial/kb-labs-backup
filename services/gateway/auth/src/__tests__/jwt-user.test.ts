@@ -45,6 +45,14 @@ describe('signUserAccessToken / verifyUserAccessToken', () => {
     expect(payload.payload.type).toBe('user_access');
   });
 
+  it('classifies a validly signed user access token outside the current claim contract for reissue', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({ tenantId: claims.tenantId, fam: claims.familyId, type: 'user_access' })
+      .setProtectedHeader({ alg: 'HS256' }).setIssuer(KB_JWT_ISSUER).setSubject(claims.userId)
+      .setIssuedAt(now).setExpirationTime(now + 900).sign(new TextEncoder().encode(config.secret));
+    expect(await verifyUserAccessToken(token, config)).toEqual({ ok: false, reason: 'reissue-required' });
+  });
+
   it('payload contains NO role / scopes / permissions fields (principle #3)', async () => {
     const { token } = await signUserAccessToken({ ...claims, ttlSec: 900 }, config);
     const payload = await verifyUserAccessToken(token, config);

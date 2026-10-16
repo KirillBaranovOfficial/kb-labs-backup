@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Writable } from 'node:stream';
+import { createHmac } from 'node:crypto';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createErrorEnvelope, type ICache, type ILogger, type IServiceTransport } from '@kb-labs/core-platform';
 import type { ManifestV3, ProjectServiceDeclaration } from '@kb-labs/plugin-contracts';
 import { signAccessToken } from '@kb-labs/gateway-auth';
-import { AuthConfigSchema, type GatewayConfig } from '@kb-labs/gateway-contracts';
+import { AuthConfigSchema, GatewayConfigSchema, type GatewayConfig } from '@kb-labs/gateway-contracts';
 import { createAuthMiddleware, isDeclaredWebhookRoute, isPlatformPublicRoute } from '../middleware.js';
 import { createServer } from '../../server.js';
 import type { ProjectRouting } from '../../project-routing.js';
@@ -347,6 +348,66 @@ describe('Gateway global auth gate', () => {
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('studio shell');
     expect(shell).toHaveBeenCalledOnce();
+  });
+
+  // case: S-259.1
+  it('returns the reissue diagnostic for a signed machine token outside the current claim contract', async () => {
+    let upstreamHits = 0;
+    upstream = createHttpServer((_request, response) => {
+      upstreamHits += 1;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"ok":true}');
+    });
+    await new Promise<void>((resolve) => upstream!.listen(0, '127.0.0.1', resolve));
+    const upstreamPort = (upstream.address() as { port: number }).port;
+    previousInternalSecret = process.env.GATEWAY_INTERNAL_SECRET;
+    process.env.GATEWAY_INTERNAL_SECRET = 'gateway-internal-secret';
+    const logger = {
+      info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined,
+      fatal: () => undefined, trace: () => undefined, child: () => logger,
+    } as unknown as ILogger;
+    const serviceTransport = {
+      connectionInfo: () => ({ baseUrl: `http://127.0.0.1:${upstreamPort}` }),
+      call: async () => ({ ok: true, statusCode: 200, payload: null }),
+      stream: async () => { throw new Error('unused'); },
+    } as unknown as IServiceTransport;
+    const projectRouting: ProjectRouting = {
+      status: () => ({ limit: 1, active: 0, runtimes: [] }),
+      acquire: async () => ({ host: '127.0.0.1', port: upstreamPort, headers: {}, release: () => undefined }),
+    };
+    const secured = await createServer(
+      GatewayConfigSchema.parse({ access: { mode: 'secured' }, upstreams: {
+        testPlugin: { serviceId: 'test-plugin', prefix: '/api/v1/plugins/test-plugin' },
+      } }),
+      cache(), logger, { secret: 'test-secret-at-least-32-chars-long!' }, undefined, serviceTransport,
+      undefined, undefined, projectRouting, undefined, undefined, undefined,
+      [{ serviceId: 'mcp', rewritePrefix: '/api/v1', healthCheck: '/health' } satisfies ProjectServiceDeclaration],
+      { resolveProjectService: async () => ({ baseUrl: `http://127.0.0.1:${upstreamPort}` }) },
+    );
+    app = secured;
+    await app.ready();
+
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const now = Math.floor(Date.now() / 1000);
+    const unsigned = `${encode({ alg: 'HS256' })}.${encode({
+      iss: 'kb-labs', sub: 'agent-1', iat: now, exp: now + 900,
+      namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access', permissions: ['packages:read'],
+    })}`;
+    const signature = createHmac('sha256', 'test-secret-at-least-32-chars-long!').update(unsigned).digest('base64url');
+    const token = `${unsigned}.${signature}`;
+
+    for (const url of ['/api/v1/plugins/test-plugin/packages', '/api/v1/projects/test-project/mcp']) {
+      const response = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${token}`, host: 'gateway.test' } });
+      expect(response.statusCode, url).toBe(401);
+      expect(response.json(), url).toMatchObject({
+        ok: false,
+        error: {
+          ...createErrorEnvelope('KB_AUTH_TOKEN_REISSUE_REQUIRED', { details: { gatewayUrl: 'http://gateway.test' } }),
+          correlationId: expect.any(String),
+        },
+      });
+    }
+    expect(upstreamHits).toBe(0);
   });
 });
 

@@ -162,7 +162,7 @@ describe("registerProjectRoutes", () => {
     expect(seen).toHaveLength(wireReplies.length);
   });
 
-  // case: S-192.5
+  // case: S-192.1
   it("returns the catalogued not-found error for an undeclared service without acquiring a runtime", async () => {
     let acquired = false;
     await setup(() => ({

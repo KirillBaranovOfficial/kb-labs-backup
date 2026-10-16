@@ -156,6 +156,7 @@ export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
     const authContext: AuthContext = {
       type: 'user',
       userId: payload.userId,
+      tokenId: payload.jti,
       namespaceId: payload.tenantId,
       tier: 'free',
       permissions,
