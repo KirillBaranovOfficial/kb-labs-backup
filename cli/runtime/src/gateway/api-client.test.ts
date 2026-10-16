@@ -81,7 +81,7 @@ describe('gatewayApiFetch auth mapping', () => {
 
   // case: S-203.2
   it('decodes a parsed failure result without cloning or reading the body again', async () => {
-    const envelope = createErrorEnvelope('KB_AUTH_SESSION_REVOKED', { correlationId: 'already-parsed' });
+    const envelope = createErrorEnvelope('KB_AUTH_SESSION_REVOKED', { correlationId: 'already-parsed', details: { gatewayUrl: 'https://gateway.test' } });
     const response = new Response(JSON.stringify({ ok: false, error: envelope }), { status: 200 });
     const clone = vi.spyOn(response, 'clone');
     const json = vi.spyOn(response, 'json');

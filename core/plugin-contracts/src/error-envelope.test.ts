@@ -28,10 +28,12 @@ describe('core toErrorEnvelope for plugin errors', () => {
 
   for (const [name, error, code] of cases) {
     it(`maps ${name} to ${code} as a valid envelope`, () => {
-      const envelope = toErrorEnvelope(error, { correlationId: 'c1' });
+      const envelope = toErrorEnvelope(error, { correlationId: 'c1', binary: 'test-cli' });
       expect(validateErrorEnvelope(envelope)).toEqual([]);
       expect(envelope.code).toBe(code);
       expect(envelope.correlationId).toBe('c1');
+      expect(envelope.message).not.toMatch(/\{[^}]+\}/);
+      expect(envelope.hint).not.toMatch(/\{[^}]+\}/);
     });
   }
 

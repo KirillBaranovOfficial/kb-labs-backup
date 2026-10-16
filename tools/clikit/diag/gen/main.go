@@ -8,24 +8,27 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strings"
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 )
 
 type entry struct {
-	Code                     string `json:"code"`
-	HTTPStatus               int    `json:"httpStatus"`
-	Area                     string `json:"area"`
-	Stage                    string `json:"stage"`
-	Severity                 string `json:"severity"`
-	Retryable                bool   `json:"retryable"`
-	ProcessExitClass         string `json:"processExitClass"`
-	Message                  string `json:"message"`
-	Hint                     string `json:"hint"`
-	HintWithoutCorrelationID string `json:"hintWithoutCorrelationId"`
+	Code                      string            `json:"code"`
+	HTTPStatus                int               `json:"httpStatus"`
+	Area                      string            `json:"area"`
+	Stage                     string            `json:"stage"`
+	Severity                  string            `json:"severity"`
+	Retryable                 bool              `json:"retryable"`
+	ProcessExitClass          string            `json:"processExitClass"`
+	Message                   string            `json:"message"`
+	Hint                      string            `json:"hint"`
+	HintWithoutCorrelationID  string            `json:"hintWithoutCorrelationId"`
+	RuntimeTemplateParameters map[string]string `json:"runtimeTemplateParameters"`
 }
 
 func main() {
@@ -64,10 +67,10 @@ func run() diag.ExitStatus {
 			hintWithoutCorrelationID = fmt.Sprintf(", HintWithoutCorrelationID: %q", item.HintWithoutCorrelationID)
 		}
 		if item.HTTPStatus == 0 {
-			_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s},\n", item.Code, item.Code, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID)
+			_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringMapLiteral(item.RuntimeTemplateParameters))
 			continue
 		}
-		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID)
+		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringMapLiteral(item.RuntimeTemplateParameters))
 	}
 	_, _ = source.WriteString("}\n")
 	formatted, err := format.Source(source.Bytes())
@@ -80,8 +83,67 @@ func run() diag.ExitStatus {
 	return diag.SuccessStatus()
 }
 
+var templateParameterPattern = regexp.MustCompile(`\{([A-Za-z0-9_]+)\}`)
+
+func templateParameters(item entry) []string {
+	seen := make(map[string]struct{})
+	var names []string
+	for _, template := range []string{item.Message, item.Hint, item.HintWithoutCorrelationID} {
+		for _, match := range templateParameterPattern.FindAllStringSubmatch(template, -1) {
+			if _, exists := seen[match[1]]; exists {
+				continue
+			}
+			seen[match[1]] = struct{}{}
+			names = append(names, match[1])
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func stringSliceLiteral(values []string) string {
+	if len(values) == 0 {
+		return "nil"
+	}
+	parts := make([]string, len(values))
+	for index, value := range values {
+		parts[index] = fmt.Sprintf("%q", value)
+	}
+	return "[]string{" + strings.Join(parts, ", ") + "}"
+}
+
+func stringMapLiteral(values map[string]string) string {
+	if len(values) == 0 {
+		return "nil"
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for index, key := range keys {
+		parts[index] = fmt.Sprintf("%q: %q", key, values[key])
+	}
+	return "map[string]string{" + strings.Join(parts, ", ") + "}"
+}
+
 func validate(entries []entry) error {
+
 	for _, item := range entries {
+		names := templateParameters(item)
+		used := make(map[string]struct{}, len(names))
+		for _, name := range names {
+			used[name] = struct{}{}
+		}
+		for name, requirement := range item.RuntimeTemplateParameters {
+			if _, exists := used[name]; !exists {
+				return fmt.Errorf("catalog entry %s declares unused runtime template parameter %s", item.Code, name)
+			}
+			if requirement != "required" && requirement != "optional" {
+				return fmt.Errorf("catalog entry %s has invalid runtime template parameter requirement %q", item.Code, requirement)
+			}
+		}
 		if item.ProcessExitClass != "input-refusal" && item.ProcessExitClass != "operation-failure" {
 			return fmt.Errorf("catalog entry %s has missing or invalid processExitClass %q", item.Code, item.ProcessExitClass)
 		}

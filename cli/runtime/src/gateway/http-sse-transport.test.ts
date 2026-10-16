@@ -30,7 +30,7 @@ describe('HttpSseGatewayTransport credential origin', () => {
       kind: 'session', gatewayUrl: 'https://gateway.test', accessToken: 'session-token',
       refresh: vi.fn(), save: vi.fn(),
     });
-    const failure = new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED'));
+    const failure = new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { templateValues: { binary: 'test-cli' } }));
     const decodeFailure = vi.spyOn(AuthSessionOwner.prototype, 'decodeFailure').mockRejectedValue(failure);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('private response', { status: 503 })));
     const transport = new HttpSseGatewayTransport({ gatewayUrl: 'https://gateway.test', credentialKind: 'either' });

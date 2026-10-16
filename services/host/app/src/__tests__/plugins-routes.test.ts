@@ -140,7 +140,10 @@ describe("createPluginsRoutes", () => {
     });
 
     expect(res.statusCode).toBe(404);
-    expect((res.json() as ErrorBody).error.code).toBe("KB_PLUGIN_NOT_FOUND");
+    expect((res.json() as ErrorBody).error).toMatchObject({
+      code: "KB_PLUGIN_NOT_FOUND",
+      details: { plugin: "@kb-labs/unknown" },
+    });
   });
 
   it("POST /plugins/enable without packageId returns KB_RUNTIME_INPUT_INVALID", async () => {

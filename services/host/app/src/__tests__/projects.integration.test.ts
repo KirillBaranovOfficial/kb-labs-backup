@@ -769,8 +769,8 @@ describe("kb-host project routing", () => {
 
     expect(response.status).toBe(502);
     const body = (await response.json()) as ErrorBody;
-    expect(body.error.code).toBe("KB_PROJECT_RUNTIME_START_FAILED");
-    expect(body.error.details).toEqual({ project: a.id });
+    expect(body.error.code).toBe("KB_PROJECT_RUNTIME_PROCESS_START_FAILED");
+    expect(body.error.details).toEqual({ projectId: a.id });
     // Other projects are unaffected.
     const b = await registered();
     expect((await reply(subject, b.id, "/rest/whoami")).projectRoot).toBe(b.root);

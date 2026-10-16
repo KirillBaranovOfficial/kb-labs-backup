@@ -25,6 +25,7 @@
           "message": { "type": "string", "minLength": 1, "description": "Template; {name} placeholders are filled from details." },
           "hint": { "type": "string", "minLength": 1, "description": "Template; {name} placeholders are filled from details." },
           "hintWithoutCorrelationId": { "type": "string", "minLength": 1, "description": "Hint used when the error has no correlation ID to fill its normal hint." },
+          "runtimeTemplateParameters": { "type": "object", "additionalProperties": { "enum": ["required", "optional"] }, "description": "Parameters supplied by the runtime rather than error details. Optional parameters are only rendered when their runtime context is present." },
           "deprecated": { "type": "boolean" }
         }
       }

@@ -23,6 +23,50 @@ import (
 	"github.com/kb-labs/clikit/proc"
 )
 
+// case: S-203.6
+func TestRootHelpSpellingsReturnUsageSuccessfully(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}} {
+		var stdout, stderr bytes.Buffer
+		status := executeInvocation("kb-runner", args, &stdout, &stderr)
+		if status.Code() != 0 {
+			t.Fatalf("executeCommand(%q) exit = %d; stdout=%s stderr=%s", args, status.Code(), stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "Usage: kb-runner") {
+			t.Fatalf("executeCommand(%q) did not print root usage: %s", args, stdout.String())
+		}
+	}
+}
+
+// case: S-203.6
+func TestUnknownCommandHintNamesRunnerHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	status := executeInvocation("kb-runner", []string{"missing"}, &stdout, &stderr)
+	if status.Code() != 2 {
+		t.Fatalf("unknown command exit = %d, want 2; stdout=%s stderr=%s", status.Code(), stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "kb-runner --help") || !strings.Contains(stderr.String(), "KB_RUNTIME_UNKNOWN_COMMAND") {
+		t.Fatalf("unknown command diagnostic does not use the catalogued code and runner help: %s", stderr.String())
+	}
+}
+
+// case: S-203.6
+func TestUnknownCommandHintUsesInvokedRunnerName(t *testing.T) {
+	runner := buildRunnerBinary(t)
+	invoked := filepath.Join(t.TempDir(), "runner-from-invocation")
+	if err := os.Rename(runner, invoked); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(invoked, "missing")
+	command.Env = []string{"HOME=" + t.TempDir()}
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("renamed runner accepted an unknown command: %s", output)
+	}
+	if !strings.Contains(string(output), "runner-from-invocation --help") {
+		t.Fatalf("runner hint did not use its invoked name: %s", output)
+	}
+}
+
 func TestRenderDiagnosticUsesCataloguedScratchPathHint(t *testing.T) {
 	entry, ok := diag.LookupCatalog("KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG")
 	if !ok {

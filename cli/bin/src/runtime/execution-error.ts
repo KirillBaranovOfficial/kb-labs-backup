@@ -1,3 +1,4 @@
+import { cliBinaryName } from './cli-binary.js';
 import {
   ServicePortConfigError,
   mapErrorEnvelopeToExitCode,
@@ -38,7 +39,7 @@ export function handleExecutionError(
   }
 
   if (error instanceof ServicePortConfigError) {
-    const envelope = toErrorEnvelope(error, { correlationId: options.correlationId });
+    const envelope = toErrorEnvelope(error, { correlationId: options.correlationId, binary: cliBinaryName });
     if (presenter.isJSON && typeof presenter.json === 'function') {
       presenter.json({ ok: false, error: envelope });
     } else if (typeof presenter.error === 'function') {
@@ -47,7 +48,7 @@ export function handleExecutionError(
     return mapErrorEnvelopeToExitCode(envelope.code);
   }
 
-  let envelope = options.envelope ?? toErrorEnvelope(error, { correlationId: options.correlationId });
+  let envelope = options.envelope ?? toErrorEnvelope(error, { correlationId: options.correlationId, binary: cliBinaryName });
   if (options.correlationId && !envelope.correlationId) {
     envelope = { ...envelope, correlationId: options.correlationId };
   }

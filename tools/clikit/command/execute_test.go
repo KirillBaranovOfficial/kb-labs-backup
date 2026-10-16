@@ -301,3 +301,52 @@ func sliceResetWrapperDepth(value pflag.Value) int {
 	}
 	return 1 + sliceResetWrapperDepth(wrapped.value.(pflag.Value))
 }
+
+// case: S-203.6
+func TestExecuteHelpAtRootAndSubcommand(t *testing.T) {
+	root := &cobra.Command{Use: "kb-probe", Short: "probe"}
+	child := &cobra.Command{Use: "inspect", Short: "inspect"}
+	child.RunE = func(*cobra.Command, []string) error { return nil }
+	root.AddCommand(child)
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}, {"inspect", "--help"}, {"inspect", "-h"}, {"help", "inspect"}} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Execute(root, args, &stdout, &stderr); code.Code() != 0 {
+				t.Fatalf("Execute(%q) exit = %d, stdout=%s stderr=%s", args, code.Code(), stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stdout.String(), "Usage:") {
+				t.Fatalf("Execute(%q) did not show usage: %s", args, stdout.String())
+			}
+		})
+	}
+}
+
+// case: S-203.6
+func TestExecuteUnknownCommandHintUsesRootHelp(t *testing.T) {
+	root := &cobra.Command{Use: "kb-probe"}
+	root.AddCommand(&cobra.Command{Use: "inspect", RunE: func(*cobra.Command, []string) error { return nil }})
+	var stdout, stderr bytes.Buffer
+	if code := Execute(root, []string{"does-not-exist"}, &stdout, &stderr); code.Code() != 2 {
+		t.Fatalf("Execute() exit = %d, want input refusal 2; stdout=%s stderr=%s", code.Code(), stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "kb-probe --help") || !strings.Contains(stderr.String(), "KB_RUNTIME_UNKNOWN_COMMAND") {
+		t.Fatalf("unknown-command diagnostic did not use the catalogued code and root help: %s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "unknown command") && !strings.Contains(stderr.String(), "Hint:") {
+		t.Fatalf("raw command error escaped without a hint: %s", stderr.String())
+	}
+}
+
+// case: S-203.6
+func TestExecuteCatalogFailureUsesRootNameInHint(t *testing.T) {
+	root := &cobra.Command{Use: "kb-devkit", RunE: func(*cobra.Command, []string) error {
+		return diag.New("KB_RUNTIME_COMMAND_FAILED", "The command could not complete.")
+	}}
+	var stdout, stderr bytes.Buffer
+	if code := Execute(root, nil, &stdout, &stderr); code.Code() != 1 {
+		t.Fatalf("Execute() exit = %d, want operation failure 1", code.Code())
+	}
+	if !strings.Contains(stderr.String(), "kb-devkit --help") {
+		t.Fatalf("catalog hint does not name the executing root: %s", stderr.String())
+	}
+}

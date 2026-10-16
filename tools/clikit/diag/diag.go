@@ -41,6 +41,9 @@ func RedactText(value string) string {
 // Diag is a structured diagnostic. The zero value is not useful — construct
 // with New or Wrap.
 type Diag struct {
+	// Binary is the registered root command name used to render binary-scoped
+	// catalog templates. It is invocation context, not wire data.
+	Binary string `json:"-"`
 	// Code is a stable KB_* platform error identifier.
 	Code string `json:"code"`
 	// Message is the human-readable WHAT (one line, no trailing punctuation).
@@ -119,6 +122,9 @@ func WithData(data any) Opt { return func(d *Diag) { d.Data = data } }
 
 // WithCorrelationID attaches the ID that joins a safe result to its log entry.
 func WithCorrelationID(id string) Opt { return func(d *Diag) { d.CorrelationID = id } }
+
+// WithBinary supplies the registered CLI root name to catalog templates.
+func WithBinary(binary string) Opt { return func(d *Diag) { d.Binary = binary } }
 
 // New builds a Diag and uses the platform catalog hint for a known code.
 func New(code, message string, opts ...Opt) *Diag {

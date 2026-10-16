@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from "./error-codes.generated.js";
+
 import type { ErrorCode, ProductErrorCode } from './index.js';
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
@@ -62,6 +64,9 @@ describe('errors.catalog.json lint', () => {
     expect(codes).toEqual(errorCatalog.codes.map((entry) => entry.code).sort());
     expectTypeOf<ErrorCode>().not.toEqualTypeOf<string>();
     expectTypeOf<'KB_RUNTIME_COMMAND_FAILED'>().toMatchTypeOf<ErrorCode>();
+    expectTypeOf<'KB_RUNTIME_UNKNOWN_COMMAND'>().toMatchTypeOf<ErrorCode>();
+    expectTypeOf<CatalogTemplateParameters['KB_RUNTIME_UNKNOWN_COMMAND']>().toEqualTypeOf<{ binary: string }>();
+    expectTypeOf<CatalogRuntimeTemplateParameters['KB_RUNTIME_UNKNOWN_COMMAND']>().toEqualTypeOf<{ binary: string }>();
     expectTypeOf<'NOT_CATALOGUED_CODE'>().not.toMatchTypeOf<ErrorCode>();
     expectTypeOf<ProductErrorCode>().toMatchTypeOf<ErrorCode>();
     expectTypeOf<'KB_TYPO'>().not.toMatchTypeOf<ErrorCode>();
@@ -207,12 +212,26 @@ describe('shared envelope fixtures', () => {
 });
 
 describe('renderTemplate', () => {
-  it('fills known placeholders and marks missing ones', () => {
-    expect(renderTemplate('Port {port} in {where}', { port: '4000' })).toBe('Port 4000 in unknown');
+  it('reports a missing catalog template parameter as a defect', () => {
+    expect(() => renderTemplate('Port {port} in {where}', { port: '4000' })).toThrow('unrendered template parameter: where');
   });
 });
 
 describe('createErrorEnvelope', () => {
+  it('keeps input-invalid hints binary-agnostic outside CLI invocation handling', () => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_INPUT_INVALID');
+    expect(envelope.hint).not.toContain('--help');
+    expect(envelope.hint).not.toContain('{binary}');
+  });
+
+  it('requires and renders the invocation binary for unknown commands', () => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_UNKNOWN_COMMAND', {
+      templateValues: { binary: 'test-cli' },
+    });
+    expect(envelope.hint).toContain('test-cli --help');
+    expect(envelope.code).toBe('KB_RUNTIME_UNKNOWN_COMMAND');
+  });
+
   it('omits a cause that repeats the resolved message', () => {
     const envelope = createErrorEnvelope('KB_ADAPTER_NOT_INSTALLED', {
       details: { package: '@kb-labs/not-installed' },
@@ -237,8 +256,29 @@ describe('createErrorEnvelope', () => {
 });
 
 describe('structured error diagnostics', () => {
+  it('renders invocation-owned binary values in catalog hints without exposing them as details', () => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      templateValues: { binary: 'test-cli' },
+    });
+
+    expect(envelope.hint).toContain('test-cli --help');
+    expect(envelope.hint).not.toMatch(/[{}]/);
+    expect(envelope).not.toHaveProperty('details');
+  });
+
+  it('keeps validation failures binary-agnostic', () => {
+    const envelope = toErrorEnvelope(Object.assign(new Error('Invalid input.'), {
+      validation: [{ path: 'value', message: 'must be valid' }],
+    }));
+
+    expect(envelope.code).toBe('KB_RUNTIME_INPUT_INVALID');
+    expect(envelope.hint).not.toContain('--help');
+    expect(envelope.hint).not.toMatch(/[{}]/);
+  });
+
   it('keeps gate findings as typed diagnostics', () => {
     const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      templateValues: { binary: 'test-cli' },
       diagnostics: [{ code: 'CONFIG_INVALID', message: 'Invalid setting.', severity: 'error', path: 'config.json', line: 3, hint: 'Fix the setting.' }],
     });
     expect(envelope.diagnostics).toEqual([{ code: 'CONFIG_INVALID', message: 'Invalid setting.', severity: 'error', path: 'config.json', line: 3, hint: 'Fix the setting.' }]);
@@ -247,7 +287,7 @@ describe('structured error diagnostics', () => {
 
   it.each(['{"findings":[]}', '[{"message":"bad"}]'])('rejects serialized structured detail values: %s', (value) => {
     try {
-      createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { details: { report: value } });
+      createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { templateValues: { binary: 'test-cli' }, details: { report: value } });
       throw new Error('expected serialized JSON detail to be rejected');
     } catch (error) {
       expect(error).toMatchObject({ code: 'KB_PLUGIN_CONTRACT_VIOLATION', hint: expect.stringContaining('error.diagnostics') });
@@ -255,7 +295,7 @@ describe('structured error diagnostics', () => {
   });
 
   it.each(['{"findings":[]}', '[{"message":"bad"}]'])('rejects serialized structured details during envelope validation: %s', (value) => {
-    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED');
+    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { templateValues: { binary: 'test-cli' } });
     expect(validateErrorEnvelope({ ...envelope, details: { report: value } })).toContainEqual({
       field: 'details.report',
       reason: 'must not contain serialized JSON; use data or diagnostics',
@@ -264,6 +304,7 @@ describe('structured error diagnostics', () => {
 
   it('rejects non-string details in the builder with a catalogued contract violation', () => {
     expect(() => createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      templateValues: { binary: 'test-cli' },
       details: { report: ['finding'] as unknown as string },
     })).toThrow(expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }));
   });
@@ -272,7 +313,7 @@ describe('structured error diagnostics', () => {
 describe('toErrorEnvelope (platform errors)', () => {
   it('does not promote a catalogued error message into a duplicate cause', () => {
     const message = 'Adapter package @kb-labs/not-installed is not installed on this platform.';
-    const error = Object.assign(new Error(message), { code: 'KB_ADAPTER_NOT_INSTALLED' });
+    const error = Object.assign(new Error(message), { code: 'KB_ADAPTER_NOT_INSTALLED', details: { package: '@kb-labs/not-installed' } });
 
     const envelope = toErrorEnvelope(error);
 
@@ -370,7 +411,7 @@ describe('toErrorEnvelope (platform errors)', () => {
   it('normalizes typed platform errors structurally when they cross a package boundary', () => {
     const error = Object.assign(new Error('Adapter "llm" is not available.'), {
       code: 'KB_ADAPTER_NOT_CONFIGURED',
-      details: { service: 'llm' },
+      details: { service: 'llm', adapter: 'platform.adapters.llm', command: 'kb adapter bind llm @kb-labs/adapters-openai' },
     });
 
     expect(toErrorEnvelope(error)).toMatchObject({

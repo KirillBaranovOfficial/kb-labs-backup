@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -44,8 +45,13 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 		}
 		entries[entry.Code] = CatalogEntry(entry)
 		entryCodes[entry.Code] = struct{}{}
-		if embedded, ok := LookupCatalog(entry.Code); !ok || embedded != CatalogEntry(entry) {
-			t.Errorf("clikit metadata for %s differs from the platform catalog", entry.Code)
+		if embedded, ok := LookupCatalog(entry.Code); ok {
+			embedded.TemplateParameters = nil
+			if !reflect.DeepEqual(embedded, CatalogEntry(entry)) {
+				t.Errorf("clikit metadata for %s differs from the platform catalog", entry.Code)
+			}
+		} else {
+			t.Errorf("clikit metadata for %s is missing", entry.Code)
 		}
 	}
 	if len(catalogEntries) != len(entries) {

@@ -49,6 +49,27 @@ func ToEnvelope(d *Diag) (Envelope, error) {
 	if message == "" {
 		message = entry.Message
 	}
+	templateValues := make(map[string]string, len(d.Meta)+2)
+	for key, value := range d.Meta {
+		templateValues[key] = fmt.Sprint(value)
+	}
+	if d.Binary != "" {
+		templateValues["binary"] = d.Binary
+	}
+	if d.CorrelationID != "" {
+		templateValues["correlationId"] = d.CorrelationID
+	}
+	message, err := renderTemplate(message, templateValues)
+	if err != nil {
+		return Envelope{}, err
+	}
+	if err := validateCatalogTemplateParameters(entry, hint, templateValues); err != nil {
+		return Envelope{}, err
+	}
+	hint, err = renderTemplate(hint, templateValues)
+	if err != nil {
+		return Envelope{}, err
+	}
 	envelope := Envelope{
 		Code: entry.Code, Area: entry.Area, Stage: entry.Stage,
 		Severity: entry.Severity, Retryable: entry.Retryable,
@@ -56,14 +77,6 @@ func ToEnvelope(d *Diag) (Envelope, error) {
 		Actions: append([]Action(nil), d.Actions...), Docs: d.Docs,
 		CorrelationID: d.CorrelationID,
 	}
-	templateValues := make(map[string]string, len(d.Meta)+1)
-	for key, value := range d.Meta {
-		templateValues[key] = fmt.Sprint(value)
-	}
-	if d.CorrelationID != "" {
-		templateValues["correlationId"] = d.CorrelationID
-	}
-	envelope.Hint = renderTemplate(hint, templateValues)
 	if envelope.Cause == "" {
 		envelope.Cause = d.Reason
 	}
@@ -76,10 +89,23 @@ func ToEnvelope(d *Diag) (Envelope, error) {
 	return envelope, nil
 }
 
-// renderTemplate resolves catalog placeholders from diagnostic details and the
-// correlation ID. Missing values use the same "unknown" value as the platform
-// TypeScript renderer, so template syntax never leaks into rendered output.
-func renderTemplate(template string, values map[string]string) string {
+// validateCatalogTemplateParameters checks the generated code-specific parameter contract.
+func validateCatalogTemplateParameters(entry CatalogEntry, template string, values map[string]string) error {
+	for _, name := range entry.TemplateParameters {
+		if strings.Contains(template, "{"+name+"}") {
+			if _, ok := values[name]; !ok {
+				if entry.RuntimeTemplateParameters[name] == "optional" {
+					continue
+				}
+				return fmt.Errorf("unrendered template parameter: %s", name)
+			}
+		}
+	}
+	return nil
+}
+
+// renderTemplate resolves the selected catalog template and rejects every unresolved parameter.
+func renderTemplate(template string, values map[string]string) (string, error) {
 	var rendered strings.Builder
 	for len(template) > 0 {
 		opening := strings.IndexByte(template, '{')
@@ -91,16 +117,15 @@ func renderTemplate(template string, values map[string]string) string {
 		template = template[opening+1:]
 		closing := strings.IndexByte(template, '}')
 		if closing < 0 {
-			rendered.WriteString("unknown")
-			break
+			return "", fmt.Errorf("unclosed template parameter in %q", template)
 		}
 		key := template[:closing]
 		value, ok := values[key]
 		if !ok {
-			value = "unknown"
+			return "", fmt.Errorf("unrendered template parameter: %s", key)
 		}
 		rendered.WriteString(value)
 		template = template[closing+1:]
 	}
-	return rendered.String()
+	return rendered.String(), nil
 }

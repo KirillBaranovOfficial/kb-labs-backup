@@ -6,7 +6,33 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const catalogPath = resolve(packageRoot, 'src/error-envelope/errors.catalog.json');
 const outputPath = resolve(packageRoot, 'src/error-envelope/error-codes.generated.ts');
 const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
-const codes = [...new Set(catalog.codes.map(({ code }) => code))].sort();
+const entries = [...catalog.codes].sort((left, right) => left.code < right.code ? -1 : left.code > right.code ? 1 : 0);
+const codes = [...new Set(entries.map(({ code }) => code))];
+const templateParameters = entries.map((entry) => {
+  const templates = [entry.message, entry.hint, entry.hintWithoutCorrelationId].filter(Boolean);
+  const names = [...new Set(templates.flatMap((template) => [...template.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map((match) => match[1])))].sort();
+  const runtime = entry.runtimeTemplateParameters ?? {};
+  for (const name of Object.keys(runtime)) {
+    if (!names.includes(name)) throw new Error(`${entry.code} declares unused runtime template parameter ${name}`);
+  }
+  const renderRecord = (fields) => fields.length === 0 ? 'Record<never, never>' : `{ ${fields.join('; ')} }`;
+  const allType = renderRecord(names.map((name) => `${JSON.stringify(name)}: string`));
+  return `  ${JSON.stringify(entry.code)}: ${allType};`;
+});
+const parametersForTemplate = (entry, fields) => {
+  const runtime = entry.runtimeTemplateParameters ?? {};
+  const templates = fields.map((field) => entry[field]).filter(Boolean);
+  const names = [...new Set(templates.flatMap((template) => [...template.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map((match) => match[1])))].filter((name) => !(name in runtime)).sort();
+  return names.length === 0 ? 'Record<never, never>' : `{ ${names.map((name) => `${JSON.stringify(name)}: string`).join('; ')} }`;
+};
+const messageTemplateParameters = entries.map((entry) => `  ${JSON.stringify(entry.code)}: ${parametersForTemplate(entry, ['message'])};`);
+const hintTemplateParameters = entries.map((entry) => `  ${JSON.stringify(entry.code)}: ${parametersForTemplate(entry, ['hint', 'hintWithoutCorrelationId'])};`);
+const runtimeTemplateParameters = entries.map((entry) => {
+  const runtime = entry.runtimeTemplateParameters ?? {};
+  const fields = Object.entries(runtime).map(([name, requirement]) => `${JSON.stringify(name)}${requirement === 'optional' ? '?' : ''}: string`);
+  const type = fields.length === 0 ? 'Record<never, never>' : `{ ${fields.join('; ')} }`;
+  return `  ${JSON.stringify(entry.code)}: ${type};`;
+});
 const output = [
   '/**',
   ' * Generated from errors.catalog.json by `pnpm generate:error-codes`.',
@@ -15,6 +41,22 @@ const output = [
   'export type CatalogErrorCode =',
   ...codes.map((code) => `  | ${JSON.stringify(code)}`),
   ';',
+  '',
+  'export interface CatalogTemplateParameters {',
+  ...templateParameters,
+  '}',
+  '',
+  'export interface CatalogMessageTemplateParameters {',
+  ...messageTemplateParameters,
+  '}',
+  '',
+  'export interface CatalogHintTemplateParameters {',
+  ...hintTemplateParameters,
+  '}',
+  '',
+  'export interface CatalogRuntimeTemplateParameters {',
+  ...runtimeTemplateParameters,
+  '}',
   '',
 ].join('\n');
 await writeFile(outputPath, output, 'utf8');

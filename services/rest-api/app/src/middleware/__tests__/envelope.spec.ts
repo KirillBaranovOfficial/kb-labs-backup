@@ -266,7 +266,7 @@ describe('registerEnvelopeMiddleware', () => {
 
     // case: S-203.2
     it('normalizes route-local secured failures and preserves the HTTP status', async () => {
-      app.get('/unauthorized', async (_request: FastifyRequest, reply: FastifyReply) => reply.code(401).send({ error: { code: 'KB_AUTH_REQUIRED' } }));
+      app.get('/unauthorized', async (_request: FastifyRequest, reply: FastifyReply) => reply.code(401).send({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Authenticate with Gateway.' } }));
       await app.ready();
 
       const response = await app.inject({ method: 'GET', url: '/unauthorized' });
@@ -276,7 +276,7 @@ describe('registerEnvelopeMiddleware', () => {
 
     it('normalizes direct reply failures through the shared boundary', async () => {
       app.get('/reply-failure', async (_request: FastifyRequest, reply: FastifyReply) =>
-        reply.code(409).send({ error: { code: 'KB_PROJECT_ALREADY_REGISTERED' } }));
+        reply.code(409).send({ error: { code: 'KB_PROJECT_ALREADY_REGISTERED', details: { path: '/fixture/project' } } }));
       await app.ready();
 
       const response = await app.inject({ method: 'GET', url: '/reply-failure' });

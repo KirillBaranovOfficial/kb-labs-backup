@@ -121,7 +121,7 @@ export class PlatformError extends PluginError {
     message: string,
     details?: Record<string, string>
   ) {
-    super(message, 'KB_HOST_ADAPTER_UNAVAILABLE', { service, ...details });
+    super(message, 'KB_HOST_ADAPTER_UNAVAILABLE', { slot: service, reason: message, ...details });
     this.name = 'PlatformError';
   }
 }

@@ -1564,6 +1564,17 @@
       "hint": "Run `kb logs query --source {serviceId} --level error --limit 20` to inspect its errors, then retry the request."
     },
     {
+      "code": "KB_PROJECT_RUNTIME_PROCESS_START_FAILED",
+      "httpStatus": 502,
+      "area": "project",
+      "stage": "start",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "The project runtime for {projectId} could not start.",
+      "hint": "Run `kb logs query` to inspect project runtime errors, then retry after resolving the reported cause."
+    },
+    {
       "code": "KB_PROJECT_SERVICE_NOT_FOUND",
       "httpStatus": 404,
       "area": "project",
@@ -1817,7 +1828,10 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The command could not complete.",
-      "hint": "Run `kb --help` to review available commands, then rerun the command."
+      "hint": "Run `{binary} --help` to review available commands, then rerun the command.",
+      "runtimeTemplateParameters": {
+        "binary": "required"
+      }
     },
     {
       "code": "KB_RUNTIME_CONTAINER_UNAVAILABLE",
@@ -1946,7 +1960,21 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "The provided input is invalid.",
-      "hint": "Correct the reported fields and retry; run the command with --help for the expected input."
+      "hint": "Correct the reported fields and retry."
+    },
+    {
+      "code": "KB_RUNTIME_UNKNOWN_COMMAND",
+      "httpStatus": 400,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "The requested command is not available.",
+      "hint": "Run `{binary} --help` to review available commands, then retry with a registered command.",
+      "runtimeTemplateParameters": {
+        "binary": "required"
+      }
     },
     {
       "code": "KB_RUNTIME_PAYLOAD_TOO_LARGE",
@@ -2118,7 +2146,10 @@
       "processExitClass": "operation-failure",
       "message": "The operation did not finish in time.",
       "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the timeout, then retry or increase the timeout.",
-      "hintWithoutCorrelationId": "Run `kb logs query` to inspect the timeout, then retry or increase the timeout."
+      "hintWithoutCorrelationId": "Run `kb logs query` to inspect the timeout, then retry or increase the timeout.",
+      "runtimeTemplateParameters": {
+        "correlationId": "optional"
+      }
     },
     {
       "code": "KB_RUNTIME_UNEXPECTED",
@@ -2130,7 +2161,10 @@
       "processExitClass": "operation-failure",
       "message": "An unexpected error occurred.",
       "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack.",
-      "hintWithoutCorrelationId": "Run `kb logs query` to inspect the failure details and stack."
+      "hintWithoutCorrelationId": "Run `kb logs query` to inspect the failure details and stack.",
+      "runtimeTemplateParameters": {
+        "correlationId": "optional"
+      }
     },
     {
       "code": "KB_RUNTIME_WORKFLOW_API_FAILURE",
@@ -2484,7 +2518,10 @@
       "message": "Plugin command {command} in {plugin} {failureReason}.",
       "hint": "Run \"kb logs query --correlation-id {correlationId}\" to inspect the failure details and stack, then fix the reported plugin issue.",
       "hintWithoutCorrelationId": "Run `kb logs query` to inspect the failure details and stack, then fix the reported plugin issue.",
-      "processExitClass": "operation-failure"
+      "processExitClass": "operation-failure",
+      "runtimeTemplateParameters": {
+        "correlationId": "optional"
+      }
     },
     {
       "code": "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE",

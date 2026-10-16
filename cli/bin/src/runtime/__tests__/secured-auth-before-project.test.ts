@@ -392,7 +392,7 @@ describe('secured CLI auth ordering', () => {
     expect(exitCode).toBe(2);
     expect(JSON.parse(records[0]!)).toMatchObject({
       ok: false,
-      error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'Unknown command: commit open' },
+      error: { code: 'KB_RUNTIME_UNKNOWN_COMMAND', message: 'Unknown command: commit open' },
     });
     expect(mocks.hasUsablePlatformAuth).not.toHaveBeenCalled();
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();

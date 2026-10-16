@@ -8,11 +8,11 @@
 
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, getAdapterConfigurationCommand, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError, type TypedPlatformError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
-import { createErrorDetailsContractViolation, createErrorEnvelope, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
+import { createErrorDetailsContractViolation, createErrorEnvelope, getCatalogEntry, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
 import { ErrorEnvelopeError, type ErrorEnvelope, type ProductErrorCode } from './types.js';
 import { isErrorEnvelope, validateErrorEnvelope } from './validate.js';
 
-export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'actions' | 'docs' | 'diagnostics'>;
+export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions<never>, 'correlationId' | 'actions' | 'docs' | 'diagnostics'> & { binary?: string };
 
 /** Read a validated platform envelope carried by a typed error wrapper. */
 export function errorEnvelopeFrom(error: unknown): ErrorEnvelope | undefined {
@@ -82,6 +82,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
     return createErrorEnvelope('KB_CONFIG_INVALID', {
       ...options,
       details: {
+        path: error.contractPath,
         contractPath: error.contractPath,
         remedyOperation: error.remedy.operation,
         remedyPlatformRoot: error.remedy.platformRoot,
@@ -229,8 +230,13 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
   }
 
   try {
+    const entry = getCatalogEntry(code);
+    const templateValues = options.binary && entry?.runtimeTemplateParameters?.binary === 'required'
+      ? { binary: options.binary }
+      : undefined;
     return createErrorEnvelope(code, {
       ...options,
+      ...(templateValues ? { templateValues } : {}),
       ...(cause ? { cause } : {}),
       ...(message ? { message } : {}),
       ...(hint ? { hint } : {}),
