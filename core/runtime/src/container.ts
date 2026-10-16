@@ -396,7 +396,7 @@ export class PlatformContainer {
   }
 
   /**
-   * Get list of all configured services (adapters + core features).
+   * Get all configured adapters, core features, and initialized platform services.
    * Used for validating plugin platform requirements.
    */
   getConfiguredServices(): Set<string> {
@@ -418,6 +418,10 @@ export class PlatformContainer {
     // Resource broker (if initialized)
     if (this._resourceBroker) {
       services.add('resourceBroker');
+    }
+
+    if (this._executionBackend) {
+      services.add('executionBackend');
     }
 
     if (this._environmentManager) {

@@ -95,6 +95,18 @@ describe('Platform Loader', () => {
         const script = `
           import { initPlatform, platform } from ${JSON.stringify(pathToFileURL(runtimeModule).href)};
           let telegramRequests = 0;
+          const brokerRegistrations = [];
+          const brokerReadyAtRegistration = [];
+          const initResourceBroker = platform.initResourceBroker;
+          platform.initResourceBroker = function (broker) {
+            const register = broker.register.bind(broker);
+            broker.register = (resource, config) => {
+              brokerRegistrations.push(resource);
+              brokerReadyAtRegistration.push(platform.hasResourceBroker);
+              return register(resource, config);
+            };
+            return initResourceBroker.call(this, broker);
+          };
           globalThis.fetch = async () => { telegramRequests++; return new Response('{"ok":true}', { status: 200 }); };
           await initPlatform({
             adapters: { notifier: '@kb-labs/notifier-router' },
@@ -106,7 +118,7 @@ describe('Platform Loader', () => {
             },
           }, ${JSON.stringify(workspaceRoot)}, undefined, undefined, { workspaceDevelopment: true });
           await platform.notifier.notify({ severity: 'info', title: 'loader test', body: 'bound' });
-          console.log('C01_RESULT ' + JSON.stringify({ real: platform.isReal('notifier'), telegramRequests }));
+          console.log('C01_RESULT ' + JSON.stringify({ real: platform.isReal('notifier'), telegramRequests, brokerRegistrations, brokerReadyAtRegistration }));
           process.exit(0);
         `;
         const env: NodeJS.ProcessEnv = { ...process.env, HOME: isolatedHome };
@@ -119,7 +131,7 @@ describe('Platform Loader', () => {
           encoding: 'utf8',
         });
         expect(result.status, result.stderr).toBe(0);
-        expect(result.stdout).toContain('C01_RESULT {"real":true,"telegramRequests":1}');
+        expect(result.stdout).toContain('C01_RESULT {"real":true,"telegramRequests":1,"brokerRegistrations":["notifier:ops"],"brokerReadyAtRegistration":[true]}');
       } finally {
         await rm(tempRoot, { recursive: true, force: true });
       }
@@ -544,35 +556,6 @@ describe('Platform Loader', () => {
       await initPlatform({ adapters: {} });
 
       expect(platform.hasResourceBroker).toBe(true);
-    });
-  });
-
-  describe('Initialization Order', () => {
-    it('should initialize in correct order', async () => {
-      const order: string[] = [];
-
-      // Track initialization steps
-      const original = platform.initCoreFeatures;
-      platform.initCoreFeatures = function (...args) {
-        order.push('coreFeatures');
-        return original.apply(this, args);
-      };
-
-      const originalBroker = platform.initResourceBroker;
-      platform.initResourceBroker = function (...args) {
-        order.push('resourceBroker');
-        return originalBroker.apply(this, args);
-      };
-
-      resetPlatform();
-      await initPlatform({});
-
-      // Should initialize core features before resource broker
-      expect(order).toEqual(['coreFeatures', 'resourceBroker']);
-
-      // Restore
-      platform.initCoreFeatures = original;
-      platform.initResourceBroker = originalBroker;
     });
   });
 
