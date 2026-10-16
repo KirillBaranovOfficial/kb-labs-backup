@@ -3,9 +3,7 @@
 package v2cli
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,7 +19,6 @@ import (
 	"path/filepath"
 	"reflect"
 	goruntime "runtime"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +84,7 @@ func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 		ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
 		Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, inst.port),
 	})
-	sealedPrimary, err := catalog.Seal(source)
+	sealedPrimary, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +96,7 @@ func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	source.Platforms[0].Host.Args = []string{"-port", fmt.Sprint(inst.port + 100)}
-	sealed, err := catalog.Seal(source)
+	sealed, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,10 +374,15 @@ func writeSecretCommandInputs(t *testing.T, inst installation, fakehost, binaryU
 		cliDigest := sha256.Sum256(cliPackage)
 		source.Platforms[0].Members = []catalog.Component{{ID: "cli-bin", Version: "1.0.0", Package: "@kb-labs/cli-bin",
 			Tarball: binaryURL + "/cli-bin-1.0.0.tgz", SHA256: hex.EncodeToString(cliDigest[:]), SizeBytes: int64(len(cliPackage))}}
+		withProvenance, err := testfixtures.SealCatalogWithArchives(source, map[string][]byte{"@kb-labs/cli-bin@1.0.0": cliPackage})
+		if err != nil {
+			t.Fatalf("seal test package provenance: %v", err)
+		}
+		source = withProvenance
 		requirement := catalog.ConfigRequirement{ID: "gateway.token", Secret: true, Required: required, Optional: !required,
 			Env: "GATEWAY_TOKEN", Services: []string{"runtime"}}
 		source.Platforms[0].Config = []catalog.ConfigRequirement{requirement}
-		sealed, err := catalog.Seal(source)
+		sealed, err := sealTestCatalog(t, source)
 		if err != nil {
 			t.Fatalf("seal test secret index: %v", err)
 		}
@@ -420,27 +422,30 @@ func testPackageTarball(name, version string) []byte {
 }
 
 func testPackageTarballWithFiles(name, version string, files map[string][]byte) []byte {
-	var data bytes.Buffer
-	compressed := gzip.NewWriter(&data)
-	archive := tar.NewWriter(compressed)
-	manifest, _ := json.Marshal(map[string]string{"name": name, "version": version})
-	entries := map[string][]byte{"package/package.json": manifest}
-	for path, contents := range files {
-		entries["package/"+filepath.ToSlash(path)] = contents
+	return testfixtures.PackageTarball(name, version, files)
+}
+
+func fixturePackageProvenance(t *testing.T, name, version string) contracts.ArtifactProvenance {
+	t.Helper()
+	provenance, err := testfixtures.PackageProvenance(name, version)
+	if err != nil {
+		t.Fatalf("seal package fixture provenance: %v", err)
 	}
-	paths := make([]string, 0, len(entries))
-	for path := range entries {
-		paths = append(paths, path)
+	return provenance
+}
+
+func fixturePackageArtifact(t *testing.T, name, version string) contracts.Artifact {
+	t.Helper()
+	archive := testfixtures.PackageTarball(name, version, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write(archive)
+	}))
+	t.Cleanup(server.Close)
+	digest := sha256.Sum256(archive)
+	return contracts.Artifact{
+		ID: name, Kind: "plugin", Package: name, Version: version, Tarball: server.URL,
+		SHA256: hex.EncodeToString(digest[:]), Provenance: fixturePackageProvenance(t, name, version),
 	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		contents := entries[path]
-		_ = archive.WriteHeader(&tar.Header{Name: path, Mode: 0o644, Size: int64(len(contents))})
-		_, _ = archive.Write(contents)
-	}
-	_ = archive.Close()
-	_ = compressed.Close()
-	return data.Bytes()
 }
 
 func (r *recordingInstaller) Install(items []contracts.Artifact) error {
@@ -848,7 +853,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		"install": []byte("install binary fixture"),
 		"update1": []byte("first update binary fixture"),
 		"update2": []byte("second update binary fixture"),
-		"package": []byte("package tarball fixture"),
+		"package": testPackageTarball("@kb-labs/fixture", "1.0.0"),
 	}
 	digests := make(map[string]string, len(fixtures))
 	for name, data := range fixtures {
@@ -905,14 +910,14 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		Host:         hostSpec,
 		Artifacts: []contracts.Artifact{
 			{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/install", SHA256: digests["install"], Target: "bin/kb-create"},
-			{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"]},
+			{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
 		},
 	}
 	state, err := host.StateForRoot(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	packageRunner := productionPackageFixtureRunner{packageName: "@kb-labs/fixture", version: "1.0.0"}
+	packageRunner := productionPackageFixtureRunner{}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, Runtime: &runtime.Dependencies{}, ArtifactRunner: packageRunner}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	t.Cleanup(func() {
@@ -986,7 +991,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			Host:         hostSpec,
 			Artifacts: []contracts.Artifact{
 				{ID: "fixture-binary", Kind: "binary", Version: version, URL: server.URL + "/" + name, SHA256: digests[name], Target: "bin/kb-create"},
-				{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"]},
+				{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
 			},
 		}
 		plan.Request.PlatformRoot = layout.PlatformRoot()
@@ -1013,7 +1018,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
-			input.ArtifactRunner = productionPackageFixtureRunner{packageName: "@kb-labs/fixture", version: "1.0.0", injectProjection: true}
+			input.ArtifactRunner = productionPackageFixtureRunner{injectProjection: true}
 			_, refusal := runUpdateCommand(context.Background(), input, root, plan, state, launcherState, nil)
 			if refusal == nil || refusal.Code != contracts.CodeApplyFailed || !strings.Contains(refusal.Cause, ".kb/v2/cache") {
 				t.Fatalf("activation refusal = %#v; want shared-cache stage refusal", refusal)
@@ -1118,7 +1123,7 @@ func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixtures := map[string][]byte{"binary": []byte("binary fixture"), "package": []byte("package fixture")}
+	fixtures := map[string][]byte{"binary": []byte("binary fixture"), "package": testPackageTarball("@kb-labs/fixture", "1.0.0")}
 	digests := make(map[string]string, len(fixtures))
 	for name, data := range fixtures {
 		digest := sha256.Sum256(data)
@@ -1135,13 +1140,13 @@ func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testi
 	}))
 	defer server.Close()
 	executor, err := newArtifactExecutor(layout, stage, "", false, io.Discard,
-		productionPackageFixtureRunner{packageName: "@kb-labs/fixture", version: "1.0.0"})
+		productionPackageFixtureRunner{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	items := []contracts.Artifact{
 		{ID: "fixture-binary", Kind: "binary", Version: "1.0.0", URL: server.URL + "/binary", SHA256: digests["binary"], Target: "bin/kb-create"},
-		{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"]},
+		{ID: "fixture-package", Kind: "plugin", Version: "1.0.0", Package: "@kb-labs/fixture", Tarball: server.URL + "/package", SHA256: digests["package"], Provenance: fixturePackageProvenance(t, "@kb-labs/fixture", "1.0.0")},
 	}
 	if err := executor.InstallWithProgress(items, func(_ string, start bool) error {
 		if start {
@@ -1221,12 +1226,15 @@ func TestUpdateActivationRetryHintPreservesOriginalInvocation(t *testing.T) {
 }
 
 type productionPackageFixtureRunner struct {
-	packageName      string
-	version          string
 	injectProjection bool
 }
 
-func (r productionPackageFixtureRunner) Run(_ context.Context, output io.Writer, _ string, args ...string) error {
+func (r productionPackageFixtureRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Stdout, command.Stderr = output, output
+	if err := command.Run(); err != nil {
+		return err
+	}
 	root := ""
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "--dir" {
@@ -1237,17 +1245,6 @@ func (r productionPackageFixtureRunner) Run(_ context.Context, output io.Writer,
 	if root == "" {
 		return fmt.Errorf("pnpm fixture did not receive --dir")
 	}
-	packageRoot := filepath.Join(root, "node_modules", filepath.FromSlash(r.packageName))
-	if err := os.MkdirAll(packageRoot, 0o755); err != nil {
-		return err
-	}
-	manifest, err := json.Marshal(map[string]string{"name": r.packageName, "version": r.version})
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), manifest, 0o644); err != nil {
-		return err
-	}
 	if r.injectProjection {
 		projection := filepath.Join(root, ".kb", "v2", "cache")
 		if err := os.MkdirAll(projection, 0o700); err != nil {
@@ -1257,8 +1254,7 @@ func (r productionPackageFixtureRunner) Run(_ context.Context, output io.Writer,
 			return err
 		}
 	}
-	_, err = io.WriteString(output, "local package fixture installed\n")
-	return err
+	return nil
 }
 
 func assertContainerParent(t *testing.T, parent string) {

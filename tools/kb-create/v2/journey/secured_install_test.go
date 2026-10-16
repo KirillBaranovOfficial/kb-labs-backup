@@ -18,6 +18,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/release"
 	"github.com/kb-labs/create/v2/resolve"
@@ -30,6 +31,11 @@ import (
 
 func primeOfflineCatalog(t *testing.T, root string, source *catalog.Catalog) {
 	t.Helper()
+	sealed, err := testfixtures.SealCatalog(*source)
+	if err != nil {
+		t.Fatalf("seal offline test catalog: %v", err)
+	}
+	*source = sealed
 	layout, err := versionroot.New(root)
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +208,11 @@ func sealedGatewayCatalog(t *testing.T) catalog.Catalog {
 	if err != nil {
 		t.Fatalf("the real requirements must survive the release sealing path: %v", err)
 	}
-	sealed, err := catalog.Seal(enriched)
+	withProvenance, err := testfixtures.SealCatalog(enriched)
+	if err != nil {
+		t.Fatalf("seal gateway package provenance: %v", err)
+	}
+	sealed, err := catalog.Seal(withProvenance)
 	if err != nil {
 		t.Fatal(err)
 	}

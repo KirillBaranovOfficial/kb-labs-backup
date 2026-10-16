@@ -173,7 +173,7 @@ func TestExecuteSuppliedBootstrapPasswordNeverSerializesValueOrEnvironmentName(t
 				{ID: secrets.BootstrapPassword, Path: "/gateway/bootstrap/password", Required: true, Secret: true, Generate: true, Env: secrets.BootstrapPasswordEnvironment, Services: []string{"gateway"}},
 				{ID: "gateway.jwtSecret", Path: "/gateway/jwtSecret", Required: true, Secret: true, Generate: true, Env: "GATEWAY_JWT_SECRET", Services: []string{"gateway"}},
 			}
-			release, err := catalog.Seal(source)
+			release, err := sealTestCatalog(t, source)
 			if err != nil {
 				t.Fatal("seal release catalog")
 			}
@@ -303,7 +303,7 @@ func TestExecuteRejectsUndeclaredAndLifecycleSecretIDsBeforeWriting(t *testing.T
 				{ID: "gateway.bootstrap.adminEmail", Path: "/gateway/bootstrap/adminEmail", Default: `"admin@example.test"`},
 				{ID: secrets.BootstrapPassword, Path: "/gateway/bootstrap/password", Secret: true, Generate: true, Env: secrets.BootstrapPasswordEnvironment, Services: []string{"gateway"}},
 			}
-			release, err := catalog.Seal(source)
+			release, err := sealTestCatalog(t, source)
 			if err != nil {
 				t.Fatal("seal test release")
 			}
@@ -380,7 +380,7 @@ func TestExecuteInteractiveInstallDoesNotPersistPromptSecretsBeforeMappingValida
 		{ID: secrets.BootstrapPassword, Path: "/gateway/bootstrap/password", Secret: true, Generate: true, Env: secrets.BootstrapPasswordEnvironment, Services: []string{"gateway"}},
 		{ID: "gateway.jwtSecret", Path: "/gateway/jwtSecret", Secret: true, Generate: true, Env: "GATEWAY_JWT_SECRET", Services: []string{"gateway"}},
 	}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal("seal interactive test release")
 	}
@@ -915,17 +915,18 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
 		Values:       map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.test"`},
 		SecretInputs: []string{"gateway.bootstrap.password", "gateway.jwtSecret"}}
+	gateway := fixturePackageArtifact(t, "@kb-labs/gateway", "2.0.0")
+	gateway.ID = "gateway"
+	gateway.Config = []contracts.ConfigRequirement{{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true}}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "admin-bootstrap-repeat",
 		Request: request, Host: &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "default"},
-		Artifacts: []contracts.Artifact{{ID: "gateway", Package: "@kb-labs/gateway", Version: "2.0.0", Config: []contracts.ConfigRequirement{
-			{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true},
-		}}}}
+		Artifacts:    []contracts.Artifact{gateway}}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	platformRoot := platformRootForTest(t, root)
 	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 	starter := &bootstrapTestHost{address: address}
-	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: productionPackageFixtureRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
 	t.Cleanup(func() {
 		if starter.stop != nil {
 			_ = starter.stop()
@@ -1000,16 +1001,17 @@ func TestApplyFailureBeforeResultWriteLeavesPasswordEligibleForRetry(t *testing.
 	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
 		Values:       map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.test"`},
 		SecretInputs: []string{"gateway.bootstrap.password", "gateway.jwtSecret"}}
+	gateway := fixturePackageArtifact(t, "@kb-labs/gateway", "2.0.0")
+	gateway.ID = "gateway"
+	gateway.Config = []contracts.ConfigRequirement{{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true}}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "admin-bootstrap-repeat",
 		Request: request, Host: &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "default"},
-		Artifacts: []contracts.Artifact{{ID: "gateway", Package: "@kb-labs/gateway", Version: "2.0.0", Config: []contracts.ConfigRequirement{
-			{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true},
-		}}}}
+		Artifacts:    []contracts.Artifact{gateway}}
 	resolved := resolvedPlan{Plan: plan, State: state}
 	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 	starter := &bootstrapTestHost{address: address}
-	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: productionPackageFixtureRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
 	t.Cleanup(func() {
 		if starter.stop != nil {
 			_ = starter.stop()
@@ -1064,16 +1066,17 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
 		Values:       map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.test"`},
 		SecretInputs: []string{"gateway.bootstrap.password", "gateway.jwtSecret"}}
+	gateway := fixturePackageArtifact(t, "@kb-labs/gateway", "2.0.0")
+	gateway.ID = "gateway"
+	gateway.Config = []contracts.ConfigRequirement{{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true}}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "result-write-failure",
 		Request: request, Host: &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 5},
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "default"},
-		Artifacts: []contracts.Artifact{{ID: "gateway", Package: "@kb-labs/gateway", Version: "2.0.0", Config: []contracts.ConfigRequirement{
-			{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true},
-		}}}}
+		Artifacts:    []contracts.Artifact{gateway}}
 	resolved := resolvedPlan{Plan: plan, State: host.State{Dir: t.TempDir()}}
 	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 	starter := &bootstrapTestHost{address: address}
-	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: productionPackageFixtureRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
 	t.Cleanup(func() {
 		if starter.stop != nil {
 			_ = starter.stop()
@@ -1159,7 +1162,7 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 		{ID: "gateway.authStorage.filename", Path: "/platform/adapterOptions/documentDatabase/filename", Default: `"database/kb.sqlite"`},
 	}
 	source.Adapters = []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "1.0.0", Package: "@kb/sqlite-stores", Tarball: "https://example.test/sqlite.tgz", SHA256: "sqlite"}, Provides: []string{"documentDatabase"}}}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}

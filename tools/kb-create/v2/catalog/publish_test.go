@@ -1,12 +1,10 @@
 package catalog
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
-	"github.com/kb-labs/create/v2/internal/testfixtures"
 )
 
 func TestSealAndVerifyImmutableReleaseIndex(t *testing.T) {
@@ -151,11 +149,19 @@ func TestSealRequiresPlatformSDKRelationsAndRecords(t *testing.T) {
 }
 
 func compatibilitySealFixture() Catalog {
-	var source Catalog
-	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.0.0", "linux", "amd64"), &source); err != nil {
-		panic(err)
+	platformID, sdkID := "platform@2.0.0", "sdk@2.0.0"
+	return Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: &CompatibilityMatrix{Schema: CompatibilitySchema, Labels: []CompatibilityLabel{
+			{ID: platformID, Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Requires: []CompatibilityRelation{{Label: sdkID}}, Status: "prepared", ValidatedBy: []string{"test"}},
+			{ID: sdkID, Kind: "sdk", ArtifactID: "sdk", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"test"}},
+			{ID: "binary:kb-create@2.0.0:linux/amd64", Kind: "binary", ArtifactID: "kb-create", Version: "2.0.0", Requires: []CompatibilityRelation{{Label: platformID}, {Label: sdkID}}, Status: "prepared", ValidatedBy: []string{"test"}},
+		}},
+		Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+			Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}},
+			Binaries: []Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}}}},
+		SDKs: []Component{{ID: "sdk", Version: "2.0.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
 	}
-	return source
 }
 
 // case: S-214.9
