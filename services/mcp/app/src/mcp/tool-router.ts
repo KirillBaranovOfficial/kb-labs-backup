@@ -105,7 +105,6 @@ export async function callTool(
       ui: noopUI,
       platform: createPlatformServices(container),
       platformContainer: container,
-      socketPath: container.getSocketPath(),
       permissions: tool.permissions,
       quotas: tool.permissions?.quotas,
     }),

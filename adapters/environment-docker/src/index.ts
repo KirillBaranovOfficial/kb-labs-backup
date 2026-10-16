@@ -3,9 +3,12 @@
  * Docker CLI adapter implementing IEnvironmentProvider.
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { PassThrough } from 'node:stream';
+import { resolve, posix as posixPath } from 'node:path';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import { EnvironmentProvisioningError, EnvironmentTeardownError } from '@kb-labs/sdk/adapters';
 import type {
   IEnvironmentProvider,
   CreateEnvironmentRequest,
@@ -17,11 +20,14 @@ import type {
   EnvironmentLease,
   EnvironmentProviderCapabilities,
   EnvironmentStatus,
+  EnvironmentExecutionStream,
 } from '@kb-labs/sdk/adapters';
 
 export { manifest } from './manifest.js';
 
 const execFileAsync = promisify(execFile);
+const CONTAINER_TEARDOWN_TIMEOUT_MS = 5_000;
+const CONTAINER_TEARDOWN_POLL_MS = 100;
 
 interface WorkspaceContext {
   cwd?: string;
@@ -29,19 +35,23 @@ interface WorkspaceContext {
 
 export type DockerExec = (args: string[]) => Promise<string>;
 
-/**
- * Gateway coordination config for container runtime.
- * The adapter owns all transport-specific setup — callers know nothing about Gateway.
- */
-export interface GatewayConfig {
-  /** WebSocket URL the runtime-server connects to, e.g. ws://kb-gateway:4000 */
-  wsUrl: string;
-  /** JWT secret for signing per-container access tokens */
-  jwtSecret: string;
-  /** Internal secret for dispatch endpoint */
-  dispatchSecret: string;
-  /** Dispatch endpoint URL, e.g. http://localhost:4000/internal/dispatch */
-  dispatchUrl: string;
+interface AttachedContainer {
+  containerId: string;
+  process: ChildProcessWithoutNullStreams;
+  readable: PassThrough;
+  diagnostics: PassThrough;
+  completion: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  ready: Promise<void>;
+}
+
+class DockerRunExitedBeforeCreation extends Error {
+  constructor(
+    readonly code: number | null,
+    readonly signal: NodeJS.Signals | null,
+    readonly diagnostics: string,
+  ) {
+    super(`Docker run exited before creating a container (code ${code ?? 'null'}, signal ${signal ?? 'none'})`);
+  }
 }
 
 /**
@@ -50,7 +60,6 @@ export interface GatewayConfig {
 export interface DockerEnvironmentAdapterConfig {
   dockerBinary?: string;
   defaultImage?: string;
-  network?: string;
   autoRemove?: boolean;
   defaultTtlMs?: number;
   mountWorkspace?: boolean;
@@ -72,13 +81,6 @@ export interface DockerEnvironmentAdapterConfig {
    * where host.docker.internal is not automatically available.
    */
   extraHosts?: string[];
-  /**
-   * Gateway coordination config.
-   * When present, the adapter mints a JWT per container and injects
-   * GATEWAY_WS_URL, RUNTIME_HOST_ID, GATEWAY_TOKEN, GATEWAY_ALLOW_WS into env.
-   * Callers never see these details.
-   */
-  gateway?: GatewayConfig;
 }
 
 /**
@@ -87,7 +89,6 @@ export interface DockerEnvironmentAdapterConfig {
 export class DockerEnvironmentAdapter implements IEnvironmentProvider {
   private readonly dockerBinary: string;
   private readonly defaultImage: string;
-  private readonly network?: string;
   private readonly autoRemove: boolean;
   private readonly defaultTtlMs: number;
   private readonly mountWorkspace: boolean;
@@ -96,17 +97,15 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
   private readonly dockerExec: DockerExec;
   private readonly runtimeCommand?: string[];
   private readonly extraHosts: string[];
-  private readonly gateway?: GatewayConfig;
 
   // reserved environments pending start(): environmentId → reservation metadata
   private readonly reserved = new Map<string, { runId: string; ttlMs: number; createdAt: Date }>();
   // active environments: environmentId → Docker containerId (for getStatus/destroy lookup)
-  private readonly active = new Map<string, string>();
+  private readonly active = new Map<string, AttachedContainer>();
 
   constructor(private readonly config: DockerEnvironmentAdapterConfig = {}) {
     this.dockerBinary = config.dockerBinary ?? 'docker';
     this.defaultImage = config.defaultImage ?? 'node:20-alpine';
-    this.network = config.network;
     this.autoRemove = config.autoRemove ?? true;
     this.defaultTtlMs = config.defaultTtlMs ?? 60 * 60 * 1000;
     this.mountWorkspace = config.mountWorkspace ?? true;
@@ -115,7 +114,6 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
     this.dockerExec = config.execDocker ?? this.defaultExecDocker.bind(this);
     this.runtimeCommand = config.runtimeCommand;
     this.extraHosts = config.extraHosts ?? [];
-    this.gateway = config.gateway;
   }
 
   /**
@@ -135,7 +133,7 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
 
   /**
    * Phase 2: Start the container for a previously reserved environmentId.
-   * Injects all gateway coordination env vars (JWT, WS URL, etc.) internally.
+   * Keeps Docker's attached stdio streams available for execution control and platform RPC.
    */
   async start(environmentId: string, request: StartEnvironmentRequest): Promise<EnvironmentDescriptor> {
     const reservation = this.reserved.get(environmentId);
@@ -147,39 +145,32 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
     const { runId, ttlMs } = reservation;
     const image = request.image ?? this.defaultImage;
     const containerName = this.buildContainerName(runId);
-    const args = ['run', '-d'];
-
-    if (this.autoRemove) {
-      args.push('--rm');
-    }
+    const args = ['run', '-i', '--rm'];
 
     args.push('--name', containerName);
     args.push('--label', `kb.run_id=${runId}`);
     args.push('--label', `kb.environment_id=${environmentId}`);
 
-    if (this.network) {
-      args.push('--network', this.network);
-    }
+    args.push('--network', 'none');
 
     for (const host of this.extraHosts) {
       args.push('--add-host', host);
     }
 
-    // Adapter-owned env vars: gateway coordination
-    const namespaceId = (request.metadata?.namespaceId as string | undefined) ?? 'default';
-    const gatewayEnv = await this.buildGatewayEnv(environmentId, namespaceId);
-    for (const [key, value] of Object.entries(gatewayEnv)) {
+    for (const [key, value] of Object.entries(request.executionPolicy.environment)) {
       args.push('-e', `${key}=${value}`);
     }
-
-    // Caller-supplied extra env vars (merged after gateway env)
-    for (const [key, value] of Object.entries(request.env ?? {})) {
-      args.push('-e', `${key}=${value}`);
+    const workspacePath = request.workspacePath;
+    for (const mount of request.executionPolicy.mounts) {
+      const source = mount.path.startsWith('/')
+        ? mount.path
+        : resolve(workspacePath, mount.path);
+      const target = mount.path.startsWith('/')
+        ? mount.path
+        : posixPath.join(this.workspaceMountPath, mount.path);
+      args.push('--mount', `type=bind,source=${source},target=${target}${mount.access === 'read-only' ? ',readonly' : ''}`);
     }
-
-    const workspacePath = request.workspacePath ?? this.workspaceCwd;
-    if (workspacePath && this.mountWorkspace) {
-      args.push('-v', `${workspacePath}:${this.workspaceMountPath}`);
+    if (request.executionPolicy.mounts.some((mount) => mount.path === '.' || mount.path === './')) {
       args.push('-w', this.workspaceMountPath);
     }
 
@@ -190,10 +181,48 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
       args.push(...command);
     }
 
-    const containerId = (await this.execDocker(args)).trim();
+    try {
+      await this.execDocker(['info']);
+    } catch (error) {
+      throw new EnvironmentProvisioningError('daemon-unreachable', image, error);
+    }
 
-    // Register containerId for getStatus/destroy lookup by environmentId
-    this.active.set(environmentId, containerId);
+    try {
+      await this.execDocker(['image', 'inspect', image]);
+    } catch (inspectError) {
+      try {
+        await this.execDocker(['pull', image]);
+      } catch (error) {
+        throw new EnvironmentProvisioningError(
+          'image-unavailable',
+          image,
+          new AggregateError([inspectError, error], `Unable to inspect or pull container image ${image}`),
+        );
+      }
+    }
+
+    let attached: AttachedContainer;
+    try {
+      attached = await this.spawnContainer(args, containerName);
+    } catch (error) {
+      throw await this.classifyRunFailure(image, error);
+    }
+
+    const { containerId } = attached;
+    // Register immediately after the Docker client starts. If readiness fails
+    // or the caller aborts startup, the provisioning owner can still tear it down.
+    this.active.set(environmentId, attached);
+
+    try {
+      await attached.ready;
+    } catch (error) {
+      try {
+        await this.destroy(environmentId);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Container failed before becoming ready and teardown also failed');
+      }
+      throw await this.classifyRunFailure(image, error);
+    }
 
     const now = new Date();
     const lease = this.buildLease(now, ttlMs, runId);
@@ -234,9 +263,7 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
       args.push('--label', `kb.template_id=${request.templateId}`);
     }
 
-    if (this.network) {
-      args.push('--network', this.network);
-    }
+    args.push('--network', 'none');
 
     for (const host of this.extraHosts) {
       args.push('--add-host', host);
@@ -283,7 +310,7 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
   async getStatus(environmentId: string): Promise<EnvironmentStatusResult> {
     const now = new Date().toISOString();
     // Resolve logical environmentId → actual Docker container ID (from start())
-    const dockerRef = this.active.get(environmentId) ?? environmentId;
+    const dockerRef = this.active.get(environmentId)?.containerId ?? environmentId;
 
     try {
       const state = (await this.execDocker([
@@ -316,17 +343,62 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
     // Clean up any pending reservation
     this.reserved.delete(environmentId);
     // Resolve logical environmentId → actual Docker container ID (from start())
-    const dockerRef = this.active.get(environmentId) ?? environmentId;
-    this.active.delete(environmentId);
+    const active = this.active.get(environmentId);
+    const dockerRef = active?.containerId ?? environmentId;
 
+    // First let a cooperative runtime observe EOF, then ask the daemon to
+    // force-remove the container. Docker --rm can race this request, so the
+    // teardown result is the daemon-observed postcondition, not rm's exit code.
+    if (active && active.process.exitCode === null && active.process.signalCode === null) {
+      active.process.stdin.end();
+    }
+
+    let daemonFailure: unknown;
     try {
       await this.execDocker(['rm', '-f', dockerRef]);
     } catch (error) {
-      if (this.isMissingContainerError(error)) {
-        return;
-      }
-      throw error;
+      daemonFailure = error;
     }
+    const deadline = Date.now() + CONTAINER_TEARDOWN_TIMEOUT_MS;
+    const presenceFilter = active
+      ? ['--filter', `label=kb.environment_id=${environmentId}`]
+      : ['--filter', `id=${dockerRef}`];
+    let present = true;
+    while (Date.now() < deadline) {
+      try {
+        const containerIds = (await this.execDocker(['ps', '-a', '-q', ...presenceFilter])).trim();
+        present = containerIds.length > 0;
+        if (!present) { break; }
+      } catch (error) {
+        daemonFailure = error;
+      }
+      await new Promise<void>((resolvePoll) => setTimeout(resolvePoll, CONTAINER_TEARDOWN_POLL_MS));
+    }
+
+    if (present) {
+      if (active && active.process.exitCode === null && active.process.signalCode === null) {
+        active.process.kill('SIGKILL');
+        await active.completion;
+      }
+      const cause = daemonFailure ?? new Error(`Docker daemon still reports container ${dockerRef}`);
+      throw new EnvironmentTeardownError(dockerRef, cause);
+    }
+
+    if (active) { await active.completion; }
+    this.active.delete(environmentId);
+  }
+
+  getExecutionStream(environmentId: string): EnvironmentExecutionStream {
+    const active = this.active.get(environmentId);
+    if (!active) {
+      throw new Error(`No attached execution stream exists for environment ${environmentId}`);
+    }
+    return {
+      readable: active.readable,
+      writable: active.process.stdin,
+      diagnostics: active.diagnostics,
+      completion: active.completion,
+    };
   }
 
   async renewLease(environmentId: string, ttlMs: number): Promise<EnvironmentLease> {
@@ -347,33 +419,73 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
     };
   }
 
-  /**
-   * Build gateway coordination env vars for a container.
-   * Mints a short-lived JWT using the environmentId as hostId.
-   * Returns empty object when gateway is not configured.
-   */
-  private async buildGatewayEnv(environmentId: string, namespaceId: string): Promise<Record<string, string>> {
-    if (!this.gateway) {
-      return {};
-    }
-
-    const { signAccessToken } = await import('@kb-labs/gateway-auth');
-    const { token } = await signAccessToken(
-      { hostId: environmentId, namespaceId, type: 'machine_access' as const, tier: 'free' as const },
-      { secret: this.gateway.jwtSecret },
-    );
-
-    return {
-      GATEWAY_WS_URL: this.gateway.wsUrl,
-      RUNTIME_HOST_ID: environmentId,
-      GATEWAY_TOKEN: token,
-      // Allow ws:// on Docker bridge networks (trusted, orchestrated network)
-      GATEWAY_ALLOW_WS: '1',
-    };
-  }
-
   private async execDocker(args: string[]): Promise<string> {
     return this.dockerExec(args);
+  }
+
+  private async classifyRunFailure(image: string, error: unknown): Promise<EnvironmentProvisioningError> {
+    if (!(error instanceof DockerRunExitedBeforeCreation)) {
+      return new EnvironmentProvisioningError('daemon-error', image, error);
+    }
+    try {
+      await this.execDocker(['info']);
+    } catch (daemonError) {
+      return new EnvironmentProvisioningError(
+        'daemon-unreachable',
+        image,
+        new AggregateError([error, daemonError], error.diagnostics || error.message),
+      );
+    }
+    try {
+      await this.execDocker(['image', 'inspect', image]);
+    } catch (inspectError) {
+      try {
+        await this.execDocker(['pull', image]);
+      } catch (pullError) {
+        return new EnvironmentProvisioningError(
+          'image-unavailable',
+          image,
+          new AggregateError([error, inspectError, pullError], error.diagnostics || error.message),
+        );
+      }
+    }
+    return new EnvironmentProvisioningError('daemon-error', image, error);
+  }
+
+  private async spawnContainer(args: string[], containerId: string): Promise<AttachedContainer> {
+    const child = spawn(this.dockerBinary, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const completion = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
+      child.once('exit', (code, signal) => resolveExit({ code, signal }));
+    });
+    let diagnostics = '';
+    const captureDiagnostics = (chunk: Buffer) => { diagnostics += chunk.toString('utf8'); };
+    child.stderr.on('data', captureDiagnostics);
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      child.once('spawn', () => resolveSpawn());
+      child.once('error', rejectSpawn);
+    });
+    const readable = new PassThrough();
+    const diagnosticStream = new PassThrough();
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    const onReady = () => {
+      child.off('exit', onExit);
+      resolveReady();
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      child.stdout.off('data', onReady);
+      rejectReady(new DockerRunExitedBeforeCreation(code, signal, diagnostics));
+    };
+    child.stdout.once('data', onReady);
+    child.once('exit', onExit);
+    child.stdout.pipe(readable);
+    if (diagnostics.length > 0) { diagnosticStream.write(diagnostics); }
+    child.stderr.pipe(diagnosticStream);
+    return { containerId, process: child, readable, diagnostics: diagnosticStream, completion, ready };
   }
 
   private async defaultExecDocker(args: string[]): Promise<string> {

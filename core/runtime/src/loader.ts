@@ -31,11 +31,12 @@ import {
   getAdapterStatusRegistry,
   resetAdapterStatus,
 } from './adapter-status.js';
-import { ADAPTER_DEFAULTS, AdapterConfigError, AdapterUnavailableError, type AdapterSlot, type HostServiceEnvironment } from '@kb-labs/core-platform';
+import { ADAPTER_DEFAULTS, AdapterConfigError, AdapterUnavailableError, type AdapterSlot, type HostServiceEnvironment, type ReservedEnvironment } from '@kb-labs/core-platform';
 import { inmemoryFactories } from '@kb-labs/core-platform/inmemory';
 import { noopFactories } from '@kb-labs/core-platform/noop';
 import { WorkflowEngine } from './core/workflow-engine.js';
 import { getHostGatewayAddresses } from './host-gateway-address.js';
+import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
 
 const OPTIONAL_ADAPTER_SLOTS = new Set(['logPersistence', 'logRingBuffer']);
 
@@ -110,8 +111,6 @@ import type {
   VectorRecord,
   RawMiddlewareDecl,
 } from '@kb-labs/core-platform';
-import type { ExecutionRequest } from '@kb-labs/core-platform';
-
 import { ResourceBroker, InMemoryRateLimitBackend } from '@kb-labs/core-resource-broker';
 import type { RateLimitBackend, IResourceBroker } from '@kb-labs/core-resource-broker';
 
@@ -536,7 +535,7 @@ export async function initPlatform(
   } = options;
 
   // ✅ Idempotent: If already initialized, return existing singleton
-  // This prevents duplicate adapter instances across CLI and sandbox processes
+  // This prevents duplicate adapter instances across CLI and service startup.
   platform.logger.debug(`initPlatform isInitialized=${platform.isInitialized} pid=${process.pid}`);
 
   if (platform.isInitialized) {
@@ -546,16 +545,11 @@ export async function initPlatform(
 
   platform.logger.debug(`initPlatform initializing NEW platform pid=${process.pid}`);
   const { core = {}, execution = {} } = config;
-  // 🔍 Detect if running in child process (sandbox worker)
-  const isChildProcess = !!process.send; // Has IPC channel = forked child
   const adapterRoot = platformRoot ?? cwd;
   const installedPlatform = Boolean(platformRoot) || await fs.access(path.join(adapterRoot, '.kb', 'marketplace.lock'))
     .then(() => true)
     .catch(() => false);
-  const defaultedConfig = isChildProcess ? {
-    adapters: (config.adapters ?? {}) as Record<string, unknown>,
-    adapterOptions: config.adapterOptions ?? {},
-  } : await resolveInstalledAdapterDefaults({
+  const defaultedConfig = await resolveInstalledAdapterDefaults({
     adapters: (config.adapters ?? {}) as Record<string, unknown>,
     adapterOptions: config.adapterOptions ?? {},
   }, adapterRoot, cwd);
@@ -566,7 +560,6 @@ export async function initPlatform(
 
   await platform.emitLifecyclePhase('start', {
     cwd,
-    isChildProcess,
     metadata: {
       adapterKeys: Object.keys(adapters),
       hasExecutionConfig: Object.keys(execution).length > 0,
@@ -575,99 +568,9 @@ export async function initPlatform(
   });
 
   try {
-    if (isChildProcess) {
-    // ══════════════════════════════════════════════════════════════════════
-    // CHILD PROCESS (Sandbox Worker)
-    // ══════════════════════════════════════════════════════════════════════
-    // Create IPC proxy adapters that forward calls to parent process.
-    // This eliminates adapter duplication - only parent has real adapters.
+    // Load real adapters in this platform process.
 
-    platform.logger.debug('initPlatform child process detected - creating proxy adapters');
-
-    // Use Unix Socket transport by default (100-1000x faster than IPC for large messages)
-    const {
-      UnixSocketTransport,
-      VectorStoreProxy,
-      CacheProxy,
-      ConfigProxy,
-      LLMProxy,
-      EmbeddingsProxy,
-      StorageProxy,
-    } = await import('@kb-labs/core-ipc');
-
-    // Create single transport for all adapters
-    const transport = new UnixSocketTransport();
-    platform.logger.debug('initPlatform using Unix Socket transport');
-
-    // Create proxy adapters (replace real adapters with IPC proxies)
-    if (adapters.vectorStore) {
-      platform.setAdapter('vectorStore', new VectorStoreProxy(transport));
-      platform.logger.debug('initPlatform created VectorStoreProxy');
-    }
-
-    if (adapters.cache) {
-      platform.setAdapter('cache', new CacheProxy(transport));
-      platform.logger.debug('initPlatform created CacheProxy');
-    }
-
-    // Config adapter is ALWAYS created (not optional like other adapters)
-    platform.setAdapter('config', new ConfigProxy(transport));
-    platform.logger.debug('initPlatform created ConfigProxy');
-
-    // LLM proxy is ALWAYS created (parent may have real LLM even if not in child config)
-    platform.setAdapter('llm', new LLMProxy(transport));
-    platform.logger.debug('initPlatform created LLMProxy');
-
-    if (adapters.embeddings) {
-      const embeddingsProxy = new EmbeddingsProxy(transport);
-      await embeddingsProxy.getDimensions(); // Initialize dimensions before use
-      platform.setAdapter('embeddings', embeddingsProxy);
-      platform.logger.debug('initPlatform created EmbeddingsProxy');
-    }
-
-    if (adapters.storage) {
-      platform.setAdapter('storage', new StorageProxy(transport));
-      platform.logger.debug('initPlatform created StorageProxy');
-    }
-
-    // Fill remaining slots with InMemory/NoOp fallbacks and populate the
-    // adapter-status registry. Slots the parent already wired through a
-    // proxy stay untouched and are recorded as `mode: 'real'`; slots
-    // without a proxy fall back per `ADAPTER_DEFAULTS`.
-    fillAdapterFallbacksAndRecord(
-      platform,
-      adapters as Record<string, AdapterValue | undefined>,
-      installedPlatform && !isChildProcess,
-    );
-
-    // ⚠️ CRITICAL: Do NOT create ExecutionBackend in child process!
-    // Child processes ARE the workers - creating backend here would spawn infinite workers.
-    // ExecutionBackend is ONLY created in parent process.
-
-    // Core features are initialized normally (they don't duplicate resources)
-    const coreFeatures = initializeCoreFeatures(platform, core);
-    platform.initCoreFeatures(
-      coreFeatures.workflows,
-      coreFeatures.jobs,
-      coreFeatures.cron,
-      coreFeatures.resources
-    );
-
-    // Initialize ResourceBroker for queue and rate limiting
-    const resourceBroker = initializeResourceBroker(platform, core.resourceBroker);
-    platform.initResourceBroker(resourceBroker);
-    platform.logger.debug('initPlatform initialized ResourceBroker');
-
-    platform.logger.debug('initPlatform child process initialization complete');
-
-    } else {
-    // ══════════════════════════════════════════════════════════════════════
-    // PARENT PROCESS (CLI bin)
-    // ══════════════════════════════════════════════════════════════════════
-    // Load real adapters (Qdrant, Redis, OpenAI, etc.)
-    // Start IPC server to handle calls from child processes.
-
-    platform.logger.debug('initPlatform parent process detected - loading real adapters');
+    platform.logger.debug('initPlatform loading platform adapters');
 
     // Create analytics context for auto-enrichment (once per execution)
     const analyticsContext = await createAnalyticsContext(cwd);
@@ -1007,7 +910,7 @@ export async function initPlatform(
     fillAdapterFallbacksAndRecord(
       platform,
       adapters as Record<string, AdapterValue | undefined>,
-      installedPlatform && !isChildProcess,
+      installedPlatform,
       adapterLoadFailures,
     );
 
@@ -1016,23 +919,19 @@ export async function initPlatform(
     // CRITICAL: ExecutionBackend is REQUIRED - all execution goes through it
     // ══════════════════════════════════════════════════════════════════════
     try {
-      if (execution.mode === 'container' && execution.container) {
-        // ── Container mode: RoutingBackend with remote dispatch via Gateway ──
-        // Dynamic imports — pyramid rule: core-runtime (L4) cannot depend on gateway-* (L7) at compile-time.
-        const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory/construct');
-        const { GatewayDispatchTransport } = await import('@kb-labs/gateway-core');
-        const containerCfg = execution.container;
-        const { dispatchEndpoint } = getHostGatewayAddresses();
-
+      if (execution.mode === 'container') {
+        // ── Container mode: attached runtime stdio with host-served platform RPC ──
+        const { containerUnavailableError, requireAttachedEnvironmentProvider, ContainerProviderUnavailableError, createContainerExecutionSpec, createIsolatedExecutionBackend, StdioExecutionTransport } = await import('@kb-labs/plugin-execution-factory/construct');
         const strictIsolation = {
           buildTransport(ctx: { runtimeHostId: string; namespaceId: string }) {
-            return new GatewayDispatchTransport({
-              dispatchEndpoint,
-              internalSecret: containerCfg.gatewayInternalSecret,
-              runtimeHostId: ctx.runtimeHostId,
-              namespaceId: ctx.namespaceId,
-              retryOn503: { maxAttempts: 30, delayMs: 1000 },
-            });
+            const environmentProvider = platform.getAdapter<IEnvironmentProvider>('environment');
+            if (!environmentProvider) {
+              throw containerUnavailableError(new ContainerProviderUnavailableError('provider-missing'));
+            }
+            return new StdioExecutionTransport(
+              environmentProvider.getExecutionStream(ctx.runtimeHostId),
+              platform,
+            );
           },
           workspaceRootOnHost: cwd,
 
@@ -1040,6 +939,14 @@ export async function initPlatform(
             const namespace = request.target?.namespace
               ?? (request.context?.tenantId ? `tenant/${request.context.tenantId}` : 'default');
             const provisioningRunId = `exec-${randomUUID().slice(0, 12)}`;
+
+            const environmentProvider = platform.getAdapter<IEnvironmentProvider>('environment');
+            let attachedProvider: ReturnType<typeof requireAttachedEnvironmentProvider>;
+            try {
+              attachedProvider = requireAttachedEnvironmentProvider(environmentProvider);
+            } catch (error) {
+              throw containerUnavailableError(error);
+            }
 
             let createdWorkspaceId: string | undefined;
             let workspaceRootPath: string | undefined;
@@ -1062,37 +969,56 @@ export async function initPlatform(
               workspaceRootPath = workspace.rootPath;
             }
 
-            const environmentProvider = platform.getAdapter<IEnvironmentProvider>('environment');
-            if (!environmentProvider?.reserve || !environmentProvider?.start) {
-              throw new Error(
-                'mode=container requires an environment adapter with reserve()/start() support ' +
-                '(e.g. @kb-labs/adapters-environment-docker).'
-              );
-            }
-
-            const reservation = await environmentProvider.reserve({
-              namespace,
-              runId: provisioningRunId,
-              metadata: {
-                source: 'auto-provision',
-                executionId: request.executionId,
-              },
-            });
-
-            await environmentProvider.start(reservation.environmentId, {
-              workspacePath: workspaceRootPath ?? cwd,
-              metadata: {
-                source: 'auto-provision',
-                executionId: request.executionId,
-                namespaceId: namespace,
-              },
-            });
-
-            if (createdWorkspaceId && workspaceProvider?.attach) {
-              await workspaceProvider.attach({
-                workspaceId: createdWorkspaceId,
-                environmentId: reservation.environmentId,
+            let reservation: ReservedEnvironment | undefined;
+            try {
+              reservation = await attachedProvider.reserve({
+                namespace,
+                runId: provisioningRunId,
+                metadata: {
+                  source: 'auto-provision',
+                  executionId: request.executionId,
+                },
               });
+
+              await attachedProvider.start(reservation.environmentId, {
+                workspacePath: workspaceRootPath ?? cwd,
+                executionPolicy: createContainerExecutionSpec(request.descriptor.permissions, {
+                  environment: { ...process.env, ...request.env },
+                }),
+                metadata: {
+                  source: 'auto-provision',
+                  executionId: request.executionId,
+                  namespaceId: namespace,
+                },
+              });
+              if (createdWorkspaceId && workspaceProvider?.attach) {
+                await workspaceProvider.attach({
+                  workspaceId: createdWorkspaceId,
+                  environmentId: reservation.environmentId,
+                });
+              }
+            } catch (error) {
+              if (createdWorkspaceId && workspaceProvider) {
+                try {
+                  await workspaceProvider.release(createdWorkspaceId, reservation?.environmentId);
+                } catch (cleanupError) {
+                  platform.logger.warn('Failed to release workspace after container provisioning failure', {
+                    workspaceId: createdWorkspaceId,
+                    error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+                  });
+                }
+              }
+              if (reservation && environmentProvider) {
+                try {
+                  await environmentProvider.destroy(reservation.environmentId, 'auto-provision.failed');
+                } catch (cleanupError) {
+                  platform.logger.warn('Failed to destroy environment after container provisioning failure', {
+                    environmentId: reservation.environmentId,
+                    error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+                  });
+                }
+              }
+              throw containerUnavailableError(error);
             }
 
             platform.logger.debug('Auto-provisioned execution environment', {
@@ -1112,7 +1038,7 @@ export async function initPlatform(
                   } catch { /* best-effort */ }
                 }
                 try {
-                  await environmentProvider.destroy(reservation.environmentId, 'auto-provision.done');
+                  await attachedProvider.destroy(reservation.environmentId, 'auto-provision.done');
                 } catch { /* best-effort */ }
               },
             };
@@ -1129,7 +1055,7 @@ export async function initPlatform(
 
         platform.logger.info('ExecutionBackend initialized: container mode via Gateway', {
           mode: backend.executionMode,
-          dispatchEndpoint,
+          controlChannel: 'stdio',
         });
       } else if (execution.workspaceAgent?.enabled) {
         // ── Standard mode + Workspace Agent routing ──
@@ -1166,7 +1092,7 @@ export async function initPlatform(
           fallbackPolicy: agentCfg.fallback ?? 'local' as const,
         };
 
-        const localExecutionMode = execution.mode === 'container' ? 'auto' : execution.mode ?? 'auto';
+        const localExecutionMode = execution.mode ?? 'auto';
         const backend = createIsolatedExecutionBackend({
           localBackend: {
             platform,
@@ -1194,7 +1120,7 @@ export async function initPlatform(
         // ── Standard mode: in-process | worker-pool ──
         const { createExecutionBackend } = await import('@kb-labs/plugin-execution-factory/construct');
 
-        const localExecutionMode = execution.mode === 'container' ? 'auto' : execution.mode ?? 'auto';
+        const localExecutionMode = execution.mode ?? 'auto';
         const executionBackend = createExecutionBackend({
           platform: platform,
           mode: localExecutionMode,
@@ -1426,25 +1352,11 @@ export async function initPlatform(
       });
     }
 
-    // Start Unix Socket server to handle adapter calls from children (critical for V3 plugins)
-    try {
-      const { createUnixSocketServer } = await import('./ipc/unix-socket-server.js');
-      const socketServer = await createUnixSocketServer(platform);
-      platform.initSocketServer(socketServer);
-      platform.logger.debug('initPlatform started Unix Socket server for child processes');
-    } catch (error) {
-      platform.logger.warn('Failed to start UnixSocketServer, V3 plugin execution will be unavailable', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-      platform.logger.debug('initPlatform parent process initialization complete');
-    }
+    platform.logger.debug('initPlatform platform initialization complete');
 
     await platform.emitLifecyclePhase('ready', {
       cwd,
-      isChildProcess,
-      metadata: {
+        metadata: {
         adapterKeys: platform.listAdapters(),
         durationMs: Date.now() - initStartedAt,
         pid: process.pid,
@@ -1455,8 +1367,7 @@ export async function initPlatform(
   } catch (error) {
     await platform.emitLifecycleError(error, 'start', {
       cwd,
-      isChildProcess,
-      metadata: {
+        metadata: {
         adapterKeys: Object.keys(adapters),
         durationMs: Date.now() - initStartedAt,
         pid: process.pid,

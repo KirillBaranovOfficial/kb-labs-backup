@@ -23,12 +23,9 @@
  * @see ADR-0053: Delivery Semantics
  */
 
-import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import type { CapabilityCall } from '@kb-labs/host-agent-contracts';
 import type { GatewayTransport } from '@kb-labs/host-agent-core';
-import { createProxyPlatform, UnixSocketServer, type ITransport, type PlatformContainer } from '@kb-labs/core-runtime';
+import { createProxyPlatform, type ITransport, type PlatformContainer } from '@kb-labs/core-runtime';
 import { runInProcess, runInSubprocess } from '@kb-labs/plugin-runtime';
 import { noopUI } from '@kb-labs/plugin-contracts';
 import type { PluginContextDescriptor } from '@kb-labs/plugin-contracts';
@@ -207,13 +204,9 @@ export class ExecutionHandler {
    * Subprocess execution (balanced mode) — sandboxed, separate process.
    *
    * Flow:
-   *   1. Start UnixSocketServer with proxyPlatform as backend
-   *   2. Fork subprocess via runInSubprocess()
-   *   3. Subprocess connects to Unix socket → adapter calls proxied:
-   *      subprocess → UnixSocket → UnixSocketServer(proxyPlatform) → GatewayTransport → WS → Platform
-   *   4. Subprocess applies sandbox patches (harden.ts)
-   *   5. Result returned via IPC
-   *   6. Cleanup Unix socket server
+   *   1. runInSubprocess starts the shared framed stdio channel
+   *   2. Platform RPC frames dispatch through proxyPlatform → GatewayTransport → WS → Platform
+   *   3. Subprocess applies sandbox patches and returns its result over the same stream
    */
   private async executeInSubprocess(
     resolved: { pluginRoot: string; handlerPath: string },
@@ -223,27 +216,16 @@ export class ExecutionHandler {
     timeoutMs: number,
     signal: AbortSignal,
   ): Promise<unknown> {
-    // Unique socket path per execution to avoid collisions
-    const socketPath = join(tmpdir(), `kb-ws-agent-${randomUUID()}.sock`);
-
-    // UnixSocketServer bridges subprocess IPC → proxyPlatform → GatewayTransport → Platform
-    const socketServer = new UnixSocketServer(proxyPlatform, { socketPath });
-    await socketServer.start();
-
-    try {
-      const result = await runInSubprocess({
-        descriptor,
-        socketPath,
-        handlerPath: resolved.handlerPath,
-        input,
-        timeoutMs,
-        signal,
-        cwd: resolved.pluginRoot,
-      });
-      return result.data;
-    } finally {
-      await socketServer.close();
-    }
+    const result = await runInSubprocess({
+      descriptor,
+      platform: proxyPlatform,
+      handlerPath: resolved.handlerPath,
+      input,
+      timeoutMs,
+      signal,
+      cwd: resolved.pluginRoot,
+    });
+    return result.data;
   }
 
   /** Remove expired journal entries */

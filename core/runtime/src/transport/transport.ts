@@ -1,20 +1,13 @@
 /**
  * @module @kb-labs/core-runtime/transport
- * Abstract transport layer for cross-process adapter communication.
+ * Abstract transport layer for host-owned platform proxy adapters.
  *
- * Provides a transport-agnostic interface for sending adapter calls
- * between parent and child processes. Implementations can use:
- * - IPC (process.send/process.on('message'))
- * - HTTP REST API
- * - Docker exec
- * - gRPC
- * - WebSockets
+ * Provides a transport-agnostic interface for sending adapter calls. The
+ * transport framing and child control channel are owned by @kb-labs/core-ipc.
  *
  * @example
  * ```typescript
- * import { ITransport, IPCTransport } from '@kb-labs/core-runtime/transport';
- *
- * const transport: ITransport = new IPCTransport();
+ * import type { ITransport } from '@kb-labs/core-runtime/transport';
  * const response = await transport.send({
  *   type: 'adapter:call',
  *   requestId: 'uuid-123',

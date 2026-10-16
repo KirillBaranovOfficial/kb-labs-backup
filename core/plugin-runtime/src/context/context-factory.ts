@@ -73,6 +73,9 @@ export interface CreateContextOptions {
   /** Environment values explicitly supplied for this execution. */
   environment?: Record<string, string | undefined>;
 
+  /** Enforce only the manifest's filesystem patterns, with no local defaults. */
+  strictFilesystemPermissions?: boolean;
+
   /**
    * Resolved adapter middlewares from loaded adapter manifests.
    * Applied in slot/priority order before system governance.
@@ -170,6 +173,7 @@ export function createPluginContextV3<TConfig = unknown>(
     cwd,
     outdir,
     environment: options.environment,
+    strictFilesystemPermissions: options.strictFilesystemPermissions,
   });
 
   // 5. Apply adapter middlewares + permission governance to platform services.

@@ -13,24 +13,7 @@
 
 import type { ChildProcess } from 'node:child_process';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
-import type { AdapterCall, AdapterResponse, SerializableError } from '@kb-labs/core-platform/serializable';
-import {
-  isAdapterCall,
-  isEventBusSubscribe,
-  isEventBusUnsubscribe,
-  serialize,
-  deserialize,
-} from '@kb-labs/core-platform/serializable';
-import { resolveIPCAdapter } from './adapter-route.js';
-
-/**
- * Serialize an Error (or any value) to SerializableError for IPC response.
- * `serialize` always returns `SerializableError` when given an `Error` instance.
- * This helper makes the narrowing explicit without `as any`.
- */
-function serializeError(error: unknown): SerializableError {
-  return serialize(error) as SerializableError;
-}
+import { PlatformRPCDispatcher } from './platform-rpc-dispatcher.js';
 
 /**
  * ChildIPCServer — parent-side adapter call handler for a single child process.
@@ -50,8 +33,7 @@ export class ChildIPCServer {
   private messageHandler: (msg: unknown) => void;
   private exitHandler: () => void;
   private started = false;
-  /** Active EventBus subscriptions: subscriptionId → unsubscribe fn */
-  private eventBusSubs = new Map<string, () => void>();
+  private readonly dispatcher: PlatformRPCDispatcher;
 
   constructor(
     private readonly platform: IPlatformAdapters,
@@ -59,6 +41,9 @@ export class ChildIPCServer {
   ) {
     this.messageHandler = this.handleMessage.bind(this);
     this.exitHandler = () => this.stop();
+    this.dispatcher = new PlatformRPCDispatcher(platform, (message) => {
+      if (this.child.connected) { this.child.send(message); }
+    });
   }
 
   /**
@@ -82,8 +67,7 @@ export class ChildIPCServer {
     this.child.off('exit', this.exitHandler);
     this.started = false;
 
-    for (const unsub of this.eventBusSubs.values()) { unsub(); }
-    this.eventBusSubs.clear();
+    this.dispatcher.close();
   }
 
   /**
@@ -91,102 +75,8 @@ export class ChildIPCServer {
    * Routes adapter:call, eventbus:subscribe, eventbus:unsubscribe.
    * WorkerMessages (execute, result, etc.) pass through untouched.
    */
-  private async handleMessage(msg: unknown): Promise<void> {
-    if (isEventBusSubscribe(msg)) {
-      if (!this.platform.eventBus) { return; }
-      const { subscriptionId, topic } = msg;
-      const unsub = this.platform.eventBus.subscribe(topic, async (payload) => {
-        if (this.child.connected) {
-          this.child.send({ type: 'eventbus:push', subscriptionId, topic, payload: serialize(payload) });
-        }
-      });
-      this.eventBusSubs.set(subscriptionId, unsub);
-      return;
-    }
-
-    if (isEventBusUnsubscribe(msg)) {
-      const unsub = this.eventBusSubs.get(msg.subscriptionId);
-      if (unsub) {
-        unsub();
-        this.eventBusSubs.delete(msg.subscriptionId);
-      }
-      return;
-    }
-
-    if (!isAdapterCall(msg)) {return;}
-
-    // Layer 2: permission check (stateless — reads from call context)
-    const permissionError = this.checkPermission(msg);
-    if (permissionError) {
-      this.sendResponse({
-        type: 'adapter:response',
-        requestId: msg.requestId,
-        error: serializeError(permissionError),
-      });
-      return;
-    }
-
-    try {
-      const adapter = resolveIPCAdapter(this.platform, msg.adapter);
-      const method = (adapter as Record<string, unknown>)[msg.method];
-
-      if (typeof method !== 'function') {
-        throw new Error(
-          `Method '${msg.method}' not found on adapter '${msg.adapter}'`
-        );
-      }
-
-      const args = msg.args.map((arg) => deserialize(arg));
-      const result = await method.apply(adapter, args);
-
-      this.sendResponse({
-        type: 'adapter:response',
-        requestId: msg.requestId,
-        result: serialize(result),
-      });
-    } catch (error) {
-      this.sendResponse({
-        type: 'adapter:response',
-        requestId: msg.requestId,
-        error: serializeError(error),
-      });
-    }
-  }
-
-  /**
-   * Layer 2 permission check.
-   * Reads permissions from call.context.permissions (stateless).
-   * Returns Error if denied, undefined if allowed.
-   */
-  private checkPermission(call: AdapterCall): Error | undefined {
-    const permissions = call.context?.permissions;
-
-    // No permissions context = allow (backward compat with v1 protocol)
-    if (!permissions) {return undefined;}
-
-    const allowedAdapters = permissions.adapters;
-
-    // No adapter restrictions = allow all
-    if (!allowedAdapters) {return undefined;}
-
-    // Check if adapter is in allowed list
-    if (!allowedAdapters.includes(call.adapter)) {
-      return new Error(
-        `Permission denied: adapter '${call.adapter}' not allowed. ` +
-        `Allowed: ${allowedAdapters.join(', ')}`
-      );
-    }
-
-    return undefined;
-  }
-
-  /**
-   * Send response back to child process.
-   */
-  private sendResponse(response: AdapterResponse): void {
-    if (this.child.connected) {
-      this.child.send(response);
-    }
+  private handleMessage(msg: unknown): void {
+    void this.dispatcher.dispatch(msg);
   }
 
   isStarted(): boolean {

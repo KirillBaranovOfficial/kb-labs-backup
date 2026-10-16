@@ -39,10 +39,6 @@ export const manifest: AdapterManifest = {
       default: 'node:20-alpine',
       description: 'Default image used for created environments',
     },
-    network: {
-      type: 'string',
-      description: 'Optional Docker network for created containers',
-    },
     autoRemove: {
       type: 'boolean',
       default: true,

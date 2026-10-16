@@ -22,24 +22,23 @@
  * ## Architecture
  *
  * Parent Process:
- * 1. Creates Unix socket server for platform API
- * 2. Forks child process with socket path
- * 3. Waits for IPC messages (ready, result, error)
- * 4. Cleans up socket after execution
+ * 1. Spawns the bootstrap with piped stdin, stdout, and stderr
+ * 2. Sends execution and platform requests over one framed stdio channel
+ * 3. Receives result, error, platform messages, and log frames
+ * 4. Closes stdin so the child exits
  *
  * Child Process:
- * 1. Connects to Unix socket
- * 2. Receives execution request via IPC
- * 3. Executes handler with platform proxy
- * 4. Sends result back via IPC
- * 5. Exits
+ * 1. Reads execution and platform frames from stdin
+ * 2. Executes the handler with a host-served platform proxy
+ * 3. Writes result, error, RPC, and log frames to stdout
+ * 4. Exits when the host closes stdin
  *
  * ## runInSubprocess Contract (v5)
  *
  * This backend delegates to `runInSubprocess()` from @kb-labs/plugin-runtime.
  * The contract is:
  *
- * - Input: descriptor, socketPath, handlerPath, input, timeoutMs, signal
+ * - Input: descriptor, platform, handlerPath, input, timeoutMs, signal
  * - Output: RunResult<T> { data: T, meta: ExecutionMeta }
  * - Throws: PluginError on handler failure, TimeoutError on timeout
  *
@@ -49,9 +48,8 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { randomBytes } from 'node:crypto';
-import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import { logDiagnosticEvent } from '@kb-labs/core-platform';
+import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import type {
   RawExecutionBackend,
   ExecutionRequest,
@@ -64,7 +62,6 @@ import type {
 import type { PlatformServices, UIFacade } from '@kb-labs/plugin-contracts';
 import { noopUI } from '@kb-labs/plugin-contracts';
 import type { ISubprocessRunner } from '@kb-labs/core-platform';
-import type { UnixSocketServerConfig } from '@kb-labs/core-ipc';
 import { localWorkspaceManager } from '../workspace/local.js';
 import type { WorkspaceLease } from '../workspace/types.js';
 import { normalizeExecutionFailure } from '../utils.js';
@@ -73,103 +70,6 @@ import {
   AbortError,
   HandlerNotFoundError,
 } from '../errors.js';
-
-/**
- * IPC server interface for subprocess communication.
- * Abstracts Unix sockets (Unix/macOS/Linux) and process IPC (Windows).
- */
-export interface IPCServer {
-  /** Start the server and begin listening */
-  start(): Promise<void>;
-
-  /** Stop the server and cleanup resources */
-  close(): Promise<void>;
-
-  /** Get connection info for child process (socket path or 'ipc') */
-  getConnectionInfo(): string;
-
-  /** Get auth token for child process platform calls */
-  getAuthToken(): string;
-}
-
-/**
- * Factory function to create IPC server.
- * Allows platform-specific server creation (Unix sockets vs process IPC).
- */
-export type IPCServerFactory = (platform: PlatformServices, executionId: string) => Promise<IPCServer>;
-
-/**
- * Ensure platform is a PlatformContainer.
- * If it's just PlatformServices, wrap it.
- */
-function ensurePlatformContainer(platform: PlatformServices): IPlatformAdapters {
-  return platform as unknown as IPlatformAdapters;
-}
-
-/**
- * Wrap UnixSocketServer to match IPCServer interface.
- */
-class UnixSocketIPCServer implements IPCServer {
-  private socketPath: string;
-  private authToken: string;
-  private server: { start(): Promise<void>; close(): Promise<void> };
-
-  constructor(
-    server: { start(): Promise<void>; close(): Promise<void> },
-    socketPath: string,
-    authToken: string
-  ) {
-    this.server = server;
-    this.socketPath = socketPath;
-    this.authToken = authToken;
-  }
-
-  async start(): Promise<void> {
-    await this.server.start();
-  }
-
-  async close(): Promise<void> {
-    await this.server.close();
-  }
-
-  getConnectionInfo(): string {
-    return this.socketPath;
-  }
-
-  getAuthToken(): string {
-    return this.authToken;
-  }
-}
-
-/**
- * Create default IPC server factory based on platform.
- * - Unix/Linux/macOS: Unix socket server (faster, ~100x for large messages)
- * - Windows: Process IPC server (process.send/on)
- */
-function createDefaultIPCServerFactory(): IPCServerFactory {
-  return async (platform: PlatformServices, executionId: string): Promise<IPCServer> => {
-    // Platform needs to be PlatformContainer for servers
-    const platformContainer = ensurePlatformContainer(platform);
-
-    if (process.platform === 'win32') {
-      // Cross-platform: Unix domain socket on Linux/macOS, named pipe on Windows.
-      // Node.js net API handles both transparently via createSocketPath().
-      const { UnixSocketServer, createSocketPath } = await import('@kb-labs/core-ipc');
-      const socketPath = createSocketPath(`subprocess-${executionId}`);
-      const authToken = randomBytes(32).toString('hex');
-      const serverConfig: UnixSocketServerConfig = { socketPath, authToken };
-      const server = new UnixSocketServer(platformContainer, serverConfig);
-      return new UnixSocketIPCServer(server, socketPath, authToken);
-    } else {
-      const { UnixSocketServer, createSocketPath } = await import('@kb-labs/core-ipc');
-      const socketPath = createSocketPath(`subprocess-${executionId}`);
-      const authToken = randomBytes(32).toString('hex');
-      const serverConfig: UnixSocketServerConfig = { socketPath, authToken };
-      const server = new UnixSocketServer(platformContainer, serverConfig);
-      return new UnixSocketIPCServer(server, socketPath, authToken);
-    }
-  };
-}
 
 /**
  * SubprocessBackend options.
@@ -197,12 +97,6 @@ export interface SubprocessBackendOptions {
    */
   defaultTimeoutMs?: number;
 
-  /**
-   * IPC server factory for creating platform-specific servers.
-   * Default: Unix socket server (Unix/macOS/Linux compatible).
-   * For Windows: use process IPC factory.
-   */
-  ipcServerFactory?: IPCServerFactory;
 }
 
 /**
@@ -211,7 +105,7 @@ export interface SubprocessBackendOptions {
  * Features:
  * - Process isolation (crashes don't affect main process)
  * - Simple lifecycle (one subprocess per execution)
- * - Unix socket for platform API communication
+ * - Framed stdio for execution control and platform API communication
  * - Timeout support with SIGKILL
  * - Abort signal support
  * - No pool overhead
@@ -234,17 +128,13 @@ export class SubprocessBackend implements RawExecutionBackend {
   private readonly runner: ISubprocessRunner;
   private readonly uiProvider: (hostType: HostType) => UIFacade;
   private readonly defaultTimeoutMs: number;
-  private readonly ipcServerFactory: IPCServerFactory;
-
-  // Active IPC servers (one per execution)
-  private activeServers = new Map<string, IPCServer>();
+  private activeSubprocesses = 0;
 
   constructor(options: SubprocessBackendOptions) {
     this.platform = options.platform;
     this.runner = options.runner;
     this.uiProvider = options.uiProvider ?? (() => noopUI);
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
-    this.ipcServerFactory = options.ipcServerFactory ?? createDefaultIPCServerFactory();
   }
 
   // eslint-disable-next-line sonarjs/cognitive-complexity
@@ -254,7 +144,7 @@ export class SubprocessBackend implements RawExecutionBackend {
   ): Promise<ExecutionResult> {
     const start = performance.now();
     let lease: WorkspaceLease | undefined;
-    let ipcServer: IPCServer | undefined;
+    let subprocessStarted = false;
     let resolvedExecutionId = request.executionId;
     let resolvedTarget = request.target;
 
@@ -307,48 +197,29 @@ export class SubprocessBackend implements RawExecutionBackend {
         throw new HandlerNotFoundError(handlerPath);
       }
 
-      // 4. Create IPC server using factory (platform-specific)
-      ipcServer = await this.ipcServerFactory(this.platform, requestToExecute.executionId);
-      await ipcServer.start();
-
-      // Track active server
-      this.activeServers.set(requestToExecute.executionId, ipcServer);
-
-      // 5. Get connection info for subprocess
-      const socketPath = ipcServer.getConnectionInfo();
-      const platformAuthToken = ipcServer.getAuthToken();
-
-      // 6. Get timeout (from request or default)
+      // 4. Get timeout (from request or default)
       const timeoutMs = requestToExecute.timeoutMs ?? this.defaultTimeoutMs;
 
       // 7. Execute via subprocess runner (dependency injection)
       // NOTE: UI is not passed to subprocess - subprocess uses platform proxy
       // UI would need to be serialized and proxied, which is complex
       // For now, subprocess handlers use noopUI or log via platform.logger
-      const previousToken = process.env.KB_PLATFORM_SOCKET_TOKEN;
-      const previousExecutionId = process.env.KB_EXECUTION_ID;
-      const previousTenantId = process.env.KB_TENANT_ID;
-      const previousTraceId = process.env.KB_TRACE_ID;
-
-      process.env.KB_PLATFORM_SOCKET_TOKEN = platformAuthToken;
-      process.env.KB_EXECUTION_ID = requestToExecute.executionId;
-      if (requestToExecute.context?.tenantId) {
-        process.env.KB_TENANT_ID = requestToExecute.context.tenantId;
-      }
-      if (requestToExecute.context?.traceId) {
-        process.env.KB_TRACE_ID = requestToExecute.context.traceId;
-      }
-
       let runResult;
       try {
+        this.activeSubprocesses++;
+        subprocessStarted = true;
         runResult = await this.runner.runInSubprocess({
           descriptor: requestToExecute.descriptor,
-          platformSocketPath: socketPath,
-          platformAuthToken,
+          platform: this.platform as unknown as IPlatformAdapters,
           handlerPath,
           exportName: requestToExecute.exportName,
           input: requestToExecute.input,
-          environment: requestToExecute.env,
+          environment: {
+            ...requestToExecute.env,
+            KB_EXECUTION_ID: requestToExecute.executionId,
+            KB_TENANT_ID: requestToExecute.context?.tenantId ?? requestToExecute.descriptor.tenantId,
+            KB_TRACE_ID: requestToExecute.context?.traceId,
+          },
           timeoutMs,
           signal: options?.signal,
           cwd: lease.cwd,
@@ -356,26 +227,7 @@ export class SubprocessBackend implements RawExecutionBackend {
           onLog: options?.onLog,
         });
       } finally {
-        if (previousToken === undefined) {
-          delete process.env.KB_PLATFORM_SOCKET_TOKEN;
-        } else {
-          process.env.KB_PLATFORM_SOCKET_TOKEN = previousToken;
-        }
-        if (previousExecutionId === undefined) {
-          delete process.env.KB_EXECUTION_ID;
-        } else {
-          process.env.KB_EXECUTION_ID = previousExecutionId;
-        }
-        if (previousTenantId === undefined) {
-          delete process.env.KB_TENANT_ID;
-        } else {
-          process.env.KB_TENANT_ID = previousTenantId;
-        }
-        if (previousTraceId === undefined) {
-          delete process.env.KB_TRACE_ID;
-        } else {
-          process.env.KB_TRACE_ID = previousTraceId;
-        }
+        if (subprocessStarted) { this.activeSubprocesses--; }
       }
 
       // 7. Success - handler completed without throwing
@@ -409,21 +261,7 @@ export class SubprocessBackend implements RawExecutionBackend {
       };
     } finally {
       // CRITICAL: Always cleanup
-      // 1. Stop and remove IPC server
-      if (ipcServer) {
-        try {
-          await ipcServer.close();
-          this.activeServers.delete(resolvedExecutionId);
-        } catch (cleanupError) {
-          // Log but don't throw - already handling main error
-          this.platform.logger.warn('Failed to close IPC server', {
-            executionId: resolvedExecutionId,
-            error: cleanupError,
-          });
-        }
-      }
-
-      // 2. Release workspace
+      // 1. Release workspace
       if (lease) {
         await localWorkspaceManager.release(lease).catch(() => {
           // Swallow release errors - already handling main error
@@ -468,7 +306,7 @@ export class SubprocessBackend implements RawExecutionBackend {
       backend: 'subprocess',
       details: {
         uptimeMs: Date.now() - this.startTime,
-        activeSubprocesses: this.activeServers.size,
+        activeSubprocesses: this.activeSubprocesses,
       },
     };
   }
@@ -478,14 +316,10 @@ export class SubprocessBackend implements RawExecutionBackend {
   }
 
   async shutdown(): Promise<void> {
-    // Stop all active socket servers
-    const shutdownPromises = Array.from(this.activeServers.values()).map(
-      server => server.close().catch(() => {
-        // Swallow errors during shutdown
-      })
-    );
-
-    await Promise.all(shutdownPromises);
-    this.activeServers.clear();
+    if (this.activeSubprocesses > 0) {
+      this.platform.logger.warn('Subprocess backend shutdown while executions are active', {
+        activeSubprocesses: this.activeSubprocesses,
+      });
+    }
   }
 }

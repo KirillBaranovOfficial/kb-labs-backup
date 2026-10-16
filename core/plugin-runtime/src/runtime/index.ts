@@ -16,16 +16,17 @@ export interface CreateRuntimeAPIOptions {
   cwd: string;
   outdir?: string;
   environment?: Record<string, string | undefined>;
+  strictFilesystemPermissions?: boolean;
 }
 
 /**
  * Create the complete RuntimeAPI with all shims
  */
 export function createRuntimeAPI(options: CreateRuntimeAPIOptions): RuntimeAPI {
-  const { permissions, cwd, outdir, environment } = options;
+  const { permissions, cwd, outdir, environment, strictFilesystemPermissions } = options;
 
   return {
-    fs: createFSShim({ permissions, cwd, outdir }),
+    fs: createFSShim({ permissions, cwd, outdir, strictPermissions: strictFilesystemPermissions }),
     fetch: createFetchShim({ permissions }),
     env: createEnvShim({ permissions, environment }),
   };

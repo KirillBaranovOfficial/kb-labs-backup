@@ -140,7 +140,6 @@ function registerLifecycleLogging(
         message: "Platform lifecycle start",
         fields: {
           cwd: context.cwd,
-          isChildProcess: context.isChildProcess,
         },
       });
     },

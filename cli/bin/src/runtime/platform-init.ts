@@ -51,7 +51,6 @@ function ensureLifecycleHooksRegistered(): void {
       lifecycleLogger().debug("Platform lifecycle: start", {
         app: "cli",
         cwd: ctx.cwd,
-        isChildProcess: ctx.isChildProcess,
       });
     },
     onReady: (ctx: PlatformLifecycleContext) => {
