@@ -1836,6 +1836,7 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 		t.Helper()
 		base := []string{"run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err")}
 		command := exec.Command(runner, append(base, args...)...)
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := command.Start(); err != nil {
 			t.Fatal(err)
 		}
@@ -1843,10 +1844,14 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 	}
 	holderPID := filepath.Join(state, "holder.pid")
 	holder := exec.Command(runner, append([]string{"gate", "hold", "maintenance", "--tag", "holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "holder.out"), "--stderr", filepath.Join(state, "holder.err"), "--"}, "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", holderPID)...)
+	holder.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := holder.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		if err := killTestProcessGroup(holder); err != nil {
+			t.Logf("stop holder command child: %v", err)
+		}
 		if holder.Process != nil {
 			_ = holder.Process.Kill()
 			_ = holder.Wait()
@@ -1859,6 +1864,9 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 	waiterPID := filepath.Join(state, "waiter.pid")
 	waiter := start("waiter", "--wait-gate", "maintenance", "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", waiterPID)
 	t.Cleanup(func() {
+		if err := killTestProcessGroup(waiter); err != nil {
+			t.Logf("stop waiter command child: %v", err)
+		}
 		if waiter.Process != nil {
 			_ = waiter.Process.Kill()
 			_ = waiter.Wait()
@@ -2300,6 +2308,40 @@ func stopSlotProcess(t *testing.T, pidFile string) {
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		t.Fatalf("release slot by terminating process %d: %v", pid, err)
 	}
+}
+
+func killTestProcessGroup(command *exec.Cmd) error {
+	if command == nil || command.Process == nil {
+		return nil
+	}
+	if err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("kill process group for %d: %w", command.Process.Pid, err)
+	}
+	return nil
+}
+
+func TestKillTestProcessGroupStopsChild(t *testing.T) {
+	child := exec.Command("/bin/sh", "-c", "exec /bin/sleep 30")
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	t.Cleanup(func() {
+		if !waited {
+			_ = killTestProcessGroup(child)
+			_ = child.Process.Kill()
+			_ = child.Wait()
+		}
+	})
+	if err := killTestProcessGroup(child); err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Wait(); err == nil {
+		waited = true
+		t.Fatal("child survived process-group cleanup")
+	}
+	waited = true
 }
 
 func waitFile(t *testing.T, path string, timeout time.Duration) ([]byte, error) {

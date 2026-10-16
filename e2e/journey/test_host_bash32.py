@@ -25,7 +25,7 @@ class HostBash32Tests(unittest.TestCase):
             repo = sandbox / "repo"
             journey = repo / "e2e/journey"
             journey.mkdir(parents=True)
-            for name in ("run.sh", "teardown-compose.sh", "storage_has_packages.sh"):
+            for name in ("run.sh", "candidate-services.sh", "teardown-compose.sh", "storage_has_packages.sh"):
                 shutil.copy2(JOURNEY / name, journey / name)
 
             bin_dir = sandbox / "bin"
@@ -60,7 +60,8 @@ class HostBash32Tests(unittest.TestCase):
             docker_calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
             ps_calls = [call for call in docker_calls if "ps" in call]
             self.assertEqual(len(ps_calls), 2, f"expected empty monitor and teardown listings: {docker_calls}")
-            self.assertIn(["wait", ""], docker_calls, f"publisher wait did not use the empty id: {docker_calls}")
+            self.assertIn(["wait", "publisher-container-id"], docker_calls, f"publisher wait did not use the created id: {docker_calls}")
+            self.assertIn(["rm", "-f", "publisher-container-id"], docker_calls, f"publisher container cleanup did not use the created id: {docker_calls}")
             self.assertTrue(
                 any("down" in call and "--volumes" in call and "--remove-orphans" in call for call in docker_calls),
                 f"Compose teardown was not called: {docker_calls}",
@@ -74,9 +75,9 @@ class HostBash32Tests(unittest.TestCase):
             "args = sys.argv[1:]\n"
             "with open(os.environ['FAKE_DOCKER_CALLS'], 'a', encoding='utf-8') as stream:\n"
             "    stream.write(json.dumps(args) + '\\n')\n"
-            "action = next((item for item in args[1:] if item in {'version', 'ps', 'run', 'exec', 'down', 'build', 'up'}), None)\n"
-            "if action in {'version', 'ps', 'down', 'build', 'up'}: raise SystemExit(0)\n"
-            "if action == 'run': raise SystemExit(0)\n"
+            "action = next((item for item in args[1:] if item in {'version', 'ps', 'run', 'exec', 'down', 'build', 'up', 'stop', 'rm'}), None)\n"
+            "if action in {'version', 'ps', 'down', 'build', 'up', 'stop', 'rm'}: raise SystemExit(0)\n"
+            "if action == 'run':\n    print('publisher-container-id')\n    raise SystemExit(0)\n"
             "if action == 'exec': raise SystemExit(1)\n"
             "if args[:1] == ['wait']:\n"
             "    print('17')\n"

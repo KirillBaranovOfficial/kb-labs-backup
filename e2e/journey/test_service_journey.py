@@ -1927,15 +1927,19 @@ raise SystemExit(1)
         self.assertEqual(len(closed["closed"]), 1)
         self.assertEqual(client.issues[1]["state"], "closed")
 
+    # case: S-261.3
     def test_issue_sync_creates_one_pinned_status_issue_when_missing(self):
         client = FakeGitHub()
         client.issues.clear()
         passed = {"capability": "gateway", "mode": "local", "name": "ready",
                   "status": "PASS", "message": "passed", "duration_seconds": 0}
-        changes = sync_issues(client, aggregate([{"steps": [passed]}]), 0)
+        report = aggregate([{"steps": [passed]}])
+        changes = sync_issues(client, report, 0)
         self.assertEqual(len(client.issues), 1)
         self.assertIn("nightly-status", client.issues[0]["labels"])
         self.assertEqual(changes, {"created": [], "updated": [], "closed": []})
+        sync_issues(client, report, 0)
+        self.assertEqual(len(client.issues), 1, "the nightly issue is found and updated on the next run")
 
     def test_required_mode_steps_and_workflow_fixture_are_explicit(self):
         local = {capability for _, capability, _, _, _, _ in checks("local")}
