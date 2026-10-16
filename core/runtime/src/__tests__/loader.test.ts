@@ -632,11 +632,7 @@ describe('Platform Loader', () => {
   });
 
   describe('ExecutionBackend Initialization', () => {
-    // case: S-244.4
-    it.each([
-      ['no environment adapter', false],
-      ['an environment adapter without attached start support', true],
-    ])('returns the catalogued provider diagnostic through container execution when %s', async (_setup, configureProvider) => {
+    const assertContainerProviderDiagnostic = async (configureProvider: boolean) => {
       await initPlatform({ execution: { mode: 'container' } });
 
       if (configureProvider) {
@@ -689,6 +685,16 @@ describe('Platform Loader', () => {
       } finally {
         await platform.executionBackend.shutdown();
       }
+    };
+
+    // case: S-244.4
+    it('returns the catalogued provider diagnostic when no environment adapter is configured', async () => {
+      await assertContainerProviderDiagnostic(false);
+    });
+
+    // case: S-244.4
+    it('returns the catalogued provider diagnostic when the environment adapter lacks attached start support', async () => {
+      await assertContainerProviderDiagnostic(true);
     });
 
     it('should initialize ExecutionBackend by default', async () => {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -108,6 +109,10 @@ Examples:
 		result, err := engine.Run(ws, cfg, opts)
 		elapsed := time.Since(start)
 		if err != nil {
+			var graphErr *engine.TaskGraphError
+			if errors.As(err, &graphErr) {
+				return taskGraphFailure(graphErr)
+			}
 			return err
 		}
 
@@ -118,7 +123,7 @@ Examples:
 				"elapsed": elapsed.String(),
 			}
 			if !result.OK {
-				return commandFailureWithData("kb-devkit run", payload)
+				return taskFailure(failedTaskResult(result.Results), payload)
 			}
 			return JSONOut(payload)
 		}
@@ -142,10 +147,19 @@ Examples:
 		}
 
 		if !result.OK {
-			return commandFailure("kb-devkit run")
+			return taskFailure(failedTaskResult(result.Results), result.Summary())
 		}
 		return nil
 	},
+}
+
+func failedTaskResult(results []engine.TaskResult) engine.TaskResult {
+	for _, result := range results {
+		if !result.OK && !result.Cached {
+			return result
+		}
+	}
+	return engine.TaskResult{}
 }
 
 func init() {
