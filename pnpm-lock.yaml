@@ -1063,6 +1063,9 @@ importers:
       '@kb-labs/core-workspace':
         specifier: workspace:*
         version: link:../../core/workspace
+      '@kb-labs/gateway-contracts':
+        specifier: workspace:*
+        version: link:../../services/gateway/contracts
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts

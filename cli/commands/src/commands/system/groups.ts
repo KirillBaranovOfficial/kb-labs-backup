@@ -15,7 +15,7 @@ import { docsGenerateCliReference } from './docs-generate-cli-reference';
 import { logsDiagnose, logsContext, logsSummarize, logsQuery, logsSearch, logsGet, logsStats } from './logs';
 import { authLogin, authLogout, authStatus, authRegister, authResetLink, authTokens } from './auth';
 import { platformSyncCommand } from './platform/sync';
-import { webhookProvision, webhookList, webhookRevoke } from './webhook';
+import { webhookProvision, webhookList, webhookRevoke, webhookHistory } from './webhook';
 import { configShow, configGet, configSet } from './config';
 import { projectAdd, projectList, projectShow, projectRemove } from './project';
 import { mcpConfig } from './mcp';
@@ -91,6 +91,7 @@ export const webhookGroup = defineSystemCommandGroup('webhook', 'Webhook managem
   webhookProvision,
   webhookList,
   webhookRevoke,
+  webhookHistory,
 ]);
 
 /**

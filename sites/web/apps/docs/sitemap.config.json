@@ -181,7 +181,7 @@
       "label": "Configuration",
       "stalenessRisk": "medium",
       "pages": [
-        { "slug": "configuration/kb-config",             "type": "hybrid", "owners": ["core/config/**", "core/runtime/src/config.ts", "core/runtime/src/config-schemas.ts", "core/runtime/src/adapters/config-adapter.ts", "core/runtime/src/loader.ts", "core/runtime/src/platform-data-root.ts", "tools/kb-create/v2/contracts/platform-layout.json", "adapters/**"] },
+        { "slug": "configuration/kb-config",             "type": "hybrid", "owners": ["core/config/**", "core/runtime/src/config.ts", "core/runtime/src/config-schemas.ts", "core/runtime/src/adapters/config-adapter.ts", "core/runtime/src/loader.ts", "core/runtime/src/platform-data-root.ts", "services/gateway/contracts/src/webhook-history.ts", "tools/kb-create/v2/contracts/platform-layout.json", "adapters/**"] },
         { "slug": "configuration/dev-config",            "type": "hybrid", "owners": ["infra/devkit/**", "tools/kb-devkit/**", "shared/daemon/src/daemon.ts", "services/host/app/src/host.ts"] },
         { "slug": "configuration/profiles",              "type": "manual", "owners": ["core/config/**", "core/runtime/src/adapters/config-adapter.ts"] },
         { "slug": "configuration/environment-variables", "type": "manual", "owners": ["core/config/**", "core/platform/src/host-service-address.ts", "core/platform/src/service-listen-address.ts", "shared/daemon/src/daemon.ts", "cli/bin/src/runtime/plugin-executor.ts", "services/host/app/src/host.ts", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "plugins/marketplace-registry/app/src/bootstrap.ts"] }
@@ -215,7 +215,7 @@
         { "slug": "gateway/index",          "type": "manual", "owners": ["plugins/gateway/**"] },
         { "slug": "gateway/authentication", "type": "hybrid", "owners": ["services/gateway/app/src/auth/**", "services/gateway/auth/src/**", "cli/commands/src/commands/system/auth/**", "studio/app/src/pages/admin-users-page.tsx", "studio/app/src/pages/admin-invites-page.tsx", "studio/app/src/pages/api-tokens-page.tsx", "studio/app/src/pages/activate-page.tsx", "studio/app/src/pages/reset-password-page.tsx"] },
         { "slug": "gateway/routing",        "type": "hybrid", "owners": ["plugins/gateway/core/**"] },
-        { "slug": "gateway/webhooks",       "type": "manual", "owners": ["plugins/gateway/**"], "status": "missing" },
+        { "slug": "gateway/webhooks",       "type": "manual", "owners": ["services/gateway/app/src/webhook/**", "services/gateway/contracts/src/webhook-history.ts", "cli/commands/src/commands/system/webhook/**"] },
         { "slug": "gateway/self-hosted",    "type": "manual", "owners": ["tools/kb-deploy/**", "infra/docker-compose.backend.yml", "deploy/helm/kb-labs-platform/**", "services/host/app/src/host.ts", "services/gateway/app/kb-create.requirements.json"] },
         { "slug": "gateway/architecture",   "type": "manual", "owners": ["plugins/gateway/**", "services/gateway/app/src/server.ts", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/routes/adapter-call.ts", "plugins/marketplace-registry/api/src/auth-middleware.ts"] }
       ]

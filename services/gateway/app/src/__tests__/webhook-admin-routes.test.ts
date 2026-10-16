@@ -14,6 +14,8 @@ import type { ILogger } from '@kb-labs/core-platform';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import { InMemoryCache } from '@kb-labs/core-platform/inmemory';
+import { createInMemoryDocumentDatabase } from '@kb-labs/sdk/testing';
+import { WebhookHistoryStore } from '../webhook/history-store.js';
 import { WebhookSecretStore } from '../webhook/secret-store.js';
 import { registerWebhookAdminRoutes } from '../webhook/admin-routes.js';
 import type { WebhookManifestEntry } from '../webhook/router.js';
@@ -26,6 +28,10 @@ const EVENT = 'alert';
 const NS = 'ns-test';
 const PLUGIN_ROOT = '/plugins/test-plugin';
 const BASE_URL = 'http://localhost:4000';
+
+function createHistoryStore(): WebhookHistoryStore {
+  return new WebhookHistoryStore(createInMemoryDocumentDatabase());
+}
 
 function makeManifest(pluginId: string, events: string[]): ManifestV3 {
   return {
@@ -99,6 +105,7 @@ describe('webhook admin routes', () => {
       manifests,
       baseUrl: BASE_URL,
       broker: makeMockBroker(),
+      historyStore: createHistoryStore(),
     });
 
     await app.ready();
@@ -187,6 +194,7 @@ describe('webhook admin routes', () => {
         manifests,
         baseUrl: BASE_URL,
         broker: makeMockBroker(),
+      historyStore: createHistoryStore(),
       });
       await appNoAuth.ready();
 
@@ -217,6 +225,7 @@ describe('webhook admin routes', () => {
         manifests,
         baseUrl: BASE_URL,
         broker,
+        historyStore: createHistoryStore(),
       });
       await isolatedApp.ready();
 
@@ -259,6 +268,7 @@ describe('webhook admin routes', () => {
         manifests,
         baseUrl: BASE_URL,
         broker: makeMockBroker(),
+      historyStore: createHistoryStore(),
       });
       await isolatedApp.ready();
 
@@ -301,6 +311,7 @@ describe('webhook admin routes', () => {
         manifests,
         baseUrl: BASE_URL,
         broker: makeMockBroker(),
+      historyStore: createHistoryStore(),
       });
       await appNoAuth.ready();
 
@@ -361,6 +372,7 @@ describe('webhook admin routes', () => {
         manifests,
         baseUrl: BASE_URL,
         broker: makeMockBroker(),
+      historyStore: createHistoryStore(),
       });
       await appNoAuth.ready();
 

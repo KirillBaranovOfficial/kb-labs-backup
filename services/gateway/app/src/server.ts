@@ -70,6 +70,7 @@ import {
   createStudioUrlRewriter,
 } from "./studio/static.js";
 import { registerWebhookAdminRoutes } from "./webhook/admin-routes.js";
+import { WebhookHistoryStore } from './webhook/history-store.js';
 import {
   registerWebhookRoutes,
   type WebhookManifestEntry,
@@ -210,6 +211,9 @@ export async function createServer(
   }));
 
   const isProduction = process.env.NODE_ENV === "production";
+  const webhookHistoryStore = platform.hasResourceBroker
+    ? new WebhookHistoryStore(platform.documentDatabase)
+    : undefined;
 
   // OpenAPI / Swagger UI — must be registered before routes
   await registerOpenAPI(app, {
@@ -885,7 +889,7 @@ export async function createServer(
     // Registered unconditionally when the resource broker is available so that the
     // admin API (GET /api/v1/webhooks, POST /api/v1/webhooks/provision, DELETE) works
     // even in environments where no webhook-enabled plugins are currently installed.
-    if (platform.hasResourceBroker) {
+    if (webhookHistoryStore) {
       const webhookBaseUrl =
         resolvePublicUrl(config.port);
       // Thin adapter: globalDispatcher.call() requires namespaceId — threaded via optional field
@@ -929,6 +933,7 @@ export async function createServer(
           manifests: webhookManifests ?? [],
           baseUrl: webhookBaseUrl,
           broker: platform.resourceBroker,
+          historyStore: webhookHistoryStore,
         },
       );
     }
@@ -938,7 +943,7 @@ export async function createServer(
   // Registered in a separate Fastify scope so both user-auth and machine-token
   // middleware (which live only inside gatewayRoutes) are bypassed automatically.
   // Delivery auth is handled by the webhook router itself (secret / hmac / custom).
-  if (webhookManifests?.length && platform.hasResourceBroker) {
+  if (webhookManifests?.length && webhookHistoryStore) {
     const webhookBaseUrl =
       resolvePublicUrl(config.port);
     await app.register(async (webhookScope) => {
@@ -948,6 +953,7 @@ export async function createServer(
         logger,
         manifests: webhookManifests,
         baseUrl: webhookBaseUrl,
+        historyStore: webhookHistoryStore,
       });
     });
   }

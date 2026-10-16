@@ -1,7 +1,7 @@
 ---
 title: "kb.config.json"
 description: "The main KB Labs configuration file — adapters, execution, profiles, and per-product config."
-updatedAt: "2026-10-11"
+updatedAt: "2026-10-16"
 order: 1
 ---
 
@@ -446,3 +446,12 @@ The reference config in this monorepo ([.kb/kb.config.json](.kb/kb.config.json))
 - [devservices.yaml](/configuration/dev-config) — the `kb-dev` service manager config, a separate file.
 - [Adapters → Overview](/adapters) — how adapter packages plug into the `platform.adapters` slot.
 - [Execution Model](/concepts/execution-model) — more on the `platform.execution` knob.
+
+
+## Gateway webhook history
+
+Gateway webhook delivery history is stored in the platform document database. The default retention is the latest 100 records per webhook endpoint (project, plugin, event, and instance). The Gateway prunes older records when it writes new history.
+
+The Gateway keeps this default bounded automatically; there is no additional configuration key.
+
+The record contains the delivery ID, project, received-at time, plugin and handler identity, outcome code, duration, and correlation ID. Payload bodies and webhook secrets are never stored. See [Gateway webhooks](/gateway/webhooks) for the REST and CLI inspection commands.

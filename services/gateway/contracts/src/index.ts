@@ -8,3 +8,4 @@ export * from './client-protocol.js';
 export * from './llm-gateway.js';
 export * from './telemetry.js';
 export * from './platform-api.js';
+export * from './webhook-history.js';
