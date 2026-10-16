@@ -313,6 +313,9 @@ func StartWithHostResourceSource(ctx context.Context, cfg Config, source HostRes
 	if err != nil {
 		return nil, fmt.Errorf("proc: create run id: %w", err)
 	}
+	if _, err := runScratchPath(runID); err != nil {
+		return nil, err
+	}
 	parentIdentity, ok, err := ProcessIdentity(os.Getpid())
 	if err != nil {
 		return nil, fmt.Errorf("proc: inspect supervisor process identity: %w", err)

@@ -14,16 +14,20 @@ import (
 
 var errOwnedPathAlreadyGone = errors.New("owned path is already gone")
 
-func removeOwnedPathRelative(stateDir, path string, expected fileIdentity, ownerToken string) error {
-	return removePathRelative(stateDir, path, &expected, ownerToken, nil)
+func removeOwnedPathRelative(stateDir, path string, expected fileIdentity, ownerToken string, additionalRoots []string) error {
+	return removePathRelative(stateDir, path, &expected, ownerToken, nil, additionalRoots)
 }
 
 func removeScratchPathRelative(stateDir, path string, expected fileIdentity, keepPaths []string) error {
-	return removePathRelative(stateDir, path, &expected, "", keepPaths)
+	root, err := scratchRoot()
+	if err != nil {
+		return err
+	}
+	return removePathRelative(stateDir, path, &expected, "", keepPaths, []string{root})
 }
 
-func removePathRelative(stateDir, path string, expected *fileIdentity, ownerToken string, keepPaths []string) (result error) {
-	root, relative, err := cleanupRootForPath(stateDir, path)
+func removePathRelative(stateDir, path string, expected *fileIdentity, ownerToken string, keepPaths []string, additionalRoots []string) (result error) {
+	root, relative, err := cleanupRootForPath(stateDir, path, additionalRoots)
 	if err != nil {
 		return err
 	}
@@ -209,7 +213,7 @@ func existingKeepPaths(rootFD int, rootPath string, candidates []string) ([]stri
 	return existing, nil
 }
 
-func cleanupRootForPath(stateDir, path string) (string, string, error) {
+func cleanupRootForPath(stateDir, path string, additionalRoots []string) (string, string, error) {
 	absolute, err := normalizeCleanupPath(stateDir, path)
 	if err != nil {
 		return "", "", err
@@ -218,6 +222,7 @@ func cleanupRootForPath(stateDir, path string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("read configured cleanup roots: %w", err)
 	}
+	roots = append(roots, additionalRoots...)
 	for _, root := range roots {
 		relative, err := filepath.Rel(root, filepath.Clean(absolute))
 		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {

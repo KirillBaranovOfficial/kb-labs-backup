@@ -589,13 +589,14 @@ func markLostLocked(stateDir string, rec record) error {
 	resources, resourceErr := cleanupResourcesLocked(stateDir, rec.RunID)
 	resourceErr = errors.Join(resourceErr, resourceOutcomesError(resources))
 	scratch := rec.Scratch
-	if scratch == "" {
-		scratch = filepath.Join(stateDir, "runs", rec.RunID, "scratch")
-	}
-	scratchOutcome, scratchErr := cleanupScratchOutcome(stateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
-	resources = append(resources, scratchOutcome)
-	if scratchErr != nil {
-		resourceErr = errors.Join(resourceErr, fmt.Errorf("remove run scratch: %w", scratchErr))
+	var scratchErr error
+	if scratch != "" {
+		scratchOutcome, err := cleanupScratchOutcome(stateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
+		scratchErr = err
+		resources = append(resources, scratchOutcome)
+		if scratchErr != nil {
+			resourceErr = errors.Join(resourceErr, fmt.Errorf("remove run scratch: %w", scratchErr))
+		}
 	}
 	rec.Status = StatusLost
 	rec.Error = fmt.Sprintf("keeper PID %d identity %s is no longer live", rec.PID, rec.StartedAt)
@@ -664,20 +665,37 @@ func cleanupAdmission(stateDir, runID, reason string) {
 		}
 		scratch := rec.Scratch
 		if scratch == "" {
-			scratch = filepath.Join(stateDir, "runs", runID, "scratch")
+			var pathErr error
+			scratch, pathErr = runScratchPath(runID)
+			if pathErr != nil {
+				event := eventFor(rec, EventTeardown)
+				event.Reason = reason
+				event.Error = pathErr.Error()
+				if removeErr := os.Remove(filepath.Join(stateDir, "runs", runID+".json")); removeErr != nil && !os.IsNotExist(removeErr) {
+					return errors.Join(pathErr, removeErr)
+				}
+				return appendEvent(stateDir, event)
+			}
 		}
-		scratchOutcome, scratchErr := cleanupScratchOutcome(stateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
 		event := eventFor(rec, EventTeardown)
 		event.Reason = reason
-		event.Resources = append(event.Resources, scratchOutcome)
-		if scratchErr != nil {
-			event.Error = scratchErr.Error()
-			rec.Status, rec.Error = StatusDirty, scratchErr.Error()
-			if err := writeRecordAtomic(rec); err != nil {
-				return errors.Join(scratchErr, err)
+		var scratchErr error
+		if scratch != "" {
+			scratchOutcome, err := cleanupScratchOutcome(stateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
+			scratchErr = err
+			event.Resources = append(event.Resources, scratchOutcome)
+			if scratchErr != nil {
+				event.Error = scratchErr.Error()
+				rec.Status, rec.Error = StatusDirty, scratchErr.Error()
+				if err := writeRecordAtomic(rec); err != nil {
+					return errors.Join(scratchErr, err)
+				}
 			}
-		} else if err := os.Remove(filepath.Join(stateDir, "runs", runID+".json")); err != nil && !os.IsNotExist(err) {
-			return err
+		}
+		if scratchErr == nil {
+			if err := os.Remove(filepath.Join(stateDir, "runs", runID+".json")); err != nil && !os.IsNotExist(err) {
+				return err
+			}
 		}
 		return appendEvent(stateDir, event)
 	}); err != nil {

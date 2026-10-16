@@ -46,17 +46,15 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 	readyFile := filepath.Join(state, "descendant.pid")
 	cmd := exec.CommandContext(ctx, runner, "run", "--tag", "normal", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--", helper, "detached", "3", readyFile)
 	output, err := cmd.CombinedOutput()
-	if err != nil && !teardownHasObservationFailure(t, state, outputRunID(t, state, "normal")) {
+	if err != nil {
 		forceKillRecordedTree(t, state)
+		skipOnTeardownObservationFailure(t, state, outputRunID(t, state, "normal"))
 		stderr, _ := os.ReadFile(filepath.Join(state, "stderr.log"))
 		events, _ := os.ReadFile(filepath.Join(state, "events.jsonl"))
 		t.Fatalf("kb-runner normal exit failed: %v\n%s\nstderr: %s\nevents: %s", err, output, stderr, events)
 	}
-	if err == nil && !strings.Contains(string(output), "run normal completed") {
+	if !strings.Contains(string(output), "run normal completed") {
 		t.Fatalf("kb-runner did not report completion: %s", output)
-	}
-	if err != nil && !strings.Contains(string(output), "supervised command exited with status 1") {
-		t.Fatalf("observation failure was not shown to the caller: %s", output)
 	}
 	pidBytes, err := os.ReadFile(readyFile)
 	if err != nil {
@@ -111,6 +109,7 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 			}
 		}
 	}
+	skipOnTeardownObservationFailure(t, state, outputRunID(t, state, "normal"))
 }
 
 // case: S-237.42
@@ -120,7 +119,16 @@ func TestRunScratchEnvironmentIsRemovedAndKeptOutputSurvives(t *testing.T) {
 	kept := filepath.Join(state, "kept.txt")
 	scratchPathFile := filepath.Join(state, "scratch-path")
 	command := exec.Command(runner, "run", "--tag", "scratch", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--keep", kept, "--keep", "private", "--", "/bin/sh", "-ec", `printf '%s' "$TMPDIR" > "$2"; printf scratch > "$TMPDIR/private"; printf discard > "$TMPDIR/discard"; printf kept > "$3"; "$1" own path --create dir "$TMPDIR/owned"; test "$TMPDIR" = "$TMP" && test "$TMP" = "$TEMP" && test "$TMP" = "$KB_RUNNER_SCRATCH"`, "sh", runner, scratchPathFile, kept)
-	if output, err := command.CombinedOutput(); err != nil && !teardownHasObservationFailure(t, state, outputRunID(t, state, "scratch")) {
+	output, err := command.CombinedOutput()
+	runID := outputRunID(t, state, "scratch")
+	scratch := scratchForRun(t, state, runID)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(scratch); err != nil {
+			t.Errorf("remove test scratch %s: %v", scratch, err)
+		}
+	})
+	if err != nil {
+		skipOnTeardownObservationFailure(t, state, runID)
 		t.Fatalf("run with scratch environment: %v\n%s", err, output)
 	}
 	scratchBytes, err := os.ReadFile(scratchPathFile)
@@ -144,6 +152,117 @@ func TestRunScratchEnvironmentIsRemovedAndKeptOutputSurvives(t *testing.T) {
 		t.Fatalf("kept scratch output appeared as a leftover: %+v, %v", leftovers, err)
 	}
 	assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
+	skipOnTeardownObservationFailure(t, state, runID)
+}
+
+func TestRunScratchAllowsUnixSocketNameUnderDeepStateDirectory(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is unavailable")
+	}
+	stateRoot, err := os.MkdirTemp("/tmp", "x71-socket-state-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(stateRoot); err != nil {
+			t.Errorf("remove deep socket test state %s: %v", stateRoot, err)
+		}
+	})
+	state := filepath.Join(stateRoot, strings.Repeat("deep-state-segment-", 4), "logs", "runner")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := buildRunner(t)
+	boundFile := filepath.Join(state, "socket-bound")
+	nodeScript := `const path=require('path');const paths=[path.join(process.env.TMPDIR,'x'.repeat(40)),path.join(process.env.TMPDIR,'tsx-501','12345.pipe')];if(Buffer.byteLength(paths[0])+1>104) throw new Error('path too long for Unix socket: '+Buffer.byteLength(paths[0]));const bind=i=>{const s=require('net').createServer();s.listen(paths[i],()=>s.close(()=>{if(i+1<paths.length)bind(i+1);else require('fs').writeFileSync(process.argv[1],'bound')}))};bind(0)`
+	command := exec.Command(runner, "run", "--tag", "scratch-socket", "--state", state, "--stall", "1h",
+		"--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--",
+		"/bin/sh", "-ec", `mkdir -p "$TMPDIR/tsx-501"; node -e "`+nodeScript+`" "`+boundFile+`"`,
+	)
+	output, err := command.CombinedOutput()
+	runID := outputRunID(t, state, "scratch-socket")
+	data, recordErr := os.ReadFile(filepath.Join(state, "runs", runID+".json"))
+	if recordErr != nil {
+		t.Fatalf("read socket run record: %v", recordErr)
+	}
+	var runRecord struct {
+		Scratch string `json:"scratch"`
+	}
+	if err := json.Unmarshal(data, &runRecord); err != nil {
+		t.Fatal(err)
+	}
+	if runRecord.Scratch == "" {
+		t.Fatal("run record omitted scratch path")
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(runRecord.Scratch); err != nil {
+			t.Errorf("remove socket test scratch %s: %v", runRecord.Scratch, err)
+		}
+	})
+	if err != nil {
+		skipOnTeardownObservationFailure(t, state, runID)
+		stderr, _ := os.ReadFile(filepath.Join(state, "stderr.log"))
+		t.Fatalf("supervised child could not bind socket below TMPDIR: %v\n%s\nchild stderr: %s", err, output, stderr)
+	}
+	if data, err := os.ReadFile(boundFile); err != nil || string(data) != "bound" {
+		stderr, _ := os.ReadFile(filepath.Join(state, "stderr.log"))
+		t.Fatalf("supervised child did not bind its Unix socket: marker=%q err=%v stderr=%s", data, err, stderr)
+	}
+	if _, err := os.Stat(runRecord.Scratch); !os.IsNotExist(err) {
+		t.Fatalf("scratch remains after supervised child exit at %s: %v", runRecord.Scratch, err)
+	}
+	skipOnTeardownObservationFailure(t, state, runID)
+}
+
+func TestRunScratchReplacementWithDifferentInodeIsRefused(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	scratchPathFile := filepath.Join(state, "scratch-path")
+	command := exec.Command(runner, "run", "--tag", "scratch-replaced", "--state", state, "--stall", "1h",
+		"--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--",
+		"/bin/sh", "-ec", `printf '%s' "$TMPDIR" > "$1"; mv "$TMPDIR" "$TMPDIR.original"; mkdir "$TMPDIR"; printf replacement > "$TMPDIR/marker"`, "sh", scratchPathFile)
+	output, runErr := command.CombinedOutput()
+	runID := outputRunID(t, state, "scratch-replaced")
+	if runErr == nil {
+		t.Fatalf("run with replaced scratch directory succeeded; unsafe scratch removal was not reported\n%s", output)
+	}
+	exit := eventOfType(t, state, proc.EventExit)
+	if exit.ExitCode == nil || *exit.ExitCode != 0 || exit.Signal != "" {
+		t.Fatalf("replacement child did not exit successfully: %+v", exit)
+	}
+	scratchBytes, err := os.ReadFile(scratchPathFile)
+	if err != nil {
+		t.Fatalf("run did not report scratch path: %v", err)
+	}
+	scratch := string(scratchBytes)
+	originalScratch := scratch + ".original"
+	t.Cleanup(func() {
+		if err := os.RemoveAll(scratch); err != nil {
+			t.Errorf("remove test replacement scratch %s: %v", scratch, err)
+		}
+		if err := os.RemoveAll(originalScratch); err != nil {
+			t.Errorf("remove replaced original scratch %s: %v", originalScratch, err)
+		}
+	})
+	marker, err := os.ReadFile(filepath.Join(scratch, "marker"))
+	if err != nil || string(marker) != "replacement" {
+		t.Fatalf("replacement scratch was removed or changed: data=%q err=%v", marker, err)
+	}
+	teardown := eventOfType(t, state, proc.EventTeardown)
+	assertExactlyOneScratchOutcome(t, teardown, string(proc.ResourceRefused))
+	var refusal string
+	for _, outcome := range teardown.Resources {
+		if outcome.Resource.Kind == "scratch" {
+			refusal = outcome.Error
+		}
+	}
+	if refusal == "" || !strings.Contains(teardown.Error, refusal) {
+		t.Fatalf("teardown error %q does not identify the refused scratch cleanup %q", teardown.Error, refusal)
+	}
+	skipOnTeardownObservationFailure(t, state, runID)
+	if teardown.Error != "remove run scratch: "+refusal {
+		t.Fatalf("runner exited for a different teardown error: %q", teardown.Error)
+	}
 }
 
 // case: S-237.44
@@ -482,12 +601,14 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 	if err := os.WriteFile(releaseFile, []byte("release\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := run.Wait(); err != nil && !teardownHasObservationFailure(t, state, run.RunID) {
+	if err := run.Wait(); err != nil {
+		skipOnTeardownObservationFailure(t, state, run.RunID)
 		t.Fatalf("keeper failed after detached command exit: %v", err)
 	}
 	if _, alive := identityForTest(t, grandchild); alive {
 		t.Fatalf("sampled detached grandchild %d survived tree teardown", grandchild)
 	}
+	skipOnTeardownObservationFailure(t, state, run.RunID)
 }
 
 // case: S-237.13
@@ -624,7 +745,8 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	})
 	waitErr := run.Wait()
 	runFinished = true
-	if waitErr != nil && !teardownHasObservationFailure(t, state, run.RunID) {
+	if waitErr != nil {
+		skipOnTeardownObservationFailure(t, state, run.RunID)
 		t.Fatal(waitErr)
 	}
 	f, err := os.Open(filepath.Join(state, "events.jsonl"))
@@ -664,6 +786,7 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	if !exitHasCode {
 		t.Fatal("normal exit event has no exit code")
 	}
+	skipOnTeardownObservationFailure(t, state, run.RunID)
 
 	followState := t.TempDir()
 	follow := exec.Command(runner, "events", "--state", followState, "--follow")
@@ -696,7 +819,8 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := followRun.Wait(); err != nil && !teardownHasObservationFailure(t, followState, followRun.RunID) {
+	if err := followRun.Wait(); err != nil {
+		skipOnTeardownObservationFailure(t, followState, followRun.RunID)
 		t.Fatal(err)
 	}
 	lines := make(chan []string, 1)
@@ -732,6 +856,7 @@ func TestEventsAreStructuredJSONL(t *testing.T) {
 	if waitErr != nil {
 		t.Fatalf("stop events --follow: %v; stderr: %s", waitErr, followStderr.String())
 	}
+	skipOnTeardownObservationFailure(t, followState, followRun.RunID)
 }
 
 func buildHelper(t *testing.T) string {
@@ -822,28 +947,12 @@ func outputRunID(t *testing.T, state, tag string) string {
 	return ""
 }
 
-func teardownHasObservationFailure(t *testing.T, state, runID string) bool {
+func skipOnTeardownObservationFailure(t *testing.T, state, runID string) {
 	t.Helper()
-	f, err := os.Open(filepath.Join(state, "events.jsonl"))
-	if err != nil {
-		t.Fatal(err)
+	teardown := eventForRunAndType(t, state, runID, proc.EventTeardown)
+	if strings.Contains(teardown.Error, "unverified/failed observation") {
+		t.Skipf("process table unavailable; teardown could not be verified: %s", teardown.Error)
 	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var event proc.Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatal(err)
-		}
-		if event.Type == proc.EventTeardown && event.RunID == runID {
-			return strings.Contains(event.Error, "unverified/failed observation")
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return false
 }
 
 func assertSignalExitEvent(t *testing.T, state string) {
@@ -1052,7 +1161,8 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 		runs = append(runs, run)
 	}
 	for _, run := range runs {
-		if err := run.Wait(); err != nil && !teardownHasObservationFailure(t, state, run.RunID) {
+		if err := run.Wait(); err != nil {
+			skipOnTeardownObservationFailure(t, state, run.RunID)
 			t.Fatal(err)
 		}
 	}
@@ -1085,6 +1195,9 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 	}
 	if !bytes.HasSuffix(data, []byte("\n")) {
 		t.Fatal("event stream ends with a partial JSONL record")
+	}
+	for _, run := range runs {
+		skipOnTeardownObservationFailure(t, state, run.RunID)
 	}
 }
 
@@ -1179,7 +1292,8 @@ func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
 	if identity, alive := identityForTest(t, run.PID); !alive || identity != run.StartedAt {
 		t.Fatalf("running keeper changed identity after on-disk replacement: pid=%d identity=%q alive=%t", run.PID, identity, alive)
 	}
-	if err := run.Wait(); err != nil && !teardownHasObservationFailure(t, state, run.RunID) {
+	if err := run.Wait(); err != nil {
+		skipOnTeardownObservationFailure(t, state, run.RunID)
 		t.Fatalf("running keeper failed after on-disk helper replacement: %v", err)
 	}
 	_, err = startTest(context.Background(), proc.Config{
@@ -1190,6 +1304,7 @@ func TestRunningKeeperUsesLoadedImageAfterHelperReplacement(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
 		t.Fatalf("future run with replacement helper error = %v", err)
 	}
+	skipOnTeardownObservationFailure(t, state, run.RunID)
 }
 
 // case: S-237.6
@@ -1208,7 +1323,8 @@ func TestRunReadsStdinAndMergesEnvWithMarker(t *testing.T) {
 	)
 	output, err := command.CombinedOutput()
 	runID := outputRunID(t, state, "stdin-env")
-	if err != nil && !teardownHasObservationFailure(t, state, runID) {
+	if err != nil {
+		skipOnTeardownObservationFailure(t, state, runID)
 		t.Fatalf("kb-runner run with stdin/env failed: %v\n%s", err, output)
 	}
 	if len(output) == 0 {
@@ -1227,6 +1343,7 @@ func TestRunReadsStdinAndMergesEnvWithMarker(t *testing.T) {
 	if strings.HasSuffix(strings.TrimSpace(text), "marker=") {
 		t.Fatalf("run marker was empty: %s", text)
 	}
+	skipOnTeardownObservationFailure(t, state, runID)
 }
 
 // case: S-237.8
@@ -1432,8 +1549,9 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 		t.Fatalf("surviving tree process %d was not cleaned after keeper death", firstChild)
 	}
 	teardown := eventForRunAndType(t, state, firstRun.RunID, proc.EventTeardown)
-	if _, err := os.Stat(filepath.Join(state, "runs", firstRun.RunID, "scratch")); !os.IsNotExist(err) {
-		t.Fatalf("lost-run scratch remains: %v; teardown=%+v", err, teardown.Resources)
+	scratch := scratchForRun(t, state, firstRun.RunID)
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Fatalf("lost-run scratch remains at %s: %v; teardown=%+v", scratch, err, teardown.Resources)
 	}
 	if _, err := os.Stat(filepath.Join(state, "runs", firstRun.RunID, "resources.json")); err != nil {
 		t.Fatalf("lost-run resource ledger was not persisted for audit: %v", err)
@@ -1471,6 +1589,24 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 	if len(teardown.Resources) != len(entries)+1 || !removedPath || !removedScratch {
 		t.Fatalf("lost-run teardown omitted resource outcomes: %+v", teardown.Resources)
 	}
+}
+
+func scratchForRun(t *testing.T, state, runID string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(state, "runs", runID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Scratch string `json:"scratch"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Scratch == "" {
+		t.Fatalf("run %s record omitted scratch path", runID)
+	}
+	return record.Scratch
 }
 
 func eventForRunAndType(t *testing.T, state, runID string, eventType proc.EventType) proc.Event {

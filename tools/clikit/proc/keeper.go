@@ -60,35 +60,33 @@ func runKeeper(cfg keeperConfig) int {
 		writeReadyError(ready, err)
 		return 1
 	}
+	scratch, err := runScratchPath(cfg.RunID)
+	if err != nil {
+		writeReadyError(ready, err)
+		return 1
+	}
 	runDirectory := filepath.Join(cfg.StateDir, "runs", cfg.RunID)
-	if err := os.Mkdir(runDirectory, 0o700); err != nil {
-		writeReadyError(ready, fmt.Errorf("create run directory: %w", err))
-		return 1
-	}
-	runDirectoryInfo, err := os.Lstat(runDirectory)
+	runDirectoryIdentity, runDirectoryOwned, err := createOwnedDirectory(runDirectory, unixScratchDirectoryOps{})
 	if err != nil {
-		writeReadyError(ready, fmt.Errorf("inspect newly created run directory; it was left untouched because its identity could not be verified: %w", err))
+		var cleanupErr error
+		if runDirectoryOwned {
+			cleanupErr = removeOwnedPathRelative(cfg.StateDir, runDirectory, runDirectoryIdentity, "", nil)
+		}
+		writeReadyError(ready, errors.Join(fmt.Errorf("create run directory: %w", err), cleanupErr))
 		return 1
 	}
-	runDirectoryIdentity, err := resourceIdentity(runDirectory, runDirectoryInfo)
+	scratchIdentity, scratchOwned, err := createOwnedDirectory(scratch, unixScratchDirectoryOps{})
 	if err != nil {
-		writeReadyError(ready, fmt.Errorf("identify newly created run directory; it was left untouched because its identity could not be verified: %w", err))
-		return 1
-	}
-	scratch := filepath.Join(cfg.StateDir, "runs", cfg.RunID, "scratch")
-	if err := os.Mkdir(scratch, 0o700); err != nil {
-		cleanupErr := removeOwnedPathRelative(cfg.StateDir, runDirectory, runDirectoryIdentity, "")
+		cleanupErr := removeOwnedPathRelative(cfg.StateDir, runDirectory, runDirectoryIdentity, "", nil)
+		if scratchOwned {
+			cleanupErr = errors.Join(cleanupErr, removeScratchPathRelative(cfg.StateDir, scratch, scratchIdentity, nil))
+		}
 		writeReadyError(ready, errors.Join(fmt.Errorf("create run scratch directory: %w", err), cleanupErr))
 		return 1
 	}
-	scratchInfo, err := os.Lstat(scratch)
-	if err != nil {
-		writeReadyError(ready, fmt.Errorf("inspect run scratch directory: %w", err))
-		return 1
-	}
-	scratchIdentity, err := resourceIdentity(scratch, scratchInfo)
-	if err != nil {
-		writeReadyError(ready, fmt.Errorf("identify run scratch directory: %w", err))
+	if err := inspectCreatedScratch(cfg.StateDir, scratch, scratchIdentity); err != nil {
+		cleanupErr := removeOwnedPathRelative(cfg.StateDir, runDirectory, runDirectoryIdentity, "", nil)
+		writeReadyError(ready, errors.Join(err, cleanupErr))
 		return 1
 	}
 	cfg.Keep = resolveKeepPaths(scratch, cfg.Keep)
@@ -105,7 +103,7 @@ func runKeeper(cfg keeperConfig) int {
 	rec.LatestTag = cfg.LatestTag
 	if err := writeRecord(rec); err != nil {
 		writeReadyError(ready, err)
-		return 1
+		return keeperError(rec, "record run", err)
 	}
 	if err := claimGate(cfg.StateDir, cfg.RunID, cfg.HoldGate, rec.PID, rec.StartedAt); err != nil {
 		writeReadyError(ready, err)
@@ -552,14 +550,13 @@ func keeperError(rec record, action string, err error) int {
 	reapEvent.Error = e.Error
 	reapEvent.Resources = cleanupResources(rec.StateDir, rec.RunID)
 	scratch := rec.Scratch
-	if scratch == "" {
-		scratch = filepath.Join(rec.StateDir, "runs", rec.RunID, "scratch")
-	}
-	scratchOutcome, scratchErr := cleanupScratchOutcome(rec.StateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
-	reapEvent.Resources = append(reapEvent.Resources, scratchOutcome)
-	if scratchErr != nil {
-		if dirtyErr := markRunDirty(rec.StateDir, rec.RunID, "scratch cleanup failed: "+scratchErr.Error()); dirtyErr != nil {
-			fmt.Fprintln(os.Stderr, "proc: mark scratch cleanup failure dirty:", dirtyErr)
+	if scratch != "" {
+		scratchOutcome, scratchErr := cleanupScratchOutcome(rec.StateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
+		reapEvent.Resources = append(reapEvent.Resources, scratchOutcome)
+		if scratchErr != nil {
+			if dirtyErr := markRunDirty(rec.StateDir, rec.RunID, "scratch cleanup failed: "+scratchErr.Error()); dirtyErr != nil {
+				fmt.Fprintln(os.Stderr, "proc: mark scratch cleanup failure dirty:", dirtyErr)
+			}
 		}
 	}
 	if appendErr := appendEvent(rec.StateDir, reapEvent); appendErr != nil {

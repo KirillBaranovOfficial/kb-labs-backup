@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,23 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/proc"
 )
+
+func TestRenderDiagnosticUsesCataloguedScratchPathHint(t *testing.T) {
+	entry, ok := diag.LookupCatalog("KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG")
+	if !ok {
+		t.Fatal("scratch path budget diagnostic is missing from the catalog")
+	}
+	diagnostic := diag.New(entry.Code, entry.Message,
+		diag.WithReason("resolved scratch path exceeds the socket limit"),
+		diag.WithMeta(map[string]any{"root": "/private/tmp", "socketNameBytes": 40, "pathBytes": 112, "maxBytes": 104}),
+	)
+	got := renderDiagnostic(diagnostic)
+	for _, want := range []string{"KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG", "/private/tmp", "104 bytes", "realpath /tmp"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered diagnostic %q does not contain %q", got, want)
+		}
+	}
+}
 
 func TestWaitRendererCoversEveryRunStatus(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "state with spaces")
@@ -172,12 +190,12 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool)
 						break
 					}
 				} else {
-					matches, err := filepath.Glob(filepath.Join(state, "runs", candidate.RunID, "scratch"))
+					scratchPath, err := scratchPathForRun(state, candidate.RunID)
 					if err != nil {
 						t.Fatal(err)
 					}
-					if len(matches) == 1 {
-						scratch = matches[0]
+					if _, err := os.Stat(scratchPath); err == nil {
+						scratch = scratchPath
 						break
 					}
 				}
@@ -264,6 +282,23 @@ func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool)
 			t.Errorf("dirty wait output %q omitted %q", waitOutput, want)
 		}
 	}
+}
+
+func scratchPathForRun(state, runID string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(state, "runs", runID+".json"))
+	if err != nil {
+		return "", err
+	}
+	var record struct {
+		Scratch string `json:"scratch"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		return "", err
+	}
+	if record.Scratch == "" {
+		return "", fmt.Errorf("run %s record omitted scratch path", runID)
+	}
+	return record.Scratch, nil
 }
 
 func failedCleanupPath(resource bool, path, scratch string) string {
