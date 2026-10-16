@@ -45,6 +45,7 @@ jobs:
     timeout-minutes: 180
     env:
       KB_JOURNEY_CI: '1'
+      GOTOOLCHAIN: local
       JOURNEY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - id: checkout
@@ -63,7 +64,8 @@ jobs:
       - id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version-file: tools/kb-devkit/go.mod
+          # The module's toolchain directive is go1.25.13; use the workspace CI Go release.
+          go-version: '1.26.8'
           cache-dependency-path: tools/kb-devkit/go.sum
       - id: dependencies
         name: Install workspace dependencies
@@ -73,7 +75,7 @@ jobs:
         name: Run shared journey batch
         env:
           BATCH_BASELINE: ${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}
-          KB_DEVKIT_BASE_REF: ${{ github.event.pull_request.base.sha || env.JOURNEY_DEFAULT_BRANCH }}
+          KB_DEVKIT_BASE_REF: ${{ github.event.pull_request.base.sha || format('origin/{0}', env.JOURNEY_DEFAULT_BRANCH) }}
         run: e2e/journey/batch.sh .journey/batch/${{ github.run_id }} "$BATCH_BASELINE"
       - name: Add batch summary
         if: always()
@@ -90,13 +92,21 @@ jobs:
         if: always()
         with:
           name: journey-local
-          path: .journey/batch/${{ github.run_id }}/local/
+          path: |
+            .journey/batch/${{ github.run_id }}/summary.md
+            .journey/batch/${{ github.run_id }}/batch-metadata.json
+            .journey/batch/${{ github.run_id }}/build.log
+            .journey/batch/${{ github.run_id }}/local/
           if-no-files-found: warn
           retention-days: 90
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: journey-secured
-          path: .journey/batch/${{ github.run_id }}/secured/
+          path: |
+            .journey/batch/${{ github.run_id }}/summary.md
+            .journey/batch/${{ github.run_id }}/batch-metadata.json
+            .journey/batch/${{ github.run_id }}/build.log
+            .journey/batch/${{ github.run_id }}/secured/
           if-no-files-found: warn
           retention-days: 90

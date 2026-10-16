@@ -538,6 +538,7 @@ tasks:
         - "kb-create"
         - "kb-deploy"
         - "kb-monitor"
+        - "kb-runner"
 
     - categories: [site]
       command: pnpm build
