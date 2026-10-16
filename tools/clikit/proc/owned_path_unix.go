@@ -126,7 +126,7 @@ func removePathRelative(stateDir, path string, expected *fileIdentity, ownerToke
 		return err
 	}
 	if openedStat.Mode&unix.S_IFMT == unix.S_IFDIR {
-		if err := removeDirectoryContents(rootFD, objectFD, path, keepPaths); err != nil {
+		if err := removeDirectoryContents(rootFD, objectFD, path, keepPaths, unixOwnedDirectoryModeOps{}); err != nil {
 			return err
 		}
 		if preserve, _ := keptScratchPath(path, keepPaths); preserve {
@@ -259,9 +259,40 @@ func requireDescriptorWithinRoot(rootFD, directoryFD int) error {
 	return nil
 }
 
-func removeDirectoryContents(rootFD, fd int, path string, keepPaths []string) error {
+type ownedDirectoryModeOps interface {
+	Fchmod(fd int, mode uint32) error
+}
+
+type unixOwnedDirectoryModeOps struct{}
+
+func (unixOwnedDirectoryModeOps) Fchmod(fd int, mode uint32) error {
+	return unix.Fchmod(fd, mode)
+}
+
+func removeDirectoryContents(rootFD, fd int, path string, keepPaths []string, modeOps ownedDirectoryModeOps) (result error) {
 	if err := requireDescriptorWithinRoot(rootFD, fd); err != nil {
 		return err
+	}
+	var before unix.Stat_t
+	if err := unix.Fstat(fd, &before); err != nil {
+		return fmt.Errorf("inspect owned directory permissions %q: %w", path, err)
+	}
+	preserve, _ := keptScratchPath(path, keepPaths)
+	modeChanged := before.Mode&0o700 != 0o700
+	if modeChanged {
+		if err := modeOps.Fchmod(fd, uint32(before.Mode|0o700)); err != nil {
+			return fmt.Errorf("restore owner access to owned directory %q: %w", path, err)
+		}
+	}
+	if modeChanged {
+		defer func() {
+			if !preserve && result == nil {
+				return
+			}
+			if err := modeOps.Fchmod(fd, uint32(before.Mode&0o7777)); err != nil {
+				result = errors.Join(result, fmt.Errorf("restore owned directory permissions %q: %w", path, err))
+			}
+		}()
 	}
 	duplicate, err := unix.Dup(fd)
 	if err != nil {
@@ -299,7 +330,7 @@ func removeDirectoryContents(rootFD, fd int, path string, keepPaths []string) er
 			if !preserve {
 				childKeeps = nil
 			}
-			err = removeDirectoryContents(rootFD, childFD, childPath, childKeeps)
+			err = removeDirectoryContents(rootFD, childFD, childPath, childKeeps, modeOps)
 			closeErr := unix.Close(childFD)
 			if err != nil || closeErr != nil {
 				return errors.Join(err, closeErr)

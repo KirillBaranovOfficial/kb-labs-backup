@@ -514,7 +514,7 @@ func pruneStateLocked(stateDir string) error {
 		if rec.Status != StatusQueued && rec.Status != StatusBlocked && rec.Status != StatusStarting && rec.Status != StatusRunning && rec.Status != StatusStalled {
 			continue
 		}
-		if rec.Status == StatusRunning || rec.Status == StatusStalled {
+		if rec.Status == StatusRunning || rec.Status == StatusStalled || rec.Status == StatusStarting {
 			if err := markLostLocked(stateDir, rec); err != nil {
 				return fmt.Errorf("prune run %s: %w", rec.RunID, err)
 			}
@@ -527,7 +527,7 @@ func pruneStateLocked(stateDir string) error {
 		if alive && identity == rec.StartedAt {
 			continue
 		}
-		if rec.Status == StatusQueued || rec.Status == StatusBlocked || rec.Status == StatusStarting {
+		if rec.Status == StatusQueued || rec.Status == StatusBlocked {
 			if err := os.Remove(filepath.Join(stateDir, "runs", rec.RunID+".json")); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -575,7 +575,7 @@ func recordObservedKeeperLoss(stateDir, runID string) error {
 }
 
 func markLostLocked(stateDir string, rec record) error {
-	if rec.Status != StatusRunning && rec.Status != StatusStalled {
+	if rec.Status != StatusStarting && rec.Status != StatusRunning && rec.Status != StatusStalled {
 		return nil
 	}
 	identity, alive, err := inspectIdentity(rec.PID)
@@ -651,6 +651,9 @@ func cleanupAdmission(stateDir, runID, reason string) {
 				return nil
 			}
 			return err
+		}
+		if rec.Status.Terminal() {
+			return nil
 		}
 		if rec.HoldGate != "" {
 			gate, exists, err := readGateLocked(stateDir, rec.HoldGate)
