@@ -748,4 +748,19 @@ or CPU quota or live available-memory check because no work under this
 admission system can release memory. The run still waits on elevated host
 pressure, and slots, gates, FIFO, and disk admission remain enforced. When
 another resource-costed run is active, memory/CPU quota and live available
-memory both gate admission. Cases: S-237.17, S-237.26.
+memory both gate admission. Cases: S-237.29, S-237.38.
+
+## 2026-10-15
+
+### D43 — kb-runner cleanup protects against accidents, not deliberate same-user races
+
+kb-runner supervises processes and resources; it is not a sandbox. A run has
+the same user authority as the cleaner, so cleanup guarantees prevent accidents
+rather than contain a deliberately racing process. Registered paths are created
+exclusively and checked against their owner nonce; scratch is created by the
+keeper and checked against its recorded device and inode. Cleanup never follows
+symlinks, including a replaced scratch root or a symlinked parent
+present when cleanup starts, never resolves a deletion outside configured
+cleanup roots, and refuses and reports identity mismatches. Deliberate same-user
+TOCTOU races during the final filesystem syscall are outside the guarantee.
+Cases: S-237.43–S-237.44.

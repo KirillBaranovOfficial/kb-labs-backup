@@ -9,12 +9,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type darwinResourceSource struct{}
+type darwinHostResourceSource struct{}
 
-func systemResourceSource() ResourceSource { return darwinResourceSource{} }
+func systemHostResourceSource() HostResourceSource { return darwinHostResourceSource{} }
 
-func (darwinResourceSource) Snapshot() ResourceSnapshot {
-	result := ResourceSnapshot{Unavailable: map[string]string{}}
+func (darwinHostResourceSource) Snapshot() HostResourceSnapshot {
+	result := HostResourceSnapshot{Unavailable: map[string]string{}}
 	read32 := func(name string) uint32 {
 		value, err := unix.SysctlUint32(name)
 		if err != nil {

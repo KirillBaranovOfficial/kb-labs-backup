@@ -318,6 +318,7 @@ func equalStrings(left, right []string) bool {
 	return true
 }
 
+// case: S-237.14
 func TestWaitLatestTagUsesNewestRunRecord(t *testing.T) {
 	dir := t.TempDir()
 	runner := filepath.Join(dir, "kb-runner")
@@ -380,4 +381,34 @@ func waitForTeardownEvent(state string, timeout time.Duration) bool {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return false
+}
+
+// case: S-237.44
+func TestOwnUnsupportedXattrFailureGivesFilesystemAndNextCommands(t *testing.T) {
+	err := ownFailure(
+		[]string{"path", "--create", "file", "/tmp/path with space"},
+		"/tmp/state",
+		proc.Resource{Kind: proc.ResourcePath, ID: "/tmp/path with space"},
+		&proc.PathXattrUnsupportedError{Filesystem: "apfs", Path: "/tmp/path with space"},
+	).Error()
+	for _, expected := range []string{
+		`filesystem "apfs"`,
+		`df -P '/tmp/path with space'`,
+		`'kb-runner' 'own' 'path' '--create' 'file' '/tmp/path with space'`,
+	} {
+		if !strings.Contains(err, expected) {
+			t.Fatalf("own xattr error omitted %q: %s", expected, err)
+		}
+	}
+}
+
+// case: S-237.50
+func TestOwnOutsideRunIsActionablyRefused(t *testing.T) {
+	t.Setenv("KBLABS_CLIPROC_RUN", "")
+	t.Setenv("KBLABS_CLIPROC_STATE", "")
+	var output bytes.Buffer
+	code, err := execute([]string{"own", "path", "--create", "dir", "/tmp/unowned"}, &output, &output)
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "no active run marker") || !strings.Contains(err.Error(), "inside kb-runner run") {
+		t.Fatalf("own outside run result = code %d, err %v, output %q", code, err, output.String())
+	}
 }

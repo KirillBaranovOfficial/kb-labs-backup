@@ -3,374 +3,1021 @@
 package proc
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
-const pressureNormalDuration = 10 * time.Second
+type ResourceKind string
 
-const pressurePSIThreshold = 10.0
+const (
+	ResourcePath           ResourceKind = "path"
+	ResourceCompose        ResourceKind = "docker-compose"
+	ResourceContainer      ResourceKind = "docker-container"
+	ResourceNetwork        ResourceKind = "docker-network"
+	ResourceVolume         ResourceKind = "docker-volume"
+	ResourceRemoved                     = "removed"
+	ResourceAlreadyGone                 = "already-gone"
+	ResourceRefused                     = "refused"
+	ResourceFailed                      = "failed"
+	ResourcePending                     = "pending"
+	resourceStateEnv                    = "KBLABS_CLIPROC_STATE"
+	resourceLedgerFilename              = "resources.json"
+	composeStopTimeout                  = 10 * time.Second
+	composeCleanupMargin                = 5 * time.Second
+)
 
-const lowAvailableMemoryFraction = 10
+type OwnedPathType string
 
-const highLoadPerLogicalCPU = 1.5
+const (
+	OwnedDirectory OwnedPathType = "dir"
+	OwnedFile      OwnedPathType = "file"
+)
 
-type resourceUsage struct {
-	MemoryBytes uint64
-	MinCPUs     int
-	DiskBytes   uint64
+type PathXattrUnsupportedError struct {
+	Filesystem string
+	Path       string
 }
 
-type resourceQuota struct {
-	MemoryBytes uint64
-	CPUs        int
-	MinFree     uint64
+type OwnedPathRefusalError struct{ Reason string }
+
+func (err *OwnedPathRefusalError) Error() string { return err.Reason }
+
+func (err *PathXattrUnsupportedError) Error() string {
+	return fmt.Sprintf("filesystem %q at %q does not support required user xattrs; move this path to a filesystem with user xattr support", err.Filesystem, err.Path)
 }
 
-type ResourceSnapshot struct {
-	PhysicalMemory       uint64
-	AvailableMemory      uint64
-	MemoryAvailableKnown bool
-	PressureAvailable    bool
-	LoadAvailable        bool
-	LogicalCPUs          int
-	Pressure             string
-	Load1                float64
-	CPUPressure          float64
-	Swap                 string
-	Unavailable          map[string]string
-	CgroupMemory         uint64
-	CgroupCPUs           int
-	CgroupCPUsKnown      bool
+type Resource struct {
+	Kind             ResourceKind `json:"kind"`
+	ID               string       `json:"id"`
+	Files            []string     `json:"files,omitempty"`
+	ComposePrefix    []string     `json:"compose_prefix,omitempty"`
+	ProtectedVolumes []string     `json:"protected_volumes,omitempty"`
+	Device           uint64       `json:"device,omitempty"`
+	Inode            uint64       `json:"inode,omitempty"`
+	ownerToken       string       `json:"-"`
+	Outcome          string       `json:"outcome,omitempty"`
+	Error            string       `json:"error,omitempty"`
 }
 
-func resourceNotice(sample ResourceSnapshot) string {
-	keys := make([]string, 0, len(sample.Unavailable))
-	for key := range sample.Unavailable {
-		keys = append(keys, key)
+type resourceJSON Resource
+
+type resourceWire struct {
+	*resourceJSON
+	OwnerToken string `json:"owner_token,omitempty"`
+}
+
+func (resource Resource) MarshalJSON() ([]byte, error) {
+	value := resourceJSON(resource)
+	return json.Marshal(resourceWire{resourceJSON: &value, OwnerToken: resource.ownerToken})
+}
+
+func (resource *Resource) UnmarshalJSON(data []byte) error {
+	value := resourceJSON(*resource)
+	wire := resourceWire{resourceJSON: &value}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
 	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, key+" unavailable: "+sample.Unavailable[key])
+	*resource = Resource(value)
+	resource.ownerToken = wire.OwnerToken
+	return nil
+}
+
+type ResourceOutcome struct {
+	Resource Resource `json:"resource"`
+	Outcome  string   `json:"outcome"`
+	Error    string   `json:"error,omitempty"`
+	stalled  bool
+	Steps    []ResourceCleanupStep `json:"steps,omitempty"`
+}
+
+type DockerCleanupStallError struct {
+	Message string
+	Cause   error
+}
+
+func (err *DockerCleanupStallError) Error() string {
+	return fmt.Sprintf("%s: %v", err.Message, err.Cause)
+}
+
+func (err *DockerCleanupStallError) Unwrap() error { return err.Cause }
+
+type ResourceCleanupStep struct {
+	Name    string `json:"name"`
+	Outcome string `json:"outcome"`
+	Error   string `json:"error,omitempty"`
+}
+
+type fileIdentity struct {
+	Device uint64
+	Inode  uint64
+}
+
+func (identity fileIdentity) matches(resource Resource) bool {
+	return identity.Device == resource.Device && identity.Inode == resource.Inode
+}
+
+func composeCleanupBound() time.Duration {
+	return composeStopTimeout + composeCleanupMargin
+}
+
+var dockerCommand = func(ctx context.Context, args ...string) ([]byte, error) {
+	return resourceCommand(ctx, []string{"docker"}, args...)
+}
+
+var setPathOwnerXattr = func(path string, value []byte) error {
+	return unix.Lsetxattr(path, pathOwnerXattrName, value, 0)
+}
+
+var writeResourceLedgerFile = os.WriteFile
+
+var getPathOwnerXattr = func(path string) ([]byte, error) {
+	size, err := unix.Lgetxattr(path, pathOwnerXattrName, nil)
+	if err != nil {
+		return nil, err
 	}
-	return strings.Join(parts, "; ")
+	value := make([]byte, size)
+	read, err := unix.Lgetxattr(path, pathOwnerXattrName, value)
+	if err != nil {
+		return nil, err
+	}
+	return value[:read], nil
 }
 
-// ResourceSource supplies one host resource sample to admission. Start uses
-// the current host reader; callers that coordinate several clients can inject
-// the same source into every admission poll.
-type ResourceSource interface{ Snapshot() ResourceSnapshot }
-
-type quotaFile struct {
-	MemoryBytes   *uint64 `json:"memory_bytes,omitempty"`
-	MemoryPercent *int    `json:"memory_percent,omitempty"`
-	CPUs          *int    `json:"cpus,omitempty"`
-	MinFree       *uint64 `json:"min_free_bytes,omitempty"`
+var composeCommand = func(ctx context.Context, prefix []string, args ...string) ([]byte, error) {
+	return resourceCommand(ctx, prefix, args...)
 }
 
-func effectiveQuota(stateDir string, source ResourceSource) (resourceQuota, error) {
-	sample := source.Snapshot()
-	quota := resourceQuota{MemoryBytes: sample.PhysicalMemory * 70 / 100, CPUs: max(1, sample.LogicalCPUs-2)}
-	data, err := os.ReadFile(filepath.Join(stateDir, "quota.json"))
+func resourceCommand(ctx context.Context, prefix []string, args ...string) ([]byte, error) {
+	if len(prefix) == 0 || prefix[0] == "" {
+		return nil, errors.New("resource command prefix is empty")
+	}
+	command := exec.CommandContext(ctx, prefix[0], append(prefix[1:], args...)...)
+	configureCommandPlatform(command)
+	command.Cancel = func() error {
+		if command.Process == nil {
+			return os.ErrProcessDone
+		}
+		if err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+		return nil
+	}
+	return command.CombinedOutput()
+}
+
+func ledgerPath(stateDir, runID string) string {
+	return filepath.Join(stateDir, "runs", runID, resourceLedgerFilename)
+}
+
+// RegisterResource records an explicitly owned external resource in run order.
+func RegisterResource(stateDir, runID string, resource Resource) error {
+	return withStateLock(stateDir, func() error {
+		rec, err := readRecordLocked(stateDir, runID)
+		if err != nil {
+			return fmt.Errorf("resource owner run %q is unavailable: %w", runID, err)
+		}
+		if rec.Status != StatusRunning && rec.Status != StatusStalled && rec.Status != StatusStarting {
+			return fmt.Errorf("run %q is not active; resources can only be owned during a running command", runID)
+		}
+		if resource.ID == "" {
+			return errors.New("resource id is required")
+		}
+		switch resource.Kind {
+		case ResourcePath:
+			return errors.New("path ownership requires exclusive creation: use own path --create dir|file PATH")
+		case ResourceCompose:
+			if len(resource.Files) == 0 || len(resource.ComposePrefix) == 0 {
+				return errors.New("docker-compose ownership requires --file PATH and a command prefix after --")
+			}
+			protected, err := inspectComposeVolumes(resource)
+			if err != nil {
+				return err
+			}
+			resource.ProtectedVolumes = protected
+		case ResourceContainer, ResourceNetwork:
+		case ResourceVolume:
+			exists, err := dockerResourceExists(ResourceVolume, resource.ID)
+			if err != nil {
+				return fmt.Errorf("inspect Docker volume %q before ownership: %w", resource.ID, err)
+			}
+			if exists {
+				return fmt.Errorf("refused pre-existing Docker volume %q; only volumes created by this run may be owned", resource.ID)
+			}
+		default:
+			return fmt.Errorf("unsupported resource kind %q", resource.Kind)
+		}
+		entries, err := readResourceLedger(stateDir, runID)
+		if err != nil {
+			return err
+		}
+		resource.Outcome = ResourcePending
+		entries = append(entries, resource)
+		return writeResourceLedger(stateDir, runID, entries)
+	})
+}
+
+// CreateOwnedPath atomically creates and records a path under configured cleanup roots.
+func CreateOwnedPath(stateDir, runID, path string, pathType OwnedPathType) error {
+	return withStateLock(stateDir, func() error {
+		rec, err := readRecordLocked(stateDir, runID)
+		if err != nil {
+			return fmt.Errorf("resource owner run %q is unavailable: %w", runID, err)
+		}
+		if rec.Status != StatusRunning && rec.Status != StatusStalled && rec.Status != StatusStarting {
+			return fmt.Errorf("run %q is not active; resources can only be owned during a running command", runID)
+		}
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("resolve owned path: %w", err)
+		}
+		absolute, err = normalizeCleanupPath(stateDir, absolute)
+		if err != nil {
+			return fmt.Errorf("normalize owned path against cleanup roots: %w", err)
+		}
+		inside, err := pathUnderCleanupRoot(stateDir, absolute)
+		if err != nil {
+			return err
+		}
+		if !inside {
+			return fmt.Errorf("refused owned path %q: it is outside configured cleanup roots", absolute)
+		}
+		nonce, err := newID()
+		if err != nil {
+			return fmt.Errorf("create path ownership nonce: %w", err)
+		}
+		ownerToken := runID + ":" + nonce
+		var createdInfo os.FileInfo
+		switch pathType {
+		case OwnedDirectory:
+			err = os.Mkdir(absolute, 0o700)
+		case OwnedFile:
+			var file *os.File
+			file, err = os.OpenFile(absolute, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err == nil {
+				createdInfo, err = file.Stat()
+				closeErr := file.Close()
+				err = errors.Join(err, closeErr)
+			}
+		default:
+			return fmt.Errorf("unsupported owned path type %q; expected dir or file", pathType)
+		}
+		if err != nil {
+			return fmt.Errorf("create owned path %q exclusively: %w", absolute, err)
+		}
+		if createdInfo == nil {
+			createdInfo, err = os.Lstat(absolute)
+		}
+		if err != nil {
+			return fmt.Errorf("inspect newly created path %q; it was left untouched because its identity could not be verified: %w", absolute, err)
+		}
+		if createdInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refused owned path %q: symlinks are not allowed; the replacement was left untouched", absolute)
+		}
+		identity, err := resourceIdentity(absolute, createdInfo)
+		if err != nil {
+			return fmt.Errorf("inspect owned path %q; it was left untouched because its identity could not be verified: %w", absolute, err)
+		}
+		if err := setPathOwnerXattr(absolute, []byte(ownerToken)); err != nil {
+			rollbackErr := removeCreatedPath(stateDir, absolute, identity)
+			if errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, unix.ENOTSUP) {
+				return errors.Join(&PathXattrUnsupportedError{Filesystem: filesystemName(absolute), Path: absolute}, rollbackErr)
+			}
+			return errors.Join(fmt.Errorf("write path ownership xattr on %q: %w", absolute, err), rollbackErr)
+		}
+		resource := Resource{Kind: ResourcePath, ID: absolute, Device: identity.Device, Inode: identity.Inode, ownerToken: ownerToken, Outcome: ResourcePending}
+		entries, err := readResourceLedger(stateDir, runID)
+		if err == nil {
+			entries = append(entries, resource)
+			err = writeResourceLedger(stateDir, runID, entries)
+		}
+		if err != nil {
+			return errors.Join(err, removeOwnedPath(stateDir, resource))
+		}
+		return nil
+	})
+}
+
+func inspectComposeVolumes(resource Resource) ([]string, error) {
+	args := []string{"-p", resource.ID}
+	for _, file := range resource.Files {
+		args = append(args, "-f", file)
+	}
+	args = append(args, "config", "--format", "json")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	data, err := composeCommand(ctx, resource.ComposePrefix, args...)
+	cancel()
+	if err != nil {
+		return nil, fmt.Errorf("read Compose volume declarations: %w: %s", err, strings.TrimSpace(string(data)))
+	}
+	var config struct {
+		Volumes map[string]struct {
+			Name     string `json:"name"`
+			External bool   `json:"external"`
+		} `json:"volumes"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("decode Compose volume declarations: %w", err)
+	}
+	var protected []string
+	for key, volume := range config.Volumes {
+		name := volume.Name
+		if name == "" {
+			return nil, fmt.Errorf("Compose config omitted the resolved name for volume %q", key)
+		}
+		exists, inspectErr := dockerResourceExists(ResourceVolume, name)
+		if inspectErr != nil {
+			return nil, fmt.Errorf("inspect Compose volume %q before ownership: %w", name, inspectErr)
+		}
+		if exists {
+			if !volume.External {
+				return nil, fmt.Errorf("refused Compose project %q: named volume %q already exists; declare pre-existing volumes external before running compose", resource.ID, name)
+			}
+			protected = append(protected, name)
+			continue
+		}
+	}
+	return protected, nil
+}
+
+func pathUnderCleanupRoot(stateDir, path string) (bool, error) {
+	path, err := normalizeCleanupPath(stateDir, path)
+	if err != nil {
+		return false, err
+	}
+	roots, err := cleanupRoots(stateDir)
+	if err != nil {
+		return false, err
+	}
+	for _, root := range roots {
+		rel, err := filepath.Rel(root, path)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		current := root
+		rootInfo, err := os.Lstat(current)
+		if err != nil {
+			return false, fmt.Errorf("inspect cleanup root %q: %w", root, err)
+		}
+		if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+			return false, fmt.Errorf("refused path %q: cleanup root %q is not a real directory", path, root)
+		}
+		parts := strings.Split(rel, string(filepath.Separator))
+		for _, part := range parts[:len(parts)-1] {
+			current = filepath.Join(current, part)
+			info, err := os.Lstat(current)
+			if err != nil {
+				return false, fmt.Errorf("inspect parent of owned path %q: %w", path, err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return false, fmt.Errorf("refused path %q: parent %q is a symlink", path, current)
+			}
+			if !info.IsDir() {
+				return false, fmt.Errorf("refused path %q: parent %q is not a directory", path, current)
+			}
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func normalizeCleanupPath(stateDir, path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	absolute = filepath.Clean(absolute)
+	configured, err := os.ReadFile(filepath.Join(stateDir, "cleanup-roots.json"))
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("read configured cleanup roots: %w", err)
+	}
+	if len(configured) > 0 {
+		return absolute, nil
+	}
+	tempRoot, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(tempRoot, absolute)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return absolute, nil
+	}
+	realTempRoot, err := filepath.EvalSymlinks(tempRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve default system temporary root %q: %w", tempRoot, err)
+	}
+	return filepath.Join(realTempRoot, relative), nil
+}
+
+func cleanupRoots(stateDir string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(stateDir, "cleanup-roots.json"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	var roots []string
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &roots); err != nil {
+			return nil, fmt.Errorf("decode cleanup roots: %w", err)
+		}
+	} else {
+		tempRoot, err := filepath.EvalSymlinks(os.TempDir())
+		if err != nil {
+			return nil, fmt.Errorf("resolve default system temporary root %q: %w", os.TempDir(), err)
+		}
+		roots = []string{stateDir, tempRoot}
+	}
+	for i, root := range roots {
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			return nil, err
+		}
+		roots[i] = filepath.Clean(abs)
+	}
+	return roots, nil
+}
+
+func resolveKeepPaths(scratch string, paths []string) []string {
+	kept := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(scratch, path)
+		}
+		if absolute, err := filepath.Abs(path); err == nil {
+			kept = append(kept, filepath.Clean(absolute))
+		}
+	}
+	return kept
+}
+
+func cleanupScratch(stateDir, scratch string, expected fileIdentity, keepPaths []string) error {
+	return removeScratchPathRelative(stateDir, scratch, expected, keepPaths)
+}
+
+func cleanupScratchOutcome(stateDir, scratch string, expected fileIdentity, keepPaths []string) (ResourceOutcome, error) {
+	outcome := ResourceOutcome{Resource: Resource{Kind: "scratch", ID: scratch}}
+	if scratch == "" {
+		return outcome, nil
+	}
+	err := cleanupScratch(stateDir, scratch, expected, keepPaths)
+	if errors.Is(err, errOwnedPathAlreadyGone) {
+		outcome.Outcome = ResourceAlreadyGone
+		return outcome, nil
+	}
+	if err != nil {
+		var refusal *OwnedPathRefusalError
+		if errors.As(err, &refusal) {
+			outcome.Outcome = ResourceRefused
+		} else {
+			outcome.Outcome = ResourceFailed
+		}
+		outcome.Error = err.Error()
+		return outcome, err
+	}
+	outcome.Outcome = ResourceRemoved
+	return outcome, nil
+}
+
+func readResourceLedger(stateDir, runID string) ([]Resource, error) {
+	data, err := os.ReadFile(ledgerPath(stateDir, runID))
 	if os.IsNotExist(err) {
-		if sample.CgroupMemory > 0 && sample.CgroupMemory < quota.MemoryBytes {
-			quota.MemoryBytes = sample.CgroupMemory
-		}
-		if sample.CgroupCPUsKnown && sample.CgroupCPUs < quota.CPUs {
-			quota.CPUs = sample.CgroupCPUs
-		}
-		return quota, nil
+		return nil, nil
 	}
 	if err != nil {
-		return resourceQuota{}, err
+		return nil, err
 	}
-	var stored quotaFile
-	if err := json.Unmarshal(data, &stored); err != nil {
-		return resourceQuota{}, fmt.Errorf("decode quota.json: %w", err)
+	var entries []Resource
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("decode resource ledger for run %s: %w", runID, err)
 	}
-	if stored.MemoryBytes != nil {
-		quota.MemoryBytes = *stored.MemoryBytes
-	}
-	if stored.MemoryPercent != nil {
-		quota.MemoryBytes = sample.PhysicalMemory * uint64(*stored.MemoryPercent) / 100
-	}
-	if stored.CPUs != nil {
-		quota.CPUs = *stored.CPUs
-	}
-	if stored.MinFree != nil {
-		quota.MinFree = *stored.MinFree
-	}
-	if sample.CgroupMemory > 0 && sample.CgroupMemory < quota.MemoryBytes {
-		quota.MemoryBytes = sample.CgroupMemory
-	}
-	if sample.CgroupCPUsKnown && sample.CgroupCPUs < quota.CPUs {
-		quota.CPUs = sample.CgroupCPUs
-	}
-	return quota, nil
+	return entries, nil
 }
 
-func writeQuota(stateDir string, quota quotaFile) error {
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+func writeResourceLedger(stateDir, runID string, entries []Resource) error {
+	path := ledgerPath(stateDir, runID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.Marshal(quota)
+	data, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(stateDir, "quota.json.tmp")
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	return writeResourceLedgerFile(path, data, 0o600)
+}
+
+func cleanupResources(stateDir, runID string) []ResourceOutcome {
+	var outcomes []ResourceOutcome
+	enteredLock, cleanupFailed := false, false
+	if err := withStateLock(stateDir, func() error {
+		enteredLock = true
+		var err error
+		outcomes, err = cleanupResourcesLocked(stateDir, runID)
+		if err != nil {
+			cleanupFailed = true
+			markErr := markRunDirtyLocked(stateDir, runID, err.Error())
+			if markErr != nil {
+				markErr = errors.Join(markErr, markRunLostLocked(stateDir, runID, errors.Join(err, markErr).Error()))
+			}
+			err = errors.Join(err, markErr)
+		}
+		return err
+	}); err != nil {
+		outcomes = mergePendingResourceFailures(outcomes, pendingResourceFailures(stateDir, runID, err))
+		if len(outcomes) > 0 {
+			last := len(outcomes) - 1
+			if outcomes[last].Error == "" {
+				outcomes[last].Error = err.Error()
+			} else {
+				outcomes[last].Error = errors.Join(errors.New(outcomes[last].Error), err).Error()
+			}
+		}
+		if !enteredLock || !cleanupFailed {
+			if markErr := markRunDirtyWithoutLock(stateDir, runID, err.Error()); markErr != nil {
+				if lostErr := markRunLostWithoutLock(stateDir, runID, errors.Join(err, markErr).Error()); lostErr != nil {
+					err = errors.Join(err, markErr, lostErr)
+				}
+			}
+		}
+		if len(outcomes) == 0 {
+			outcomes = []ResourceOutcome{{Outcome: ResourceFailed, Error: err.Error()}}
+		}
+		return outcomes
+	}
+	return outcomes
+}
+
+func mergePendingResourceFailures(processed, pending []ResourceOutcome) []ResourceOutcome {
+	merged := append([]ResourceOutcome(nil), processed...)
+	seen := make(map[string]int, len(processed))
+	for _, outcome := range processed {
+		seen[string(outcome.Resource.Kind)+"\x00"+outcome.Resource.ID]++
+	}
+	for _, outcome := range pending {
+		key := string(outcome.Resource.Kind) + "\x00" + outcome.Resource.ID
+		if seen[key] > 0 {
+			seen[key]--
+			continue
+		}
+		merged = append(merged, outcome)
+	}
+	return merged
+}
+
+func cleanupResourcesLocked(stateDir, runID string) ([]ResourceOutcome, error) {
+	entries, err := readResourceLedger(stateDir, runID)
+	if err != nil {
+		return nil, errors.Join(err, markRunDirtyLocked(stateDir, runID, err.Error()))
+	}
+	outcomes := make([]ResourceOutcome, 0, len(entries))
+	for i := len(entries) - 1; i >= 0; i-- {
+		outcome := cleanupResource(stateDir, entries[i])
+		outcomes = append(outcomes, outcome)
+		entries[i].Outcome, entries[i].Error = outcome.Outcome, outcome.Error
+		if err := writeResourceLedger(stateDir, runID, entries); err != nil {
+			markErr := markRunDirtyLocked(stateDir, runID, err.Error())
+			return outcomes, errors.Join(fmt.Errorf("persist resource cleanup ledger: %w", err), markErr)
+		}
+		if outcome.stalled {
+			if rec, err := readRecordLocked(stateDir, runID); err == nil {
+				event := eventFor(rec, EventStall)
+				event.Command = "docker " + string(entries[i].Kind) + " " + entries[i].ID + " cleanup"
+				event.Error = outcome.Error
+				if err := appendEvent(stateDir, event); err != nil {
+					return outcomes, err
+				}
+			}
+		}
+	}
+	if rec, err := readRecordLocked(stateDir, runID); err == nil {
+		dirty := false
+		for _, outcome := range outcomes {
+			if outcome.Outcome == ResourceFailed || outcome.Outcome == ResourceRefused {
+				dirty = true
+			}
+		}
+		if dirty {
+			rec.Status = StatusDirty
+			rec.Error = "resource cleanup left entries requiring attention"
+			if err := writeRecordAtomic(rec); err != nil {
+				return outcomes, errors.Join(err, markRunLostLocked(stateDir, runID, err.Error()))
+			}
+		}
+	} else {
+		return outcomes, errors.Join(err, markRunDirtyLocked(stateDir, runID, err.Error()))
+	}
+	return outcomes, nil
+}
+
+func resourceOutcomesError(outcomes []ResourceOutcome) error {
+	var failures []error
+	for _, outcome := range outcomes {
+		if outcome.Outcome == ResourceFailed || outcome.Outcome == ResourceRefused || outcome.Error != "" {
+			failures = append(failures, fmt.Errorf("%s %s: %s", outcome.Outcome, outcome.Resource.ID, outcome.Error))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func markRunDirty(stateDir, runID, reason string) error {
+	return updateRecord(stateDir, runID, func(rec *record) error {
+		rec.Status = StatusDirty
+		rec.Error = reason
+		return nil
+	})
+}
+
+func markRunDirtyLocked(stateDir, runID, reason string) error {
+	rec, err := readRecordLocked(stateDir, runID)
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, filepath.Join(stateDir, "quota.json")); err != nil {
-		return fmt.Errorf("write quota.json: %w", err)
+	rec.Status, rec.Error = StatusDirty, reason
+	return writeRecordAtomic(rec)
+}
+
+func markRunLostLocked(stateDir, runID, reason string) error {
+	rec, err := readRecordLocked(stateDir, runID)
+	if err != nil {
+		return err
+	}
+	rec.Status, rec.Error = StatusLost, reason
+	return writeRecordAtomic(rec)
+}
+
+func markRunDirtyWithoutLock(stateDir, runID, reason string) error {
+	rec, err := readRecordLocked(stateDir, runID)
+	if err != nil {
+		return err
+	}
+	rec.Status, rec.Error = StatusDirty, reason
+	return writeRecordAtomic(rec)
+}
+
+func markRunLostWithoutLock(stateDir, runID, reason string) error {
+	rec, err := readRecordLocked(stateDir, runID)
+	if err != nil {
+		return err
+	}
+	rec.Status, rec.Error = StatusLost, reason
+	return writeRecordAtomic(rec)
+}
+
+func pendingResourceFailures(stateDir, runID string, cause error) []ResourceOutcome {
+	entries, err := readResourceLedger(stateDir, runID)
+	if err != nil {
+		return nil
+	}
+	outcomes := make([]ResourceOutcome, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Outcome == ResourcePending || entry.Outcome == "" {
+			outcomes = append(outcomes, ResourceOutcome{Resource: entry, Outcome: ResourceFailed, Error: cause.Error()})
+		}
+	}
+	return outcomes
+}
+
+func cleanupResource(stateDir string, resource Resource) ResourceOutcome {
+	result := ResourceOutcome{Resource: resource}
+	var err error
+	switch resource.Kind {
+	case ResourcePath:
+		err = removeOwnedPath(stateDir, resource)
+	case ResourceCompose:
+		result.Steps, err = cleanupCompose(resource)
+	case ResourceContainer, ResourceNetwork, ResourceVolume:
+		exists, inspectErr := dockerResourceExists(resource.Kind, resource.ID)
+		if inspectErr != nil {
+			err = inspectErr
+		} else if !exists {
+			result.Outcome = ResourceAlreadyGone
+			return result
+		} else {
+			args := map[ResourceKind][]string{
+				ResourceContainer: {"rm", "-f", resource.ID},
+				ResourceNetwork:   {"network", "rm", resource.ID},
+				ResourceVolume:    {"volume", "rm", resource.ID},
+			}[resource.Kind]
+			err = dockerRemove(args...)
+			if err != nil {
+				stillExists, checkErr := dockerResourceExists(resource.Kind, resource.ID)
+				if checkErr == nil && !stillExists {
+					result.Outcome = ResourceAlreadyGone
+					return result
+				}
+				if checkErr != nil {
+					err = errors.Join(err, checkErr)
+				}
+			}
+		}
+	default:
+		err = fmt.Errorf("unknown ledger resource kind %q", resource.Kind)
+	}
+	if err != nil {
+		if errors.Is(err, errOwnedPathAlreadyGone) {
+			result.Outcome = ResourceAlreadyGone
+			return result
+		}
+		var refusal *OwnedPathRefusalError
+		if errors.As(err, &refusal) {
+			result.Outcome, result.Error = ResourceRefused, refusal.Error()
+		} else {
+			result.Outcome, result.Error = ResourceFailed, err.Error()
+		}
+		var stall *DockerCleanupStallError
+		result.stalled = errors.As(err, &stall)
+	} else {
+		result.Outcome = ResourceRemoved
+	}
+	return result
+}
+
+func dockerResourceExists(kind ResourceKind, id string) (bool, error) {
+	var args []string
+	switch kind {
+	case ResourceContainer:
+		args = []string{"ps", "-aq", "--no-trunc", "--filter", "id=" + id}
+	case ResourceNetwork:
+		args = []string{"network", "ls", "-q", "--no-trunc", "--filter", "id=" + id}
+	case ResourceVolume:
+		args = []string{"volume", "ls", "-q", "--filter", "name=" + id}
+	default:
+		return false, fmt.Errorf("cannot inspect Docker resource kind %q", kind)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), composeCleanupBound())
+	output, err := dockerCommand(ctx, args...)
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	cancel()
+	if err != nil {
+		if timedOut {
+			return false, &DockerCleanupStallError{Message: fmt.Sprintf("stalled Docker cleanup (docker %s) exceeded %s: %s", strings.Join(args, " "), composeCleanupBound(), strings.TrimSpace(string(output))), Cause: err}
+		}
+		return false, fmt.Errorf("query Docker %s existence for %q: %w: %s", kind, id, err, strings.TrimSpace(string(output)))
+	}
+	for _, line := range strings.Fields(string(output)) {
+		if kind == ResourceVolume {
+			if line == id {
+				return true, nil
+			}
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func dockerRemove(args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), composeCleanupBound())
+	defer cancel()
+	out, err := dockerCommand(ctx, args...)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return &DockerCleanupStallError{Message: fmt.Sprintf("stalled Docker cleanup (docker %s) exceeded %s: %s", strings.Join(args, " "), composeCleanupBound(), strings.TrimSpace(string(out))), Cause: err}
+		}
+		return fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-type QuotaStatus struct {
-	MemoryBytes uint64
-	CPUs        int
-	MinFree     uint64
-	MemorySet   bool
-	CPUsSet     bool
-	MinFreeSet  bool
-	Resources   ResourceSnapshot
+func cleanupCompose(resource Resource) ([]ResourceCleanupStep, error) {
+	var failures []error
+	steps := make([]ResourceCleanupStep, 0, 2)
+	args := []string{"-p", resource.ID}
+	for _, file := range resource.Files {
+		args = append(args, "-f", file)
+	}
+	args = append(args, "down", "-v", "--remove-orphans", "--timeout", strconv.Itoa(int(composeStopTimeout/time.Second)))
+	downErr := composeRemove(resource.ComposePrefix, composeCleanupBound(), args...)
+	if downErr != nil {
+		downErr = fmt.Errorf("Compose down failed: %w", downErr)
+		failures = append(failures, downErr)
+		steps = append(steps, ResourceCleanupStep{Name: "down", Outcome: ResourceFailed, Error: downErr.Error()})
+	} else {
+		steps = append(steps, ResourceCleanupStep{Name: "down", Outcome: ResourceRemoved})
+	}
+	var sweepFailures []error
+	for _, kind := range []string{"container", "network", "volume"} {
+		args := []string{"--filter", "label=com.docker.compose.project=" + resource.ID}
+		if kind == "container" {
+			args = append([]string{"ps", "-aq"}, args...)
+		} else if kind == "network" {
+			args = append([]string{"network", "ls", "-q"}, args...)
+		} else {
+			args = append([]string{"volume", "ls", "-q"}, args...)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), composeCleanupBound())
+		ids, err := dockerCommand(ctx, args...)
+		cancel()
+		if err != nil {
+			sweepFailures = append(sweepFailures, fmt.Errorf("list compose project %s %ss: %w: %s", resource.ID, kind, err, strings.TrimSpace(string(ids))))
+			continue
+		}
+		for _, id := range strings.Fields(string(ids)) {
+			if kind == "volume" && containsString(resource.ProtectedVolumes, id) {
+				continue
+			}
+			remove := []string{"rm", "-f", id}
+			if kind == "network" {
+				remove = []string{"network", "rm", id}
+			} else if kind == "volume" {
+				remove = []string{"volume", "rm", id}
+			}
+			if err := dockerRemove(remove...); err != nil {
+				sweepFailures = append(sweepFailures, fmt.Errorf("remove labeled compose %s %q: %w", kind, id, err))
+			}
+		}
+	}
+	if len(sweepFailures) > 0 {
+		sweepErr := errors.Join(sweepFailures...)
+		failures = append(failures, fmt.Errorf("forced label sweep failed: %w", sweepErr))
+		steps = append(steps, ResourceCleanupStep{Name: "label-sweep", Outcome: ResourceFailed, Error: sweepErr.Error()})
+	} else {
+		steps = append(steps, ResourceCleanupStep{Name: "label-sweep", Outcome: ResourceRemoved})
+	}
+	return steps, errors.Join(failures...)
 }
 
-func ShowQuota(stateDir string) (QuotaStatus, error) {
-	var status QuotaStatus
+func composeRemove(prefix []string, timeout time.Duration, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	out, err := composeCommand(ctx, prefix, args...)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return &DockerCleanupStallError{Message: fmt.Sprintf("stalled Docker cleanup (%s %s) exceeded %s: %s", strings.Join(prefix, " "), strings.Join(args, " "), timeout, strings.TrimSpace(string(out))), Cause: err}
+		}
+		return fmt.Errorf("%s %s: %w: %s", strings.Join(prefix, " "), strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func removeOwnedPath(stateDir string, resource Resource) error {
+	return removeOwnedPathRelative(stateDir, resource.ID, fileIdentity{Device: resource.Device, Inode: resource.Inode}, resource.ownerToken)
+}
+
+func removeCreatedPath(stateDir, path string, identity fileIdentity) error {
+	err := removeOwnedPathRelative(stateDir, path, identity, "")
+	if errors.Is(err, errOwnedPathAlreadyGone) {
+		return nil
+	}
+	return err
+}
+
+func containsString(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+func GarbageCollect(stateDir string) ([]ResourceOutcome, error) {
+	var all []ResourceOutcome
 	err := withStateLock(stateDir, func() error {
-		source := systemResourceSource()
-		sample := source.Snapshot()
-		quota, err := effectiveQuota(stateDir, source)
+		if err := pruneStateLocked(stateDir); err != nil {
+			return err
+		}
+		records, err := readRecordsLocked(stateDir)
 		if err != nil {
 			return err
 		}
-		status = QuotaStatus{MemoryBytes: quota.MemoryBytes, CPUs: quota.CPUs, MinFree: quota.MinFree, Resources: sample}
-		data, readErr := os.ReadFile(filepath.Join(stateDir, "quota.json"))
-		if readErr == nil {
-			var stored quotaFile
-			if err := json.Unmarshal(data, &stored); err != nil {
-				return err
+		for _, rec := range records {
+			if rec.Status != StatusDirty && rec.Status != StatusLost {
+				continue
 			}
-			status.MemorySet = stored.MemoryBytes != nil || stored.MemoryPercent != nil
-			status.CPUsSet, status.MinFreeSet = stored.CPUs != nil, stored.MinFree != nil
-		} else if !os.IsNotExist(readErr) {
-			return readErr
-		}
-		return nil
-	})
-	return status, err
-}
-
-func SetQuota(stateDir, memory, cpus, minFree string) error {
-	if stateDir == "" {
-		return fmt.Errorf("state directory is required")
-	}
-	return withStateLock(stateDir, func() error {
-		var stored quotaFile
-		data, err := os.ReadFile(filepath.Join(stateDir, "quota.json"))
-		if err == nil {
-			if err := json.Unmarshal(data, &stored); err != nil {
-				return err
-			}
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		if memory != "" {
-			if strings.HasSuffix(memory, "%") {
-				n, err := strconv.Atoi(strings.TrimSuffix(memory, "%"))
-				if err != nil || n < 1 || n > 100 {
-					return fmt.Errorf("memory percent must be 1..100")
-				}
-				stored.MemoryPercent, stored.MemoryBytes = &n, nil
-			} else {
-				value, err := ParseResourceSize(memory)
-				if err != nil {
-					return err
-				}
-				if value == 0 {
-					return fmt.Errorf("memory quota must be positive")
-				}
-				stored.MemoryBytes, stored.MemoryPercent = &value, nil
-			}
-		}
-		if cpus != "" {
-			value, err := strconv.Atoi(cpus)
-			if err != nil || value < 1 {
-				return fmt.Errorf("CPU quota must be positive")
-			}
-			stored.CPUs = &value
-		}
-		if minFree != "" {
-			value, err := ParseResourceSize(minFree)
+			outcomes, err := cleanupResourcesLocked(stateDir, rec.RunID)
 			if err != nil {
 				return err
 			}
-			stored.MinFree = &value
-		}
-		return writeQuota(stateDir, stored)
-	})
-}
-
-type pressureState struct {
-	ElevatedAt time.Time `json:"elevated_at,omitempty"`
-	NormalAt   time.Time `json:"normal_at,omitempty"`
-	Level      string    `json:"level,omitempty"`
-}
-
-func isElevatedPressure(sample ResourceSnapshot) bool {
-	if sample.Pressure == "memory warn" || sample.Pressure == "memory critical" || sample.Pressure == "memory psi elevated" {
-		return true
-	}
-	if sample.PhysicalMemory > 0 && sample.AvailableMemory < sample.PhysicalMemory*lowAvailableMemoryFraction/100 {
-		return true
-	}
-	return sample.LogicalCPUs > 0 && sample.Load1 > highLoadPerLogicalCPU*float64(sample.LogicalCPUs)
-}
-
-func pressureWaitReason(sample ResourceSnapshot) string {
-	switch {
-	case sample.Pressure == "memory warn" || sample.Pressure == "memory critical" || sample.Pressure == "memory psi elevated":
-		return "host pressure (" + sample.Pressure + ")"
-	case sample.PhysicalMemory > 0 && sample.AvailableMemory < sample.PhysicalMemory*lowAvailableMemoryFraction/100:
-		return "host pressure (available memory below 10% of physical)"
-	case sample.LogicalCPUs > 0 && sample.Load1 > highLoadPerLogicalCPU*float64(sample.LogicalCPUs):
-		return fmt.Sprintf("host pressure (load %.2f above %.1f per logical CPU)", sample.Load1, highLoadPerLogicalCPU)
-	default:
-		return "host pressure"
-	}
-}
-
-func pressureSignalsAvailable(sample ResourceSnapshot) bool {
-	return sample.PressureAvailable && sample.LoadAvailable && sample.MemoryAvailableKnown
-}
-
-func (s *pressureState) blocks(elevated bool, now time.Time) bool {
-	if elevated {
-		s.ElevatedAt = now
-		s.NormalAt = time.Time{}
-		return true
-	}
-	if s.ElevatedAt.IsZero() {
-		return false
-	}
-	if s.NormalAt.IsZero() {
-		s.NormalAt = now
-	}
-	if now.Sub(s.NormalAt) < pressureNormalDuration {
-		return true
-	}
-	s.ElevatedAt = time.Time{}
-	s.NormalAt = time.Time{}
-	return false
-}
-
-func resourceFits(active, candidate resourceUsage, quota resourceQuota) bool {
-	if active.MemoryBytes == 0 && active.MinCPUs == 0 && active.DiskBytes == 0 {
-		return true
-	}
-	if active.MemoryBytes > quota.MemoryBytes || active.MinCPUs > quota.CPUs {
-		return candidate.MemoryBytes == 0 && candidate.MinCPUs == 0 && candidate.DiskBytes == 0
-	}
-	if candidate.MemoryBytes > quota.MemoryBytes-active.MemoryBytes {
-		return false
-	}
-	return candidate.MinCPUs <= quota.CPUs-active.MinCPUs
-}
-
-func diskFits(free, reserved, need, minFree uint64) bool {
-	return reserved <= free && need <= free-reserved && minFree <= free-reserved-need
-}
-
-func effectiveResourceUsage(declared, learned resourceUsage) resourceUsage {
-	return resourceUsage{
-		MemoryBytes: max(declared.MemoryBytes, learned.MemoryBytes),
-		MinCPUs:     max(declared.MinCPUs, learned.MinCPUs),
-		DiskBytes:   declared.DiskBytes,
-	}
-}
-
-func memoryUnavailable(need, available uint64) bool { return need > available }
-
-func FormatResourceBytes(value uint64) string {
-	const gib = uint64(1024 * 1024 * 1024)
-	const mib = uint64(1024 * 1024)
-	if value >= gib {
-		return fmt.Sprintf("%.1fG", float64(value)/float64(gib))
-	}
-	if value >= mib {
-		return fmt.Sprintf("%.1fM", float64(value)/float64(mib))
-	}
-	return fmt.Sprintf("%dB", value)
-}
-
-type overBudgetState struct{ emitted bool }
-
-func (s *overBudgetState) observe(rss, reserved uint64) bool {
-	if !s.emitted && reserved > 0 && rss > reserved+reserved/4 {
-		s.emitted = true
-		return true
-	}
-	return false
-}
-
-func recordResourceObservation(stateDir, runID string, rss uint64, averageCPU float64, partial bool) (bool, error) {
-	emitted := false
-	err := withStateLock(stateDir, func() error {
-		rec, err := readRecordLocked(stateDir, runID)
-		if err != nil {
-			return err
-		}
-		rec.PeakRSSBytes = max(rec.PeakRSSBytes, rss)
-		rec.AverageCPU = averageCPU
-		rec.MeasurementPartial = rec.MeasurementPartial || partial
-		state := overBudgetState{emitted: rec.OverBudget}
-		emitted = state.observe(rss, rec.MemoryBytes)
-		if emitted {
-			rec.OverBudget = true
-			if err := appendEvent(stateDir, eventFor(rec, EventOverBudget)); err != nil {
+			if rec.Scratch != "" {
+				scratchOutcome, _ := cleanupScratchOutcome(stateDir, rec.Scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
+				outcomes = append(outcomes, scratchOutcome)
+			}
+			all = append(all, outcomes...)
+			failed := false
+			for _, outcome := range outcomes {
+				if outcome.Outcome == ResourceFailed || outcome.Outcome == ResourceRefused {
+					failed = true
+				}
+			}
+			stored, err := readRecordLocked(stateDir, rec.RunID)
+			if err != nil {
+				return err
+			}
+			if failed {
+				stored.Status = StatusDirty
+			} else {
+				stored.Status = StatusDead
+				stored.Error = ""
+			}
+			if err := writeRecordAtomic(stored); err != nil {
+				return err
+			}
+			event := eventFor(stored, EventTeardown)
+			event.Resources = outcomes
+			if err := appendEvent(stateDir, event); err != nil {
 				return err
 			}
 		}
-		return writeRecordAtomic(rec)
+		return nil
 	})
-	return emitted, err
+	return all, err
 }
 
-func ParseResourceSize(value string) (uint64, error) {
-	value = strings.TrimSpace(strings.ToUpper(value))
-	if value == "" {
-		return 0, fmt.Errorf("size is empty")
-	}
-	multiplier := uint64(1)
-	last := value[len(value)-1]
-	switch last {
-	case 'K', 'M', 'G', 'T':
-		value = value[:len(value)-1]
-		multiplier = 1
-		for range strings.IndexByte("KMGT", last) + 1 {
-			multiplier *= 1024
+func Leftovers(stateDir string) ([]ResourceOutcome, error) {
+	var all []ResourceOutcome
+	err := withStateLock(stateDir, func() error {
+		if err := pruneStateLocked(stateDir); err != nil {
+			return err
 		}
-		if strings.HasSuffix(value, "I") {
-			value = strings.TrimSuffix(value, "I")
+		records, err := readRecordsLocked(stateDir)
+		if err != nil {
+			return err
 		}
-		if strings.HasSuffix(value, "B") {
-			value = strings.TrimSuffix(value, "B")
+		for _, rec := range records {
+			entries, err := readResourceLedger(stateDir, rec.RunID)
+			if err != nil {
+				return err
+			}
+			for _, entry := range entries {
+				if entry.Outcome == ResourceFailed || entry.Outcome == ResourceRefused || entry.Outcome == ResourcePending || entry.Outcome == "" {
+					all = append(all, ResourceOutcome{Resource: entry, Outcome: entry.Outcome, Error: entry.Error})
+				}
+			}
+			if rec.Scratch != "" {
+				unexpected, err := scratchHasUnexpected(rec.Scratch, rec.Keep)
+				if err != nil {
+					return err
+				}
+				if unexpected {
+					all = append(all, ResourceOutcome{Resource: Resource{Kind: "scratch", ID: rec.Scratch}, Outcome: ResourceFailed, Error: "run scratch remains"})
+				}
+			}
 		}
-	case 'B':
-		value = value[:len(value)-1]
+		return nil
+	})
+	return all, err
+}
+
+func scratchHasUnexpected(scratch string, keepPaths []string) (bool, error) {
+	root, err := filepath.Abs(scratch)
+	if err != nil {
+		return false, err
 	}
-	amount, err := strconv.ParseUint(value, 10, 64)
-	if err != nil || amount > ^uint64(0)/multiplier {
-		return 0, fmt.Errorf("invalid or overflowing size")
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return false, nil
 	}
-	return amount * multiplier, nil
+	if err != nil {
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return true, nil
+	}
+	kept := resolveKeepPaths(root, keepPaths)
+	var inspect func(string) (bool, error)
+	inspect = func(directory string) (bool, error) {
+		entries, err := os.ReadDir(directory)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		for _, entry := range entries {
+			path := filepath.Join(directory, entry.Name())
+			preserved := false
+			ancestor := false
+			for _, keep := range kept {
+				if path == keep || strings.HasPrefix(path, keep+string(filepath.Separator)) {
+					preserved = true
+					break
+				}
+				if strings.HasPrefix(keep, path+string(filepath.Separator)) {
+					ancestor = true
+				}
+			}
+			if preserved {
+				continue
+			}
+			if ancestor && entry.IsDir() {
+				unexpected, err := inspect(path)
+				if err != nil || unexpected {
+					return unexpected, err
+				}
+				continue
+			}
+			return true, nil
+		}
+		return false, nil
+	}
+	return inspect(root)
 }

@@ -3,583 +3,760 @@
 package proc
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
-	"sync"
-	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
-func countResourceEvents(t *testing.T, state string, kind EventType) int {
-	t.Helper()
-	var stream bytes.Buffer
-	if err := Events(context.Background(), state, false, []EventType{kind}, &stream); err != nil {
+// case: S-237.43
+func TestRegisterAndCleanupRunOwnedPath(t *testing.T) {
+	state := t.TempDir()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	scanner := bufio.NewScanner(&stream)
-	count := 0
-	for scanner.Scan() {
-		var event Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatal(err)
-		}
-		if event.Type == kind {
-			count++
-		}
-	}
-	if err := scanner.Err(); err != nil {
+	if err := os.WriteFile(filepath.Join(state, "cleanup-roots.json"), []byte("["+strconv.Quote(root)+"]"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return count
+	run := record{RunID: "path-run", StateDir: state, Status: StatusRunning}
+	if err := writeRecordAtomic(run); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "created")
+	if err := CreateOwnedPath(state, run.RunID, path, OwnedDirectory); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "created-file")
+	if err := CreateOwnedPath(state, run.RunID, file, OwnedFile); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := readResourceLedger(state, run.RunID)
+	if err != nil || len(entries) != 2 || entries[0].ownerToken == "" || entries[1].ownerToken == "" {
+		t.Fatalf("recorded path owner token = %+v, %v", entries, err)
+	}
+	outcomes := cleanupResources(state, run.RunID)
+	if len(outcomes) != 2 || outcomes[0].Outcome != ResourceRemoved || outcomes[1].Outcome != ResourceRemoved {
+		t.Fatalf("cleanup outcome = %+v", outcomes)
+	}
+	for _, created := range []string{path, file} {
+		if _, err := os.Lstat(created); !os.IsNotExist(err) {
+			t.Fatalf("registered path remains: %s: %v", created, err)
+		}
+	}
 }
 
-func writeAdmissionFixtureRecord(t *testing.T, state string, rec record) {
-	t.Helper()
-	data, err := json.Marshal(rec)
+// case: S-237.44
+func TestDefaultTempCleanupRootHandlesSystemAlias(t *testing.T) {
+	state := t.TempDir()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "default-temp-run", StateDir: state, Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "created")
+	if err := CreateOwnedPath(state, "default-temp-run", path, OwnedFile); err != nil {
+		t.Fatal(err)
+	}
+	outcomes := cleanupResources(state, "default-temp-run")
+	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceRemoved {
+		t.Fatalf("default temporary root cleanup = %+v", outcomes)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("owned path remains under default temporary root: %v", err)
+	}
+}
+
+// case: S-237.44
+func TestCreateOwnedPathRefusesRecreatedPathWithDifferentOwnerNonce(t *testing.T) {
+	state := t.TempDir()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "cleanup-roots.json"), []byte("[\""+root+"\"]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "nonce-run", StateDir: state, Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "replace")
+	if err := CreateOwnedPath(state, "nonce-run", path, OwnedFile); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := readResourceLedger(state, "nonce-run")
+	if err != nil || len(entries) != 1 || !strings.HasPrefix(entries[0].ownerToken, "nonce-run:") {
+		t.Fatalf("ownership token ledger = %+v, %v", entries, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outcome := cleanupResource(state, entries[0])
+	if outcome.Outcome != ResourceRefused {
+		t.Fatalf("recreated path cleanup = %+v", outcome)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil || string(contents) != "replacement" {
+		t.Fatalf("recreated path changed by cleanup: %q, %v", contents, err)
+	}
+}
+
+// case: S-237.44
+func TestCleanupRequiresOwnerNonceWhenDeviceAndInodeMatch(t *testing.T) {
+	state := t.TempDir()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "cleanup-roots.json"), []byte("[\""+root+"\"]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "nonce-match-run", StateDir: state, Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "replace")
+	if err := CreateOwnedPath(state, "nonce-match-run", path, OwnedFile); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := readResourceLedger(state, "nonce-match-run")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ownership ledger = %+v, %v", entries, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(state, "runs", rec.RunID+".json")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	replacement, err := resourceIdentity(path, info)
+	if err != nil {
 		t.Fatal(err)
+	}
+	resource := entries[0]
+	resource.Device, resource.Inode = replacement.Device, replacement.Inode
+	outcome := cleanupResource(state, resource)
+	if outcome.Outcome != ResourceRefused || !strings.Contains(outcome.Error, "owner") {
+		t.Fatalf("same device/inode with a different owner nonce = %+v", outcome)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("replacement path was removed: %v", err)
 	}
 }
 
-type fakeResourceSource struct{ sample ResourceSnapshot }
-
-func (source fakeResourceSource) Snapshot() ResourceSnapshot { return source.sample }
-
-type mutableResourceSource struct {
-	mu     sync.RWMutex
-	sample ResourceSnapshot
+// case: S-237.44
+func TestCreateOwnedPathRefusesUnsupportedUserXattr(t *testing.T) {
+	state := t.TempDir()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "cleanup-roots.json"), []byte("[\""+root+"\"]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "unsupported-xattr-run", StateDir: state, Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	original := setPathOwnerXattr
+	setPathOwnerXattr = func(string, []byte) error { return unix.EOPNOTSUPP }
+	t.Cleanup(func() { setPathOwnerXattr = original })
+	path := filepath.Join(root, "unsupported")
+	err := CreateOwnedPath(state, "unsupported-xattr-run", path, OwnedFile)
+	if err == nil || !strings.Contains(err.Error(), "filesystem") || !strings.Contains(err.Error(), "xattr") {
+		t.Fatalf("unsupported xattr registration error = %v", err)
+	}
+	var unsupported *PathXattrUnsupportedError
+	if !errors.As(err, &unsupported) || unsupported.Filesystem == "" {
+		t.Fatalf("unsupported xattr error omitted filesystem identity: %#v", err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("unsupported xattr left a path behind: %v", err)
+	}
 }
 
-func (source *mutableResourceSource) Snapshot() ResourceSnapshot {
-	source.mu.RLock()
-	defer source.mu.RUnlock()
-	return source.sample
+// case: S-237.45
+func TestComposeCleanupRunsDownThenRemovesLabeledContainersAndNetworks(t *testing.T) {
+	var composeCalls, dockerCalls [][]string
+	originalCompose, originalDocker := composeCommand, dockerCommand
+	composeCommand = func(_ context.Context, prefix []string, args ...string) ([]byte, error) {
+		composeCalls = append(composeCalls, append(append([]string(nil), prefix...), args...))
+		return nil, nil
+	}
+	dockerCommand = func(_ context.Context, args ...string) ([]byte, error) {
+		dockerCalls = append(dockerCalls, append([]string(nil), args...))
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(joined, "ps -aq "):
+			return []byte("container-id\n"), nil
+		case strings.Contains(joined, "network ls -q"):
+			return []byte("network-id\n"), nil
+		case strings.Contains(joined, "volume ls -q"):
+			return []byte("volume-id\n"), nil
+		default:
+			return nil, nil
+		}
+	}
+	t.Cleanup(func() { composeCommand = originalCompose; dockerCommand = originalDocker })
+	outcome := cleanupResource(t.TempDir(), Resource{Kind: ResourceCompose, ID: "throwaway-project", Files: []string{"compose.yml"}, ComposePrefix: []string{"docker-compose"}})
+	if outcome.Outcome != ResourceRemoved {
+		t.Fatalf("compose cleanup = %+v", outcome)
+	}
+	wantDown := []string{"docker-compose", "-p", "throwaway-project", "-f", "compose.yml", "down", "-v", "--remove-orphans", "--timeout", "10"}
+	if len(composeCalls) != 1 || !reflect.DeepEqual(composeCalls[0], wantDown) {
+		t.Fatalf("cleanup Compose command = %#v", composeCalls)
+	}
+	if !containsArgs(dockerCalls, "ps", "-aq", "--filter", "label=com.docker.compose.project=throwaway-project") || !containsArgs(dockerCalls, "network", "ls", "-q", "--filter", "label=com.docker.compose.project=throwaway-project") || !containsArgs(dockerCalls, "volume", "ls", "-q", "--filter", "label=com.docker.compose.project=throwaway-project") || !containsArgs(dockerCalls, "rm", "-f", "container-id") || !containsArgs(dockerCalls, "network", "rm", "network-id") || !containsArgs(dockerCalls, "volume", "rm", "volume-id") {
+		t.Fatalf("cleanup omitted label sweep by id: %#v", dockerCalls)
+	}
 }
 
-func (source *mutableResourceSource) set(sample ResourceSnapshot) {
-	source.mu.Lock()
-	source.sample = sample
-	source.mu.Unlock()
+// case: S-237.45
+func TestRegisterComposePersistsCallerPrefix(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "compose-run", StateDir: state, Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	var gotPrefix []string
+	original := composeCommand
+	composeCommand = func(_ context.Context, prefix []string, args ...string) ([]byte, error) {
+		gotPrefix = append([]string(nil), prefix...)
+		if !reflect.DeepEqual(args, []string{"-p", "project-name", "-f", "compose.yaml", "config", "--format", "json"}) {
+			t.Fatalf("compose preflight args = %v", args)
+		}
+		return []byte(`{"volumes":{}}`), nil
+	}
+	t.Cleanup(func() { composeCommand = original })
+	resource := Resource{Kind: ResourceCompose, ID: "project-name", Files: []string{"compose.yaml"}, ComposePrefix: []string{"docker-compose"}}
+	if err := RegisterResource(state, "compose-run", resource); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotPrefix, resource.ComposePrefix) {
+		t.Fatalf("compose preflight prefix = %v", gotPrefix)
+	}
+	entries, err := readResourceLedger(state, "compose-run")
+	if err != nil || len(entries) != 1 || !reflect.DeepEqual(entries[0].ComposePrefix, resource.ComposePrefix) {
+		t.Fatalf("stored Compose prefix = %+v, %v", entries, err)
+	}
 }
 
-func readAdmissionRecord(state, runID string) (record, error) {
+// case: S-237.45
+func TestComposeCleanupSweepsLabelsAfterDownFailure(t *testing.T) {
+	var calls [][]string
+	originalCompose, originalDocker := composeCommand, dockerCommand
+	composeCommand = func(context.Context, []string, ...string) ([]byte, error) {
+		return []byte("compose down failed"), errors.New("compose exited 1")
+	}
+	dockerCommand = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return nil, nil
+	}
+	t.Cleanup(func() { composeCommand = originalCompose; dockerCommand = originalDocker })
+	resource := Resource{Kind: ResourceCompose, ID: "failed-down-project", Files: []string{"compose.yml"}, ComposePrefix: []string{"docker-compose"}}
+	outcome := cleanupResource(t.TempDir(), resource)
+	if outcome.Outcome != ResourceFailed {
+		t.Fatalf("failed down outcome = %+v", outcome)
+	}
+	if len(outcome.Steps) != 2 || outcome.Steps[0].Name != "down" || outcome.Steps[0].Outcome != ResourceFailed || outcome.Steps[1].Name != "label-sweep" || outcome.Steps[1].Outcome != ResourceRemoved {
+		t.Fatalf("Compose cleanup step outcomes = %+v", outcome.Steps)
+	}
+	for _, kind := range []string{"ps", "network", "volume"} {
+		found := false
+		for _, args := range calls {
+			if len(args) >= 2 && args[0] == kind {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("label sweep for %s did not run after down failure: %v", kind, calls)
+		}
+	}
+}
+
+// case: S-237.49
+func TestSlowComposeDownUsesStopTimeoutMarginAndReportsSweep(t *testing.T) {
+	started := time.Now()
+	var deadline time.Time
+	downFinished := false
+	var calls [][]string
+	originalCompose, originalDocker := composeCommand, dockerCommand
+	composeCommand = func(ctx context.Context, _ []string, _ ...string) ([]byte, error) {
+		var ok bool
+		deadline, ok = ctx.Deadline()
+		if !ok {
+			t.Fatal("Compose down has no cleanup deadline")
+		}
+		<-ctx.Done()
+		downFinished = true
+		return []byte("container still stopping"), ctx.Err()
+	}
+	dockerCommand = func(_ context.Context, args ...string) ([]byte, error) {
+		if !downFinished {
+			t.Fatalf("label sweep started before down finished: %v", args)
+		}
+		calls = append(calls, append([]string(nil), args...))
+		return nil, nil
+	}
+	t.Cleanup(func() { composeCommand = originalCompose; dockerCommand = originalDocker })
+	resource := Resource{Kind: ResourceCompose, ID: "slow-down-project", Files: []string{"compose.yml"}, ComposePrefix: []string{"docker-compose"}}
+	outcome := cleanupResource(t.TempDir(), resource)
+	if deadline.IsZero() {
+		t.Fatal("Compose down did not run")
+	}
+	want := composeCleanupBound()
+	remaining := deadline.Sub(started)
+	if want <= composeStopTimeout || remaining < want-100*time.Millisecond || remaining > want+100*time.Millisecond {
+		t.Fatalf("Compose deadline = %s, stop=%s cleanup-bound=%s", remaining, composeStopTimeout, want)
+	}
+	if outcome.Outcome != ResourceFailed || len(outcome.Steps) != 2 || outcome.Steps[0].Name != "down" || outcome.Steps[0].Outcome != ResourceFailed || outcome.Steps[1].Name != "label-sweep" || outcome.Steps[1].Outcome != ResourceRemoved {
+		t.Fatalf("slow Compose cleanup outcomes = %+v", outcome)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("label sweep calls after stalled down = %v", calls)
+	}
+}
+
+func containsArgs(calls [][]string, expected ...string) bool {
+	for _, args := range calls {
+		if reflect.DeepEqual(args, expected) {
+			return true
+		}
+	}
+	return false
+}
+
+// case: S-237.46
+func TestRegisterRefusesPreexistingDockerVolume(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "volume-run", StateDir: state, StartedAtTime: time.Now(), Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	original := dockerCommand
+	dockerCommand = func(_ context.Context, args ...string) ([]byte, error) {
+		if !reflect.DeepEqual(args, []string{"volume", "ls", "-q", "--filter", "name=shared-volume"}) {
+			t.Fatalf("unexpected Docker inspect: %v", args)
+		}
+		return []byte("shared-volume\n"), nil
+	}
+	t.Cleanup(func() { dockerCommand = original })
+	err := RegisterResource(state, "volume-run", Resource{Kind: ResourceVolume, ID: "shared-volume"})
+	if err == nil || !strings.Contains(err.Error(), "pre-existing") {
+		t.Fatalf("pre-existing volume registration error = %v", err)
+	}
+}
+
+// case: S-237.48
+func TestFailedResourceCleanupMarksDirtyAndGCRetriesEntry(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "dirty-run", StateDir: state, StartedAtTime: time.Now(), Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterResource(state, "dirty-run", Resource{Kind: ResourceContainer, ID: "container-id"}); err != nil {
+		t.Fatal(err)
+	}
+	fail := true
+	original := dockerCommand
+	dockerCommand = func(_ context.Context, args ...string) ([]byte, error) {
+		if fail {
+			return []byte("no such host"), errors.New("docker exited 1")
+		}
+		if len(args) > 0 && args[0] == "ps" {
+			return []byte("container-id\n"), nil
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { dockerCommand = original })
+	outcomes := cleanupResources(state, "dirty-run")
+	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceFailed {
+		t.Fatalf("first cleanup outcome = %+v", outcomes)
+	}
+	stored, err := readRecordLockedForTest(state, "dirty-run")
+	if err != nil || stored.Status != StatusDirty {
+		t.Fatalf("failed cleanup state = %+v, %v", stored, err)
+	}
+	leftovers, err := Leftovers(state)
+	if err != nil || len(leftovers) != 1 || leftovers[0].Outcome != ResourceFailed {
+		t.Fatalf("dirty leftovers = %+v, %v", leftovers, err)
+	}
+	fail = false
+	outcomes, err = GarbageCollect(state)
+	if err != nil || len(outcomes) != 1 || outcomes[0].Outcome != ResourceRemoved {
+		t.Fatalf("gc outcome = %+v, %v", outcomes, err)
+	}
+	stored, err = readRecordLockedForTest(state, "dirty-run")
+	if err != nil || stored.Status != StatusDead {
+		t.Fatalf("cleaned run state = %+v, %v", stored, err)
+	}
+	leftovers, err = Leftovers(state)
+	if err != nil || len(leftovers) != 0 {
+		t.Fatalf("cleaned leftovers = %+v, %v", leftovers, err)
+	}
+}
+
+// case: S-237.48
+func TestLedgerPersistenceFailureLeavesDirtyPendingEntryForGC(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "ledger-write-run", StateDir: state, StartedAtTime: time.Now(), Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterResource(state, "ledger-write-run", Resource{Kind: ResourceContainer, ID: "container-id"}); err != nil {
+		t.Fatal(err)
+	}
+	originalDocker := dockerCommand
+	dockerCommand = func(_ context.Context, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "ps" {
+			return []byte("container-id\n"), nil
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { dockerCommand = originalDocker })
+
+	originalWrite := writeResourceLedgerFile
+	writeFailed := false
+	writeResourceLedgerFile = func(path string, data []byte, mode os.FileMode) error {
+		if !writeFailed {
+			writeFailed = true
+			return errors.New("injected ledger persistence failure")
+		}
+		return originalWrite(path, data, mode)
+	}
+	t.Cleanup(func() { writeResourceLedgerFile = originalWrite })
+
+	outcomes := cleanupResources(state, "ledger-write-run")
+	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceRemoved || !strings.Contains(outcomes[0].Error, "injected ledger persistence failure") {
+		t.Fatalf("processed cleanup outcome = %+v", outcomes)
+	}
+	if err := completeRecord(state, "ledger-write-run", nil, "", time.Second, record{}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := readRecordLockedForTest(state, "ledger-write-run")
+	if err != nil || stored.Status != StatusDirty {
+		t.Fatalf("run status after ledger failure = %s, %v", stored.Status, err)
+	}
+	leftovers, err := Leftovers(state)
+	if err != nil || len(leftovers) != 1 || leftovers[0].Outcome != ResourcePending {
+		t.Fatalf("pending leftovers = %+v, %v", leftovers, err)
+	}
+
+	outcomes, err = GarbageCollect(state)
+	if err != nil || len(outcomes) != 1 || outcomes[0].Outcome != ResourceRemoved {
+		t.Fatalf("gc retry outcomes = %+v, %v", outcomes, err)
+	}
+	stored, err = readRecordLockedForTest(state, "ledger-write-run")
+	if err != nil || stored.Status != StatusDead {
+		t.Fatalf("run status after gc = %s, %v", stored.Status, err)
+	}
+}
+
+// case: S-237.48
+func TestDockerTransportErrorContainingNoSuchIsFailedAndDirty(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "docker-transport-run", StateDir: state, StartedAtTime: time.Now(), Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterResource(state, "docker-transport-run", Resource{Kind: ResourceContainer, ID: "container-id"}); err != nil {
+		t.Fatal(err)
+	}
+	original := dockerCommand
+	dockerCommand = func(context.Context, ...string) ([]byte, error) {
+		return []byte("dial tcp: no such host"), errors.New("docker exited 1")
+	}
+	t.Cleanup(func() { dockerCommand = original })
+	outcomes := cleanupResources(state, "docker-transport-run")
+	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceFailed {
+		t.Fatalf("transport failure outcome = %+v", outcomes)
+	}
+	stored, err := readRecordLockedForTest(state, "docker-transport-run")
+	if err != nil || stored.Status != StatusDirty {
+		t.Fatalf("transport failure run status = %s, %v", stored.Status, err)
+	}
+}
+
+// case: S-237.44
+func TestCleanupOwnedDirectoryRemovesSymlinkWithoutFollowingItsTarget(t *testing.T) {
+	state := t.TempDir()
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "cleanup-roots.json"), []byte("["+strconv.Quote(root)+"]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "nested-link-run", StateDir: state, Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	owned := filepath.Join(root, "owned")
+	if err := CreateOwnedPath(state, "nested-link-run", owned, OwnedDirectory); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(outside, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(owned, "outside-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := readResourceLedger(state, "nested-link-run")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("owned ledger = %+v, %v", entries, err)
+	}
+	outcome := cleanupResource(state, entries[0])
+	if outcome.Outcome != ResourceRemoved {
+		t.Fatalf("owned directory cleanup = %+v", outcome)
+	}
+	if _, err := os.Lstat(owned); !os.IsNotExist(err) {
+		t.Fatalf("owned directory remains: %v", err)
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "keep" {
+		t.Fatalf("cleanup followed nested symlink: data=%q err=%v", data, err)
+	}
+}
+
+// case: S-237.49
+func TestHangingDockerCleanupIsStalledAndBounded(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordAtomic(record{RunID: "hang-run", StateDir: state, StartedAtTime: time.Now(), Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterResource(state, "hang-run", Resource{Kind: ResourceContainer, ID: "hanging-container"}); err != nil {
+		t.Fatal(err)
+	}
+	original := dockerCommand
+	dockerCommand = func(ctx context.Context, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "ps" {
+			return []byte("hanging-container\n"), nil
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	t.Cleanup(func() { dockerCommand = original })
+	started := time.Now()
+	outcomes := cleanupResources(state, "hang-run")
+	if time.Since(started) > composeCleanupBound()+2*time.Second {
+		t.Fatalf("Docker cleanup exceeded its %s bound: %s", composeCleanupBound(), time.Since(started))
+	}
+	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceFailed || !strings.Contains(outcomes[0].Error, "stalled Docker cleanup") {
+		t.Fatalf("bounded cleanup outcome = %+v", outcomes)
+	}
+	var events []Event
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var event Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	if len(events) != 1 || events[0].Type != EventStall {
+		t.Fatalf("hanging cleanup stall events = %+v", events)
+	}
+}
+
+func readRecordLockedForTest(stateDir, runID string) (record, error) {
 	var result record
-	err := withStateLock(state, func() error {
+	err := withStateLock(stateDir, func() error {
 		var err error
-		result, err = readRecordLocked(state, runID)
+		result, err = readRecordLocked(stateDir, runID)
 		return err
 	})
 	return result, err
 }
 
-func waitForAdmissionRecord(t *testing.T, state, runID string, check func(record) bool) record {
-	t.Helper()
-	timer := time.NewTimer(3 * time.Second)
-	ticker := time.NewTicker(admissionPollInterval)
-	defer timer.Stop()
-	defer ticker.Stop()
-	for {
-		rec, err := readAdmissionRecord(state, runID)
-		if err == nil && check(rec) {
-			return rec
-		}
-		select {
-		case <-ticker.C:
-		case <-timer.C:
-			t.Fatalf("run %s did not reach expected admission state; last record=%+v err=%v", runID, rec, err)
-		}
-	}
-}
-
-func TestParseResourceSize(t *testing.T) {
-	got, err := ParseResourceSize("12G")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != 12*1024*1024*1024 {
-		t.Fatalf("ParseResourceSize(12G) = %d", got)
-	}
-}
-
-func TestZeroMinFreeQuotaRemainsAnExplicitSetValue(t *testing.T) {
+// case: S-237.44
+func TestCreateOwnedPathRefusesOutsideRootPreexistingSymlinkAndInodeSwap(t *testing.T) {
 	state := t.TempDir()
-	if err := SetQuota(state, "", "", "0"); err != nil {
-		t.Fatal(err)
-	}
-	status, err := ShowQuota(state)
-	if err != nil || !status.MinFreeSet || status.MinFree != 0 {
-		t.Fatalf("zero min-free quota = %+v, err=%v", status, err)
-	}
-}
-
-func TestPressureHysteresis(t *testing.T) {
-	state := pressureState{}
-	now := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
-	if !state.blocks(true, now) {
-		t.Fatal("elevated pressure did not block admission")
-	}
-	if !state.blocks(false, now.Add(time.Second)) {
-		t.Fatal("pressure hold ended before ten seconds")
-	}
-	if state.blocks(false, now.Add(11*time.Second)) {
-		t.Fatal("pressure hold remained after ten normal seconds")
-	}
-}
-
-func TestResourceAdmissionAllowsOversizedAlone(t *testing.T) {
-	if !resourceFits(resourceUsage{}, resourceUsage{MemoryBytes: 16, MinCPUs: 8}, resourceQuota{MemoryBytes: 4, CPUs: 2}) {
-		t.Fatal("oversized run should be admitted when no resource-costed run is active")
-	}
-	if resourceFits(resourceUsage{MemoryBytes: 1, MinCPUs: 1}, resourceUsage{MemoryBytes: 16, MinCPUs: 8}, resourceQuota{MemoryBytes: 4, CPUs: 2}) {
-		t.Fatal("oversized run should wait while another resource-costed run is active")
-	}
-	if resourceFits(resourceUsage{MinCPUs: 1}, resourceUsage{DiskBytes: 1}, resourceQuota{MemoryBytes: 4, CPUs: 0}) {
-		t.Fatal("disk-costed run should not overlap an oversized CPU run")
-	}
-}
-
-// case: S-237.29
-func TestAdmissionAloneIgnoresMemoryAvailabilityButWaitsForPressure(t *testing.T) {
-	identity, alive, err := ProcessIdentity(os.Getpid())
-	if err != nil || !alive {
-		t.Fatalf("identify test process for admission: alive=%t err=%v", alive, err)
-	}
-	normal := ResourceSnapshot{
-		PhysicalMemory: 1000, AvailableMemory: 100, MemoryAvailableKnown: true,
-		PressureAvailable: true, LoadAvailable: true, LogicalCPUs: 4, Pressure: "normal",
-	}
-	quotaAndCost := func(state string) Config {
-		t.Helper()
-		if err := SetQuota(state, "50B", "1", "0"); err != nil {
-			t.Fatal(err)
-		}
-		return Config{StateDir: state, Tag: "alone", Command: []string{"/bin/true"}, MemoryBytes: 200, CPUsMin: 2, CPUsMax: 2}
-	}
-
-	t.Run("normal pressure admits despite quota and live-memory shortfall", func(t *testing.T) {
-		state := t.TempDir()
-		cfg := quotaAndCost(state)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		if err := reserveAdmission(ctx, cfg, "alone-normal", os.Getpid(), identity, fakeResourceSource{sample: normal}); err != nil {
-			t.Fatalf("admission with no active costed run: %v", err)
-		}
-		rec, err := readAdmissionRecord(state, "alone-normal")
-		if err != nil || rec.Status != StatusStarting || rec.WaitReason != "" {
-			t.Fatalf("alone admission record = %+v, err=%v", rec, err)
-		}
-		cleanupAdmission(state, rec.RunID, "test complete")
-	})
-
-	t.Run("elevated pressure holds until ten normal seconds", func(t *testing.T) {
-		state := t.TempDir()
-		cfg := quotaAndCost(state)
-		elevated := normal
-		elevated.Pressure = "memory warn"
-		source := &mutableResourceSource{sample: elevated}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		done := make(chan error, 1)
-		go func() { done <- reserveAdmission(ctx, cfg, "alone-elevated", os.Getpid(), identity, source) }()
-		blocked := waitForAdmissionRecord(t, state, "alone-elevated", func(rec record) bool {
-			return rec.Status == StatusBlocked && strings.HasPrefix(rec.WaitReason, "host pressure (")
-		})
-		if blocked.WaitReason != "host pressure (memory warn)" {
-			t.Fatalf("elevated-pressure wait = %q", blocked.WaitReason)
-		}
-		source.set(normal)
-		select {
-		case err := <-done:
-			t.Fatalf("run admitted before pressure hysteresis elapsed: %v", err)
-		case <-time.After(300 * time.Millisecond):
-		}
-		duringHold, err := readAdmissionRecord(state, "alone-elevated")
-		if err != nil || duringHold.Status != StatusBlocked || !strings.HasPrefix(duringHold.WaitReason, "host pressure") {
-			t.Fatalf("normal-pressure hold record = %+v, err=%v", duringHold, err)
-		}
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatalf("admission after pressure hysteresis: %v", err)
-			}
-		case <-ctx.Done():
-			t.Fatalf("admission did not resume after pressure hysteresis: %v", ctx.Err())
-		}
-		rec, err := readAdmissionRecord(state, "alone-elevated")
-		if err != nil || rec.Status != StatusStarting {
-			t.Fatalf("admitted record = %+v, err=%v", rec, err)
-		}
-		cleanupAdmission(state, rec.RunID, "test complete")
-	})
-}
-
-// case: S-237.31
-func TestNoticeChangesPersistWithoutDuplicatingBlockedEvents(t *testing.T) {
-	state := t.TempDir()
+	root := t.TempDir()
+	outside := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	identity, alive, err := ProcessIdentity(os.Getpid())
-	if err != nil || !alive {
-		t.Fatalf("identify test process for admission: alive=%t err=%v", alive, err)
-	}
-	if err := SetQuota(state, "100B", "2", "0"); err != nil {
+	if err := os.WriteFile(filepath.Join(state, "cleanup-roots.json"), []byte("[\""+root+"\"]"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writeAdmissionFixtureRecord(t, state, record{
-		RunID: "active", QueueOrder: 1, PID: os.Getpid(), StartedAt: identity,
-		Status: StatusRunning, MemoryBytes: 90, CPUsMin: 1,
-	})
-	unavailable := ResourceSnapshot{
-		PhysicalMemory: 1000, AvailableMemory: 900, MemoryAvailableKnown: true,
-		LoadAvailable: true, LogicalCPUs: 4, Unavailable: map[string]string{"memory pressure": "read denied"},
+	outsidePath := filepath.Join(outside, "outside")
+	if err := os.WriteFile(outsidePath, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	unavailable.PressureAvailable = false
-	source := &mutableResourceSource{sample: unavailable}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	cfg := Config{StateDir: state, Tag: "notice-change", Command: []string{"/bin/true"}, MemoryBytes: 20, CPUsMin: 1, CPUsMax: 1}
-	go func() { done <- reserveAdmission(ctx, cfg, "notice-change", os.Getpid(), identity, source) }()
-	blocked := waitForAdmissionRecord(t, state, "notice-change", func(rec record) bool {
-		return rec.Status == StatusBlocked && rec.WaitReason != "" && rec.ResourceNotice == "memory pressure unavailable: read denied"
-	})
-	waitReason := blocked.WaitReason
-	available := unavailable
-	available.Unavailable = nil
-	available.PressureAvailable = true
-	available.Pressure = "normal"
-	source.set(available)
-	waitForAdmissionRecord(t, state, "notice-change", func(rec record) bool {
-		return rec.Status == StatusBlocked && rec.WaitReason == waitReason && rec.ResourceNotice == ""
-	})
-	secondUnavailable := unavailable
-	secondUnavailable.Unavailable = map[string]string{"memory pressure": "read timed out"}
-	source.set(secondUnavailable)
-	latest := waitForAdmissionRecord(t, state, "notice-change", func(rec record) bool {
-		return rec.Status == StatusBlocked && rec.WaitReason == waitReason && rec.ResourceNotice == "memory pressure unavailable: read timed out"
-	})
-	if latest.WaitReason != waitReason || latest.ResourceNotice != "memory pressure unavailable: read timed out" {
-		t.Fatalf("latest notice was not persisted with the unchanged wait reason: %+v", latest)
+	preexisting := filepath.Join(root, "preexisting")
+	if err := os.WriteFile(preexisting, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if got := countResourceEvents(t, state, EventBlocked); got != 1 {
-		t.Fatalf("notice-only changes emitted %d blocked events, want 1", got)
+	run := record{RunID: "unsafe-run", StateDir: state, StartedAtTime: time.Now(), Status: StatusRunning}
+	if err := writeRecordAtomic(run); err != nil {
+		t.Fatal(err)
 	}
-	cancel()
-	if err := <-done; err == nil {
-		t.Fatal("cancelled blocked admission returned nil")
+	if err := CreateOwnedPath(state, run.RunID, outsidePath, OwnedFile); err == nil {
+		t.Fatal("outside cleanup root was accepted")
+	}
+	if err := CreateOwnedPath(state, run.RunID, preexisting, OwnedFile); err == nil {
+		t.Fatal("pre-existing path was accepted")
+	}
+	target := filepath.Join(root, "target")
+	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(root, "link")
+	if err := os.Symlink(target, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateOwnedPath(state, run.RunID, symlink, OwnedFile); err == nil {
+		t.Fatal("symlink was accepted")
+	}
+	path := filepath.Join(root, "swap")
+	if err := CreateOwnedPath(state, run.RunID, path, OwnedFile); err != nil {
+		t.Fatal(err)
+	}
+	linkSwap := filepath.Join(root, "link-swap")
+	if err := CreateOwnedPath(state, run.RunID, linkSwap, OwnedFile); err != nil {
+		t.Fatal(err)
+	}
+	linkTarget := filepath.Join(root, "must-survive")
+	if err := os.WriteFile(linkTarget, []byte("target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(linkSwap); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(linkTarget, linkSwap); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outcomes := cleanupResources(state, run.RunID)
+	if len(outcomes) != 2 || outcomes[0].Outcome != ResourceRefused || outcomes[1].Outcome != ResourceRefused {
+		t.Fatalf("inode swap outcome = %+v", outcomes)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("swapped path was removed: %v", err)
+	}
+	if content, err := os.ReadFile(linkTarget); err != nil || string(content) != "target" {
+		t.Fatalf("symlink target was followed: %q, %v", content, err)
 	}
 }
 
-// case: S-237.28
-func TestResourceAdmissionBlocksMemoryAndKeepsCostedFIFO(t *testing.T) {
+// case: S-237.44
+func TestCreateOwnedPathRefusesExistingPathAndSymlink(t *testing.T) {
 	state := t.TempDir()
+	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetQuota(state, "100B", "4", ""); err != nil {
+	if err := os.WriteFile(filepath.Join(state, "cleanup-roots.json"), []byte("[\""+root+"\"]"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writeAdmissionFixtureRecord(t, state, record{RunID: "active", QueueOrder: 1, Status: StatusRunning, MemoryBytes: 80, CPUsMin: 1})
-	source := fakeResourceSource{sample: ResourceSnapshot{PhysicalMemory: 1000, AvailableMemory: 900, MemoryAvailableKnown: true, LogicalCPUs: 8, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}}
-	second := record{RunID: "second", QueueOrder: 2, MemoryBytes: 30, CPUsMin: 1}
-	decision, err := admissionStateLocked(state, second, source)
-	if err != nil || decision.Status != StatusBlocked || !strings.HasPrefix(decision.Reason, "memory budget (") {
-		t.Fatalf("second admission = %+v, err=%v", decision, err)
+	if err := writeRecordAtomic(record{RunID: "exclusive-run", StateDir: state, Status: StatusRunning}); err != nil {
+		t.Fatal(err)
 	}
-	writeAdmissionFixtureRecord(t, state, record{RunID: "second", QueueOrder: 2, Status: StatusBlocked, MemoryBytes: 30, CPUsMin: 1})
-	third := record{RunID: "third", QueueOrder: 3}
-	decision, err = admissionStateLocked(state, third, source)
-	if err != nil || decision.Status != StatusQueued || !strings.Contains(decision.Reason, "earlier run") {
-		t.Fatalf("third admission = %+v, err=%v", decision, err)
+	preexisting := filepath.Join(root, "preexisting")
+	if err := os.WriteFile(preexisting, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateOwnedPath(state, "exclusive-run", preexisting, OwnedFile); err == nil {
+		t.Fatal("exclusive create accepted a pre-existing path")
+	}
+	target := filepath.Join(root, "target")
+	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(root, "symlink")
+	if err := os.Symlink(target, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateOwnedPath(state, "exclusive-run", symlink, OwnedFile); err == nil {
+		t.Fatal("exclusive create accepted a symlink")
+	}
+	if content, err := os.ReadFile(target); err != nil || string(content) != "keep" {
+		t.Fatalf("target changed through symlink: %q, %v", content, err)
+	}
+	outside := t.TempDir()
+	parentLink := filepath.Join(root, "parent-link")
+	if err := os.Symlink(outside, parentLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateOwnedPath(state, "exclusive-run", filepath.Join(parentLink, "new-file"), OwnedFile); err == nil {
+		t.Fatal("exclusive create followed a symlinked parent")
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "new-file")); !os.IsNotExist(err) {
+		t.Fatalf("symlink parent created outside cleanup root: %v", err)
 	}
 }
 
-// case: S-237.36
-func TestDiskReservationIsSubtractedBeforeAdmission(t *testing.T) {
-	if diskFits(7, 3, 3, 2) {
-		t.Fatal("7 - 3 reserved - 3 needed is below the 2 byte floor")
-	}
-	if !diskFits(8, 3, 3, 2) {
-		t.Fatal("8 - 3 reserved - 3 needed meets the 2 byte floor")
-	}
-}
-
-// case: S-237.10
-func TestResourceQuotaMinFreeBlocksAdmission(t *testing.T) {
+// case: S-237.44
+func TestCleanupOwnedPathRefusesSymlinkedParentPresentAtCleanup(t *testing.T) {
 	state := t.TempDir()
+	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetQuota(state, "", "", "18446744073709551615"); err != nil {
+	if err := os.WriteFile(filepath.Join(state, "cleanup-roots.json"), []byte("[\""+root+"\"]"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	source := fakeResourceSource{sample: ResourceSnapshot{
-		PhysicalMemory: 1 << 30, AvailableMemory: 1 << 29, MemoryAvailableKnown: true,
-		LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true,
-	}}
-	decision, err := admissionStateLocked(state, record{RunID: "quota-floor", QueueOrder: 1}, source)
-	if err != nil {
+	if err := writeRecordAtomic(record{RunID: "parent-swap-run", StateDir: state, Status: StatusRunning}); err != nil {
 		t.Fatal(err)
 	}
-	if decision.Status != StatusBlocked || decision.DiskNeedBytes != ^uint64(0) || decision.DiskFreeBytes >= decision.DiskNeedBytes {
-		t.Fatalf("quota min-free admission = %+v; want a blocked disk-floor decision with observed free bytes", decision)
-	}
-}
-
-// case: S-237.37
-func TestLearnedEstimateNeverLowersDeclaredCost(t *testing.T) {
-	got := effectiveResourceUsage(resourceUsage{MemoryBytes: 4, MinCPUs: 2}, resourceUsage{MemoryBytes: 1, MinCPUs: 1})
-	if got.MemoryBytes != 4 || got.MinCPUs != 2 {
-		t.Fatalf("effective cost = %+v, want declared floor", got)
-	}
-}
-
-// case: S-237.32
-func TestLearnedEstimateUsesMaximumOfLatestFiveCompletedRuns(t *testing.T) {
-	records := []record{
-		{CostKey: "build", Status: StatusDead, QueueOrder: 1, PeakRSSBytes: 100, AverageCPU: 4},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 2, PeakRSSBytes: 10, AverageCPU: 1},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 3, PeakRSSBytes: 20, AverageCPU: 2},
-		{CostKey: "other", Status: StatusDead, QueueOrder: 4, PeakRSSBytes: 200, AverageCPU: 8},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 5, PeakRSSBytes: 30, AverageCPU: 3},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 6, PeakRSSBytes: 40, AverageCPU: 1},
-		{CostKey: "build", Status: StatusDead, QueueOrder: 7, PeakRSSBytes: 50, AverageCPU: 2},
-	}
-	got := learnedUsage(records, "build")
-	if got.MemoryBytes != 50 || got.MinCPUs != 2 {
-		t.Fatalf("learned usage = %+v, want latest-five maximum and matching CPU", got)
-	}
-	effective := effectiveResourceUsage(resourceUsage{MemoryBytes: 1, MinCPUs: 1}, got)
-	if effective.MemoryBytes != 50 || effective.MinCPUs != 2 {
-		t.Fatalf("effective estimate = %+v, want learned estimate above declaration", effective)
-	}
-}
-
-// case: S-237.38
-func TestAvailableMemoryIsIndependentAdmissionCondition(t *testing.T) {
-	if !memoryUnavailable(8, 7) {
-		t.Fatal("a run that exceeds live available memory must wait")
-	}
-	if memoryUnavailable(8, 8) {
-		t.Fatal("a run that fits live available memory should proceed")
-	}
-}
-
-// case: S-237.40
-func TestOverBudgetThresholdEmitsOnlyOnce(t *testing.T) {
-	var state overBudgetState
-	if !state.observe(126, 100) || state.observe(130, 100) {
-		t.Fatal("over-budget transition should emit once after 125 percent")
-	}
-}
-
-// case: S-237.38
-func TestAdmissionBlocksWhenLiveMemoryIsBelowNeed(t *testing.T) {
-	state := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+	parent := filepath.Join(root, "parent")
+	if err := os.Mkdir(parent, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetQuota(state, "200B", "4", "0"); err != nil {
+	owned := filepath.Join(parent, "owned")
+	if err := CreateOwnedPath(state, "parent-swap-run", owned, OwnedFile); err != nil {
 		t.Fatal(err)
 	}
-	writeAdmissionFixtureRecord(t, state, record{RunID: "active", QueueOrder: 1, Status: StatusRunning, MemoryBytes: 10, CPUsMin: 1})
-	source := fakeResourceSource{sample: ResourceSnapshot{PhysicalMemory: 100, AvailableMemory: 50, MemoryAvailableKnown: true, LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}}
-	candidate := record{RunID: "candidate", QueueOrder: 2, MemoryBytes: 80, CPUsMin: 1}
-	decision, err := admissionStateLocked(state, candidate, source)
-	if err != nil {
+	relocated := filepath.Join(root, "relocated")
+	if err := os.Rename(parent, relocated); err != nil {
 		t.Fatal(err)
 	}
-	if decision.Status != StatusBlocked || decision.Reason != "available memory budget (have 50B, needs 80B)" {
-		t.Fatalf("admission = %+v", decision)
-	}
-}
-
-// case: S-237.31
-func TestUnreadablePressureIsReportedAndDoesNotBlockBudgetAdmission(t *testing.T) {
-	state := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+	if err := os.Symlink(relocated, parent); err != nil {
 		t.Fatal(err)
 	}
-	source := fakeResourceSource{sample: ResourceSnapshot{
-		PhysicalMemory: 100, AvailableMemory: 80, MemoryAvailableKnown: true,
-		LogicalCPUs: 4, Unavailable: map[string]string{"pressure": "permission denied"},
-	}}
-	if pressureSignalsAvailable(source.Snapshot()) {
-		t.Fatal("unreadable pressure signal was classified as available/normal")
+	outcomes := cleanupResources(state, "parent-swap-run")
+	if len(outcomes) != 1 || outcomes[0].Outcome != ResourceRefused || !strings.Contains(outcomes[0].Error, "parent") {
+		t.Fatalf("symlinked parent cleanup = %+v", outcomes)
 	}
-	decision, err := admissionStateLocked(state, record{RunID: "candidate", QueueOrder: 1}, source)
-	if err != nil || decision.Reason != "" || decision.Status != StatusStarting {
-		t.Fatalf("unreadable pressure admission = %+v, err=%v", decision, err)
-	}
-	if got := resourceNotice(source.Snapshot()); got != "pressure unavailable: permission denied" {
-		t.Fatalf("resource notice = %q", got)
-	}
-}
-
-// case: S-237.30
-func TestAdmissionPressureTransitionWritesEvent(t *testing.T) {
-	state := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	source := fakeResourceSource{sample: ResourceSnapshot{PhysicalMemory: 100, AvailableMemory: 50, MemoryAvailableKnown: true, LogicalCPUs: 4, Pressure: "memory warn", PressureAvailable: true, LoadAvailable: true}}
-	var decision admissionDecision
-	err := withStateLock(state, func() error {
-		var err error
-		decision, err = admissionStateLocked(state, record{RunID: "candidate", QueueOrder: 1}, source)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision.Status != StatusBlocked || decision.Reason != "host pressure (memory warn)" {
-		t.Fatalf("admission = %+v", decision)
-	}
-	if countResourceEvents(t, state, EventPressure) != 1 {
-		t.Fatal("pressure transition event missing")
-	}
-}
-
-func TestConcurrentAdmissionObserversEmitOnePressureTransition(t *testing.T) {
-	state := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	source := fakeResourceSource{sample: ResourceSnapshot{
-		PhysicalMemory: 100, AvailableMemory: 50, MemoryAvailableKnown: true,
-		LogicalCPUs: 4, Pressure: "memory warn", PressureAvailable: true, LoadAvailable: true,
-	}}
-	const observers = 8
-	start := make(chan struct{})
-	errs := make(chan error, observers)
-	for range observers {
-		go func() {
-			<-start
-			errs <- withStateLock(state, func() error {
-				_, err := admissionStateLocked(state, record{RunID: "candidate", QueueOrder: 1}, source)
-				return err
-			})
-		}()
-	}
-	close(start)
-	for range observers {
-		if err := <-errs; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := countResourceEvents(t, state, EventPressure); got != 1 {
-		t.Fatalf("concurrent observers emitted %d pressure events, want 1", got)
-	}
-}
-
-// case: S-237.30
-func TestAdmissionResumesAfterNormalPressureHoldAndEmitsTransition(t *testing.T) {
-	state := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	normalSince := time.Now().Add(-pressureNormalDuration - time.Second)
-	data, err := json.Marshal(pressureState{ElevatedAt: normalSince.Add(-time.Second), NormalAt: normalSince, Level: "host pressure (memory warn)"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(state, "pressure-state.json"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	source := fakeResourceSource{sample: ResourceSnapshot{PhysicalMemory: 100, AvailableMemory: 80, MemoryAvailableKnown: true, LogicalCPUs: 4, Pressure: "normal", PressureAvailable: true, LoadAvailable: true}}
-	decision, err := admissionStateLocked(state, record{RunID: "candidate", QueueOrder: 1}, source)
-	if err != nil || decision.Reason != "" || decision.Status != StatusStarting {
-		t.Fatalf("admission after normal hold = %+v, err=%v", decision, err)
-	}
-	if countResourceEvents(t, state, EventPressure) != 1 {
-		t.Fatal("normal pressure transition event missing")
-	}
-}
-
-func TestPressureWaitReasonNamesElevatedSignal(t *testing.T) {
-	got := pressureWaitReason(ResourceSnapshot{Pressure: "memory warn"})
-	if got != "host pressure (memory warn)" {
-		t.Fatalf("pressure wait reason = %q", got)
-	}
-}
-
-// case: S-237.39
-func TestCgroupFailureFormatsVisibleAdvisory(t *testing.T) {
-	if got := limitsAdvisory("cgroup v2 create child: permission denied"); got != "limits advisory: cgroup v2 create child: permission denied" {
-		t.Fatalf("cgroup advisory = %q", got)
-	}
-}
-
-type metricsProcessSource struct{ processes []Process }
-
-func (source metricsProcessSource) Snapshot(string) ([]Process, error) { return source.processes, nil }
-func (metricsProcessSource) Identity(int) (string, bool, error)        { return "", false, nil }
-func (metricsProcessSource) Signal(int, syscall.Signal) error          { return nil }
-
-// case: S-237.33
-func TestUnreadableProcessRSSMarksMeasurementPartial(t *testing.T) {
-	rec := record{PID: 700, RunID: "run"}
-	source := metricsProcessSource{processes: []Process{
-		{PID: 700, PPID: 1, Identity: "keeper"},
-		{PID: 701, PPID: 700, Identity: "readable", RSSBytes: 11, CPUSeconds: 0.2, MetricsAvailable: true},
-		{PID: 702, PPID: 700, Identity: "unreadable"},
-	}}
-	rss, cpu, partial, err := sampleRunMetricsWithSource(rec, source)
-	if err != nil || !partial || rss != 11 || cpu != 0.2 {
-		t.Fatalf("sample = rss %d, cpu %v, partial %t, err %v", rss, cpu, partial, err)
-	}
-}
-
-// case: S-237.33
-func TestUnverifiedTreeSampleMakesMeasurementPartial(t *testing.T) {
-	started := time.Now().Add(-time.Second)
-	source := metricsProcessSource{processes: []Process{
-		{PID: 700, PPID: 1, Identity: "keeper", StartedAt: started},
-		{PID: 702, PPID: 1, Identity: "unverified", StartedAt: time.Now(), RSSBytes: 80, MetricsAvailable: true, Unverified: true},
-	}}
-	rss, _, partial, err := sampleRunMetricsWithSource(record{PID: 700, RunID: "run"}, source)
-	if err != nil || !partial || rss != 0 {
-		t.Fatalf("unverified sample = rss %d, partial %t, err %v", rss, partial, err)
-	}
-}
-
-// case: S-237.40
-func TestRecordedResourceObservationEmitsOneOverBudgetEvent(t *testing.T) {
-	state := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeRecordAtomic(record{RunID: "run", Tag: "run", StateDir: state, Status: StatusRunning, MemoryBytes: 100}); err != nil {
-		t.Fatal(err)
-	}
-	for _, rss := range []uint64{126, 130} {
-		if _, err := recordResourceObservation(state, "run", rss, 1.0, false); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if countResourceEvents(t, state, EventOverBudget) != 1 {
-		t.Fatal("expected one over-budget event")
-	}
-	rec, err := readRecordLocked(state, "run")
-	if err != nil || !rec.OverBudget || rec.PeakRSSBytes != 130 {
-		t.Fatalf("resource record = %+v, err=%v", rec, err)
-	}
-}
-
-// case: S-237.33
-func TestPartialMeasurementNeverEntersCompleteLearningHistory(t *testing.T) {
-	records := []record{{CostKey: "build", Status: StatusDead, PeakRSSBytes: 12, AverageCPU: 1, MeasurementPartial: true}}
-	if learned := learnedUsage(records, "build"); learned.MemoryBytes != 0 {
-		t.Fatalf("partial observation learned as complete: %+v", learned)
+	if _, err := os.Lstat(filepath.Join(relocated, "owned")); err != nil {
+		t.Fatalf("cleanup followed symlinked parent and removed the owned path: %v", err)
 	}
 }

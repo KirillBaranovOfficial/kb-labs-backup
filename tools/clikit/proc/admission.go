@@ -63,7 +63,7 @@ func GateStatus(stateDir, name string) (GateInfo, bool, error) {
 	return info, held, err
 }
 
-func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID int, parentIdentity string, source ResourceSource) error {
+func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID int, parentIdentity string, source HostResourceSource) error {
 	if cfg.Slots < 0 || (cfg.SlotGroup == "") != (cfg.Slots == 0) {
 		return errors.New("proc: --slot-group and positive --slots must be supplied together")
 	}
@@ -86,7 +86,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 			return err
 		}
 		learned := learnedUsage(known, cfg.CostKey)
-		cost := effectiveResourceUsage(resourceUsage{MemoryBytes: cfg.MemoryBytes, MinCPUs: cfg.CPUsMin, DiskBytes: cfg.DiskBytes}, learned)
+		cost := effectiveQuotaUsage(quotaUsage{MemoryBytes: cfg.MemoryBytes, MinCPUs: cfg.CPUsMin, DiskBytes: cfg.DiskBytes}, learned)
 		rec := record{
 			RunID: runID, Tag: cfg.Tag, LatestTag: cfg.LatestTag, PID: parentPID, StartedAt: parentIdentity,
 			Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusQueued,
@@ -122,7 +122,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 			if err != nil {
 				return err
 			}
-			notice := resourceNotice(source.Snapshot())
+			notice := hostResourceNotice(source.Snapshot())
 			if decision.Reason == "" {
 				quota, err := effectiveQuota(cfg.StateDir, source)
 				if err != nil {
@@ -197,7 +197,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 	}
 }
 
-func admissionStateLocked(stateDir string, candidate record, source ResourceSource) (admissionDecision, error) {
+func admissionStateLocked(stateDir string, candidate record, source HostResourceSource) (admissionDecision, error) {
 	records, err := readRecordsLocked(stateDir)
 	if err != nil {
 		return admissionDecision{}, err
@@ -249,7 +249,7 @@ func admissionStateLocked(stateDir string, candidate record, source ResourceSour
 	if err != nil {
 		return admissionDecision{}, err
 	}
-	activeUsage := resourceUsage{}
+	activeUsage := quotaUsage{}
 	queuedBefore := 0
 	for _, rec := range records {
 		if rec.RunID == candidate.RunID {
@@ -287,7 +287,7 @@ func admissionStateLocked(stateDir string, candidate record, source ResourceSour
 	activeCostedRun := activeUsage.MemoryBytes > 0 || activeUsage.MinCPUs > 0 || activeUsage.DiskBytes > 0
 	candidateCostedRun := candidate.MemoryBytes > 0 || candidate.CPUsMin > 0 || candidate.DiskBytes > 0
 	if activeCostedRun && candidateCostedRun {
-		if !resourceFits(activeUsage, resourceUsage{MemoryBytes: candidate.MemoryBytes, MinCPUs: candidate.CPUsMin}, quota) {
+		if !quotaFits(activeUsage, quotaUsage{MemoryBytes: candidate.MemoryBytes, MinCPUs: candidate.CPUsMin}, quota) {
 			reason := fmt.Sprintf("memory budget (reserved %s of %s, needs %s)", FormatResourceBytes(activeUsage.MemoryBytes), FormatResourceBytes(quota.MemoryBytes), FormatResourceBytes(candidate.MemoryBytes))
 			if activeUsage.MemoryBytes+candidate.MemoryBytes <= quota.MemoryBytes {
 				reason = fmt.Sprintf("cpu budget (reserved %d of %d, needs %d)", activeUsage.MinCPUs, quota.CPUs, candidate.CPUsMin)
@@ -303,7 +303,7 @@ func admissionStateLocked(stateDir string, candidate record, source ResourceSour
 	return admissionDecision{Status: StatusStarting, Position: position}, nil
 }
 
-func admissionPressureLocked(stateDir string, candidate record, source ResourceSource) (string, error) {
+func admissionPressureLocked(stateDir string, candidate record, source HostResourceSource) (string, error) {
 	sample := source.Snapshot()
 	var hold pressureState
 	pressurePath := filepath.Join(stateDir, "pressure-state.json")
@@ -345,9 +345,9 @@ func admissionPressureLocked(stateDir string, candidate record, source ResourceS
 	return "", nil
 }
 
-func learnedUsage(records []record, key string) resourceUsage {
+func learnedUsage(records []record, key string) quotaUsage {
 	if key == "" {
-		return resourceUsage{}
+		return quotaUsage{}
 	}
 	var history []record
 	for _, rec := range records {
@@ -364,7 +364,7 @@ func learnedUsage(records []record, key string) resourceUsage {
 			peak = rec
 		}
 	}
-	return resourceUsage{MemoryBytes: peak.PeakRSSBytes, MinCPUs: int(peak.AverageCPU + 0.999)}
+	return quotaUsage{MemoryBytes: peak.PeakRSSBytes, MinCPUs: int(peak.AverageCPU + 0.999)}
 }
 
 func withStateLock(stateDir string, action func() error) (err error) {
@@ -533,6 +533,7 @@ func pruneStateLocked(stateDir string) error {
 			}
 			continue
 		}
+
 	}
 	paths, err := filepath.Glob(filepath.Join(stateDir, "gates", "*.json"))
 	if err != nil {
@@ -585,10 +586,25 @@ func markLostLocked(stateDir string, rec record) error {
 		return nil
 	}
 	cleanup := cleanupLostRun(rec, osProcessSource{})
+	resources, resourceErr := cleanupResourcesLocked(stateDir, rec.RunID)
+	resourceErr = errors.Join(resourceErr, resourceOutcomesError(resources))
+	scratch := rec.Scratch
+	if scratch == "" {
+		scratch = filepath.Join(stateDir, "runs", rec.RunID, "scratch")
+	}
+	scratchOutcome, scratchErr := cleanupScratchOutcome(stateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
+	resources = append(resources, scratchOutcome)
+	if scratchErr != nil {
+		resourceErr = errors.Join(resourceErr, fmt.Errorf("remove run scratch: %w", scratchErr))
+	}
 	rec.Status = StatusLost
 	rec.Error = fmt.Sprintf("keeper PID %d identity %s is no longer live", rec.PID, rec.StartedAt)
 	if cleanup.err != nil {
 		rec.Error += "; " + cleanup.err.Error()
+	}
+	if resourceErr != nil {
+		rec.Status = StatusDirty
+		rec.Error += "; resource cleanup: " + resourceErr.Error()
 	}
 	if err := writeRecordAtomic(rec); err != nil {
 		return fmt.Errorf("record lost run %s: %w", rec.RunID, err)
@@ -602,6 +618,7 @@ func markLostLocked(stateDir string, rec record) error {
 	teardown.Reaped = cleanup.Reaped
 	teardown.Unverified = cleanup.Unverified
 	teardown.Remaining = cleanup.Remaining
+	teardown.Resources = resources
 	if cleanup.err != nil {
 		teardown.Error = cleanup.err.Error()
 	}
@@ -642,11 +659,23 @@ func cleanupAdmission(stateDir, runID, reason string) {
 				}
 			}
 		}
-		if err := os.Remove(filepath.Join(stateDir, "runs", runID+".json")); err != nil && !os.IsNotExist(err) {
-			return err
+		scratch := rec.Scratch
+		if scratch == "" {
+			scratch = filepath.Join(stateDir, "runs", runID, "scratch")
 		}
+		scratchOutcome, scratchErr := cleanupScratchOutcome(stateDir, scratch, fileIdentity{Device: rec.ScratchDevice, Inode: rec.ScratchInode}, rec.Keep)
 		event := eventFor(rec, EventTeardown)
 		event.Reason = reason
+		event.Resources = append(event.Resources, scratchOutcome)
+		if scratchErr != nil {
+			event.Error = scratchErr.Error()
+			rec.Status, rec.Error = StatusDirty, scratchErr.Error()
+			if err := writeRecordAtomic(rec); err != nil {
+				return errors.Join(scratchErr, err)
+			}
+		} else if err := os.Remove(filepath.Join(stateDir, "runs", runID+".json")); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		return appendEvent(stateDir, event)
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "proc: remove incomplete admission %s: %v\n", runID, err)
@@ -668,7 +697,9 @@ func updateRecord(stateDir, runID string, update func(*record) error) error {
 
 func completeRecord(stateDir, runID string, code *int, signal string, duration time.Duration, final record) error {
 	return updateRecord(stateDir, runID, func(rec *record) error {
-		rec.Status = StatusDead
+		if rec.Status != StatusDirty && rec.Status != StatusLost {
+			rec.Status = StatusDead
+		}
 		rec.ExitCode = code
 		rec.Signal = signal
 		rec.DurationMS = duration.Milliseconds()

@@ -5,7 +5,7 @@ package proc
 import "testing"
 
 func TestDarwinResourceReaderUsesHostSysctls(t *testing.T) {
-	sample := (darwinResourceSource{}).Snapshot()
+	sample := (darwinHostResourceSource{}).Snapshot()
 	if sample.PhysicalMemory == 0 || sample.LogicalCPUs < 1 {
 		t.Fatalf("host sysctl sample lacks physical memory or CPU count: %+v", sample)
 	}

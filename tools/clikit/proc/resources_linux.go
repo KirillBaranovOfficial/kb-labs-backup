@@ -11,17 +11,17 @@ import (
 	"strings"
 )
 
-type linuxResourceSource struct{ root string }
+type linuxHostResourceSource struct{ root string }
 
-func systemResourceSource() ResourceSource { return linuxResourceSource{} }
+func systemHostResourceSource() HostResourceSource { return linuxHostResourceSource{} }
 
-func (s linuxResourceSource) Snapshot() ResourceSnapshot {
+func (s linuxHostResourceSource) Snapshot() HostResourceSnapshot {
 	root := s.root
 	if root == "" {
 		root = "/"
 	}
 	read := func(path string) ([]byte, error) { return os.ReadFile(filepath.Join(root, path)) }
-	result := ResourceSnapshot{LogicalCPUs: runtime.NumCPU(), Unavailable: map[string]string{}}
+	result := HostResourceSnapshot{LogicalCPUs: runtime.NumCPU(), Unavailable: map[string]string{}}
 	mem, err := read("proc/meminfo")
 	if err != nil {
 		result.Unavailable["memory"] = err.Error()
@@ -68,7 +68,7 @@ func (s linuxResourceSource) Snapshot() ResourceSnapshot {
 	return result
 }
 
-func parseLinuxMemInfo(data string, result *ResourceSnapshot) error {
+func parseLinuxMemInfo(data string, result *HostResourceSnapshot) error {
 	hasTotal, hasAvailable := false, false
 	for _, line := range strings.Split(data, "\n") {
 		fields := strings.Fields(line)
@@ -95,7 +95,7 @@ func parseLinuxMemInfo(data string, result *ResourceSnapshot) error {
 	return nil
 }
 
-func parseLinuxLoad(data string, result *ResourceSnapshot) error {
+func parseLinuxLoad(data string, result *HostResourceSnapshot) error {
 	fields := strings.Fields(data)
 	if len(fields) == 0 {
 		return fmt.Errorf("/proc/loadavg is empty")
@@ -108,7 +108,7 @@ func parseLinuxLoad(data string, result *ResourceSnapshot) error {
 	return nil
 }
 
-func parseLinuxPressure(data string, result *ResourceSnapshot) error {
+func parseLinuxPressure(data string, result *HostResourceSnapshot) error {
 	value, err := parseLinuxPressureValue(data)
 	if err != nil {
 		return err
@@ -141,7 +141,7 @@ func parseLinuxPressureValue(data string) (float64, error) {
 	return 0, fmt.Errorf("pressure file has no some avg10")
 }
 
-func readCgroupLimits(cgroupRoot string, result *ResourceSnapshot) {
+func readCgroupLimits(cgroupRoot string, result *HostResourceSnapshot) {
 	if data, err := os.ReadFile(filepath.Join(cgroupRoot, "memory.max")); err != nil {
 		result.Unavailable["cgroup memory.max"] = err.Error()
 	} else if value, parseErr := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); parseErr == nil {

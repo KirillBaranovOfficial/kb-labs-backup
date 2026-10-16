@@ -23,17 +23,17 @@ import (
 	"github.com/kb-labs/clikit/proc"
 )
 
-type stableResourceSource struct{}
+type stableHostResourceSource struct{}
 
-func (stableResourceSource) Snapshot() proc.ResourceSnapshot {
-	return proc.ResourceSnapshot{
+func (stableHostResourceSource) Snapshot() proc.HostResourceSnapshot {
+	return proc.HostResourceSnapshot{
 		PhysicalMemory: 1 << 50, AvailableMemory: 1 << 50,
 		MemoryAvailableKnown: true, LogicalCPUs: 64,
 	}
 }
 
 func startTest(ctx context.Context, cfg proc.Config) (*proc.Run, error) {
-	return proc.StartWithResourceSource(ctx, cfg, stableResourceSource{})
+	return proc.StartWithHostResourceSource(ctx, cfg, stableHostResourceSource{})
 }
 
 // case: S-237.1
@@ -110,6 +110,107 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 				t.Fatalf("descendant without ancestry history or marker was still classified as owned: %+v", process)
 			}
 		}
+	}
+}
+
+// case: S-237.42
+func TestRunScratchEnvironmentIsRemovedAndKeptOutputSurvives(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	kept := filepath.Join(state, "kept.txt")
+	scratchPathFile := filepath.Join(state, "scratch-path")
+	command := exec.Command(runner, "run", "--tag", "scratch", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--keep", kept, "--keep", "private", "--", "/bin/sh", "-ec", `printf '%s' "$TMPDIR" > "$2"; printf scratch > "$TMPDIR/private"; printf discard > "$TMPDIR/discard"; printf kept > "$3"; "$1" own path --create dir "$TMPDIR/owned"; test "$TMPDIR" = "$TMP" && test "$TMP" = "$TEMP" && test "$TMP" = "$KB_RUNNER_SCRATCH"`, "sh", runner, scratchPathFile, kept)
+	if output, err := command.CombinedOutput(); err != nil && !teardownHasObservationFailure(t, state, outputRunID(t, state, "scratch")) {
+		t.Fatalf("run with scratch environment: %v\n%s", err, output)
+	}
+	scratchBytes, err := os.ReadFile(scratchPathFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(filepath.Join(string(scratchBytes), "private")); err != nil || string(content) != "scratch" {
+		t.Fatalf("kept scratch output = %q, %v", content, err)
+	}
+	if _, err := os.Stat(filepath.Join(string(scratchBytes), "discard")); !os.IsNotExist(err) {
+		t.Fatalf("undeclared scratch output remains: %v", err)
+	}
+	if content, err := os.ReadFile(kept); err != nil || string(content) != "kept" {
+		t.Fatalf("kept output = %q, %v", content, err)
+	}
+	if _, err := os.Stat(filepath.Join(state, "stdout.log")); err != nil {
+		t.Fatalf("implicit stdout keep missing: %v", err)
+	}
+	leftovers, err := proc.Leftovers(state)
+	if err != nil || len(leftovers) != 0 {
+		t.Fatalf("kept scratch output appeared as a leftover: %+v, %v", leftovers, err)
+	}
+	assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
+}
+
+// case: S-237.44
+func TestRunScratchSymlinkReplacementRefusesWithoutTouchingTarget(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	outside := t.TempDir()
+	sentinel := filepath.Join(outside, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scratchPathFile := filepath.Join(state, "scratch-path")
+	command := exec.Command(runner, "run", "--tag", "scratch-symlink", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout.log"), "--stderr", filepath.Join(state, "stderr.log"), "--", "/bin/sh", "-ec", `printf '%s' "$TMPDIR" > "$2"; rm -rf "$TMPDIR"; ln -s "$1" "$TMPDIR"`, "sh", outside, scratchPathFile)
+	_, _ = command.CombinedOutput()
+	scratchBytes, err := os.ReadFile(scratchPathFile)
+	if err != nil {
+		t.Fatalf("run did not report scratch path: %v", err)
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "keep" {
+		t.Fatalf("scratch cleanup touched symlink target: data=%q err=%v", data, err)
+	}
+	if target, err := os.Readlink(string(scratchBytes)); err != nil || target != outside {
+		t.Fatalf("scratch symlink replacement changed: target=%q err=%v", target, err)
+	}
+	teardown := eventOfType(t, state, proc.EventTeardown)
+	assertExactlyOneScratchOutcome(t, teardown, string(proc.ResourceRefused))
+}
+
+// case: S-237.41
+func TestRunScratchIsRemovedAfterNonzeroExitAndSignal(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	for _, outcome := range []struct {
+		tag    string
+		script string
+		stall  string
+	}{{tag: "nonzero", script: `printf '%s' "$TMPDIR" > "$1"; exit 7`, stall: "1h"}, {tag: "signal", script: `printf '%s' "$TMPDIR" > "$1"; kill -TERM $$`, stall: "1h"}, {tag: "stall", script: `printf '%s' "$TMPDIR" > "$1"; /bin/sleep 0.3`, stall: "100ms"}} {
+		scratchPathFile := filepath.Join(state, outcome.tag+"-scratch")
+		command := exec.Command(runner, "run", "--tag", outcome.tag, "--state", state, "--stall", outcome.stall, "--stdout", filepath.Join(state, outcome.tag+".out"), "--stderr", filepath.Join(state, outcome.tag+".err"), "--", "/bin/sh", "-c", outcome.script, "sh", scratchPathFile)
+		_, _ = command.CombinedOutput()
+		scratchBytes, err := os.ReadFile(scratchPathFile)
+		if err != nil {
+			t.Fatalf("run %s did not write its scratch path: %v", outcome.tag, err)
+		}
+		if _, err := os.Stat(string(scratchBytes)); !os.IsNotExist(err) {
+			t.Fatalf("run %s scratch remains at %s: %v", outcome.tag, scratchBytes, err)
+		}
+		if outcome.tag == "stall" {
+			assertEvent(t, state, "stall")
+		}
+		assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceRemoved))
+	}
+}
+
+func assertExactlyOneScratchOutcome(t *testing.T, event proc.Event, expected string) {
+	t.Helper()
+	count := 0
+	for _, outcome := range event.Resources {
+		if outcome.Resource.Kind == "scratch" {
+			count++
+			if outcome.Outcome != expected {
+				t.Errorf("scratch outcome = %q, want %q", outcome.Outcome, expected)
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("scratch outcomes = %d, want exactly one: %+v", count, event.Resources)
 	}
 }
 
@@ -989,6 +1090,15 @@ func TestConcurrentKeepersAppendCompleteEventLines(t *testing.T) {
 
 // case: S-237.5
 func TestStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
+	testStartRejectsHelperWithoutKeeperDispatchPromptly(t)
+}
+
+// case: S-237.41
+func TestStartupErrorTeardownReportsScratchOutcome(t *testing.T) {
+	testStartRejectsHelperWithoutKeeperDispatchPromptly(t)
+}
+
+func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 	state := t.TempDir()
 	badHelper := filepath.Join(state, "wrong-helper")
 	pidFile := filepath.Join(state, "bad-helper.pid")
@@ -1043,6 +1153,7 @@ func TestStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 	if time.Since(started) > 4*time.Second {
 		t.Fatalf("invalid helper took too long to reject: %s", time.Since(started))
 	}
+	assertExactlyOneScratchOutcome(t, eventOfType(t, state, proc.EventTeardown), string(proc.ResourceAlreadyGone))
 }
 
 // case: S-237.5
@@ -1206,13 +1317,22 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 
 // case: S-237.8
 func TestDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
+	testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t)
+}
+
+// case: S-237.47
+func TestLostKeeperCleansRegisteredResources(t *testing.T) {
+	testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t)
+}
+
+func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 	state := t.TempDir()
 	runner := buildRunner(t)
 	firstPIDFile := filepath.Join(state, "first-child.pid")
 	secondPIDFile := filepath.Join(state, "second-child.pid")
 	start := func(tag, pidFile string) *exec.Cmd {
 		t.Helper()
-		cmd := exec.Command(runner, "run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err"), "--slot-group", "stale", "--slots", "1", "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", pidFile)
+		cmd := exec.Command(runner, "run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err"), "--slot-group", "stale", "--slots", "1", "--", "/bin/sh", "-ec", `"$1" own path --create dir "$TMPDIR/owned"; echo $$ > "$2"; exec /bin/sleep 30`, "sh", runner, pidFile)
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
@@ -1311,6 +1431,69 @@ func TestDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 	if _, alive := identityForTest(t, firstChild); alive {
 		t.Fatalf("surviving tree process %d was not cleaned after keeper death", firstChild)
 	}
+	teardown := eventForRunAndType(t, state, firstRun.RunID, proc.EventTeardown)
+	if _, err := os.Stat(filepath.Join(state, "runs", firstRun.RunID, "scratch")); !os.IsNotExist(err) {
+		t.Fatalf("lost-run scratch remains: %v; teardown=%+v", err, teardown.Resources)
+	}
+	if _, err := os.Stat(filepath.Join(state, "runs", firstRun.RunID, "resources.json")); err != nil {
+		t.Fatalf("lost-run resource ledger was not persisted for audit: %v", err)
+	}
+	removedPath, removedScratch := false, false
+	ledger, err := os.ReadFile(filepath.Join(state, "runs", firstRun.RunID, "resources.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []proc.Resource
+	if err := json.Unmarshal(ledger, &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Kind != proc.ResourcePath {
+		t.Fatalf("lost run ledger entries = %+v", entries)
+	}
+	for _, outcome := range teardown.Resources {
+		if outcome.Resource.Kind == "scratch" && outcome.Outcome == proc.ResourceRemoved {
+			removedScratch = true
+		}
+	}
+	for _, entry := range entries {
+		found := false
+		for _, outcome := range teardown.Resources {
+			if outcome.Resource.Kind == entry.Kind && outcome.Resource.ID == entry.ID && outcome.Outcome == proc.ResourceRemoved {
+				found = true
+				removedPath = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("lost-run teardown omitted outcome for ledger entry %+v: %+v", entry, teardown.Resources)
+		}
+	}
+	if len(teardown.Resources) != len(entries)+1 || !removedPath || !removedScratch {
+		t.Fatalf("lost-run teardown omitted resource outcomes: %+v", teardown.Resources)
+	}
+}
+
+func eventForRunAndType(t *testing.T, state, runID string, eventType proc.EventType) proc.Event {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(state, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *proc.Event
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var event proc.Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.RunID == runID && event.Type == eventType {
+			copy := event
+			found = &copy
+		}
+	}
+	if found == nil {
+		t.Fatalf("event %s for run %s not found", eventType, runID)
+	}
+	return *found
 }
 
 // case: S-237.17
@@ -1638,7 +1821,7 @@ func TestEventsFollowStreamsLaterFilteredRecords(t *testing.T) {
 	}
 }
 
-// case: S-237.12, S-237.26
+// case: S-237.26
 func TestPSShowsRunningQueuedBlockedAndStalledTogether(t *testing.T) {
 	state := t.TempDir()
 	runner := buildRunner(t)

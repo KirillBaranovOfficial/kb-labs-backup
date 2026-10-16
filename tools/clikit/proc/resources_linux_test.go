@@ -30,7 +30,7 @@ func TestLinuxResourceReaderParsesProcAndCgroupV2(t *testing.T) {
 	write("proc/self/cgroup", "0::/fixture\n")
 	write("sys/fs/cgroup/fixture/memory.max", "524288000\n")
 	write("sys/fs/cgroup/fixture/cpu.max", "200000 100000\n")
-	got := (linuxResourceSource{root: root}).Snapshot()
+	got := (linuxHostResourceSource{root: root}).Snapshot()
 	if got.PhysicalMemory != 1_024_000_000 || got.AvailableMemory != 204_800_000 || !got.MemoryAvailableKnown {
 		t.Fatalf("memory sample = %+v", got)
 	}
@@ -60,7 +60,7 @@ func TestLinuxResourceReaderRoundsFractionalCPUQuotaDown(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got := (linuxResourceSource{root: root}).Snapshot()
+	got := (linuxHostResourceSource{root: root}).Snapshot()
 	if !got.CgroupCPUsKnown || got.CgroupCPUs != 0 {
 		t.Fatalf("fractional cgroup CPU default = %+v, want 0 whole cores and known limit", got)
 	}
@@ -82,7 +82,7 @@ func TestLinuxResourceReaderReportsUnreadableCgroupDefaults(t *testing.T) {
 	write("proc/loadavg", "1.00 1.00 1.00 1/100 42\n")
 	write("proc/pressure/memory", "some avg10=1.00 avg60=1.00 avg300=1.00 total=10\n")
 	write("proc/self/cgroup", "0::/fixture\n")
-	got := (linuxResourceSource{root: root}).Snapshot()
+	got := (linuxHostResourceSource{root: root}).Snapshot()
 	if got.Unavailable["cgroup memory.max"] == "" || got.Unavailable["cgroup cpu.max"] == "" {
 		t.Fatalf("unreadable cgroup defaults were hidden: %+v", got.Unavailable)
 	}
