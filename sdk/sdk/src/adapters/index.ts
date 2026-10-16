@@ -35,7 +35,6 @@ export type {
   AdapterCapabilities,
   AdapterFactory,
 } from '@kb-labs/core-platform/adapters';
-
 // Capability interfaces (what adapters implement)
 export type {
   ILLM,
@@ -198,9 +197,16 @@ export type {
   ReserveEnvironmentRequest,
   ReservedEnvironment,
   StartEnvironmentRequest,
+  EnvironmentExecutionPolicy,
+  EnvironmentExecutionStream,
   EnvironmentDescriptor,
   EnvironmentStatusResult,
   EnvironmentProviderCapabilities,
+} from '@kb-labs/core-platform/adapters';
+export {
+  EnvironmentProvisioningError,
+  EnvironmentTeardownError,
+  type EnvironmentProvisioningFailureCause,
 } from '@kb-labs/core-platform/adapters';
 
 // Snapshot provider

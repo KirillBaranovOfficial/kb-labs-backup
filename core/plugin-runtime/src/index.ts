@@ -23,6 +23,7 @@ export {
   type CreateFSShimOptions,
   type CreateRuntimeAPIOptions,
 } from './runtime/index.js';
+export { selectPermittedEnvironment } from './sandbox/environment.js';
 
 // API
 export {

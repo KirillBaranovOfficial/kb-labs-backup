@@ -3,12 +3,21 @@
  * Response envelope wrapper middleware — single source of truth for error formatting.
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { createUxFailureResult, createUxSuccessResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import { codeForHttpFailure, normalizeHttpFailure, statusForHttpFailure, toErrorEnvelope } from '@kb-labs/core-platform';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
 import { ZodError } from 'zod';
+
+function requestFailureOptions(request: FastifyRequest, statusCode: number) {
+  const limitBytes = request.routeOptions.bodyLimit;
+  return {
+    correlationId: String(request.id || ''),
+    statusCode,
+    ...(statusCode === 413 && limitBytes !== undefined ? { limitBytes } : {}),
+  };
+}
 
 function isPluginErrorEnvelope(err: unknown): err is PluginErrorEnvelope {
   return (
@@ -61,8 +70,7 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
       } catch {
         if (reply.statusCode >= 400) {
           const result = normalizeHttpFailure(payload, {
-            correlationId: String(request.id || ''),
-            statusCode: reply.statusCode,
+            ...requestFailureOptions(request, reply.statusCode),
           });
           reply.code(statusForHttpFailure(payload, reply.statusCode));
           return JSON.stringify(result);
@@ -78,8 +86,7 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
     } catch {
       if (reply.statusCode >= 400) {
         const result = normalizeHttpFailure(undefined, {
-          correlationId: String(request.id || ''),
-          statusCode: reply.statusCode,
+          ...requestFailureOptions(request, reply.statusCode),
         });
         reply.code(statusForHttpFailure(undefined, reply.statusCode));
         return JSON.stringify(result);
@@ -101,8 +108,7 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
 
     if (reply.statusCode >= 400) {
       const result = normalizeHttpFailure(parsedPayload, {
-        correlationId: String(request.id || ''),
-        statusCode: reply.statusCode,
+        ...requestFailureOptions(request, reply.statusCode),
       });
       reply.code(statusForHttpFailure(parsedPayload, reply.statusCode));
       return JSON.stringify(result);

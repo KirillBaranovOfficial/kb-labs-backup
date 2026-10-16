@@ -69,13 +69,13 @@ export class RemoteBackend implements RemoteExecutionBackend {
 
   async execute(
     request: ExecutionRequest,
-    _options?: ExecuteOptions,
+    options?: ExecuteOptions,
   ): Promise<ExecutionResult> {
     const start = performance.now();
 
     try {
       const remappedRequest = this.remapRequest(request);
-      const { data } = await this.transport.execute(remappedRequest);
+      const { data } = await this.transport.execute(remappedRequest, { signal: options?.signal });
       const executionTimeMs = performance.now() - start;
       this.updateStats(true, executionTimeMs);
 

@@ -2,8 +2,8 @@ package diag
 
 import "os/exec"
 
-// Numeric statuses are kept private so command packages cannot construct a
-// process result from an integer.
+// Numeric category codes stay private; explicit process results are validated
+// through ProcessExitStatus.
 const (
 	exitOK    = 0
 	exitError = 1
@@ -11,8 +11,8 @@ const (
 )
 
 // ExitStatus is a process status selected by the diagnostic contract. Its
-// value can only be constructed in this package from a catalogue class or a
-// declared non-error command outcome.
+// value can only be constructed in this package from a catalogue class or an
+// explicit process outcome validated against the portable OS exit range.
 type ExitStatus struct {
 	code     int
 	selected bool
@@ -39,13 +39,23 @@ func PlanChangesStatus() ExitStatus          { return ExitStatus{code: 2, select
 func PlanDriftStatus() ExitStatus            { return ExitStatus{code: 4, selected: true} }
 func DeployChangesAppliedStatus() ExitStatus { return ExitStatus{code: 1, selected: true} }
 
+// ProcessExitStatus preserves an explicit operating-system process outcome,
+// including command fixtures whose exit values are part of their contract.
+// Values outside the portable process exit range become an operation failure.
+func ProcessExitStatus(code int) ExitStatus {
+	if code < 0 || code > 255 {
+		return operationFailureStatus()
+	}
+	return ExitStatus{code: code, selected: true}
+}
+
 // ChildProcessStatus preserves the explicit child-process pass-through
-// contract without allowing callers to construct a status from an integer.
+// contract and normalizes values outside the portable process exit range.
 func ChildProcessStatus(child *exec.ExitError) ExitStatus {
 	if child == nil || child.ExitCode() < 0 {
 		return operationFailureStatus()
 	}
-	return ExitStatus{code: child.ExitCode(), selected: true}
+	return ProcessExitStatus(child.ExitCode())
 }
 
 // ExitCode maps the shared CLI error categories to the shared process table.

@@ -47,8 +47,22 @@ func TestExitRejectsUnselectedStatusSubprocess(t *testing.T) {
 				!strings.Contains(string(output), "returned without selecting an exit status") {
 				t.Fatalf("unselected status diagnosis missing from output: %s", output)
 			}
-			if !strings.Contains(string(output), "Hint:") || !strings.Contains(string(output), "--debug") {
-				t.Fatalf("unselected status recovery hint missing from output: %s", output)
+			text := string(output)
+			correlationMarker := "correlationId: "
+			correlationStart := strings.Index(text, correlationMarker)
+			if correlationStart < 0 {
+				t.Fatalf("unselected status correlation ID missing from output: %s", output)
+			}
+			correlationLine := strings.Fields(text[correlationStart+len(correlationMarker):])
+			if len(correlationLine) == 0 {
+				t.Fatalf("unselected status correlation ID is empty: %s", output)
+			}
+			want, envelopeErr := diag.ToEnvelope(diag.New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", diag.WithCorrelationID(correlationLine[0])))
+			if envelopeErr != nil {
+				t.Fatal(envelopeErr)
+			}
+			if !strings.Contains(text, "Hint: "+want.Hint) || strings.ContainsAny(want.Hint, "{}") {
+				t.Fatalf("unselected status recovery hint differs from rendered catalog hint: %s", output)
 			}
 			if err == nil || !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
 				t.Fatalf("unselected status exited with %v; output: %s", err, output)

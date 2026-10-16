@@ -90,10 +90,46 @@ describe('shared HTTP failure boundary', () => {
     [401, 'KB_AUTH_REQUIRED'],
     [403, 'KB_AUTH_FORBIDDEN'],
     [400, 'KB_RUNTIME_INPUT_INVALID'],
+    [413, 'KB_RUNTIME_PAYLOAD_TOO_LARGE'],
     [404, 'KB_RUNTIME_UNEXPECTED'],
     [502, 'KB_RUNTIME_UNEXPECTED'],
   ])('derives a catalog fallback code for an uncatalogued HTTP %i failure', (statusCode, code) => {
     expect(codeForHttpFailure(new Error('upstream'), statusCode)).toBe(code);
+  });
+
+  it('renders a known boundary limit and a size-free hint when the limit is unknown', () => {
+    const gateway = normalizeHttpFailure(new Error('too large'), {
+      correlationId: 'gateway-limit', statusCode: 413, limitBytes: 1024 * 1024,
+    });
+    expect(gateway.error).toMatchObject({
+      code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE',
+      message: 'The request body exceeds 1 MiB.',
+      hint: 'Reduce the request body to 1 MiB and resend it.',
+      details: { limitBytes: '1048576' },
+    });
+
+    const nonUnitLimit = normalizeHttpFailure(new Error('too large'), {
+      correlationId: 'non-unit-limit', statusCode: 413, limitBytes: 1025,
+    });
+    expect(nonUnitLimit.error.message).toBe('The request body exceeds 1025 B.');
+
+    const upstream = normalizeHttpFailure(new Error('upstream limit'), {
+      correlationId: 'unknown-limit', statusCode: 413,
+    });
+    expect(upstream.error).toMatchObject({
+      code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE',
+      message: 'The request body exceeds the configured receiving-service limit.',
+      hint: 'Reduce the request body to the configured receiving-service limit and resend it.',
+    });
+    expect(`${upstream.error.message} ${upstream.error.hint}`).not.toMatch(/\b\d+(?:\.\d+)?\s*(?:B|KiB|MiB|GiB)\b/);
+
+    const typedWithoutLimit = normalizeHttpFailure({ error: { code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE' } }, {
+      correlationId: 'typed-unknown-limit', statusCode: 413,
+    });
+    expect(typedWithoutLimit.error).toMatchObject({
+      message: 'The request body exceeds the configured receiving-service limit.',
+      hint: 'Reduce the request body to the configured receiving-service limit and resend it.',
+    });
   });
 
   it('maps framework validation and operating-system errors without treating their codes as product codes', () => {

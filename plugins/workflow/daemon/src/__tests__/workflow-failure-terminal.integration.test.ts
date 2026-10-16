@@ -9,7 +9,7 @@ import { InMemoryCache, InMemoryEventBus, InMemoryStorage } from '@kb-labs/core-
 import { FaultInjectingCache } from '@kb-labs/shared-testing';
 import { mockLogger } from '@kb-labs/shared-testing';
 import { EnvSecretProvider, WorkflowEngine, workflowDeadLetterCacheKey, workflowProjectCacheKey } from '@kb-labs/workflow-engine';
-import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution';
+import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
 import { createWorkflowWorker } from '../worker.js';
 
 // case: S-029.2, S-009.4
@@ -75,7 +75,7 @@ describe('live workflow failure terminalization', () => {
       async health() { return { healthy: true, backend: 'in-process' }; },
       async stats() { return { totalExecutions: executionCount, successCount: 0, errorCount: executionCount, avgExecutionTimeMs: 1 }; },
       async shutdown() {},
-    }, logger);
+    }, logger, 'in-process');
     const worker = await createWorkflowWorker({
       engine, secretProvider: new EnvSecretProvider(), cliApi: registry,
       logger,

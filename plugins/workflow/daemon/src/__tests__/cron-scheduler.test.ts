@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
+import type { IAnalytics } from '@kb-labs/core-platform';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { WorkflowEngine } from '@kb-labs/workflow-engine';
 import type { UserCron, WorkflowSpec } from '@kb-labs/workflow-contracts';
@@ -8,6 +9,32 @@ import { JobBroker as JobBrokerImpl } from '../job-broker.js';
 import { CronScheduler } from '../cron-scheduler.js';
 
 describe('CronScheduler project handler targets', () => {
+  // case: S-254.4
+  it('records a cron submission with run identity without claiming terminal completion', async () => {
+    const track = vi.fn(async () => undefined);
+    const runFromInline = vi.fn(async () => ({ id: 'workflow-run-active', status: 'running' }));
+    const scheduler = new CronScheduler({
+      jobBroker: {} as JobBroker,
+      workflowEngine: { runFromInline } as unknown as WorkflowEngine,
+      logger: new NoOpLogger(),
+      analytics: { track } as unknown as IAnalytics,
+    });
+    scheduler.registerUserCron({
+      id: 'nightly', schedule: '0 2 * * *', workflow: 'nightly-workflow', enabled: true,
+    } as UserCron, {
+      name: 'Nightly workflow', version: '1.0.0', on: { manual: true }, jobs: {},
+    } as WorkflowSpec);
+
+    await scheduler.triggerNow('nightly');
+
+    expect(track).toHaveBeenCalledWith('workflow.cron.job.submitted', expect.objectContaining({
+      cronJobId: 'nightly',
+      runId: 'workflow-run-active',
+      source: 'user',
+    }));
+    expect(track).not.toHaveBeenCalledWith('workflow.cron.job.completed', expect.anything());
+  });
+
   it('submits the handler and input with project cron metadata', async () => {
     const submit = vi.fn(async () => ({ id: 'job-run-1' }));
     const scheduler = new CronScheduler({

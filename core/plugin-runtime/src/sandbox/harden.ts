@@ -13,6 +13,7 @@
  */
 
 import type { PermissionSpec } from '@kb-labs/plugin-contracts';
+import { selectPermittedEnvironment } from './environment.js';
 import { createRequire } from 'node:module';
 
 export type SandboxMode = 'warn' | 'enforce' | 'compat';
@@ -336,7 +337,6 @@ function patchProcessEnv(
   _emitViolation: (event: SandboxViolationEvent) => void
 ): PatchRestore {
   const originalEnv = process.env;
-  const allowedEnvKeys = permissions?.env?.read ?? [];
 
   if (!originals.has('env')) {
     originals.set('env', originalEnv);
@@ -344,25 +344,7 @@ function patchProcessEnv(
 
   Object.defineProperty(process, 'env', {
     get() {
-      // Return filtered env
-      const filtered: Record<string, string | undefined> = {};
-
-      for (const key of allowedEnvKeys) {
-        if (key.endsWith('*')) {
-          // Wildcard support: KB_* matches KB_FOO, KB_BAR
-          const prefix = key.slice(0, -1);
-          for (const [envKey, value] of Object.entries(originalEnv)) {
-            if (envKey.startsWith(prefix)) {
-              filtered[envKey] = value;
-            }
-          }
-        } else {
-          // Exact match
-          filtered[key] = originalEnv[key];
-        }
-      }
-
-      return filtered;
+      return selectPermittedEnvironment(permissions, originalEnv);
     },
     configurable: true, // Allow restoration
     enumerable: true,

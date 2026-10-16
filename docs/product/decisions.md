@@ -15,6 +15,64 @@ failure leaves fewer live workers than the configured minimum. A failed pool
 start is retried before the pool serves work; a half-started pool is not
 published. Cases: S-241.
 
+## 2026-10-15
+
+### Human lifecycle translation publishes acknowledged progress
+
+The event daemon is the sole translator from runner lifecycle JSONL to the
+human-facing event stream. It publishes a cursor only after each translated
+event has been appended. A lag notice begins after five seconds so short
+scheduling delays do not look like a stalled translator, while sustained
+backlog becomes visible. A dead daemon is reported through its runner-owned
+`lost` state in `kb-runner ps`; a second heartbeat would duplicate the runner's
+identity-based liveness owner. Every translated human line keeps its existing
+prefix and ends with the source run tag and one-based runner event position,
+so identical prose from separate runs remains tied to a single event. Cases:
+S-237.15.
+
+### D41: resource pressure queues work and reports the wait
+
+When free disk is below a run's admission budget, the run stays queued/blocked
+and visible in `kb-runner ps`; admission does not refuse or fail the run. On
+the blocked transition the human stream emits one `LOW DISK` line with the run,
+required and available bytes, and the `retire-stream.sh <accepted-stream>`
+remedy. Cases: S-237.10, S-237.16.
+
+### Cutover refuses while a ROOT is busy
+
+The orchestrator quiesces a ROOT before replacing its launcher scripts. Cutover
+refuses when any process from the install manifest is running in that ROOT, or
+when the legacy batch lock exists. It checks the manifest inventory before and
+after the atomic per-file replacements; if a launcher starts during installation,
+the new watcher is not started and the operator waits for the run to finish
+before retrying. The recorded event watcher is stopped by its verified identity
+before the initial busy inventory. Completed legacy `.exit` files are imported
+once; in-flight legacy agents are not migrated. The old reap helper remains
+until the post-install inventory passes, then is removed because `kb-runner`
+owns process-tree cleanup. Case: S-237.18.
+
+### D42 — A run with no active resource-costed reservation may start despite low host availability
+
+When no resource-costed run is active, admission does not wait on the memory
+or CPU quota or live available-memory check because no work under this
+admission system can release memory. The run still waits on elevated host
+pressure, and slots, gates, FIFO, and disk admission remain enforced. When
+another resource-costed run is active, memory/CPU quota and live available
+memory both gate admission. Cases: S-237.29, S-237.38.
+
+### D43 — kb-runner cleanup protects against accidents, not deliberate same-user races
+
+kb-runner supervises processes and resources; it is not a sandbox. A run has
+the same user authority as the cleaner, so cleanup guarantees prevent accidents
+rather than contain a deliberately racing process. Registered paths are created
+exclusively and checked against their owner nonce; scratch is created by the
+keeper and checked against its recorded device and inode. Cleanup never follows
+symlinks, including a replaced scratch root or a symlinked parent
+present when cleanup starts, never resolves a deletion outside configured
+cleanup roots, and refuses and reports identity mismatches. Deliberate same-user
+TOCTOU races during the final filesystem syscall are outside the guarantee.
+Cases: S-237.43–S-237.44.
+
 ## 2026-10-13
 
 ### Installation identity is validated at the shared boundary

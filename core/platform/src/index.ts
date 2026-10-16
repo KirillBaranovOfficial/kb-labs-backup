@@ -261,9 +261,15 @@ export type {
   ReserveEnvironmentRequest,
   ReservedEnvironment,
   StartEnvironmentRequest,
+  EnvironmentExecutionPolicy,
   EnvironmentDescriptor,
   EnvironmentStatusResult,
   EnvironmentProviderCapabilities,
+} from "./environment/environment-provider.js";
+export {
+  EnvironmentProvisioningError,
+  EnvironmentTeardownError,
+  type EnvironmentProvisioningFailureCause,
 } from "./environment/environment-provider.js";
 
 // Workspace lifecycle abstraction

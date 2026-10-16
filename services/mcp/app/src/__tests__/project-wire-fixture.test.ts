@@ -92,7 +92,6 @@ describe('project MCP wire fixture producer', () => {
       cache: new InMemoryCache(),
       platform: {
         analytics: { track: async () => undefined },
-        getSocketPath: () => '/tmp/kb-mcp-wire-fixture.sock',
       } as unknown as PlatformContainer,
       projectRoot,
       policy: { schemaVersion: '1.0', default: 'allow', rules: [] } satisfies Policy,

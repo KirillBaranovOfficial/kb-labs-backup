@@ -57,8 +57,7 @@ export class SubprocessRunnerAdapter implements ISubprocessRunner {
     // SubprocessRunOptions from contracts matches RunInSubprocessOptions from runtime
     return runInSubprocess<T>({
       descriptor: options.descriptor as PluginContextDescriptor,
-      socketPath: options.platformSocketPath,
-      platformAuthToken: options.platformAuthToken,
+      platform: options.platform,
       handlerPath: options.handlerPath,
       input: options.input,
       environment: options.environment,

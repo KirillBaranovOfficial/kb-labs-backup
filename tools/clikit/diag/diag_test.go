@@ -141,6 +141,20 @@ func TestExitCodeUsesSharedTable(t *testing.T) {
 	}
 }
 
+func TestProcessExitStatusPreservesPortableProcessCodes(t *testing.T) {
+	for _, code := range []int{0, 1, 2, 3, 7, 128, 255} {
+		status := ProcessExitStatus(code)
+		if !status.IsSelected() || status.Code() != code {
+			t.Errorf("ProcessExitStatus(%d) = selected %t, code %d", code, status.IsSelected(), status.Code())
+		}
+	}
+	for _, code := range []int{-1, 256} {
+		if got := ProcessExitStatus(code); got.Code() != 1 {
+			t.Errorf("ProcessExitStatus(%d) = %d, want operation failure 1", code, got.Code())
+		}
+	}
+}
+
 func TestEveryCatalogEntryDeclaresCanonicalExitClass(t *testing.T) {
 	for code, entry := range catalogEntries {
 		want := operationFailureStatus()

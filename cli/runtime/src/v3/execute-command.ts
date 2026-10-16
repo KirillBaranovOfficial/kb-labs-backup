@@ -115,12 +115,6 @@ export interface ExecuteCommandV3Options {
   devMode?: boolean;
 
   /**
-   * Unix socket path for IPC communication.
-   * If not provided, will attempt to get from platform.getSocketPath()
-   */
-  socketPath?: string;
-
-  /**
    * Resource quotas from manifest
    */
   quotas?: {
@@ -173,7 +167,6 @@ export async function executeCommandV3(
     platform,
     signal,
     devMode: _devMode = false,
-    socketPath: _socketPath,
     quotas,
     configSection,
   } = options;

@@ -1,9 +1,12 @@
 import { createErrorEnvelope, getCatalogEntry, isErrorCode, toErrorEnvelope, type ErrorCode, type ErrorEnvelope } from '../error-envelope/index.js';
+import type { CatalogErrorCode } from '../error-envelope/error-codes.generated.js';
 import { createUxFailureResult, type UxFailureResult } from '../ux-result/index.js';
 
 export interface HttpFailureOptions {
   correlationId: string;
   statusCode: number;
+  /** Byte limit enforced by the boundary that produced this HTTP failure. */
+  limitBytes?: number;
 }
 
 export function statusForHttpFailure(payload: unknown, transportStatusCode: number): number {
@@ -26,18 +29,46 @@ interface HttpFailureParts {
   error: ErrorEnvelope;
 }
 
-function failureParts(payload: unknown, statusCode: number): HttpFailureParts {
+function failureParts(payload: unknown, statusCode: number, limitBytes?: number): HttpFailureParts {
   const nested = payload && typeof payload === 'object' && 'error' in payload ? payload.error : undefined;
   const candidate = hasCode(nested) ? nested : hasCode(payload) ? payload : undefined;
   if (candidate !== undefined) {
     const error = toErrorEnvelope(candidate);
-    return { code: error.code, cataloguedPayload: isErrorCode(candidate.code), error };
+    if (statusCode !== 413 || error.area === 'product') {
+      return { code: error.code, cataloguedPayload: isErrorCode(candidate.code), error };
+    }
+    const code = fallbackCodeForStatus(statusCode);
+    return { code, cataloguedPayload: false, error: createFallbackError(code, limitBytes) };
   }
-  const code = statusCode === 401 ? 'KB_AUTH_REQUIRED'
+  const code = fallbackCodeForStatus(statusCode);
+  return { code, cataloguedPayload: false, error: createFallbackError(code, limitBytes) };
+}
+
+function createFallbackError(code: CatalogErrorCode, limitBytes?: number): ErrorEnvelope {
+  if (code !== 'KB_RUNTIME_PAYLOAD_TOO_LARGE') return createErrorEnvelope(code);
+  const details: Record<string, string> = limitBytes === undefined
+    ? { limit: 'the configured receiving-service limit' }
+    : { limit: formatByteLimit(limitBytes), limitBytes: String(limitBytes) };
+  return createErrorEnvelope(code, { details });
+}
+
+function formatByteLimit(limitBytes: number): string {
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let size = limitBytes;
+  let unitIndex = 0;
+  while (size >= 1024 && size % 1024 === 0 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  return `${size} ${units[unitIndex]}`;
+}
+
+function fallbackCodeForStatus(statusCode: number): CatalogErrorCode {
+  return statusCode === 401 ? 'KB_AUTH_REQUIRED'
     : statusCode === 403 ? 'KB_AUTH_FORBIDDEN'
       : statusCode === 400 ? 'KB_RUNTIME_INPUT_INVALID'
-        : 'KB_RUNTIME_UNEXPECTED';
-  return { code, cataloguedPayload: false, error: createErrorEnvelope(code) };
+        : statusCode === 413 ? 'KB_RUNTIME_PAYLOAD_TOO_LARGE'
+          : 'KB_RUNTIME_UNEXPECTED';
 }
 
 function hasCode(value: unknown): value is Record<string, unknown> & { code: string } {
@@ -51,7 +82,7 @@ export function codeForHttpFailure(payload: unknown, statusCode: number): ErrorC
 
 /** Convert every HTTP failure shape to the ADR-0049 error result once. */
 export function normalizeHttpFailure(payload: unknown, options: HttpFailureOptions): UxFailureResult {
-  const parts = failureParts(payload, options.statusCode);
+  const parts = failureParts(payload, options.statusCode, options.limitBytes);
   const error = { ...parts.error, correlationId: parts.error.correlationId || options.correlationId };
   return createUxFailureResult(error);
 }

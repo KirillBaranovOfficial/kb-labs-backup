@@ -225,6 +225,26 @@
       "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
+      "code": "KB_RUNTIME_RUN_DIRTY",
+      "area": "runtime",
+      "stage": "recover",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The run ended with a resource or scratch cleanup failure.",
+      "hint": "Inspect the failed resource or scratch path in the run record; inspect resource leftovers and retry cleanup using the commands shown below."
+    },
+    {
+      "code": "KB_RUNTIME_WAIT_NOT_FINISHED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The wait outcome was requested before the run finished.",
+      "hint": "Inspect the run record with the command shown below, then wait again after it reaches a terminal state."
+    },
+    {
       "code": "KB_CONFIG_APPLY_FAILED",
       "area": "config",
       "stage": "apply",
@@ -1780,6 +1800,39 @@
       "hint": "Run `kb --help` to review available commands, then rerun the command."
     },
     {
+      "code": "KB_RUNTIME_CONTAINER_UNAVAILABLE",
+      "httpStatus": 503,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "The container runtime could not start the plugin execution environment.",
+      "hint": "Container startup failed because {cause}. To fix this, {fix}"
+    },
+    {
+      "code": "KB_RUNTIME_CONTAINER_NETWORK_UNSUPPORTED",
+      "httpStatus": 400,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "Container mode cannot run a plugin that declares network permissions.",
+      "hint": "Container mode currently supports only network-free plugins. Run this plugin in subprocess mode or wait for the network broker roadmap item."
+    },
+    {
+      "code": "KB_RUNTIME_CONTAINER_TEARDOWN_FAILED",
+      "httpStatus": 500,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "The container execution environment could not be removed.",
+      "hint": "Run `docker rm -f {container}` to remove the remaining container, then retry the execution."
+    },
+    {
       "code": "KB_RUNTIME_CONFIRMATION_REQUIRED",
       "area": "runtime",
       "stage": "run",
@@ -1874,6 +1927,17 @@
       "processExitClass": "input-refusal",
       "message": "The provided input is invalid.",
       "hint": "Correct the reported fields and retry; run the command with --help for the expected input."
+    },
+    {
+      "code": "KB_RUNTIME_PAYLOAD_TOO_LARGE",
+      "httpStatus": 413,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "The request body exceeds {limit}.",
+      "hint": "Reduce the request body to {limit} and resend it."
     },
     {
       "code": "KB_RUNTIME_JOB_CANCEL_FAILED",
@@ -2477,6 +2541,16 @@
       "httpStatus": 503,
       "message": "No worker is available and worker startup is failing.",
       "hint": "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after workers recover."
+    },
+    {
+      "code": "KB_RUNTIME_FRAME_TOO_LARGE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The child process sent a control frame larger than the supported limit.",
+      "hint": "Reduce the plugin platform RPC payload, then retry the command."
     }
   ]
 }

@@ -49,6 +49,7 @@ import type { IKVStore } from "@kb-labs/core-platform/adapters";
 import { createRegistry } from "@kb-labs/core-registry";
 import { loadGatewayConfig } from "./config.js";
 import { resolveAccess, resolveBootstrapTenantId } from "./access.js";
+import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
 import { createServer, type UserAuthServerDeps } from "./server.js";
 import { HostRegistry } from "./hosts/registry.js";
 import { registerPressureLimits } from "./pressure/index.js";
@@ -457,12 +458,12 @@ export async function startGateway(
     });
   }
 
-  // 8. Register HTTP pressure-control limits (ADR-0056). No-op when
-  //    `gateway.pressure` is absent or disabled in config.
+  // 8. Register HTTP pressure-control limits (ADR-0056). Secured mode gets
+  //    the shared default tenant limit unless the operator overrides it.
   if (platform.hasResourceBroker) {
     registerPressureLimits(
       platform.resourceBroker,
-      config.pressure,
+      resolveGatewayPressureConfig(config, access.authEnabled),
       platform.logger,
     );
   } else {

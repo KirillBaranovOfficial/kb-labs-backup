@@ -247,9 +247,6 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
-      '@kb-labs/gateway-auth':
-        specifier: workspace:*
-        version: link:../../services/gateway/auth
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../sdk/sdk

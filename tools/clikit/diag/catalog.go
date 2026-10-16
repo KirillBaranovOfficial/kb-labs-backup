@@ -12,15 +12,16 @@ const (
 
 // CatalogEntry is the platform-owned metadata used to render a typed error.
 type CatalogEntry struct {
-	Code             string           `json:"code"`
-	HTTPStatus       int              `json:"httpStatus,omitempty"`
-	Area             string           `json:"area"`
-	Stage            string           `json:"stage"`
-	Severity         string           `json:"severity"`
-	Retryable        bool             `json:"retryable"`
-	ProcessExitClass ProcessExitClass `json:"processExitClass"`
-	Message          string           `json:"message"`
-	Hint             string           `json:"hint"`
+	Code                     string           `json:"code"`
+	HTTPStatus               int              `json:"httpStatus,omitempty"`
+	Area                     string           `json:"area"`
+	Stage                    string           `json:"stage"`
+	Severity                 string           `json:"severity"`
+	Retryable                bool             `json:"retryable"`
+	ProcessExitClass         ProcessExitClass `json:"processExitClass"`
+	Message                  string           `json:"message"`
+	Hint                     string           `json:"hint"`
+	HintWithoutCorrelationID string           `json:"hintWithoutCorrelationId,omitempty"`
 }
 
 // LookupCatalog returns platform metadata for a typed error code.

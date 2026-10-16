@@ -20,6 +20,7 @@ import {
   JobActionResponseSchema,
 } from '@kb-labs/rest-api-contracts';
 import { normalizeBasePath } from './path-helpers';
+import { requireRestOperator } from './operator-authorization.js';
 
 // ============================================================================
 // Helper Functions
@@ -58,6 +59,7 @@ export async function registerJobsRoutes(
 
   // Encapsulate Zod compilers so they don't leak to other scopes (plugin routes use plain JSON schemas)
   await server.register(async (scope) => {
+    scope.addHook('preHandler', requireRestOperator);
     scope.setValidatorCompiler(validatorCompiler);
     scope.setSerializerCompiler(serializerCompiler);
     const s = scope.withTypeProvider<ZodTypeProvider>();

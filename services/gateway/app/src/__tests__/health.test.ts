@@ -423,7 +423,7 @@ describe('Gateway production route declarations', () => {
           expect(responseSchemas[failed.statusCode], `${method} ${route.url} missing response schema for 500`).toBeDefined();
           expect(failureBody).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String), hint: expect.any(String) } });
           expect(failed.body).not.toContain('fixture unexpected failure');
-          expect(failed.body).not.toContain('stack');
+          expect(failureBody.error).not.toHaveProperty('stack');
         }
       }
       expect(missingFixtureMetadata, 'routes without live fixtures must declare their unavailable result beside the route').toEqual([]);

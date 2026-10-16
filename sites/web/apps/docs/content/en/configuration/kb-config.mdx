@@ -256,10 +256,6 @@ Controls how plugin handlers run. This is the most consequential knob for produc
 interface ExecutionConfig {
   mode?: 'auto' | 'in-process' | 'worker-pool' | 'remote' | 'container';
 
-  container?: {
-    gatewayInternalSecret: string;
-  };
-
   workspaceAgent?: {
     enabled:        boolean;
     internalSecret: string;
@@ -290,7 +286,7 @@ interface ExecutionConfig {
 - `auto` (default) — detect from environment (`EXECUTION_MODE`, `KUBERNETES_SERVICE_HOST`).
 - `in-process` — handlers run in the host's own Node process. No isolation, fastest dev loop.
 - `worker-pool` — each handler runs in a pooled worker thread. Production default for single-node deployments.
-- `container` — handlers run inside Docker containers provisioned on demand via the Gateway. Requires `container.gatewayInternalSecret`; the host supplies its live Gateway address to the project runtime. See [Execution Model](/concepts/execution-model).
+- `container` — handlers run inside Docker containers provisioned on demand. Control, platform calls, and logs use the attached stdio stream; networking is disabled at the container boundary. No Gateway URL or secret is required. See [Execution Model](/concepts/execution-model).
 - `remote` — offload to a remote executor service. Phase 3, not wired up in the current codebase — the type is defined but there are no adapters.
 
 **Worker pool knobs.** `min`/`max` control the pool size, `maxRequestsPerWorker` and `maxUptimeMsPerWorker` recycle workers to bound memory leaks, and `warmup` lets you pre-initialize hot handlers to avoid cold starts on the first invocation.

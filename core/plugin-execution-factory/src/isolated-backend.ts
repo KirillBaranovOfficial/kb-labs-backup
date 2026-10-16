@@ -18,13 +18,14 @@
  *   loader.ts       ← wires transport + provisionEnvironment into StrictIsolationOptions
  */
 
-import type { IExecutionTransport, IHostResolver } from '@kb-labs/core-platform';
-import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
+import type { EnvironmentProvisioningFailureCause, IEnvironmentProvider, IExecutionTransport, IHostResolver } from '@kb-labs/core-platform';
+import { createErrorEnvelope, EnvironmentProvisioningError, EnvironmentTeardownError, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { BackendOptions, ExecutionBackend, ExecutionRequest, ExecuteOptions, ExecutionResult } from './types.js';
 import type { RemoteExecutionBackend } from './backends/remote.js';
 import { RemoteBackend } from './backends/remote.js';
 import { createExecutionBackend, createNormalizedExecutionBackend } from './factory.js';
 import { normalizeExecutionFailure } from './utils.js';
+import { assertContainerNetworkPermissionsSupported } from './container-spec.js';
 
 /**
  * Per-job context for both container provisioning and transport creation.
@@ -36,6 +37,31 @@ export interface RemoteJobContext {
   runtimeHostId: string;
   /** Tenant/namespace for Gateway routing and JWT */
   namespaceId: string;
+}
+
+type AttachedEnvironmentProvider = IEnvironmentProvider & Required<Pick<IEnvironmentProvider, 'reserve' | 'start'>>;
+
+export type ContainerProviderUnavailableCause =
+  | 'provider-missing'
+  | 'attached-start-unsupported';
+
+export class ContainerProviderUnavailableError extends Error {
+  constructor(readonly failureCause: ContainerProviderUnavailableCause) {
+    super(`Container environment provider unavailable (${failureCause})`);
+    this.name = 'ContainerProviderUnavailableError';
+  }
+}
+
+export function requireAttachedEnvironmentProvider(
+  provider: Partial<IEnvironmentProvider> | undefined,
+): AttachedEnvironmentProvider {
+  if (!provider) {
+    throw new ContainerProviderUnavailableError('provider-missing');
+  }
+  if (!provider.reserve || !provider.start) {
+    throw new ContainerProviderUnavailableError('attached-start-unsupported');
+  }
+  return provider as AttachedEnvironmentProvider;
 }
 
 /**
@@ -106,6 +132,55 @@ export interface IsolatedBackendOptions {
   strictIsolation?: StrictIsolationOptions;
 }
 
+export function containerUnavailableError(error?: unknown): ErrorEnvelopeError {
+  if (error instanceof EnvironmentTeardownError) {
+    const cause = error.daemonError instanceof Error ? error.daemonError.message : String(error.daemonError);
+    return new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_CONTAINER_TEARDOWN_FAILED', {
+      details: { container: error.containerRef },
+      cause,
+    }));
+  }
+
+  if (error instanceof ContainerProviderUnavailableError) {
+    const cause = {
+      'provider-missing': 'the container environment provider is not configured',
+      'attached-start-unsupported': 'the configured environment provider does not support attached reserve()/start()',
+    }[error.failureCause];
+    return new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_CONTAINER_UNAVAILABLE', {
+      details: {
+        cause,
+        fix: 'run `kb marketplace install @kb-labs/adapters-environment-docker --scope platform`, then retry the command',
+      },
+    }));
+  }
+
+  let failureCause: EnvironmentProvisioningFailureCause = 'daemon-error';
+  let image: string | undefined;
+  if (error instanceof EnvironmentProvisioningError) {
+    failureCause = error.failureCause;
+    image = error.image;
+  }
+  const cause = error instanceof EnvironmentProvisioningError
+    ? {
+      'daemon-unreachable': `the Docker daemon is unreachable while starting image ${image}`,
+      'image-unavailable': `configured image ${image} is missing or its pull failed`,
+      'daemon-error': `the Docker daemon rejected startup for image ${image}`,
+    }[failureCause]
+    : 'the container provider failed before returning a classified Docker cause';
+  const fix = {
+    'daemon-unreachable': 'start Docker Desktop and verify it with `docker info`',
+    'image-unavailable': `run \`docker pull ${image}\``,
+    'daemon-error': 'run `docker info`, inspect the Docker daemon logs, and retry the command',
+  }[failureCause];
+  return new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_CONTAINER_UNAVAILABLE', {
+    details: { cause, fix },
+  }));
+}
+
+function containerProvisionerMissingError(): ErrorEnvelopeError {
+  return containerUnavailableError(new ContainerProviderUnavailableError('provider-missing'));
+}
+
 /**
  * Create an execution backend suitable for any host.
  *
@@ -119,6 +194,21 @@ export function createIsolatedExecutionBackend(options: IsolatedBackendOptions):
   const localBackend = createExecutionBackend(options.localBackend);
 
   if (!options.strictIsolation) {
+    if (options.executionMode === 'container') {
+      const unavailable = containerProvisionerMissingError();
+      return createNormalizedExecutionBackend({
+        async execute() {
+          return {
+            ok: false,
+            error: normalizeExecutionFailure(unavailable).error,
+            executionTimeMs: 0,
+          };
+        },
+        health: () => localBackend.health(),
+        stats: () => localBackend.stats(),
+        shutdown: () => localBackend.shutdown(),
+      }, options.localBackend.platform.logger, 'container');
+    }
     return localBackend;
   }
 
@@ -164,6 +254,18 @@ function buildRoutingBackend(
 ): ExecutionBackend {
   const router = {
     async execute(request: ExecutionRequest, execOptions?: ExecuteOptions) {
+      if (executionMode === 'container') {
+        try {
+          assertContainerNetworkPermissionsSupported(request.descriptor.permissions);
+        } catch (error) {
+          return {
+            ok: false,
+            ...normalizeExecutionFailure(error),
+            executionTimeMs: 0,
+          } satisfies ExecutionResult;
+        }
+      }
+
       const target = request.target;
       const namespaceId = target?.namespace ?? 'default';
 
@@ -205,11 +307,26 @@ function buildRoutingBackend(
           const ctx: RemoteJobContext = { runtimeHostId: provisioned.environmentId, namespaceId: provisioned.namespace };
           return await remoteFactory(ctx).execute(request, execOptions);
         } finally {
-          await cleanup?.();
+          try {
+            await cleanup?.();
+          } catch (error) {
+            if (error instanceof EnvironmentTeardownError) {
+              throw containerUnavailableError(error);
+            }
+            throw error;
+          }
         }
       }
 
       // 4. Local backend (in-process, worker-pool)
+      if (executionMode === 'container') {
+        const result: ExecutionResult = {
+          ok: false,
+          error: normalizeExecutionFailure(containerProvisionerMissingError()).error,
+          executionTimeMs: 0,
+        };
+        return result;
+      }
       return localBackend.execute(request, execOptions);
     },
     health: () => localBackend.health(),

@@ -22,6 +22,7 @@
 export { UnixSocketServer, type UnixSocketServerConfig } from './ipc/unix-socket-server';
 export { IPCServer, createIPCServer } from './ipc/ipc-server';
 export { ChildIPCServer } from './ipc/child-ipc-server';
+export { StdioPlatformServer } from './ipc/stdio-platform-server';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TRANSPORT LAYER (Child Process Side)
@@ -39,6 +40,17 @@ export {
 
 export { IPCTransport, createIPCTransport } from './transport/ipc-transport';
 export { UnixSocketTransport, createUnixSocketTransport, type UnixSocketConfig } from './transport/unix-socket-transport';
+export {
+  StdioChannel,
+  StdioFrameDecoder,
+  MAX_STDIO_FRAME_BYTES,
+  createStdioChannel,
+  encodeStdioFrame,
+  type StdioFrame,
+  type StdioFrameOf,
+  type StdioFrameType,
+} from './transport/stdio-channel';
+export { StdioTransport } from './transport/stdio-transport';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BULK TRANSFER (Large Message Optimization)
