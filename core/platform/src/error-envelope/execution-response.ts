@@ -90,7 +90,9 @@ export type ExecutionErrorCode =
   | 'QUEUE_FULL'
   | 'ACQUIRE_TIMEOUT'
   | 'WORKER_CRASHED'
+  | 'WORKER_START_FAILED'
   | 'WORKER_UNHEALTHY'
+  | 'WORKER_UNAVAILABLE'
   | 'NO_HOST_AVAILABLE';
 
 /** Wire failure shared by subprocess and worker IPC: canonical user envelope plus private diagnostics. */

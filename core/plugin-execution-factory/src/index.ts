@@ -72,6 +72,7 @@ export {
   AcquireTimeoutError,
   WorkerCrashedError,
   WorkerUnhealthyError,
+  WorkerUnavailableError,
   isExecutionLayerError,
   isKnownErrorCode,
 } from './errors.js';

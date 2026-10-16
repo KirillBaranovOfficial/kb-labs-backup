@@ -104,6 +104,11 @@ describe('registerHealthRoutes', () => {
           restRoutes: 2,
           studioWidgets: 1,
         },
+        {
+          id: 'execution',
+          status: 'degraded',
+          details: { workers: { total: 0, busy: 0, idle: 0, queued: 0, queueLimit: 10 } },
+        },
       ],
     });
 
@@ -131,6 +136,7 @@ describe('registerHealthRoutes', () => {
     const payload = response.json() as SystemHealthSnapshot;
     expect(payload.schema).toBe('kb.health/1');
     expect(payload.status).toBe('degraded');
+    expect(payload.components.find(component => component.id === 'execution')).toMatchObject({ status: 'degraded', details: { workers: { total: 0, idle: 0 } } });
     const meta = (payload.meta ?? {}) as Record<string, any>;
     expect(meta.readiness).toBeDefined();
     expect(meta.readiness.pluginRouteErrors).toBe(1);

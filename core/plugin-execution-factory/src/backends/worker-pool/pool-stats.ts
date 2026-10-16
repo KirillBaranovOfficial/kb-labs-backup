@@ -13,6 +13,7 @@ import type { Worker } from './worker.js';
 export class PoolStatsTracker {
   stats: WorkerPoolStats = {
     totalWorkers: 0,
+    treeUnverifiedWorkers: 0,
     workersByState: {
       starting: 0,
       idle: 0,
@@ -29,6 +30,7 @@ export class PoolStatsTracker {
     workerCrashes: 0,
     workersRecycled: 0,
     avgQueueWaitMs: 0,
+      lastStartFailure: undefined,
   };
 
   private queueWaitTimes: number[] = [];

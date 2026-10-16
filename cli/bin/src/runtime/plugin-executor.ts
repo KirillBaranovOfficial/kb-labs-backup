@@ -262,7 +262,7 @@ function createPlatformServices(
 export function createSystemCommandContext(
   context: SystemContext,
   platform: PlatformContainer,
-): PluginContextV3 {
+): PluginContextV3 & { executionBackend?: PlatformContainer['executionBackend'] } {
   const ui = createCLIUIFacade(
     context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
   );
@@ -298,6 +298,7 @@ export function createSystemCommandContext(
     cwd: context.cwd || process.cwd(),
     ui,
     platform: scopedPlatformServices,
+    ...(platform.hasExecutionBackend ? { executionBackend: platform.executionBackend } : {}),
     runtime: {
       // Stub: system commands do not use sandboxed runtime. Real runtime is
       // only wired for plugin handlers executed via executeCommandV3.

@@ -15,7 +15,7 @@
         "additionalProperties": false,
         "required": ["code", "area", "stage", "severity", "retryable", "processExitClass", "message", "hint"],
         "properties": {
-          "code": { "type": "string", "pattern": "^KB_[A-Z]+(_[A-Z0-9]+)+$" },
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$" },
           "httpStatus": { "type": "integer", "minimum": 100, "maximum": 599, "description": "HTTP status for errors surfaced by an HTTP boundary. Omitted when the code is not surfaced over HTTP; an omitted value at an HTTP boundary is a contract defect." },
           "area": { "$ref": "error-envelope.schema.json#/properties/area" },
           "stage": { "$ref": "error-envelope.schema.json#/properties/stage" },

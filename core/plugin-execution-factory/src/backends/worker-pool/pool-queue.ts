@@ -29,6 +29,7 @@ export class PoolQueueManager {
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     uiPromptHint?: string,
+    signal?: AbortSignal,
   ) => Promise<ExecutionResult>;
   private onAcquireTimeout: () => void;
 
@@ -46,6 +47,7 @@ export class PoolQueueManager {
         onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
         onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
         uiPromptHint?: string,
+        signal?: AbortSignal,
       ) => Promise<ExecutionResult>;
       onAcquireTimeout: () => void;
     }
@@ -195,7 +197,7 @@ export class PoolQueueManager {
       const timeoutMs = queued.request.timeoutMs ?? 30_000;
       const startTime = queued.queuedAt;
 
-      this.onExecuteOnWorker(worker, queued.request, timeoutMs, startTime, queued.onLog, queued.onUIPrompt, queued.onLoggerLog, queued.uiPromptHint)
+      this.onExecuteOnWorker(worker, queued.request, timeoutMs, startTime, queued.onLog, queued.onUIPrompt, queued.onLoggerLog, queued.uiPromptHint, queued.signal)
         .then((result) => {
           queued.resolve(result);
           // Process more from queue

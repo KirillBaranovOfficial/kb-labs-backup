@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AdapterCredentialsMissingError, serializeError } from '@kb-labs/core-platform';
+import { AdapterCredentialsMissingError, createErrorEnvelope, serializeError } from '@kb-labs/core-platform';
 import { normalizeError } from '../utils.js';
 import {
   ExecutionLayerError,
@@ -30,7 +30,7 @@ describe('isKnownErrorCode()', () => {
       'TIMEOUT', 'ABORTED', 'PERMISSION_DENIED',
       'HANDLER_CONTRACT_ERROR', 'HANDLER_NOT_FOUND', 'WORKSPACE_ERROR',
       'VALIDATION_ERROR', 'UNKNOWN_ERROR',
-      'QUEUE_FULL', 'ACQUIRE_TIMEOUT', 'WORKER_CRASHED', 'WORKER_UNHEALTHY',
+      'QUEUE_FULL', 'ACQUIRE_TIMEOUT', 'WORKER_CRASHED', 'WORKER_START_FAILED', 'WORKER_UNHEALTHY', 'WORKER_UNAVAILABLE',
     ];
     for (const code of codes) {
       expect(isKnownErrorCode(code)).toBe(true);
@@ -74,6 +74,27 @@ describe('ExecutionLayerError', () => {
       name: 'ExecutionLayerError',
       message: 'fail',
       stack: expect.any(String),
+    });
+  });
+});
+
+describe('pool execution error envelopes', () => {
+  it('preserves catalogued queue errors and their catalog hints', () => {
+    const normalized = normalizeError(new QueueFullError(4, 4));
+
+    expect(normalized.code).toBe('QUEUE_FULL');
+    expect(normalized.details).toEqual({ queueSize: '4', maxQueueSize: '4' });
+    expect(normalized.hint).toBe('Run `kb health` to inspect worker pool capacity, then retry when a worker is available.');
+
+    expect(normalizeError(new AcquireTimeoutError(5000))).toMatchObject({
+      code: 'ACQUIRE_TIMEOUT',
+      details: { acquireTimeoutMs: '5000' },
+      hint: 'Run `kb health` to inspect worker pool capacity, then retry when a worker is available.',
+    });
+    expect(normalizeError(new WorkerCrashedError('worker-1'))).toMatchObject({
+      code: 'WORKER_CRASHED',
+      details: { workerId: 'worker-1' },
+      hint: 'Run `kb health` to inspect worker pool health, then retry after workers recover.',
     });
   });
 });
@@ -132,11 +153,11 @@ describe('normalizeError handler boundary', () => {
   });
 
   // case: S-203.2, S-203.3
-  it('normalizes an execution timeout for the unexpected plugin failure boundary', () => {
-    expect(normalizeError(new TimeoutError('Timed out after 50ms', 50))).toMatchObject({
-      code: 'KB_RUNTIME_UNEXPECTED',
-      hint: expect.stringContaining('correlationId'),
+  it('normalizes execution timeouts with the catalogued runtime timeout code and hint', () => {
+    const expected = createErrorEnvelope('KB_RUNTIME_TIMEOUT', {
+      details: { timeoutMs: '50' },
     });
+    expect(normalizeError(new TimeoutError('Timed out after 50ms', 50))).toMatchObject(expected);
   });
 
   // case: S-203.2

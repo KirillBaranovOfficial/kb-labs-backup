@@ -75,6 +75,7 @@ export class EntityRegistry implements IEntityRegistry {
       getManifest: (id) => this.manifests.get(id),
       root: this.root,
       platformVersion: opts.platformVersion ?? PLATFORM_VERSION,
+      healthContributors: opts.healthContributors ?? [],
     });
   }
 

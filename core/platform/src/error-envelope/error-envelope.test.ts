@@ -89,8 +89,12 @@ describe('errors.catalog.json lint', () => {
     expect(isErrorCode('KB_PERMISSION_DENIED')).toBe(false);
   });
 
+  // case: S-243.5
   it('defines the HTTP status for a project runtime timeout', () => {
-    expect(getCatalogEntry('KB_RUNTIME_TIMEOUT')).toMatchObject({ httpStatus: 504 });
+    expect(getCatalogEntry('KB_RUNTIME_TIMEOUT')).toMatchObject({
+      httpStatus: 504,
+      hint: 'Retry or increase the timeout.',
+    });
   });
 
   it('keeps installer index errors separate from publisher sealing errors', () => {

@@ -5,7 +5,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { createErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope, isErrorCode } from '@kb-labs/core-platform';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import type { ExecutionDiagnostics, ExecutionError, ExecutionRequest } from './types.js';
 import { TimeoutError, AbortError, WorkerCrashedError, isExecutionLayerError } from './errors.js';
@@ -97,11 +97,19 @@ function normalizeErrorEnvelope(error: unknown): ErrorEnvelope {
     if (error instanceof AbortError) {
       return createErrorEnvelope('KB_PLUGIN_ABORTED', { cause: error.message });
     }
-    const details = error instanceof TimeoutError
-      ? { failureReason: 'timed out' }
-      : error.code === 'WORKER_CRASHED'
-        ? { failureReason: 'execution process crashed' }
-        : undefined;
+    if (error instanceof TimeoutError) {
+      const details = Object.fromEntries(
+        Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
+      );
+      return createErrorEnvelope('KB_RUNTIME_TIMEOUT', { details });
+    }
+    if (isErrorCode(error.code)) {
+      const details = Object.fromEntries(
+        Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
+      );
+      return createErrorEnvelope(error.code, { details });
+    }
+    const details = error instanceof TimeoutError ? { failureReason: 'timed out' } : undefined;
     return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', details ? { details } : {});
   }
   if (error instanceof Error) {

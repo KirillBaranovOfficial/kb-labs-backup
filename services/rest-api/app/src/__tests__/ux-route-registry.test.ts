@@ -5,6 +5,7 @@ import { platform, resetPlatform } from '@kb-labs/core-runtime';
 import { createServer } from '../server';
 import type { RouteOptions } from 'fastify';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { assertNoStackTraceLeak } from './helpers/safe-error-envelope';
 
 const snapshot: RegistrySnapshot = {
   schema: 'kb.registry/1',
@@ -123,7 +124,8 @@ function assertUxResult(response: { statusCode: number; body: string }, expectFa
     expect(body).toHaveProperty('data');
   } else {
     expect(response.statusCode).toBeGreaterThanOrEqual(400);
-    expect(body.error?.code).toMatch(/^KB_/);
+    expect(body.error?.code).toEqual(expect.any(String));
+    expect(body.error?.code).not.toBe('');
     expect(body.error?.message).toEqual(expect.any(String));
     expect(body.error?.hint).toEqual(expect.any(String));
     expect(body.error?.correlationId).toEqual(expect.any(String));
@@ -280,7 +282,7 @@ describe('REST production route declarations', () => {
       expect(failureBody.error.correlationId).toEqual(expect.any(String));
       expect(failureBody.error.hint).toEqual(expect.any(String));
       expect(failed.body).not.toContain('fixture unexpected failure');
-      expect(failed.body).not.toContain('stack');
+      assertNoStackTraceLeak(failureBody);
     }
     expect(missingValidFixtureMetadata, 'routes without state fixtures must declare their valid unavailable result beside the route').toEqual([]);
   });

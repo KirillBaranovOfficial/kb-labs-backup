@@ -28,6 +28,7 @@ import type {
   UIFacade,
   InvokeOptions,
 } from '@kb-labs/plugin-contracts';
+import type { WorkerFailureDiagnostic } from './errors.js';
 import type {
   ExecutionRequest as CoreExecutionRequest,
   WorkspaceConfig as CoreWorkspaceConfig,
@@ -208,10 +209,23 @@ interface CoreExecutionBackendLifecycle {
 /** Internal raw backend contract. It is only used by the factory package. */
 export interface RawExecutionBackend extends CoreExecutionBackendLifecycle {
   execute(request: ExecutionRequest, options?: ExecuteOptions): Promise<ExecutionResult>;
-  start?(): Promise<void>;
+  start?(): Promise<ExecutionStartOutcome>;
 }
 
-export interface ExecutionBackend extends CoreExecutionBackendLifecycle {
+export type ExecutionStartOutcome =
+  | { status: 'ready' }
+  | { status: 'recovering'; failure: WorkerFailureDiagnostic }
+  | { status: 'stopped' };
+
+export type ResolvedExecutionMode = 'in-process' | 'subprocess' | 'worker-pool' | 'container';
+
+export type NormalizedHealthStatus = CoreHealthStatus & {
+  executionMode: ResolvedExecutionMode;
+};
+
+export interface ExecutionBackend extends Omit<CoreExecutionBackendLifecycle, 'health'> {
+  health(): Promise<NormalizedHealthStatus>;
+  readonly executionMode: 'in-process' | 'subprocess' | 'worker-pool' | 'remote' | 'container';
   /**
    * Execute plugin request with plugin-typed descriptor.
    */
@@ -223,7 +237,7 @@ export interface ExecutionBackend extends CoreExecutionBackendLifecycle {
   /**
    * Optional initialization hook for backends that need startup work.
    */
-  start?(): Promise<void>;
+  start?(): Promise<ExecutionStartOutcome>;
 }
 
 /**

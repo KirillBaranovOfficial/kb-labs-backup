@@ -5,7 +5,7 @@
 
 import { loadRestApiConfig } from "@kb-labs/rest-api-core";
 import { createServer } from "./server";
-import { createRegistry, type IEntityRegistry } from "@kb-labs/core-registry";
+import { createHealthContributor, createRegistry, type IEntityRegistry } from "@kb-labs/core-registry";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import { requireProjectContext } from "@kb-labs/core-runtime";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
@@ -112,6 +112,9 @@ export async function setup({
       ttlMs: snapshotTTL,
       adapter: platform.cache,
     },
+    healthContributors: platform.hasExecutionBackend
+      ? [createHealthContributor('execution', () => platform.executionBackend.health())]
+      : [],
   });
   restDomainOperationMetrics.recordOperation(
     "registry.init",
