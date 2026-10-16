@@ -35,7 +35,7 @@ func ValidateUpdate(active contracts.InstallReceipt, target contracts.ResolvedIn
 		failure := contracts.NewDiag(contracts.CodeUpdateDowngradeRefused,
 			fmt.Sprintf("The requested platform version %s is older than installed version %s.", targetVersion, installedVersion),
 			"use `kb-create rollback`", nil)
-		failure.Meta = map[string]any{"installedVersion": installedVersion, "targetVersion": targetVersion}
+		failure.Meta = map[string]any{"installed": installedVersion, "target": targetVersion}
 		return UpdateRequired, failure
 	}
 	if comparison == 0 {

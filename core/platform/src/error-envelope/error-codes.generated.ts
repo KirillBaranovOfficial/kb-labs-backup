@@ -507,7 +507,7 @@ export interface CatalogTemplateParameters {
   "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;
   "KB_UPDATE_HOST_NOT_HEALTHY": Record<never, never>;
-  "KB_UPDATE_INCOMPATIBLE": { "component": string; "kind": string; "range": string; "version": string };
+  "KB_UPDATE_INCOMPATIBLE": { "id": string; "kind": string; "requiredRange": string; "selectedVersion": string };
   "KB_UPDATE_NO_SNAPSHOT": Record<never, never>;
   "KB_UPDATE_SECRET_REFUSED": { "secret": string };
   "KB_UPDATE_VERIFY_FAILED": { "version": string };
@@ -765,7 +765,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": [],
-  "KB_UPDATE_INCOMPATIBLE": ["component","kind","range","version"],
+  "KB_UPDATE_INCOMPATIBLE": ["id","kind","requiredRange","selectedVersion"],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": ["secret"],
   "KB_UPDATE_VERIFY_FAILED": ["version"],
@@ -1023,7 +1023,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": [],
-  "KB_UPDATE_INCOMPATIBLE": ["component","kind","range","version"],
+  "KB_UPDATE_INCOMPATIBLE": ["id","kind","requiredRange","selectedVersion"],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": ["secret"],
   "KB_UPDATE_VERIFY_FAILED": ["version"],
@@ -1143,7 +1143,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_RESOURCE_CHECK_FAILED": [],
   "KB_INSTALL_ROLLBACK_FAILED": [],
   "KB_INSTALL_SCENARIO_INVALID": [],
-  "KB_INSTALL_SECRET_INPUT_INVALID": [],
+  "KB_INSTALL_SECRET_INPUT_INVALID": ["requirement"],
   "KB_INSTALL_SECRET_STATE_CHANGED": [],
   "KB_INSTALL_SECRET_STORE_UNSUPPORTED": [],
   "KB_INSTALL_SERVICE_GRAPH_MISMATCH": [],
@@ -1281,7 +1281,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_UPDATE_DOWNGRADE_REFUSED": [],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": ["version","attemptedRoot","recoveryRoot","recoveryStage","runningVersion","snapshotId","logPath","nextCommand","failureReason","restoredHealthy","snapshot","hostRestart"],
-  "KB_UPDATE_INCOMPATIBLE": ["id","requiredRange","selectedVersion"],
+  "KB_UPDATE_INCOMPATIBLE": [],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": [],
   "KB_UPDATE_VERIFY_FAILED": [],
@@ -1539,7 +1539,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;
   "KB_UPDATE_HOST_NOT_HEALTHY": Record<never, never>;
-  "KB_UPDATE_INCOMPATIBLE": { "component": string; "kind": string; "range": string; "version": string };
+  "KB_UPDATE_INCOMPATIBLE": { "id": string; "kind": string; "requiredRange": string; "selectedVersion": string };
   "KB_UPDATE_NO_SNAPSHOT": Record<never, never>;
   "KB_UPDATE_SECRET_REFUSED": { "secret": string };
   "KB_UPDATE_VERIFY_FAILED": { "version": string };
@@ -1797,7 +1797,7 @@ export interface CatalogHintTemplateParameters {
   "KB_UPDATE_DOWNGRADE_REFUSED": Record<never, never>;
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;
   "KB_UPDATE_HOST_NOT_HEALTHY": Record<never, never>;
-  "KB_UPDATE_INCOMPATIBLE": { "component": string; "kind": string };
+  "KB_UPDATE_INCOMPATIBLE": { "id": string; "kind": string };
   "KB_UPDATE_NO_SNAPSHOT": Record<never, never>;
   "KB_UPDATE_SECRET_REFUSED": Record<never, never>;
   "KB_UPDATE_VERIFY_FAILED": Record<never, never>;
