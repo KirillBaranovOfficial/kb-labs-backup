@@ -450,7 +450,7 @@ The reference config in this monorepo ([.kb/kb.config.json](.kb/kb.config.json))
 
 ## Gateway webhook history
 
-Gateway webhook delivery history is stored in the platform document database. The default retention is the latest 100 records for each project, plugin, event, and instance. The Gateway prunes older records when it writes new history.
+Gateway webhook delivery history is stored in the platform document database. The default retention is the latest 100 records per webhook endpoint (project, plugin, event, and instance). The Gateway prunes older records when it writes new history.
 
 The Gateway keeps this default bounded automatically; there is no additional configuration key.
 

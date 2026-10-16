@@ -371,7 +371,7 @@ curl https://my-gateway.example.com/api/v1/webhooks/history/<webhookId> \
   -H "Authorization: Bearer <token>"
 ```
 
-The Gateway keeps the latest 100 records per project, plugin, event, and instance by default. The limit is declared by the Gateway webhook history store; pruning runs through the store as records are written.
+The Gateway keeps the latest 100 records per webhook endpoint (project, plugin, event, and instance) by default. The limit is declared by the Gateway webhook history store; pruning runs through the store as records are written.
 
 ## Delivery URL format
 

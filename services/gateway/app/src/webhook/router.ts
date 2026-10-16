@@ -22,7 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ManifestV3, WebhookHandlerDecl } from '@kb-labs/plugin-contracts';
-import { codeForHttpFailure, createErrorEnvelope, toErrorEnvelope, type ICache, type ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, normalizeHttpFailure, toErrorEnvelope, type ICache, type ILogger } from '@kb-labs/core-platform';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import { globalDispatcher } from '../hosts/dispatcher.js';
 import { WebhookSecretStore } from './secret-store.js';
@@ -141,7 +141,10 @@ export async function registerWebhookRoutes(
     }
     await writeHistory(historyStore, request, entry, params.instanceId, context, {
       type: 'rejected',
-      code: codeForHttpFailure(error, statusCode),
+      code: normalizeHttpFailure(error, {
+        correlationId: String(request.id),
+        statusCode,
+      }).error.code,
     });
   });
 

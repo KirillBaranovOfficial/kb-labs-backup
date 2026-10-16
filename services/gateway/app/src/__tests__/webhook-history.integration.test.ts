@@ -261,54 +261,176 @@ describe('Gateway webhook history through createServer', () => {
   });
 
   // case: S-250.3
-  it('records signature rejection with the catalogued code', async () => {
-    const { app, documents } = await makeApp();
+  it('reads signature rejection history through REST and CLI', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'kb-webhook-signature-history-'));
+    const previousHome = process.env.HOME;
+    const previousGatewayUrl = process.env.KB_GATEWAY_URL;
+    let app: Awaited<ReturnType<typeof createServer>> | undefined;
     try {
-      const rejected = await app.inject({
-        method: 'POST', url: `/webhooks/${pluginId}/${event}`,
-        headers: { 'x-kb-namespace': namespaceId, 'x-signature': 'sha256=invalid', 'x-request-id': 'rejected-correlation', 'content-type': 'application/json' },
-        payload: body,
+      const fixture = await makeApp();
+      app = fixture.app;
+      await app.listen({ port: 0, host: '127.0.0.1' });
+      const address = app.server.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Gateway did not bind an ephemeral TCP port');
+      }
+      process.env.HOME = home;
+      process.env.KB_GATEWAY_URL = `http://127.0.0.1:${address.port}`;
+
+      const rejected = await fetch(`${process.env.KB_GATEWAY_URL}/webhooks/${pluginId}/${event}`, {
+        method: 'POST',
+        headers: {
+          'x-kb-namespace': namespaceId,
+          'x-signature': 'sha256=invalid',
+          'x-request-id': 'rejected-correlation',
+          'content-type': 'application/json',
+        },
+        body,
       });
-      expect(rejected.statusCode).toBe(401);
-      expect(rejected.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
-      const webhookId = rejected.headers['x-webhook-id'] as string;
-      const history = await app.inject({ method: 'GET', url: `/api/v1/webhooks/history/${webhookId}` });
-      expect(history.statusCode, JSON.stringify(history.json())).toBe(200);
-      expect(history.json().data.record).toMatchObject({
+      expect(rejected.status).toBe(401);
+      expect(await rejected.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
+      const webhookId = rejected.headers.get('x-webhook-id');
+      expect(webhookId).toBeTruthy();
+      const history = await fetch(`${process.env.KB_GATEWAY_URL}/api/v1/webhooks/history/${webhookId}`);
+      expect(history.status).toBe(200);
+      const historyEnvelope = await history.json() as { data: { record: Record<string, unknown> } };
+      const record = historyEnvelope.data.record;
+      expect(record).toMatchObject({
         webhookId, project: namespaceId, pluginId,
         handler: './dist/webhooks/alert.js#default',
         outcome: { type: 'rejected', code: 'KB_AUTH_REQUIRED' },
         correlationId: 'rejected-correlation',
       });
       expect(mockDispatcher.call).not.toHaveBeenCalled();
-      expect(await documents.count('gateway_webhook_history', {})).toBe(1);
+      expect(await fixture.documents.count('gateway_webhook_history', {})).toBe(1);
+      expect(JSON.stringify(historyEnvelope)).not.toContain(secret);
+      expect(JSON.stringify(historyEnvelope)).not.toContain(body);
+
+      const cliModuleUrl = new URL('../../../../../cli/commands/src/commands/system/webhook/webhook-history.ts', import.meta.url).href;
+      const { webhookHistory } = await import(cliModuleUrl);
+      for (const flags of [{ json: true }, {}]) {
+        const captured: CliOutput = { output: [], errors: [], json: [] };
+        const exitCode = await webhookHistory.run(commandContext(captured, home), [webhookId!], flags);
+        expect(exitCode).toBe(0);
+        if (flags.json) {
+          expect(captured.json[0]).toMatchObject({ ok: true, data: { record } });
+          expect(JSON.stringify(captured.json)).not.toContain(secret);
+          expect(JSON.stringify(captured.json)).not.toContain(body);
+        } else {
+          expect(captured.output.join('')).toContain(`Webhook: ${webhookId}`);
+          expect(captured.output.join('')).toContain('Outcome: rejected (KB_AUTH_REQUIRED)');
+          expect(captured.output.join('')).toContain('Correlation ID: rejected-correlation');
+          expect(captured.output.join('')).not.toContain(secret);
+          expect(captured.output.join('')).not.toContain(body);
+        }
+      }
     } finally {
-      await app.close();
+      await app?.close();
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      if (previousGatewayUrl === undefined) {
+        delete process.env.KB_GATEWAY_URL;
+      } else {
+        process.env.KB_GATEWAY_URL = previousGatewayUrl;
+      }
+      await rm(home, { recursive: true, force: true });
     }
   });
 
   // case: S-250.3
-  it('records an oversized-body rejection from the scoped parser error hook', async () => {
-    const { app, documents } = await makeApp();
+  it('records the normalized oversized-body rejection in REST and CLI history', async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'kb-webhook-body-history-'));
+    const previousHome = process.env.HOME;
+    const previousGatewayUrl = process.env.KB_GATEWAY_URL;
+    let app: Awaited<ReturnType<typeof createServer>> | undefined;
     try {
-      const rejected = await app.inject({
-        method: 'POST', url: `/webhooks/${pluginId}/${event}`,
-        headers: { 'x-kb-namespace': namespaceId, 'x-signature': 'sha256=not-relevant', 'x-request-id': 'large-correlation', 'content-type': 'application/json' },
-        payload: JSON.stringify({ value: 'x'.repeat(1_048_576) }),
+      const fixture = await makeApp();
+      app = fixture.app;
+      await app.listen({ port: 0, host: '127.0.0.1' });
+      const address = app.server.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Gateway did not bind an ephemeral TCP port');
+      }
+      process.env.HOME = home;
+      process.env.KB_GATEWAY_URL = `http://127.0.0.1:${address.port}`;
+      const oversizedBody = JSON.stringify({ value: 'x'.repeat(1_048_576) });
+      const rejected = await fetch(`${process.env.KB_GATEWAY_URL}/webhooks/${pluginId}/${event}`, {
+        method: 'POST',
+        headers: {
+          'x-kb-namespace': namespaceId,
+          'x-signature': 'sha256=not-relevant',
+          'x-request-id': 'large-correlation',
+          'content-type': 'application/json',
+        },
+        body: oversizedBody,
       });
-      expect(rejected.statusCode).toBe(413);
-      expect(rejected.json()).toMatchObject({ error: { code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE' } });
-      const webhookId = rejected.headers['x-webhook-id'] as string;
-      const history = await app.inject({ method: 'GET', url: `/api/v1/webhooks/history/${webhookId}` });
-      expect(history.statusCode, JSON.stringify(history.json())).toBe(200);
-      expect(history.json().data.record).toMatchObject({
-        webhookId, outcome: { type: 'rejected', code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE' },
+      expect(rejected.status).toBe(413);
+      const responseEnvelope = await rejected.json() as {
+        ok: boolean;
+        error: { code: string; correlationId: string; details: Record<string, string> };
+      };
+      expect(responseEnvelope).toMatchObject({
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE',
+          correlationId: 'large-correlation',
+          details: { limitBytes: '1048576' },
+        },
+      });
+      const webhookId = rejected.headers.get('x-webhook-id');
+      expect(webhookId).toBeTruthy();
+
+      const historyResponse = await fetch(`${process.env.KB_GATEWAY_URL}/api/v1/webhooks/history/${webhookId}`);
+      expect(historyResponse.status).toBe(200);
+      const historyEnvelope = await historyResponse.json() as { data: { record: Record<string, unknown> } };
+      const record = historyEnvelope.data.record;
+      expect(historyEnvelope.data.record).toMatchObject({ webhookId, outcome: { type: 'rejected', code: responseEnvelope.error.code } });
+      expect(record).toMatchObject({
+        webhookId,
+        project: namespaceId,
+        pluginId,
+        outcome: { type: 'rejected', code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE' },
         correlationId: 'large-correlation',
       });
       expect(mockDispatcher.call).not.toHaveBeenCalled();
-      expect(await documents.count('gateway_webhook_history', {})).toBe(1);
+      expect(await fixture.documents.count('gateway_webhook_history', {})).toBe(1);
+      expect(JSON.stringify(record)).not.toContain(oversizedBody);
+      expect(JSON.stringify(historyEnvelope)).not.toContain(secret);
+
+      const cliModuleUrl = new URL('../../../../../cli/commands/src/commands/system/webhook/webhook-history.ts', import.meta.url).href;
+      const { webhookHistory } = await import(cliModuleUrl);
+      for (const flags of [{ json: true }, {}]) {
+        const captured: CliOutput = { output: [], errors: [], json: [] };
+        const exitCode = await webhookHistory.run(commandContext(captured, home), [webhookId!], flags);
+        expect(exitCode, JSON.stringify({ errors: captured.errors, json: captured.json })).toBe(0);
+        if (flags.json) {
+          expect(captured.json[0]).toMatchObject({ ok: true, data: { record } });
+          expect(JSON.stringify(captured.json)).not.toContain(oversizedBody);
+          expect(JSON.stringify(captured.json)).not.toContain(secret);
+        } else {
+          expect(captured.output.join('')).toContain(`Webhook: ${webhookId}`);
+          expect(captured.output.join('')).toContain('Outcome: rejected (KB_RUNTIME_PAYLOAD_TOO_LARGE)');
+          expect(captured.output.join('')).toContain('Correlation ID: large-correlation');
+          expect(captured.output.join('')).not.toContain(oversizedBody);
+          expect(captured.output.join('')).not.toContain(secret);
+        }
+      }
     } finally {
-      await app.close();
+      await app?.close();
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      if (previousGatewayUrl === undefined) {
+        delete process.env.KB_GATEWAY_URL;
+      } else {
+        process.env.KB_GATEWAY_URL = previousGatewayUrl;
+      }
+      await rm(home, { recursive: true, force: true });
     }
   });
 });

@@ -33,7 +33,7 @@ Provision a secret for a manifest-declared plugin webhook through the Gateway RE
 
 ## Decision note
 
-**D48:** Per ADR-0023, webhook delivery invokes only the manifest-declared plugin handler; it does not start a workflow. Every delivery attempt admitted to a declared Gateway webhook route produces one durable, payload-free history record, including authentication, signature, and body-size rejection and handler failure. Operators inspect records through REST and CLI. History keeps the latest 100 records per project, plugin, and handler by default, with pruning owned by the persistence store.
+**D48 / D72:** Per ADR-0023, webhook delivery invokes only the manifest-declared plugin handler; it does not start a workflow. Every delivery attempt admitted to a declared Gateway webhook route produces one durable, payload-free history record, including authentication, signature, and body-size rejection and handler failure. Operators inspect records through REST and CLI. History keeps the latest 100 records per webhook endpoint (project, plugin, event, and instance) by default, with pruning owned by the persistence store.
 
 ## Source
 
