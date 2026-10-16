@@ -104,7 +104,7 @@ func TestCreateOwnedPathRefusesRecreatedPathWithDifferentOwnerNonce(t *testing.T
 	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	outcome := cleanupResource(state, entries[0])
+	outcome := cleanupResource(state, "", entries[0])
 	if outcome.Outcome != ResourceRefused {
 		t.Fatalf("recreated path cleanup = %+v", outcome)
 	}
@@ -151,7 +151,7 @@ func TestCleanupRequiresOwnerNonceWhenDeviceAndInodeMatch(t *testing.T) {
 	}
 	resource := entries[0]
 	resource.Device, resource.Inode = replacement.Device, replacement.Inode
-	outcome := cleanupResource(state, resource)
+	outcome := cleanupResource(state, "", resource)
 	if outcome.Outcome != ResourceRefused || !strings.Contains(outcome.Error, "owner") {
 		t.Fatalf("same device/inode with a different owner nonce = %+v", outcome)
 	}
@@ -213,7 +213,7 @@ func TestComposeCleanupRunsDownThenRemovesLabeledContainersAndNetworks(t *testin
 		}
 	}
 	t.Cleanup(func() { composeCommand = originalCompose; dockerCommand = originalDocker })
-	outcome := cleanupResource(t.TempDir(), Resource{Kind: ResourceCompose, ID: "throwaway-project", Files: []string{"compose.yml"}, ComposePrefix: []string{"docker-compose"}})
+	outcome := cleanupResource(t.TempDir(), "", Resource{Kind: ResourceCompose, ID: "throwaway-project", Files: []string{"compose.yml"}, ComposePrefix: []string{"docker-compose"}})
 	if outcome.Outcome != ResourceRemoved {
 		t.Fatalf("compose cleanup = %+v", outcome)
 	}
@@ -271,7 +271,7 @@ func TestComposeCleanupSweepsLabelsAfterDownFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { composeCommand = originalCompose; dockerCommand = originalDocker })
 	resource := Resource{Kind: ResourceCompose, ID: "failed-down-project", Files: []string{"compose.yml"}, ComposePrefix: []string{"docker-compose"}}
-	outcome := cleanupResource(t.TempDir(), resource)
+	outcome := cleanupResource(t.TempDir(), "", resource)
 	if outcome.Outcome != ResourceFailed {
 		t.Fatalf("failed down outcome = %+v", outcome)
 	}
@@ -318,7 +318,7 @@ func TestSlowComposeDownUsesStopTimeoutMarginAndReportsSweep(t *testing.T) {
 	}
 	t.Cleanup(func() { composeCommand = originalCompose; dockerCommand = originalDocker })
 	resource := Resource{Kind: ResourceCompose, ID: "slow-down-project", Files: []string{"compose.yml"}, ComposePrefix: []string{"docker-compose"}}
-	outcome := cleanupResource(t.TempDir(), resource)
+	outcome := cleanupResource(t.TempDir(), "", resource)
 	if deadline.IsZero() {
 		t.Fatal("Compose down did not run")
 	}
@@ -611,7 +611,7 @@ func TestCleanupOwnedDirectoryRemovesSymlinkWithoutFollowingItsTarget(t *testing
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("owned ledger = %+v, %v", entries, err)
 	}
-	outcome := cleanupResource(state, entries[0])
+	outcome := cleanupResource(state, "", entries[0])
 	if outcome.Outcome != ResourceRemoved {
 		t.Fatalf("owned directory cleanup = %+v", outcome)
 	}

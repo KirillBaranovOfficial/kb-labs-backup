@@ -33,7 +33,12 @@ func executeCommand(args []string, stdout, stderr io.Writer) diag.ExitStatus {
 	}
 	code, err := execute(args, stdout, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		var diagnostic *diag.Diag
+		if errors.As(err, &diagnostic) {
+			fmt.Fprintln(stderr, renderDiagnostic(diagnostic))
+		} else {
+			fmt.Fprintln(stderr, err)
+		}
 	}
 	return diag.ProcessExitStatus(code)
 }
@@ -505,11 +510,19 @@ type waitDiagnosticError struct {
 }
 
 func (err waitDiagnosticError) Error() string {
-	return fmt.Sprintf("%s: %s\nreason: %s\nhint: %s", err.diagnostic.Code, err.diagnostic.Message, err.diagnostic.Reason, err.diagnostic.Hint)
+	return renderDiagnostic(err.diagnostic)
 }
 
 func (err waitDiagnosticError) Unwrap() error {
 	return err.diagnostic
+}
+
+func renderDiagnostic(diagnostic *diag.Diag) string {
+	envelope, err := diag.ToEnvelope(diagnostic)
+	if err != nil {
+		return diagnostic.Error()
+	}
+	return fmt.Sprintf("%s: %s\nreason: %s\nhint: %s", envelope.Code, envelope.Message, envelope.Cause, envelope.Hint)
 }
 
 func shellJoin(args []string) string {

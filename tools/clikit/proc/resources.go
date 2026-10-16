@@ -245,7 +245,7 @@ func CreateOwnedPath(stateDir, runID, path string, pathType OwnedPathType) error
 		if err != nil {
 			return fmt.Errorf("normalize owned path against cleanup roots: %w", err)
 		}
-		inside, err := pathUnderCleanupRoot(stateDir, absolute)
+		inside, err := pathUnderCleanupRoot(stateDir, runID, absolute)
 		if err != nil {
 			return err
 		}
@@ -289,7 +289,7 @@ func CreateOwnedPath(stateDir, runID, path string, pathType OwnedPathType) error
 			return fmt.Errorf("inspect owned path %q; it was left untouched because its identity could not be verified: %w", absolute, err)
 		}
 		if err := setPathOwnerXattr(absolute, []byte(ownerToken)); err != nil {
-			rollbackErr := removeCreatedPath(stateDir, absolute, identity)
+			rollbackErr := removeCreatedPath(stateDir, runID, absolute, identity)
 			if errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, unix.ENOTSUP) {
 				return errors.Join(&PathXattrUnsupportedError{Filesystem: filesystemName(absolute), Path: absolute}, rollbackErr)
 			}
@@ -302,7 +302,7 @@ func CreateOwnedPath(stateDir, runID, path string, pathType OwnedPathType) error
 			err = writeResourceLedger(stateDir, runID, entries)
 		}
 		if err != nil {
-			return errors.Join(err, removeOwnedPath(stateDir, resource))
+			return errors.Join(err, removeOwnedPath(stateDir, runID, resource))
 		}
 		return nil
 	})
@@ -350,7 +350,7 @@ func inspectComposeVolumes(resource Resource) ([]string, error) {
 	return protected, nil
 }
 
-func pathUnderCleanupRoot(stateDir, path string) (bool, error) {
+func pathUnderCleanupRoot(stateDir, runID, path string) (bool, error) {
 	path, err := normalizeCleanupPath(stateDir, path)
 	if err != nil {
 		return false, err
@@ -359,6 +359,11 @@ func pathUnderCleanupRoot(stateDir, path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	scratch, err := runScratchPath(runID)
+	if err != nil {
+		return false, err
+	}
+	roots = append(roots, scratch)
 	for _, root := range roots {
 		rel, err := filepath.Rel(root, path)
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -579,7 +584,7 @@ func cleanupResourcesLocked(stateDir, runID string) ([]ResourceOutcome, error) {
 	}
 	outcomes := make([]ResourceOutcome, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
-		outcome := cleanupResource(stateDir, entries[i])
+		outcome := cleanupResource(stateDir, runID, entries[i])
 		outcomes = append(outcomes, outcome)
 		entries[i].Outcome, entries[i].Error = outcome.Outcome, outcome.Error
 		if err := writeResourceLedger(stateDir, runID, entries); err != nil {
@@ -685,12 +690,12 @@ func pendingResourceFailures(stateDir, runID string, cause error) []ResourceOutc
 	return outcomes
 }
 
-func cleanupResource(stateDir string, resource Resource) ResourceOutcome {
+func cleanupResource(stateDir, runID string, resource Resource) ResourceOutcome {
 	result := ResourceOutcome{Resource: resource}
 	var err error
 	switch resource.Kind {
 	case ResourcePath:
-		err = removeOwnedPath(stateDir, resource)
+		err = removeOwnedPath(stateDir, runID, resource)
 	case ResourceCompose:
 		result.Steps, err = cleanupCompose(resource)
 	case ResourceContainer, ResourceNetwork, ResourceVolume:
@@ -858,12 +863,28 @@ func composeRemove(prefix []string, timeout time.Duration, args ...string) error
 	return nil
 }
 
-func removeOwnedPath(stateDir string, resource Resource) error {
-	return removeOwnedPathRelative(stateDir, resource.ID, fileIdentity{Device: resource.Device, Inode: resource.Inode}, resource.ownerToken)
+func removeOwnedPath(stateDir, runID string, resource Resource) error {
+	var additionalRoots []string
+	if runID != "" {
+		scratch, err := runScratchPath(runID)
+		if err != nil {
+			return err
+		}
+		additionalRoots = []string{scratch}
+	}
+	return removeOwnedPathRelative(stateDir, resource.ID, fileIdentity{Device: resource.Device, Inode: resource.Inode}, resource.ownerToken, additionalRoots)
 }
 
-func removeCreatedPath(stateDir, path string, identity fileIdentity) error {
-	err := removeOwnedPathRelative(stateDir, path, identity, "")
+func removeCreatedPath(stateDir, runID, path string, identity fileIdentity) error {
+	var additionalRoots []string
+	if runID != "" {
+		scratch, err := runScratchPath(runID)
+		if err != nil {
+			return err
+		}
+		additionalRoots = []string{scratch}
+	}
+	err := removeOwnedPathRelative(stateDir, path, identity, "", additionalRoots)
 	if errors.Is(err, errOwnedPathAlreadyGone) {
 		return nil
 	}

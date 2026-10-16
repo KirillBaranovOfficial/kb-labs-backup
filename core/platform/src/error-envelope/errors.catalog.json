@@ -235,6 +235,26 @@
       "hint": "Inspect the failed resource or scratch path in the run record; inspect resource leftovers and retry cleanup using the commands shown below."
     },
     {
+      "code": "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG",
+      "area": "runtime",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The run scratch path cannot support the required Unix socket name.",
+      "hint": "The inspected root {root} makes the required {socketNameBytes}-byte Unix socket name use {pathBytes} bytes including the terminator; the supported limit is {maxBytes} bytes. Run `realpath /tmp` to inspect the resolved path, repair the system /tmp target so the scratch path fits, then retry."
+    },
+    {
+      "code": "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED",
+      "area": "runtime",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The run scratch directory could not be safely created.",
+      "hint": "Inspect the leftover path with `ls -ld -- {path}`, resolve the removal refusal described in the reason, remove the obstruction safely, then retry the run."
+    },
+    {
       "code": "KB_RUNTIME_WAIT_NOT_FINISHED",
       "area": "runtime",
       "stage": "run",
