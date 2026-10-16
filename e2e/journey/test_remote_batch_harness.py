@@ -80,9 +80,13 @@ if [ "$1" = api ]; then
     if [ "$1" = --jq ]; then shift; jq_filter="$1"; fi
     shift
   done
-  if [ "${GH_FAIL:-}" = appearance ]; then exit 0; fi
-  expected_filter=".workflow_runs[] | select(.path == \\\"$EXPECTED_WORKFLOW_PATH\\\") | .database_id"
-  [ "$jq_filter" = "$expected_filter" ] && echo 98765
+  # Serve the REST Actions runs payload shape and apply the harness filter with real jq.
+  if [ "${GH_FAIL:-}" = appearance ]; then
+    payload='{"total_count":0,"workflow_runs":[]}'
+  else
+    payload="{\\"total_count\\":2,\\"workflow_runs\\":[{\\"id\\":11111,\\"path\\":\\".github/workflows/ci.yml\\"},{\\"id\\":98765,\\"path\\":\\"$EXPECTED_WORKFLOW_PATH\\"}]}"
+  fi
+  printf '%s\\n' "$payload" | jq -r "$jq_filter"
   exit 0
 fi
 exit 2
@@ -139,7 +143,7 @@ exit 0
         calls = self.calls.read_text()
         self.assertIn("git push --force-with-lease=refs/heads/batch/batch-test: backup HEAD:refs/heads/batch/batch-test", calls)
         self.assertIn("gh api repos/KirillBaranovOfficial/kb-labs-backup/actions/runs?branch=batch/batch-test&head_sha=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef&event=push", calls)
-        self.assertIn(f'--jq .workflow_runs[] | select(.path == "{self.workflow_path}") | .database_id', calls)
+        self.assertIn(f'--jq .workflow_runs[] | select(.path == "{self.workflow_path}") | .id', calls)
         self.assertNotIn("--workflow", calls)
         self.assertNotIn("Journey batch", calls)
         self.assertIn("gh run watch 98765 --repo KirillBaranovOfficial/kb-labs-backup --exit-status", calls)
