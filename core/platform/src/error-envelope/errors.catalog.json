@@ -1896,6 +1896,17 @@
       "hint": "Correct the reported fields and retry; run the command with --help for the expected input."
     },
     {
+      "code": "KB_RUNTIME_PAYLOAD_TOO_LARGE",
+      "httpStatus": 413,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "The request body exceeds {limit}.",
+      "hint": "Reduce the request body to {limit} and resend it."
+    },
+    {
       "code": "KB_RUNTIME_JOB_CANCEL_FAILED",
       "httpStatus": 500,
       "area": "runtime",

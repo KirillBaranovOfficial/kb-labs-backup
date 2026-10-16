@@ -11,7 +11,11 @@ export function sendGatewayNotFound(reply: FastifyReply, correlationId: string):
 }
 
 /** Install the shared error result at the final send boundary. */
-export function registerGatewayUxErrorResponses(app: FastifyInstance, logger?: ILogger): void {
+export function registerGatewayUxErrorResponses(
+  app: FastifyInstance,
+  logger?: ILogger,
+  options: { bodyLimitBytes?: number } = {},
+): void {
   registerGatewayRouteSchemas(app);
   app.addHook('preSerialization', async (_request, reply, payload) => {
     if (reply.statusCode >= 400) reply.serializer((value) => JSON.stringify(value));
@@ -28,7 +32,13 @@ export function registerGatewayUxErrorResponses(app: FastifyInstance, logger?: I
     requestLogger?.error('HTTP route failed', error instanceof Error ? error : new Error(String(error)), {
       correlationId, statusCode, errorCode,
     });
-    const errorValue = normalizeHttpFailure(error, { correlationId, statusCode }).error;
+    const errorValue = normalizeHttpFailure(error, {
+      correlationId,
+      statusCode,
+      ...(statusCode === 413 && options.bodyLimitBytes !== undefined
+        ? { limitBytes: options.bodyLimitBytes }
+        : {}),
+    }).error;
     reply.serializer((payload) => JSON.stringify(payload));
     reply.code(statusCode).send({ error: errorValue });
   });
@@ -44,6 +54,9 @@ export function registerGatewayUxErrorResponses(app: FastifyInstance, logger?: I
     const result = normalizeHttpFailure(body, {
       correlationId: String(request.id || randomUUID()),
       statusCode: reply.statusCode,
+      ...(reply.statusCode === 413 && options.bodyLimitBytes !== undefined
+        ? { limitBytes: options.bodyLimitBytes }
+        : {}),
     });
     reply.code(statusForHttpFailure(body, reply.statusCode));
     return JSON.stringify(result);
@@ -51,8 +64,12 @@ export function registerGatewayUxErrorResponses(app: FastifyInstance, logger?: I
 }
 
 /** Install the final JSON result boundary before registering route plugins. */
-export function registerGatewayUxBoundary(app: FastifyInstance, logger: ILogger): void {
-  registerGatewayUxErrorResponses(app, logger);
+export function registerGatewayUxBoundary(
+  app: FastifyInstance,
+  logger: ILogger,
+  options: { bodyLimitBytes?: number } = {},
+): void {
+  registerGatewayUxErrorResponses(app, logger, options);
   app.setNotFoundHandler((request, reply) => {
     return sendGatewayNotFound(reply, String(request.id || randomUUID()));
   });

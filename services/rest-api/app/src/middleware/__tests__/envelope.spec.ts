@@ -138,6 +138,29 @@ describe('registerEnvelopeMiddleware', () => {
     });
   });
 
+  it('renders a route-enforced 413 limit from the REST request boundary', async () => {
+    app.post('/limited-body', { bodyLimit: 12 }, async () => ({ accepted: true }));
+    await app.ready();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/limited-body',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ value: 'larger than twelve bytes' }),
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_PAYLOAD_TOO_LARGE',
+        message: 'The request body exceeds 12 B.',
+        hint: 'Reduce the request body to 12 B and resend it.',
+        details: { limit: '12 B', limitBytes: '12' },
+      },
+    });
+  });
+
   describe('error responses', () => {
     it('should return a catalogued validation failure using the platform envelope', async () => {
       app.get('/error', async () => {

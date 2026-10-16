@@ -1,7 +1,7 @@
 import type { ICache, ILogger, IStorage } from '@kb-labs/core-platform'
 import { ConsoleLogger, InMemoryEventBus } from '@kb-labs/core-platform/inmemory'
 import { createRegistry } from '@kb-labs/core-registry'
-import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution'
+import { createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct'
 import { EnvSecretProvider, WorkflowEngine } from '@kb-labs/workflow-engine'
 import { createWorkflowWorker } from '../worker.js'
 
@@ -71,7 +71,7 @@ async function startWorker(): Promise<void> {
     async health() { return { healthy: true, backend: 'in-process' } },
     async stats() { return { totalExecutions: 1, successCount: 0, errorCount: 0, avgExecutionTimeMs: 0 } },
     async shutdown() {},
-  }, logger)
+  }, logger, 'in-process')
   const worker = await createWorkflowWorker({
     engine,
     secretProvider: new EnvSecretProvider(),

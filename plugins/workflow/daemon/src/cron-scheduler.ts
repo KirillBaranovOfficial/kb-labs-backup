@@ -290,13 +290,16 @@ export class CronScheduler {
       }
       job.lastRun = { id: runId, status: runStatus, time: new Date().toISOString() };
 
-      // Track successful cron job completion
-      const duration = Date.now() - startTime;
-      this.analytics?.track('workflow.cron.job.completed', {
+      // Submission does not imply the workflow has reached a terminal state.
+      this.analytics?.track('workflow.cron.job.submitted', {
         cronJobId,
+        runId,
         source: job.source,
-        durationMs: duration,
-      }).catch(() => {});
+      }).catch((error) => this.logger.warn('Failed to record cron submission analytics', {
+        cronJobId,
+        runId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      }));
     } catch (error) {
       const duration = Date.now() - startTime;
       this.logger.error(

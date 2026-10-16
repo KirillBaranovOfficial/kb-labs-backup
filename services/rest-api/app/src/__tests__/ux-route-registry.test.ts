@@ -5,6 +5,8 @@ import { platform, resetPlatform } from '@kb-labs/core-runtime';
 import { createServer } from '../server';
 import type { RouteOptions } from 'fastify';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
+import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
 import { assertNoStackTraceLeak } from './helpers/safe-error-envelope';
 
 const snapshot: RegistrySnapshot = {
@@ -79,11 +81,11 @@ function pathForRoute(url: string, paramsSchema: unknown): string {
 
 type FixtureMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
-function requestForRoute(route: RouteOptions, method: FixtureMethod): { method: FixtureMethod; url: string; payload?: string; headers?: { 'content-type': string } } {
+function requestForRoute(route: RouteOptions, method: FixtureMethod): { method: FixtureMethod; url: string; payload?: string; headers?: Record<string, string> } {
   const schema = (route.schema ?? {}) as { params?: unknown; querystring?: unknown; body?: unknown };
   const query = schemaExample(schema.querystring) as Record<string, unknown>;
   const search = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)] as [string, string]));
-  const request: { method: FixtureMethod; url: string; payload?: string; headers?: { 'content-type': string } } = {
+  const request: { method: FixtureMethod; url: string; payload?: string; headers?: Record<string, string> } = {
     method,
     url: `${pathForRoute(route.url, schema.params)}${search.size ? `?${search}` : ''}`,
   };
@@ -91,10 +93,14 @@ function requestForRoute(route: RouteOptions, method: FixtureMethod): { method: 
     request.payload = JSON.stringify(schemaExample(schema.body));
     request.headers = { 'content-type': 'application/json' };
   }
+  Object.assign(request.headers ??= {}, forwardedIdentityHeaders({
+    type: 'user', userId: 'ux-route-registry', namespaceId: 'test', tier: 'enterprise',
+    permissions: [PERMISSIONS.USERS_READ],
+  }, process.env.GATEWAY_INTERNAL_SECRET));
   return request;
 }
 
-function invalidRequestForRoute(route: RouteOptions, method: FixtureMethod): { method: FixtureMethod; url: string; payload?: string; headers?: { 'content-type': string } } {
+function invalidRequestForRoute(route: RouteOptions, method: FixtureMethod): { method: FixtureMethod; url: string; payload?: string; headers?: Record<string, string> } {
   const request = requestForRoute(route, method);
   const schema = (route.schema ?? {}) as { body?: unknown; querystring?: unknown };
   if (['POST', 'PUT', 'PATCH'].includes(method) && schema.body) {
@@ -135,6 +141,7 @@ function assertUxResult(response: { statusCode: number; body: string }, expectFa
 describe('REST production route declarations', () => {
   const apps: Array<Awaited<ReturnType<typeof createServer>>> = [];
   const originalTenantTier = process.env.KB_TENANT_DEFAULT_TIER;
+  const originalInternalSecret = process.env.GATEWAY_INTERNAL_SECRET;
 
   afterEach(async () => {
     await Promise.all(apps.splice(0).map((app) => app.close()));
@@ -142,6 +149,8 @@ describe('REST production route declarations', () => {
     vi.unstubAllGlobals();
     if (originalTenantTier === undefined) delete process.env.KB_TENANT_DEFAULT_TIER;
     else process.env.KB_TENANT_DEFAULT_TIER = originalTenantTier;
+    if (originalInternalSecret === undefined) delete process.env.GATEWAY_INTERNAL_SECRET;
+    else process.env.GATEWAY_INTERNAL_SECRET = originalInternalSecret;
   });
 
   it('adapts root Fastify log objects into platform logger message and fields', async () => {
@@ -170,6 +179,7 @@ describe('REST production route declarations', () => {
   // case: S-203.1, S-203.2, S-203.3
   it('discovers production registrations and requires closed request and response schemas or an explicit raw declaration', async () => {
     process.env.KB_TENANT_DEFAULT_TIER = 'enterprise';
+    process.env.GATEWAY_INTERNAL_SECRET = 'ux-route-registry-internal-secret';
     const routes: RouteOptions[] = [];
     const cache = new Map<string, unknown>();
     platform.setAdapter('cache', {
@@ -259,7 +269,7 @@ describe('REST production route declarations', () => {
         return app.inject({ ...request, headers: { ...request.headers, 'x-ux-fixture-failure': failure } });
       };
       const typed = await withFailure('typed');
-      expect(typed.statusCode).toBe(422);
+      expect(typed.statusCode, `${method} ${route.url} typed failure status`).toBe(422);
       expect(typed.json()).toMatchObject({ ok: false, error: {
         code: 'KB_PROJECT_DECLARATION_INVALID', message: 'Project declaration failed.',
         hint: 'Repair the project declaration.', details: { projectId: 'project-1' },
