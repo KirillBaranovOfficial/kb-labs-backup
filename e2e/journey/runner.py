@@ -55,6 +55,7 @@ from invocations import (
     decode_ux_error_result,
     decode_ux_success_result,
     describe_cli_failure,
+    catalogued_error_hint,
     invocation_context,
     open_http,
     print_report_text,
@@ -1081,9 +1082,20 @@ def _main(*, update_variant_runner=None):
         # The prerequisite is evaluated by kb-create install; install.sh itself only downloads.
         (BIN / "kb-create").exists() and None
         launcher, _ = run([str(BIN / "kb-create"), "install"], env=env, timeout=90) if (BIN / "kb-create").exists() else (result, 0)
-        passed = "KB_INSTALL_NODE_VERSION" in launcher.stdout and "Node.js 24" in launcher.stdout
+        node_engine_helper = workspace_resource("core", "plugin-runtime", "src", "platform-resolve", "node-engine.mjs")
+        root_manifest = workspace_resource("package.json")
+        policy_result = run_command(
+            ["node", str(node_engine_helper), "--required-major", str(root_manifest)], env=BASE_ENV,
+        )
+        if policy_result.returncode != 0:
+            fail(f"cannot read the workspace Node policy: {policy_result.stderr.strip()[:300]}")
+        required_major = policy_result.stdout.strip()
+        expected_hint = catalogued_error_hint(
+            "KB_NODE_VERSION_UNSUPPORTED", requiredMajor=required_major, actualVersion="22.11.0",
+        )
+        passed = "KB_NODE_VERSION_UNSUPPORTED" in launcher.stdout and expected_hint in launcher.stdout
         if not passed:
-            fail(f"wrong Node major: expected KB_INSTALL_NODE_VERSION and Node 24 hint; {launcher.stdout.strip()[:300]}")
+            fail(f"wrong Node major: expected the catalogued unsupported-major diagnostic; {launcher.stdout.strip()[:300]}")
         return finalize_run(passed)
 
     if VARIANT == "occupied-port":

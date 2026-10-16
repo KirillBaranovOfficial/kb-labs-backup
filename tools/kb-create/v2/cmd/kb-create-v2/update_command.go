@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
@@ -56,9 +57,7 @@ func updateActivationRetryHint(input updateCommandInput) string {
 
 func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps commandDependencies) (updateCommandResult, *diag.Diag) {
 	if err := commandDeps.NodeCheck(); err != nil {
-		failure := contracts.NewDiag(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.",
-			"Install Node.js 24, then run `kb-create update` (for nvm: `nvm install 24 && nvm use 24`).", err)
-		return updateCommandResult{}, failure
+		return updateCommandResult{}, sharedtoolchain.NodeCheckDiagnostic(err)
 	}
 	resolved, failure := resolvePlan(planInput{Operation: "update", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
 		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable})

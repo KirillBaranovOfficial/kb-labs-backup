@@ -48,12 +48,14 @@ as `--platform-root`, `--platform-version`/`--platform-channel`,
 the same `InstallRequest` before resolution; flags never build a separate
 shell-level install sequence.
 
-For a human, run `kb-create install`. It checks Node.js 24 before prompting,
-uses the release index saved by `install.sh` and defaults the platform root to
-`~/kb-platform`. It gathers scenario answers, resolves and displays the plan,
-then applies that plan through the same engine used by CI. Local access is the
-default; secured access remains available in the scenario. After installation,
-run `cd ~/any-project && kb commit`.
+For a human, run `kb-create install`. The platform supports exactly one Node.js
+major, the latest LTS major declared by the root `package.json` `engines.node`.
+On a mismatch, the installer prints the exact command to switch to that major.
+It uses the release index saved by `install.sh` and defaults the platform root
+to `~/kb-platform`. It gathers scenario answers, resolves and displays the
+plan, then applies that plan through the same engine used by CI. Local access
+is the default; secured access remains available in the scenario. After
+installation, run `cd ~/any-project && kb commit`.
 
 ## Scenarios
 

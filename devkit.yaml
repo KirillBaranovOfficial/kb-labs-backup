@@ -164,7 +164,6 @@ presets:
         - exports
       type: module
       engines:
-        node: ">=24.0.0"
         pnpm: ">=9.0.0"
     tsconfig:
       must_extend_pattern: "@kb-labs/devkit/tsconfig/"
@@ -208,7 +207,6 @@ presets:
         - exports
       type: module
       engines:
-        node: ">=24.0.0"
         pnpm: ">=9.0.0"
     tsconfig:
       must_extend_pattern: "@kb-labs/devkit/tsconfig/"
@@ -708,6 +706,22 @@ tasks:
         - "build"
       cache: false
 
+  # Workspace policy regressions, run from the script package that owns the gate.
+  # Run: kb-devkit run test:node-policy --packages @kb-labs/devkit
+  test:node-policy:
+    - categories: [ts-lib]
+      command: node --test ../../scripts/checks/check-node-engine-policy.test.mjs ../../e2e/delivery/scripts/delivery-invoker.test.mjs
+      inputs:
+        - "package.json"
+        - "../../scripts/checks/**"
+        - "../../e2e/delivery/scripts/**"
+        - "../../e2e/delivery/docker-compose.yml"
+        - "../../e2e/delivery/Dockerfile.target"
+        - "../../core/plugin-runtime/src/platform-resolve/node-engine.mjs"
+        - "../../package.json"
+      outputs: []
+      cache: false
+
   e2e:
     # Both the infrastructure matrix (e2e-suite) and the per-plugin matrix
     # (plugin-e2e-suite) run the same `pnpm run e2e`. `--affected` then scopes
@@ -747,6 +761,11 @@ tasks:
 #   { ok: boolean, items: [{ target, message, fix? }] }
 
 custom_checks:
+  - name: node-engine-policy
+    run: node scripts/checks/check-node-engine-policy.mjs
+    on: [check]
+    scope: workspace
+
   - name: browser-node-builtins
     run: node scripts/checks/check-browser-node-builtins.mjs
     on: [check]

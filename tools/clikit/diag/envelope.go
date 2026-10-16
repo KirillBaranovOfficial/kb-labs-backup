@@ -104,3 +104,8 @@ func renderTemplate(template string, values map[string]string) string {
 	}
 	return rendered.String()
 }
+
+// RenderTemplate expands catalog-owned text with the supplied diagnostic fields.
+func RenderTemplate(template string, values map[string]string) string {
+	return renderTemplate(template, values)
+}

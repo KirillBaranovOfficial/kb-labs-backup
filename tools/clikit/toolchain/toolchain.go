@@ -4,14 +4,18 @@
 package toolchain
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/kb-labs/clikit/diag"
 )
 
+//go:generate node generate-node-policy.mjs
+
 const (
-	SupportedNodeMajor = 24
 	SupportedPnpmMajor = 11
 	SupportedPnpm      = "11.4.0"
 )
@@ -30,9 +34,34 @@ func (e *ValidationError) Error() string {
 }
 
 func NodeRemediation() string {
-	return fmt.Sprintf("Update Node.js and retry (for nvm: `nvm install %d && nvm use %d`)", SupportedNodeMajor, SupportedNodeMajor)
+	entry, ok := diag.LookupCatalog("KB_NODE_VERSION_UNSUPPORTED")
+	if !ok {
+		panic("Node.js unsupported diagnostic is missing from the platform catalog")
+	}
+	return diag.RenderTemplate(entry.Hint, map[string]string{"requiredMajor": strconv.Itoa(SupportedNodeMajor)})
 }
 func PnpmRemediation() string { return fmt.Sprintf("Install pnpm@%s and retry", SupportedPnpm) }
+
+// NodeMissingDiagnostic reports that Node.js could not be executed at all.
+func NodeMissingDiagnostic() *diag.Diag {
+	entry, ok := diag.LookupCatalog("KB_INSTALL_NODE_MISSING")
+	if !ok {
+		panic("Node.js missing diagnostic is missing from the platform catalog")
+	}
+	values := map[string]string{"requirement": "Node.js"}
+	return diag.New(entry.Code, diag.RenderTemplate(entry.Message, values),
+		diag.WithHint(diag.RenderTemplate(entry.Hint, values)), diag.WithMeta(map[string]any{"requirement": values["requirement"]}))
+}
+
+// NodeCheckDiagnostic preserves a structured preflight failure or reports that
+// no Node.js executable could be run.
+func NodeCheckDiagnostic(err error) *diag.Diag {
+	var failure *diag.Diag
+	if errors.As(err, &failure) {
+		return failure
+	}
+	return NodeMissingDiagnostic()
+}
 
 func Version(binary string) (string, error) {
 	if strings.TrimSpace(binary) == "" {
@@ -48,7 +77,19 @@ func Version(binary string) (string, error) {
 func ValidateNode(version string) error {
 	major, err := major(version)
 	if err != nil || major != SupportedNodeMajor {
-		return &ValidationError{Tool: "Node.js", Detected: version, Requirement: fmt.Sprintf("Node.js %d.x only", SupportedNodeMajor), Remediation: NodeRemediation()}
+		entry, ok := diag.LookupCatalog("KB_NODE_VERSION_UNSUPPORTED")
+		if !ok {
+			panic("Node.js unsupported diagnostic is missing from the platform catalog")
+		}
+		actualVersion := strings.TrimPrefix(strings.TrimSpace(version), "v")
+		values := map[string]string{
+			"requiredMajor": strconv.Itoa(SupportedNodeMajor),
+			"actualVersion": actualVersion,
+		}
+		return diag.New(entry.Code, diag.RenderTemplate(entry.Message, values),
+			diag.WithHint(diag.RenderTemplate(entry.Hint, values)), diag.WithMeta(map[string]any{
+				"requiredMajor": values["requiredMajor"], "actualVersion": values["actualVersion"],
+			}))
 	}
 	return nil
 }

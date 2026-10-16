@@ -3,7 +3,7 @@
 # Stage 1 (go-builder): compiles kb-create and kb-dev from monorepo source so
 # the E2E suite never needs kblabs.ru or GitHub releases to be reachable (CI-safe).
 #
-# Stage 2 (runtime): Node 24 image with the compiled binaries pre-installed.
+# Stage 2 (runtime): test image with the compiled binaries pre-installed.
 # entrypoint.sh detects the pre-installed binaries and skips the remote
 # install.sh download. kb-create then installs all @kb-labs/* packages from
 # the Verdaccio local registry (started by the verdaccio Compose service),

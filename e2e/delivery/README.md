@@ -13,7 +13,8 @@ Full real-stack exercise of the ADR-0014 delivery plane:
 │  │  kb-create     │   │  kb-create     │◀──▶│  @kb-labs/gateway-  │   │
 │  │  kb-dev (stub) │   │  kb-dev (stub) │    │    test@1.0.0       │   │
 │  │  openssh       │   │  openssh       │    │  @kb-labs/adapter-  │   │
-│  │  Node 24+pnpm  │   │  Node 24+pnpm  │    │    noop@1.0.0       │   │
+│  │ supported Node │   │ supported Node │    │    noop@1.0.0       │   │
+│  │    + pnpm      │   │    + pnpm      │    │                     │   │
 │  └────────────────┘   └────────────────┘    └─────────────────────┘   │
 │          └─ docker-compose (kb-net) ───────────────────────┘           │
 └────────────────────────────────────────────────────────────────────────┘
@@ -27,15 +28,19 @@ release-id agreement.
 
 ## Running
 
-Requires Docker + docker-compose + Go 1.24.
+Requires Docker + docker-compose + Go 1.24, and Node.js matching the policy in
+the root `package.json` `engines.node` field.
 
 ```sh
 # From this directory:
-DELIVERY_E2E=1 go test -v -timeout 10m
+./scripts/run.sh
 ```
 
-First run builds images (~1 min); warm runs are ~10s. `DELIVERY_E2E=1` is
-required so a plain `go test ./...` at the repo root skips this test.
+The invoker reads the required major from the root manifest, passes it to
+Compose as `KB_NODE_MAJOR`, and runs the opt-in Go test. First run builds
+images (~1 min); warm runs are ~10s. A plain `go test ./...` at the repo root
+still skips this test. To inspect the resolved build args without building,
+run `./scripts/run.sh config --format json`.
 
 `KEEP_STACK=1` leaves the compose stack up after the test for manual
 inspection. Tear down with `docker-compose down -v` from this dir.

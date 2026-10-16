@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { commandSources } from '../lib/doc-source-map.mjs';
+import { commandSources, sourceFragmentSources } from '../lib/doc-source-map.mjs';
 import { renderGeneratedDocSource } from '../lib/expand-doc-sources.mjs';
+import { parseNodeEnginePolicy } from '../../../../../core/plugin-runtime/src/platform-resolve/node-engine.mjs';
 
 const docsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(docsDir, '../../../..');
@@ -12,10 +13,21 @@ export function sourceFileForCommand(command) {
 }
 
 export function collectGeneratedSources() {
-  return Object.fromEntries(Object.entries(commandSources).map(([command, sourcePath]) => {
+  const generated = Object.fromEntries(Object.entries(commandSources).map(([command, sourcePath]) => {
     const sourceText = readFileSync(path.join(repoRoot, sourcePath), 'utf8');
     return [command, { source: sourcePath, examples: findCommand(sourceText, sourcePath, command) }];
   }));
+  const nodePolicySource = sourceFragmentSources.nodePolicy;
+  const rootManifest = JSON.parse(readFileSync(path.join(repoRoot, nodePolicySource), 'utf8'));
+  const { requiredMajor } = parseNodeEnginePolicy(rootManifest.engines?.node);
+  return {
+    commands: generated,
+    nodePolicy: { source: nodePolicySource, requiredMajor },
+  };
+}
+
+export function sourceFileForNodePolicy() {
+  return sourceFragmentSources.nodePolicy;
 }
 
 function parseStringArray(sourceText, sourcePath, command) {

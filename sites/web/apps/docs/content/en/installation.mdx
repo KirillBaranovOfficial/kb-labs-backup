@@ -12,7 +12,7 @@ the platform into `~/kb-platform`, starts it, verifies its health, and adds the
 ## Prerequisites
 
 - macOS or Linux.
-- Node.js 24.x. Install it before continuing; pnpm is managed by the installer.
+- Node.js <NodePolicy />.x. Install it before continuing; pnpm is managed by the installer.
 - At least 1.20 GiB of available memory and 2 GiB of free disk space.
 - `curl` and a network connection to the KB Labs release index and package registry.
 
@@ -102,7 +102,7 @@ from the error catalog:
 
 | Error code | Meaning | Recovery |
 | --- | --- | --- |
-| `KB_INSTALL_NODE_VERSION` | Node.js is not 24.x. | Install Node 24, then run `kb-create install`; with nvm: `nvm install 24 && nvm use 24`. |
+| `KB_NODE_VERSION_UNSUPPORTED` | Node.js is on a major outside the supported policy. | Run the version-switch command shown in the diagnostic, then retry `kb-create install`. |
 | `KB_INSTALL_MEMORY_INSUFFICIENT` | Available memory is below 1.20 GiB. | Close memory-heavy applications or increase machine memory, then run `kb-create install` again. |
 | `KB_INSTALL_NO_DISK_SPACE` | There is not enough free disk space. | Free disk space or choose another writable directory with `kb-create install --platform-root PATH`. The preflight minimum is 2 GiB. |
 | `KB_INSTALL_PACKAGE_MANAGER_KILLED` | The package manager was killed, likely because memory ran out. | Free memory, then rerun `kb-create install`. |
