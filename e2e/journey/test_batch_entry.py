@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[2]
+ENTRY_SHELL = shutil.which("dash") or "sh"
 
 
 class JourneyBatchEntryTests(unittest.TestCase):
@@ -59,6 +60,10 @@ while [ "$#" -gt 0 ]; do
     cat > "$1" <<'SCRIPT'
 #!/bin/sh
 printf 'build\\n' >> "$CALLS"
+if [ "${FAIL_AFFECTED_BUILD:-}" = 1 ]; then
+  printf 'affected build fixture failure\\n'
+  exit 1
+fi
 exit 0
 SCRIPT
     chmod +x "$1"
@@ -70,6 +75,11 @@ exit 2
 ''')
         self._script(self.bin / "git", '''#!/bin/sh
 [ "$1 $2" = "rev-parse HEAD" ] && { echo deadbeef; exit 0; }
+if [ "$1 $2 $3" = "rev-parse --verify --quiet" ]; then
+  [ "${MISSING_BASE_REF:-}" = "$4" ] && exit 1
+  echo deadbeef
+  exit 0
+fi
 exit 2
 ''')
         self.env = {
@@ -80,6 +90,7 @@ exit 2
             "ATTEMPT_MARKER": str(self.root / "first-attempt"),
             "BLOCK_FIFO": str(self.root / "reset.fifo"),
             "HOME": str(self.root / "home"),
+            "KB_DEVKIT_BASE_REF": "origin/master",
         }
         Path(self.env["REPORTS"]).mkdir(parents=True)
         Path(self.env["HOME"]).mkdir()
@@ -92,13 +103,18 @@ exit 2
         path.write_text(contents)
         path.chmod(0o755)
 
-    def _run(self, mode="", failure_kind="infra"):
+    def _run(self, mode="", failure_kind="infra", missing_base_ref="", fail_build=False):
         env = dict(self.env)
         if mode:
             env["FAIL_MODE"] = mode
             env["FAIL_KIND"] = failure_kind
+        if missing_base_ref:
+            env["KB_DEVKIT_BASE_REF"] = missing_base_ref
+            env["MISSING_BASE_REF"] = missing_base_ref + "^{commit}"
+        if fail_build:
+            env["FAIL_AFFECTED_BUILD"] = "1"
         return subprocess.run(
-            ["sh", str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
             cwd=self.root,
             env=env,
             text=True,
@@ -110,6 +126,7 @@ exit 2
     def test_entry_runs_product_steps_in_order_and_exports_both_modes(self):
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertNotIn("not found", result.stderr)
         calls = self.calls.read_text().splitlines()
         self.assertEqual(calls, [
             "journey  --down",
@@ -123,6 +140,9 @@ exit 2
         self.assertTrue((self.root / "out/secured/secured.json").is_file())
         self.assertIn("deadbeef", (self.root / "out/run.json").read_text())
         summary = (self.root / "out/summary.md").read_text()
+        self.assertIn("- Commit: `deadbeef`", summary)
+        self.assertIn("- Baseline: `j28`", summary)
+        self.assertIn("- Build base: `origin/master`", summary)
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: PASS"])
         import json
         for mode in ("local", "secured"):
@@ -170,7 +190,7 @@ exit 2
         ready_read, ready_write = os.pipe()
         env = {**self.env, "BLOCK_RESET": "1", "READY_FD": str(ready_write)}
         process = subprocess.Popen(
-            ["sh", str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
             cwd=self.root,
             env=env,
             text=True,
@@ -199,6 +219,30 @@ exit 2
         self.assertGreaterEqual(metadata["stageDurationsSeconds"]["reset"], 0)
         self.assertEqual(metadata["result"], "INTERRUPTED")
 
+    # case: S-262.1
+    def test_entry_names_missing_base_ref_before_affected_build(self):
+        result = self._run(missing_base_ref="origin/master")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("affected-build base ref 'origin/master' is missing", result.stderr)
+        self.assertIn("next: git fetch --all --prune", result.stderr)
+        self.assertNotIn("not found", result.stderr)
+        self.assertFalse(self.calls.exists())
+        self.assertTrue((self.root / "out/summary.md").is_file())
+        self.assertTrue((self.root / "out/batch-metadata.json").is_file())
+        self.assertTrue((self.root / "out/build.log").is_file())
+
+    # case: S-262.1
+    def test_entry_preserves_root_outputs_when_build_fails_before_modes(self):
+        result = self._run(fail_build=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("devkit affected build failed", result.stderr)
+        self.assertNotIn("not found", result.stderr)
+        self.assertTrue((self.root / "out/summary.md").is_file())
+        self.assertTrue((self.root / "out/batch-metadata.json").is_file())
+        self.assertTrue((self.root / "out/build.log").is_file())
+        self.assertFalse((self.root / "out/local").exists())
+        self.assertFalse((self.root / "out/secured").exists())
+
     # case: S-262.2
     def test_workflow_uses_only_batch_entry_and_uploads_each_mode(self):
         workflow = REPO / ".github/workflows/journey-batch.yml"
@@ -225,7 +269,10 @@ exit 2
         entries = [step for step in steps if "e2e/journey/batch.sh" in step.get("run", "")]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["env"]["BATCH_BASELINE"], "${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}")
-        self.assertEqual(entries[0]["env"]["KB_DEVKIT_BASE_REF"], "${{ github.event.pull_request.base.sha || env.JOURNEY_DEFAULT_BRANCH }}")
+        self.assertEqual(entries[0]["env"]["KB_DEVKIT_BASE_REF"], "${{ github.event.pull_request.base.sha || format('origin/{0}', env.JOURNEY_DEFAULT_BRANCH) }}")
+        self.assertEqual(job_env["GOTOOLCHAIN"], "local")
+        checkout_step = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+        self.assertEqual(checkout_step["with"]["fetch-depth"], 0)
         pnpm_steps = [step for step in steps if step.get("uses", "").startswith("pnpm/action-setup@")]
         self.assertEqual(len(pnpm_steps), 1)
         pnpm_step = pnpm_steps[0]
@@ -235,11 +282,23 @@ exit 2
         package = json.loads((REPO / "package.json").read_text())
         self.assertIn("packageManager", package)
         go_step = next(step for step in steps if step.get("uses", "").startswith("actions/setup-go@"))
-        self.assertEqual(go_step["with"]["go-version-file"], "tools/kb-devkit/go.mod")
+        self.assertEqual(go_step["with"]["go-version"], "1.26.8")
+        module = subprocess.run(["go", "mod", "edit", "-json"], cwd=REPO / "tools/kb-devkit", text=True, capture_output=True, check=False)
+        self.assertEqual(module.returncode, 0, module.stderr)
+        module_info = json.loads(module.stdout)
+        selected_go = tuple(int(part) for part in go_step["with"]["go-version"].split("."))
+        for required in (module_info["Go"], module_info["Toolchain"].removeprefix("go")):
+            self.assertGreaterEqual(selected_go, tuple(int(part) for part in required.split(".")))
         self.assertEqual(sum("journey-local" in step.get("with", {}).get("name", "") for step in steps), 1)
         self.assertEqual(sum("journey-secured" in step.get("with", {}).get("name", "") for step in steps), 1)
         artifact_steps = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
         self.assertEqual([step["with"]["path"].rsplit("/", 2)[-2] for step in artifact_steps], ["local", "secured"])
+        for step, mode in zip(artifact_steps, ("local", "secured"), strict=True):
+            artifact_paths = step["with"]["path"].splitlines()
+            self.assertIn(f".journey/batch/${{{{ github.run_id }}}}/summary.md", artifact_paths)
+            self.assertIn(f".journey/batch/${{{{ github.run_id }}}}/batch-metadata.json", artifact_paths)
+            self.assertIn(f".journey/batch/${{{{ github.run_id }}}}/build.log", artifact_paths)
+            self.assertIn(f".journey/batch/${{{{ github.run_id }}}}/{mode}/", artifact_paths)
         self.assertEqual([step["with"]["if-no-files-found"] for step in artifact_steps], ["warn", "warn"])
         self.assertEqual(node_step["with"]["node-version-file"], "package.json")
         summary_step = next(step for step in steps if step.get("name") == "Add batch summary")
