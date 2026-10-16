@@ -67,6 +67,47 @@ func TestLifecycleRecordReadersNeverSeePartialPublication(t *testing.T) {
 	writers.Wait()
 }
 
+func TestStartFailureEnvelopePreservesReadinessEvidence(t *testing.T) {
+	state := State{Dir: filepath.Join(t.TempDir(), "missing-state-dir")}
+	original := StartFailure(state, errors.New("readiness check failed"), map[string]string{
+		"stderrTail": "fakehost: ready check failed", "hostStartupCode": "KB_RUNTIME_UNEXPECTED",
+		"waited": "1s", "readinessURL": "http://127.0.0.1:5250/ready", "readinessStatus": "500",
+		"readinessError": "readiness refused", "exitCode": "2", "signal": "SIGTERM", "exitStatus": "exit status 2",
+		"expectedPid": "20", "pid": "21", "command": "kb-host", "failureKind": "readinessFailed",
+		"supervisorLog": "/tmp/supervisor.log", "supervisorStderrTail": "supervisor failed",
+		"supervisorExit": "exit status 3", "controlRecord": "/tmp/control.json",
+		"nextCommand": "kb-create status",
+	})
+	encoded, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal start failure: %v", err)
+	}
+	var decoded diag.Diag
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("decode start failure: %v", err)
+	}
+	for key, want := range original.Meta {
+		if got := decoded.Meta[key]; got != want {
+			t.Errorf("decoded start-failure detail %q = %v, want %v", key, got, want)
+		}
+	}
+	entry, _ := diag.LookupCatalog("KB_HOST_START_FAILED")
+	if len(encoded) == 0 || len(decoded.Meta) != len(entry.StructuredDetailFields) {
+		t.Fatalf("round-trip fields=%v, catalog declares %v", decoded.Meta, entry.StructuredDetailFields)
+	}
+}
+
+func TestStartFailureRejectsUndeclaredEvidence(t *testing.T) {
+	failure := StartFailure(State{Dir: t.TempDir()}, errors.New("startup failed"), map[string]string{
+		"evidenceFromNewProducer": "value",
+	})
+	if failure.Code != "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION" ||
+		failure.Meta["originalCode"] != "KB_HOST_START_FAILED" ||
+		failure.Meta["fields"] != "evidenceFromNewProducer" {
+		t.Fatalf("StartFailure = %+v, want typed contract violation with offending field", failure)
+	}
+}
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "kb-create-fakehost-")
 	if err != nil {
@@ -277,6 +318,13 @@ func TestPortInUse(t *testing.T) {
 		var typed *diag.Diag
 		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Meta["port"] != fmt.Sprint(f.port) || typed.Meta["pid"] == "" || typed.Meta["command"] == "" {
 			t.Fatalf("port diagnostic lacks owner details: %#v", err)
+		}
+		wire, marshalErr := diag.ToEnvelope(typed)
+		if marshalErr != nil {
+			t.Fatalf("marshal actual port preflight diagnostic: %v", marshalErr)
+		}
+		if wire.Code != "KB_INSTALL_PORT_IN_USE" || wire.Details["port"] != fmt.Sprint(f.port) {
+			t.Fatalf("actual kb-create wire diagnostic = %+v, want details.port=%d", wire, f.port)
 		}
 		if !strings.Contains(typed.Hint, contracts.ShellCommand("kb-create", "apply")) ||
 			!strings.Contains(typed.Hint, typed.Meta["pid"].(string)) || !strings.Contains(typed.Hint, typed.Meta["command"].(string)) {
@@ -965,5 +1013,9 @@ func TestRootConflictNamesPidWhenRootIsUnknown(t *testing.T) {
 	want := contracts.ShellCommand("kb-create", "stop", "--platform-root", "/tmp/KB Labs ' A")
 	if !strings.Contains(known.Hint, want) {
 		t.Fatalf("hint = %q", known.Hint)
+	}
+	envelope, err := diag.ToEnvelope(known)
+	if err != nil || envelope.Details["nextCommand"] != want {
+		t.Fatalf("root conflict envelope command = %q, error = %v", envelope.Details["nextCommand"], err)
 	}
 }

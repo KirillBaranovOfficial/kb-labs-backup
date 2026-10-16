@@ -76,11 +76,94 @@ func TestDiagnosticJSONUsesCanonicalEnvelopeAndAcceptsNoPrivateShape(t *testing.
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("canonical envelope did not decode: %v", err)
 	}
-	if decoded.Hint != hint || decoded.Cause != "safe detail" || decoded.CorrelationID != "corr-test" {
+	entry, _ := LookupCatalog("KB_RUNTIME_INPUT_INVALID")
+	if decoded.Hint != entry.Hint || decoded.Cause != "safe detail" || decoded.CorrelationID != "corr-test" {
 		t.Fatalf("decoded diagnostic = %+v", decoded)
 	}
 	if err := json.Unmarshal([]byte(`{"code":"KB_RUNTIME_INPUT_INVALID","message":"old private shape","reason":"old","meta":{}}`), &decoded); err == nil {
 		t.Fatal("private diagnostic JSON shape was accepted")
+	}
+}
+
+func TestDiagnosticJSONReconstructsCatalogTextFromDetails(t *testing.T) {
+	var decoded Diag
+	body := []byte(`{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"remote text","hint":"remote hint","details":{"permission":"plugins:manage"}}`)
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode catalog diagnostic: %v", err)
+	}
+	encoded, err := json.Marshal(&decoded)
+	if err != nil {
+		t.Fatalf("render reconstructed diagnostic: %v", err)
+	}
+	if strings.Contains(string(encoded), "remote text") || strings.Contains(string(encoded), "remote hint") || !strings.Contains(string(encoded), "plugins:manage") {
+		t.Fatalf("reconstructed diagnostic = %s", encoded)
+	}
+	if err := json.Unmarshal([]byte(`{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"remote text","hint":"remote hint"}`), &decoded); err != nil {
+		t.Fatalf("invalid remote catalog diagnostic should become a typed protocol diagnostic: %v", err)
+	}
+	if decoded.Code != "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE" || decoded.Meta["remoteCode"] != "KB_AUTH_FORBIDDEN" || decoded.Meta["fields"] != "permission" {
+		t.Fatalf("invalid remote diagnostic = %+v, want protocol failure with missing permission", decoded)
+	}
+}
+
+func TestDiagnosticJSONPreservesCatalogDeclaredRecoveryDetails(t *testing.T) {
+	original := New("KB_UPDATE_HOST_NOT_HEALTHY", "The update recovery did not complete.",
+		WithMeta(map[string]any{
+			"version": "1.2.3", "recoveryStage": "restore last healthy root",
+			"nextCommand": "kb-create doctor --platform-root '/tmp/KB Labs'",
+			"failureReason": "restore failed",
+		}))
+	encoded, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal recovery diagnostic: %v", err)
+	}
+	var decoded Diag
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("decode recovery diagnostic: %v", err)
+	}
+	for key, want := range map[string]string{
+		"version": "1.2.3", "recoveryStage": "restore last healthy root",
+		"nextCommand": "kb-create doctor --platform-root '/tmp/KB Labs'", "failureReason": "restore failed",
+	} {
+		if got := decoded.Meta[key]; got != want {
+			t.Errorf("decoded detail %q = %v, want %q", key, got, want)
+		}
+	}
+}
+
+func TestDiagnosticJSONRequiresAndRendersRunningHostNextCommand(t *testing.T) {
+	const command = "kb-create stop --platform-root '/tmp/KB Labs'"
+	original, err := FromCatalog("KB_HOST_ALREADY_RUNNING", map[string]string{"nextCommand": command})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Diag
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("decode running-host diagnostic: %v", err)
+	}
+	entry, _ := LookupCatalog("KB_HOST_ALREADY_RUNNING")
+	wantHint := renderTemplate(entry.Hint, map[string]string{"nextCommand": command}, map[string]struct{}{"nextCommand": {}})
+	if decoded.Hint != wantHint {
+		t.Fatalf("decoded hint = %q, want %q", decoded.Hint, wantHint)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "details")
+	missing, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(missing, &decoded); err != nil {
+		t.Fatalf("invalid running-host envelope should become a typed protocol diagnostic: %v", err)
+	}
+	if decoded.Code != "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE" || decoded.Meta["remoteCode"] != "KB_HOST_ALREADY_RUNNING" || decoded.Meta["fields"] != "nextCommand" {
+		t.Fatalf("invalid running-host diagnostic = %+v", decoded)
 	}
 }
 

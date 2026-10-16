@@ -48,7 +48,7 @@ describe('gatewayApiFetch auth mapping', () => {
     await expect(gatewayApiFetch('https://gateway.test/api')).rejects.toMatchObject({
       envelope: {
         code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
-        message: 'Gateway protocol failure during Gateway request: expected a canonical UX result from https://gateway.test (HTTP 403).',
+        message: 'The Gateway returned an invalid UX result.',
         hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
         details: { gatewayUrl: 'https://gateway.test', status: '403', operation: 'Gateway request' },
         correlationId: expect.any(String),
@@ -71,12 +71,44 @@ describe('gatewayApiFetch auth mapping', () => {
     });
     expect(malformed).toMatchObject({
       code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
-      message: 'Gateway protocol failure during Gateway request: expected a canonical UX result from https://gateway.test (HTTP 403).',
+      message: 'The Gateway returned an invalid UX result.',
       details: { gatewayUrl: 'https://gateway.test', status: '403', operation: 'Gateway request' },
       correlationId: expect.any(String),
     });
     expect(JSON.stringify(malformed)).not.toContain('raw body');
     expect(JSON.stringify(malformed)).not.toContain('permission');
+  });
+
+  // case: S-203.2
+  it('reconstructs catalog failures from details and rejects missing template values', async () => {
+    const remoteText = {
+      code: 'KB_AUTH_FORBIDDEN', area: 'auth', stage: 'run', severity: 'error', retryable: false,
+      message: 'remote attacker message', hint: 'remote attacker hint',
+    };
+    const context = { operation: 'Gateway request', gatewayUrl: 'https://gateway.test' };
+    const reconstructed = await decodeGatewayFailure(new Response(JSON.stringify({
+      ok: false,
+      error: { ...remoteText, details: { permission: 'users:read' } },
+    }), { status: 403 }), context);
+    expect(reconstructed).toMatchObject({
+      code: 'KB_AUTH_FORBIDDEN',
+      message: 'Permission denied: users:read',
+      hint: 'Ask your administrator for the permission needed to perform this operation.',
+      details: { permission: 'users:read', gatewayUrl: 'https://gateway.test' },
+    });
+    expect(JSON.stringify(reconstructed)).not.toContain('remote attacker');
+
+    const missing = await decodeGatewayFailure(new Response(JSON.stringify({
+      ok: false,
+      error: remoteText,
+    }), { status: 403 }), context);
+    expect(missing).toMatchObject({
+      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+      details: {
+        remoteCode: 'KB_AUTH_FORBIDDEN', gatewayUrl: 'https://gateway.test', status: '403', operation: 'Gateway request',
+      },
+    });
+    expect(JSON.stringify(missing)).not.toContain('remote attacker');
   });
 
   // case: S-203.2
@@ -264,7 +296,7 @@ describe('readGatewaySuccessData', () => {
     })).rejects.toMatchObject({
       envelope: {
         code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
-        message: 'Gateway protocol failure during Gateway request: expected a canonical UX result from https://gateway.test (HTTP 200).',
+        message: 'The Gateway returned an invalid UX result.',
         details: { operation: 'Gateway request', gatewayUrl: 'https://gateway.test', status: '200' },
       },
     });

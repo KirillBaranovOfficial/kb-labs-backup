@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
@@ -59,7 +60,7 @@ func TestDecodeSuccessResultRequiresTheSharedEnvelope(t *testing.T) {
 // case: S-224.2
 func TestDecodeResultReturnsCataloguedFailureEnvelope(t *testing.T) {
 	const gatewayCorrelationID = "0123456789abcdef0123456789abcdef"
-	body := []byte(`{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>.","correlationId":"` + gatewayCorrelationID + `"}}`)
+	body := []byte(`{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>.","correlationId":"` + gatewayCorrelationID + `","details":{"permission":"plugins:manage"}}}`)
 	var payload struct {
 		Status string `json:"status"`
 	}
@@ -81,7 +82,7 @@ func TestDecodeResultWithContextDropsRemoteTextAndRejectsUnknownCodes(t *testing
 	const password = "remote-password-marker"
 	const token = "remote-token-marker"
 	const gatewayCorrelationID = "fedcba9876543210fedcba9876543210"
-	body := []byte(`{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"` + password + ` ` + token + `","hint":"` + token + ` ` + password + `","cause":"` + password + `","correlationId":"` + gatewayCorrelationID + `","details":{"leak":"` + token + `"}}}`)
+	body := []byte(`{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"` + password + ` ` + token + `","hint":"` + token + ` ` + password + `","cause":"` + password + `","correlationId":"` + gatewayCorrelationID + `","details":{"permission":"plugins:manage"}}}`)
 	var payload struct{}
 	failure, err := DecodeResultWithContext(body, &payload, RemoteFailureContext{RequestStage: "register", HTTPStatus: 403})
 	if err != nil {
@@ -102,6 +103,28 @@ func TestDecodeResultWithContextDropsRemoteTextAndRejectsUnknownCodes(t *testing
 			t.Fatalf("remote secret survived in reconstructed diagnostic: %s", encoded)
 		}
 	}
+	if !bytes.Contains(encoded, []byte("Permission denied: plugins:manage")) || bytes.Contains(encoded, []byte("{permission}")) {
+		t.Fatalf("catalog message did not render the remote template value: %s", encoded)
+	}
+	for _, details := range []string{`{}`, `{"permission":"  "}`} {
+		invalid := []byte(`{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"remote","hint":"remote","correlationId":"` + gatewayCorrelationID + `","details":` + details + `}}`)
+		broken, decodeErr := DecodeResultWithContext(invalid, &payload, RemoteFailureContext{})
+		if decodeErr != nil || broken == nil || broken.Code != "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE" {
+			t.Fatalf("missing or invalid remote template values = (%#v, %v)", broken, decodeErr)
+		}
+		if broken.Meta["remoteCode"] != "KB_AUTH_FORBIDDEN" {
+			t.Fatalf("protocol diagnostic lost received code: %#v", broken.Meta)
+		}
+		if _, marshalErr := json.Marshal(broken); marshalErr != nil {
+			t.Fatalf("protocol diagnostic failed to render: %v", marshalErr)
+		}
+	}
+	undeclared := []byte(`{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"remote","hint":"remote","correlationId":"` + gatewayCorrelationID + `","details":{"permission":"plugins:manage","leak":"` + token + `"}}}`)
+	broken, decodeErr := DecodeResultWithContext(undeclared, &payload, RemoteFailureContext{})
+	if decodeErr != nil || broken == nil || broken.Code != "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE" ||
+		broken.Meta["remoteCode"] != "KB_AUTH_FORBIDDEN" || broken.Meta["fields"] != "leak" {
+		t.Fatalf("undeclared remote details = (%#v, %v), want protocol failure preserving code and field", broken, decodeErr)
+	}
 	unknown := []byte(`{"ok":false,"error":{"code":"KB_REMOTE_UNRECOGNIZED","area":"runtime","stage":"run","severity":"error","retryable":false,"message":"` + password + `","hint":"` + token + `","correlationId":"remote"}}`)
 	failure, err = DecodeResultWithContext(unknown, &payload, RemoteFailureContext{RequestStage: "login", HTTPStatus: 401})
 	if err != nil || failure == nil || failure.Code != "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE" || failure.Meta["requestStage"] != "login" || failure.Meta["httpStatus"] != 401 {
@@ -110,6 +133,22 @@ func TestDecodeResultWithContextDropsRemoteTextAndRejectsUnknownCodes(t *testing
 	encoded, _ = json.Marshal(failure)
 	if bytes.Contains(encoded, []byte(password)) || bytes.Contains(encoded, []byte(token)) {
 		t.Fatalf("unknown remote failure leaked response text: %s", encoded)
+	}
+}
+
+// case: S-203.2
+func TestDecodeResultPreservesCataloguedStructuredDetails(t *testing.T) {
+	body := []byte(`{"ok":false,"error":{"code":"KB_AUTH_SESSION_REVOKED","area":"auth","stage":"run","severity":"error","retryable":false,"message":"remote message","hint":"remote hint","correlationId":"0123456789abcdef0123456789abcdef","details":{"gatewayUrl":"https://gateway.test","reason":"revoked"}}}`)
+	var payload struct{}
+	failure, err := DecodeResult(body, &payload)
+	if err != nil || failure == nil {
+		t.Fatalf("DecodeResult = (%#v, %v)", failure, err)
+	}
+	if failure.Code != "KB_AUTH_SESSION_REVOKED" || failure.Meta["reason"] != "revoked" || failure.Meta["gatewayUrl"] != "https://gateway.test" {
+		t.Fatalf("decoded structured details = %#v", failure.Meta)
+	}
+	if strings.Contains(failure.Message, "remote message") || strings.Contains(failure.Hint, "remote hint") {
+		t.Fatalf("remote prose survived: %#v", failure)
 	}
 }
 

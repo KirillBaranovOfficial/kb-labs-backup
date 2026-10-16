@@ -11,6 +11,7 @@ import {
   ERROR_STAGES,
   ErrorEnvelopeError,
   createErrorEnvelope,
+  decodeErrorEnvelope,
   errorCatalog,
   getCatalogEntry,
   isErrorCode,
@@ -27,6 +28,64 @@ describe('mapErrorEnvelopeToExitCode', () => {
   it('maps catalogued invalid input to usage exit and other envelopes to failure', () => {
     expect(mapErrorEnvelopeToExitCode('KB_RUNTIME_INPUT_INVALID')).toBe(2);
     expect(mapErrorEnvelopeToExitCode('KB_RUNTIME_UNEXPECTED')).toBe(1);
+  });
+});
+
+describe('catalog producer contract', () => {
+  it('requires generated parameters even when a caller overrides the catalog hint', () => {
+    expect(createErrorEnvelope('KB_RUNTIME_UNKNOWN_COMMAND', { hint: 'Use the command registry.' })).toMatchObject({
+      code: 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION',
+      details: { originalCode: 'KB_RUNTIME_UNKNOWN_COMMAND', fields: 'binary' },
+    });
+  });
+});
+
+describe('received catalog envelope reconstruction', () => {
+  // case: S-203.2
+  it('renders catalog text from generated required details and reports missing values as protocol failures', () => {
+    const received = {
+      ...createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'plugins:manage' } }),
+      message: 'remote message',
+      hint: 'remote hint',
+    };
+    const reconstructed = decodeErrorEnvelope(received);
+    expect(reconstructed).toMatchObject({
+      code: 'KB_AUTH_FORBIDDEN',
+      message: 'Permission denied: plugins:manage',
+      hint: 'Ask your administrator for the permission needed to perform this operation.',
+      details: { permission: 'plugins:manage' },
+    });
+    expect(JSON.stringify(reconstructed)).not.toContain('remote ');
+
+    const missing = decodeErrorEnvelope({ ...received, details: {} });
+    expect(missing).toMatchObject({
+      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+      details: { remoteCode: 'KB_AUTH_FORBIDDEN', fields: 'permission' },
+    });
+
+    const undeclared = decodeErrorEnvelope({
+      ...received,
+      message: 'untrusted remote prose',
+      hint: 'untrusted remote hint',
+      details: { permission: 'plugins:manage', undeclaredRemoteField: 'value' },
+    });
+    expect(undeclared).toMatchObject({
+      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+      details: { remoteCode: 'KB_AUTH_FORBIDDEN', fields: 'undeclaredRemoteField' },
+    });
+    expect(JSON.stringify(undeclared)).not.toContain('untrusted remote');
+
+    const withSafeDetail = decodeErrorEnvelope({
+      ...createErrorEnvelope('KB_AUTH_SESSION_REVOKED', { details: { gatewayUrl: 'https://gateway.test' } }),
+      message: 'remote message',
+      hint: 'remote hint',
+      details: { gatewayUrl: 'https://gateway.test', reason: 'revoked' },
+    });
+    expect(withSafeDetail).toMatchObject({
+      code: 'KB_AUTH_SESSION_REVOKED',
+      details: { gatewayUrl: 'https://gateway.test', reason: 'revoked' },
+    });
+    expect(JSON.stringify(withSafeDetail)).not.toContain('remote ');
   });
 });
 
@@ -212,8 +271,9 @@ describe('shared envelope fixtures', () => {
 });
 
 describe('renderTemplate', () => {
-  it('reports a missing catalog template parameter as a defect', () => {
-    expect(() => renderTemplate('Port {port} in {where}', { port: '4000' })).toThrow('unrendered template parameter: where');
+  it('substitutes declared template names and preserves other braces literally', () => {
+    expect(renderTemplate('Port {port} in {where}', { port: '4000' }, ['port']))
+      .toBe('Port 4000 in {where}');
   });
 });
 
@@ -243,6 +303,23 @@ describe('createErrorEnvelope', () => {
       message: 'Adapter package @kb-labs/not-installed is not installed on this platform.',
     });
     expect(envelope).not.toHaveProperty('cause');
+  });
+
+  it('preserves braces inside dynamic values and free-form hints literally', () => {
+    const envelope = createErrorEnvelope('KB_ADAPTER_NOT_INSTALLED', {
+      details: { package: '@kb-labs/example/{braces}' },
+      hint: 'Inspect the literal {braces} before retrying.',
+    });
+    expect(envelope.message).toContain('@kb-labs/example/{braces}');
+    expect(envelope.hint).toBe('Inspect the literal {braces} before retrying.');
+  });
+
+  it('returns a catalogued producer-contract diagnostic for undeclared details', () => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+      details: { undeclaredEvidence: 'unexpected' },
+    });
+    expect(envelope.code).toBe('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION');
+    expect(envelope.details).toEqual({ originalCode: 'KB_RUNTIME_UNEXPECTED', fields: 'undeclaredEvidence' });
   });
 
   it('retains a cause that adds information beyond the message', () => {

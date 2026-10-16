@@ -1,19 +1,73 @@
 package diag
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
 
 // case: S-203.2
-func TestToEnvelopeRejectsUnrenderedHintTemplateParameters(t *testing.T) {
-	d := New("KB_RUNTIME_UNEXPECTED", "unexpected",
-		WithCorrelationID("corr-template"),
-		WithHint("Inspect {correlationId}; missing value: {missingValue}."),
+func TestToEnvelopeRejectsMissingRequiredParameter(t *testing.T) {
+	d := New("KB_RUNTIME_UNKNOWN_COMMAND", "The requested command is not available.", WithHint("Use the command registry."))
+	envelope, err := ToEnvelope(d)
+	var violation *Diag
+	if !errors.As(err, &violation) || violation.Code != "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION" {
+		t.Fatalf("ToEnvelope error = %v, want typed producer-contract diagnostic", err)
+	}
+	if violation.Meta["originalCode"] != "KB_RUNTIME_UNKNOWN_COMMAND" || violation.Meta["fields"] != "binary" || envelope.Code != "" {
+		t.Fatalf("contract violation = %+v, envelope = %+v", violation, envelope)
+	}
+}
+
+func TestToEnvelopeTreatsUndeclaredBracesAsLiteral(t *testing.T) {
+	d := New("KB_ADAPTER_NOT_INSTALLED", "Adapter package {package} is not installed. Literal {braces}.",
+		WithMeta(map[string]any{"package": "@kb-labs/example/{braces}"}),
+		WithHint("Inspect the literal {braces} before retrying."),
+	)
+	envelope, err := ToEnvelope(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Message != "Adapter package @kb-labs/example/{braces} is not installed. Literal {braces}." || envelope.Hint != "Inspect the literal {braces} before retrying." {
+		t.Fatalf("rendered envelope = %+v", envelope)
+	}
+}
+
+func TestToEnvelopeDoesNotRenderStructuredOnlyFieldNames(t *testing.T) {
+	d := New("KB_PLUGIN_CONTRACT_VIOLATION", "The literal {field} is part of this message.",
+		WithMeta(map[string]any{"field": "actual-field"}),
+		WithHint("Keep {field} literal in this hint."),
+	)
+	envelope, err := ToEnvelope(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Message != "The literal {field} is part of this message." || envelope.Hint != "Keep {field} literal in this hint." {
+		t.Fatalf("structured-only template name was substituted: %+v", envelope)
+	}
+}
+
+func TestContractViolationErrorIncludesCataloguedCodeAndFields(t *testing.T) {
+	err := NewContractViolation("KB_DEVKIT_TASK_GRAPH_INVALID", "package").Error()
+	if !strings.Contains(err, "KB_DEVKIT_TASK_GRAPH_INVALID") || !strings.Contains(err, "package") {
+		t.Fatalf("contract violation Error() = %q, want original code and offending fields", err)
+	}
+}
+
+func TestToEnvelopeRejectsUndeclaredDetailsWithTypedDiagnostic(t *testing.T) {
+	d := New("KB_HOST_START_FAILED", "The host process failed while starting.",
+		WithMeta(map[string]any{"undeclaredEvidence": "unexpected"}),
 	)
 	_, err := ToEnvelope(d)
-	if err == nil || !strings.Contains(err.Error(), "unrendered template parameter: missingValue") {
-		t.Fatalf("ToEnvelope error = %v, want missing template parameter defect", err)
+	var violation *Diag
+	if !errors.As(err, &violation) || violation.Code != "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION" {
+		t.Fatalf("ToEnvelope error = %v, want typed producer-contract diagnostic", err)
+	}
+	if violation.Meta["originalCode"] != d.Code || violation.Meta["fields"] != "undeclaredEvidence" {
+		t.Fatalf("contract violation details = %#v", violation.Meta)
+	}
+	if !strings.Contains(err.Error(), d.Code) || !strings.Contains(err.Error(), "undeclaredEvidence") {
+		t.Fatalf("contract violation error = %q, want original code and offending field", err.Error())
 	}
 }
 
@@ -61,7 +115,9 @@ func TestToEnvelopeRequiresGeneratedUnknownCommandTemplateParameter(t *testing.T
 		t.Fatalf("generated template parameters = %v, want [binary]", entry.TemplateParameters)
 	}
 	d := New(entry.Code, entry.Message)
-	if _, err := ToEnvelope(d); err == nil || !strings.Contains(err.Error(), "unrendered template parameter: binary") {
-		t.Fatalf("ToEnvelope error = %v, want missing generated binary parameter defect", err)
+	_, err := ToEnvelope(d)
+	var violation *Diag
+	if !errors.As(err, &violation) || violation.Code != "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION" || violation.Meta["fields"] != "binary" {
+		t.Fatalf("ToEnvelope error = %v, want missing generated binary contract diagnostic", err)
 	}
 }

@@ -17,7 +17,7 @@ import (
 
 func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	cause := errors.New("invalid config: token=top-secret-value")
-	value := NewDiag(CodeInputRequired, "", "", cause)
+	value := (&RequestValidationError{Code: CodeInputRequired, Field: "platformRoot", Cause: cause}).Diagnostic()
 	if value.Code != CodeInputRequired || value.Unwrap() != cause {
 		t.Fatalf("diag = %#v; cause was not kept internal", value)
 	}
@@ -31,6 +31,9 @@ func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	}
 	if envelope.Message != entry.Message || envelope.Hint != entry.Hint || envelope.Area != entry.Area || envelope.Stage != entry.Stage || envelope.Severity != entry.Severity || envelope.Retryable != entry.Retryable {
 		t.Fatalf("envelope = %+v; shared catalog entry = %+v", envelope, entry)
+	}
+	if envelope.Details["field"] != "platformRoot" {
+		t.Fatalf("envelope omitted producer field: %+v", envelope.Details)
 	}
 	data, err := json.Marshal(envelope)
 	if err != nil {

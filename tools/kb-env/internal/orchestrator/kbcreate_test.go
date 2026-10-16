@@ -27,7 +27,7 @@ func TestInstallUsesV2RequestAndParsesTypedStreamFailure(t *testing.T) {
 	}
 	argsFile := filepath.Join(root, "args")
 	fake := filepath.Join(root, "kb-create")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$KB_CREATE_ARGS_FILE\"\nprintf '%s\\n' '{\"ok\":false,\"error\":{\"code\":\"KB_INSTALL_PORT_IN_USE\",\"area\":\"install\",\"stage\":\"preflight\",\"severity\":\"error\",\"retryable\":false,\"message\":\"Port is in use.\",\"hint\":\"Stop the process.\",\"correlationId\":\"stream-test-id\"}}'\nprintf '%s\\n' '{\"ok\":true,\"data\":null,\"meta\":{\"stream\":{\"terminal\":true,\"exitCode\":1}}}'\nexit 1\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$KB_CREATE_ARGS_FILE\"\nprintf '%s\\n' '{\"ok\":false,\"error\":{\"code\":\"KB_INSTALL_PORT_IN_USE\",\"area\":\"install\",\"stage\":\"preflight\",\"severity\":\"error\",\"retryable\":false,\"message\":\"Port 45123 is already in use.\",\"hint\":\"Stop the process using port 45123, then rerun `kb-create install`.\",\"correlationId\":\"stream-test-id\",\"details\":{\"port\":\"45123\",\"pid\":\"1234\",\"command\":\"test-listener\",\"operation\":\"install\"}}}'\nprintf '%s\\n' '{\"ok\":true,\"data\":null,\"meta\":{\"stream\":{\"terminal\":true,\"exitCode\":1}}}'\nexit 1\n"
 	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
