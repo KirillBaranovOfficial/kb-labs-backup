@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/proc"
 )
 
@@ -452,20 +453,61 @@ func waitCommand(args []string, stdout, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("kb-runner wait: %w; next: kb-runner ps --state %s", err, shellQuote(*state))
 	}
-	if run.Status == proc.StatusLost {
-		return 1, fmt.Errorf("kb-runner wait: run %s was lost: %s; next: kb-runner ps --state %s", run.Tag, run.Error, shellQuote(*state))
+	return renderWaitOutcome(run, *state, stdout, os.Args[0])
+}
+
+func renderWaitOutcome(run proc.RunInfo, state string, stdout io.Writer, executable string) (int, error) {
+	if !run.Status.Terminal() {
+		entry, ok := diag.LookupCatalog("KB_RUNTIME_WAIT_NOT_FINISHED")
+		if !ok {
+			return 1, errors.New("kb-runner wait: not-finished diagnostic is missing from the platform catalog")
+		}
+		inspectCommand := fmt.Sprintf("%s ps --state %s", shellQuote(executable), shellQuote(state))
+		diagnostic := diag.New(
+			entry.Code,
+			entry.Message,
+			diag.WithReason("wait received a run record before it reached a terminal state"),
+			diag.WithHint(entry.Hint+"\n  "+inspectCommand),
+			diag.WithProcessExitCode(1),
+		)
+		return 1, waitDiagnosticError{diagnostic: diagnostic}
 	}
-	if _, err := fmt.Fprintf(stdout, "run %s exited after %dms\n", run.Tag, run.DurationMS); err != nil {
-		return 1, fmt.Errorf("kb-runner wait: write output: %w", err)
+	switch run.Status {
+	case proc.StatusDead:
+		if _, err := fmt.Fprintf(stdout, "run %s exited after %dms\n", run.Tag, run.DurationMS); err != nil {
+			return 1, fmt.Errorf("kb-runner wait: write output: %w", err)
+		}
+		if run.Signal != "" {
+			number, _ := strconv.Atoi(run.Signal)
+			return 128 + number, nil
+		}
+		if run.ExitCode != nil {
+			return *run.ExitCode, nil
+		}
+		return 1, errors.New("kb-runner wait: run ended without an exit code or signal")
+	case proc.StatusLost:
+		return 1, fmt.Errorf("kb-runner wait: run %s was lost: %s; next: kb-runner ps --state %s", run.Tag, run.Error, shellQuote(state))
+	case proc.StatusDirty:
+		entry, ok := diag.LookupCatalog("KB_RUNTIME_RUN_DIRTY")
+		if !ok {
+			return 1, errors.New("kb-runner wait: dirty-run diagnostic is missing from the platform catalog")
+		}
+		commands := fmt.Sprintf("\n  %s ps --state %s\n  %s ps --leftovers --state %s\n  %s gc --state %s", shellQuote(executable), shellQuote(state), shellQuote(executable), shellQuote(state), shellQuote(executable), shellQuote(state))
+		return 1, fmt.Errorf("%s: %s\nreason: %s\nhint: %s%s", entry.Code, entry.Message, run.Error, entry.Hint, commands)
 	}
-	if run.Signal != "" {
-		number, _ := strconv.Atoi(run.Signal)
-		return 128 + number, nil
-	}
-	if run.ExitCode != nil {
-		return *run.ExitCode, nil
-	}
-	return 1, errors.New("kb-runner wait: run ended without an exit code or signal")
+	return 1, fmt.Errorf("kb-runner wait: unknown run status %q", run.Status)
+}
+
+type waitDiagnosticError struct {
+	diagnostic *diag.Diag
+}
+
+func (err waitDiagnosticError) Error() string {
+	return fmt.Sprintf("%s: %s\nreason: %s\nhint: %s", err.diagnostic.Code, err.diagnostic.Message, err.diagnostic.Reason, err.diagnostic.Hint)
+}
+
+func (err waitDiagnosticError) Unwrap() error {
+	return err.diagnostic
 }
 
 func shellJoin(args []string) string {

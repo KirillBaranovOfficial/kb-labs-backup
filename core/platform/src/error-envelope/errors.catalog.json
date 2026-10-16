@@ -203,6 +203,24 @@
       "httpStatus": 401
     },
     {
+      "code": "KB_RUNTIME_RUN_DIRTY",
+      "area": "runtime",
+      "stage": "recover",
+      "severity": "error",
+      "retryable": false,
+      "message": "The run ended with a resource or scratch cleanup failure.",
+      "hint": "Inspect the failed resource or scratch path in the run record; inspect resource leftovers and retry cleanup using the commands shown below."
+    },
+    {
+      "code": "KB_RUNTIME_WAIT_NOT_FINISHED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The wait outcome was requested before the run finished.",
+      "hint": "Inspect the run record with the command shown below, then wait again after it reaches a terminal state."
+    },
+    {
       "code": "KB_CONFIG_APPLY_FAILED",
       "area": "config",
       "stage": "apply",

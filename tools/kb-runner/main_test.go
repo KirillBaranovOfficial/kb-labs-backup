@@ -18,8 +18,285 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/proc"
 )
+
+func TestWaitRendererCoversEveryRunStatus(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state with spaces")
+	zero := 0
+	statuses := []struct {
+		status   proc.RunStatus
+		terminal bool
+	}{
+		{proc.StatusRunning, false},
+		{proc.StatusQueued, false},
+		{proc.StatusBlocked, false},
+		{proc.StatusStalled, false},
+		{proc.StatusStarting, false},
+		{proc.StatusDead, true},
+		{proc.StatusLost, true},
+		{proc.StatusDirty, true},
+	}
+	seen := make(map[proc.RunStatus]bool, len(statuses))
+	var nonterminalOutcome string
+	for _, entry := range statuses {
+		status := entry.status
+		if seen[status] {
+			t.Fatalf("status %q was enumerated more than once", status)
+		}
+		seen[status] = true
+		if got := status.Terminal(); got != entry.terminal {
+			t.Errorf("%s.Terminal() = %t, want %t", status, got, entry.terminal)
+		}
+		run := proc.RunInfo{Status: status, Tag: "runner", DurationMS: 12, Error: "scratch path /tmp/run/scratch cleanup failed"}
+		if status == proc.StatusDead {
+			run.ExitCode = &zero
+		}
+		var output bytes.Buffer
+		code, err := renderWaitOutcome(run, state, &output, "kb-runner")
+		handled := true
+		switch status {
+		case proc.StatusRunning, proc.StatusQueued, proc.StatusBlocked, proc.StatusStalled, proc.StatusStarting:
+			catalogEntry, ok := diag.LookupCatalog("KB_RUNTIME_WAIT_NOT_FINISHED")
+			if !ok || code == 0 || err == nil {
+				t.Errorf("nonterminal %s rendered code %d error %v catalog entry exists=%t", status, code, err, ok)
+			} else {
+				var diagnostic *diag.Diag
+				if !errors.As(err, &diagnostic) || diagnostic.Code != catalogEntry.Code {
+					t.Errorf("nonterminal %s outcome is not typed as %s: %v", status, catalogEntry.Code, err)
+				}
+				if nonterminalOutcome == "" {
+					nonterminalOutcome = err.Error()
+				} else if err.Error() != nonterminalOutcome {
+					t.Errorf("nonterminal %s produced a different outcome: %q, want %q", status, err, nonterminalOutcome)
+				}
+				for _, want := range []string{
+					catalogEntry.Code, catalogEntry.Message, catalogEntry.Hint,
+					shellQuote("kb-runner") + " ps --state " + shellQuote(state),
+				} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("nonterminal %s outcome %q omitted %q", status, err, want)
+					}
+				}
+			}
+		case proc.StatusDead:
+			if code != 0 || err != nil || !strings.Contains(output.String(), "run runner exited after 12ms") {
+				t.Errorf("dead outcome = code %d error %v output %q", code, err, output.String())
+			}
+		case proc.StatusLost:
+			if code == 0 || err == nil {
+				t.Errorf("lost outcome = code %d error %v", code, err)
+			}
+		case proc.StatusDirty:
+			entry, ok := diag.LookupCatalog("KB_RUNTIME_RUN_DIRTY")
+			if !ok || code == 0 || err == nil {
+				t.Fatalf("dirty outcome = code %d error %v, catalog entry exists=%t", code, err, ok)
+			}
+			for _, want := range []string{
+				entry.Code, entry.Message, run.Error, entry.Hint,
+				shellQuote("kb-runner") + " ps --state " + shellQuote(state),
+				shellQuote("kb-runner") + " ps --leftovers --state " + shellQuote(state),
+				shellQuote("kb-runner") + " gc --state " + shellQuote(state),
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("dirty outcome %q omitted %q", err, want)
+				}
+			}
+		default:
+			handled = false
+		}
+		if !handled {
+			t.Errorf("test has no assertion for run status %q", status)
+		}
+	}
+}
+
+// case: S-237.48
+func TestWaitReturnsDirtyDiagnosticAfterLostResourceCleanup(t *testing.T) {
+	testWaitReturnsDirtyDiagnosticAfterLostCleanup(t, true)
+}
+
+// case: S-237.48
+func TestWaitReturnsDirtyDiagnosticAfterLostScratchCleanup(t *testing.T) {
+	testWaitReturnsDirtyDiagnosticAfterLostCleanup(t, false)
+}
+
+func testWaitReturnsDirtyDiagnosticAfterLostCleanup(t *testing.T, resource bool) {
+	t.Helper()
+	state := t.TempDir()
+	runner := buildRunnerBinary(t)
+	tag := "lost-scratch"
+	path := filepath.Join(state, "runs", "owned-path")
+	childPIDFile := filepath.Join(state, "child.pid")
+	script := `printf '%s' "$$" > "$1"; exec /bin/sleep 30`
+	if resource {
+		tag = "lost-resource"
+		script = `"$1" own path --create file "$2"; printf '%s' "$$" > "$3"; exec /bin/sleep 30`
+	}
+	commandArgs := []string{"run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "stdout"), "--stderr", filepath.Join(state, "stderr"), "--", "/bin/sh", "-c", script}
+	if resource {
+		commandArgs = append(commandArgs, "sh", runner, path, childPIDFile)
+	} else {
+		commandArgs = append(commandArgs, "sh", childPIDFile)
+	}
+	runCommand := exec.Command(runner, commandArgs...)
+	var run proc.RunInfo
+	var scratch string
+	var childPID int
+	var childIdentity string
+	if err := runCommand.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		killOwnedProcess(childPID, childIdentity)
+		for _, child := range run.Tree {
+			killOwnedProcess(child.PID, child.Identity)
+		}
+		killOwnedProcess(run.PID, run.StartedAt)
+		_ = runCommand.Process.Kill()
+		_ = runCommand.Wait()
+	})
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		listing := proc.List(state)
+		if listing.Error != nil {
+			t.Fatalf("list active test run: %v", listing.Error)
+		}
+		for _, candidate := range listing.Runs {
+			if candidate.Tag == tag && candidate.Status == proc.StatusRunning {
+				run = candidate
+				if resource {
+					if _, err := os.Stat(path); err == nil {
+						break
+					}
+				} else {
+					matches, err := filepath.Glob(filepath.Join(state, "runs", candidate.RunID, "scratch"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(matches) == 1 {
+						scratch = matches[0]
+						break
+					}
+				}
+			}
+		}
+		if run.PID != 0 && fileExists(childPIDFile) && (resource && fileExists(path) || !resource && scratch != "") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if run.PID == 0 {
+		t.Fatalf("run %q did not become visible", tag)
+	}
+	pidData, err := os.ReadFile(childPIDFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childPID, err = strconv.Atoi(string(pidData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	childIdentity, alive, err := proc.ProcessIdentity(childPID)
+	if err != nil || !alive || childIdentity == "" {
+		t.Fatalf("inspect test-owned child %d: identity=%q alive=%t error=%v", childPID, childIdentity, alive, err)
+	}
+	if resource {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := os.RemoveAll(scratch); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(t.TempDir(), scratch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	killOwnedProcess(run.PID, run.StartedAt)
+	terminalDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(terminalDeadline) {
+		listing := proc.List(state)
+		for _, candidate := range listing.Runs {
+			if candidate.Tag == tag && candidate.Status.Terminal() {
+				run = candidate
+				break
+			}
+		}
+		if run.Status.Terminal() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !run.Status.Terminal() {
+		t.Fatalf("keeper loss did not become terminal; status=%q", run.Status)
+	}
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	procRun, procWaitErr := proc.WaitTag(waitCtx, state, tag)
+	waitCancel()
+	if procWaitErr != nil || procRun.Status != proc.StatusDirty || !strings.Contains(procRun.Error, failedCleanupPath(resource, path, scratch)) {
+		t.Fatalf("proc wait result = %+v, %v; want dirty cleanup outcome", procRun, procWaitErr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	wait := exec.CommandContext(ctx, runner, "wait", "--tag", tag, "--state", state)
+	waitOutput, waitErr := wait.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(waitErr, &exitErr) || exitErr.ExitCode() != 1 {
+		listing := proc.List(state)
+		t.Fatalf("dirty wait result = %v, output=%s; listing=%+v; want prompt exit 1", waitErr, waitOutput, listing)
+	}
+	failedPath := path
+	if !resource {
+		failedPath = scratch
+	}
+	for _, want := range []string{
+		"KB_RUNTIME_RUN_DIRTY", failedPath,
+		shellQuote(runner) + " ps --state " + shellQuote(state),
+		shellQuote(runner) + " ps --leftovers --state " + shellQuote(state),
+	} {
+		if !strings.Contains(string(waitOutput), want) {
+			t.Errorf("dirty wait output %q omitted %q", waitOutput, want)
+		}
+	}
+}
+
+func failedCleanupPath(resource bool, path, scratch string) string {
+	if resource {
+		return path
+	}
+	return scratch
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func killOwnedProcess(pid int, expectedIdentity string) {
+	if pid <= 0 || expectedIdentity == "" {
+		return
+	}
+	identity, alive, err := proc.ProcessIdentity(pid)
+	if err == nil && alive && identity == expectedIdentity {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
+func buildRunnerBinary(t *testing.T) string {
+	t.Helper()
+	runner := filepath.Join(t.TempDir(), "kb-runner")
+	build := exec.Command("go", "build", "-o", runner, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build kb-runner: %v\n%s", err, output)
+	}
+	return runner
+}
 
 // case: S-237.27
 func TestQuotaShowSetUsesStateDirectoryValues(t *testing.T) {

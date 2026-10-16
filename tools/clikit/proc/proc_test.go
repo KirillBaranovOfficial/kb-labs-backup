@@ -349,7 +349,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	if !waitUntil(5*time.Second, func() bool {
 		listing := proc.List(state)
 		if listing.Error != nil || len(listing.Runs) != 1 ||
-			(listing.Runs[0].Status != proc.StatusDead && listing.Runs[0].Status != proc.StatusLost) || countEvents(t, state, "teardown") != 1 {
+			!listing.Runs[0].Status.Terminal() || countEvents(t, state, "teardown") != 1 {
 			return false
 		}
 		teardown := eventOfType(t, state, proc.EventTeardown)

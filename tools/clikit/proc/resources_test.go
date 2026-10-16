@@ -419,6 +419,84 @@ func TestFailedResourceCleanupMarksDirtyAndGCRetriesEntry(t *testing.T) {
 }
 
 // case: S-237.48
+func TestWaitReturnsForLostRunWithFailedResourceCleanup(t *testing.T) {
+	state := t.TempDir()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "cleanup-roots.json"), []byte("["+strconv.Quote(root)+"]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := record{RunID: "lost-resource", Tag: "lost-resource", StateDir: state, PID: 2147483647, StartedAt: "stale", Status: StatusRunning}
+	if err := writeRecordAtomic(run); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "owned")
+	if err := CreateOwnedPath(state, run.RunID, path, OwnedFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordObservedKeeperLoss(state, run.RunID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	got, err := WaitTag(ctx, state, run.Tag)
+	if err != nil {
+		t.Fatalf("wait for lost run with failed resource cleanup: %v", err)
+	}
+	if got.Status != StatusDirty || !strings.Contains(got.Error, path) {
+		t.Fatalf("wait result = status %q error %q, want dirty cleanup failure for %q", got.Status, got.Error, path)
+	}
+}
+
+// case: S-237.48
+func TestWaitReturnsForLostRunWithFailedScratchCleanup(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs", "lost-scratch", "scratch"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	scratch := filepath.Join(state, "runs", "lost-scratch", "scratch")
+	info, err := os.Lstat(scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := resourceIdentity(scratch, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := record{RunID: "lost-scratch", Tag: "lost-scratch", StateDir: state, PID: 2147483647, StartedAt: "stale", Status: StatusRunning,
+		Scratch: scratch, ScratchDevice: identity.Device, ScratchInode: identity.Inode}
+	if err := writeRecordAtomic(run); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(scratch); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), scratch); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordObservedKeeperLoss(state, run.RunID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	got, err := WaitTag(ctx, state, run.Tag)
+	if err != nil {
+		t.Fatalf("wait for lost run with failed scratch cleanup: %v", err)
+	}
+	if got.Status != StatusDirty || !strings.Contains(got.Error, scratch) {
+		t.Fatalf("wait result = status %q error %q, want dirty scratch cleanup failure for %q", got.Status, got.Error, scratch)
+	}
+}
+
+// case: S-237.48
 func TestLedgerPersistenceFailureLeavesDirtyPendingEntryForGC(t *testing.T) {
 	state := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {

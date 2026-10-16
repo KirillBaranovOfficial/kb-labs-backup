@@ -604,7 +604,10 @@ func markLostLocked(stateDir string, rec record) error {
 	}
 	if resourceErr != nil {
 		rec.Status = StatusDirty
-		rec.Error += "; resource cleanup: " + resourceErr.Error()
+		rec.Error += "; resource or scratch cleanup failed: " + resourceErr.Error()
+		if scratchErr != nil {
+			rec.Error += fmt.Sprintf("; scratch path %q cleanup failed: %v", scratch, scratchErr)
+		}
 	}
 	if err := writeRecordAtomic(rec); err != nil {
 		return fmt.Errorf("record lost run %s: %w", rec.RunID, err)
@@ -697,7 +700,7 @@ func updateRecord(stateDir, runID string, update func(*record) error) error {
 
 func completeRecord(stateDir, runID string, code *int, signal string, duration time.Duration, final record) error {
 	return updateRecord(stateDir, runID, func(rec *record) error {
-		if rec.Status != StatusDirty && rec.Status != StatusLost {
+		if !rec.Status.Terminal() {
 			rec.Status = StatusDead
 		}
 		rec.ExitCode = code
@@ -757,11 +760,15 @@ func waitRun(ctx context.Context, stateDir, tag string, latest bool) (RunInfo, e
 		if err != nil {
 			return RunInfo{}, err
 		}
-		if match != nil && match.Status == StatusDead && (match.ExitCode != nil || match.Signal != "") {
-			return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, SlotGroup: match.SlotGroup, ExitCode: match.ExitCode, Signal: match.Signal, DurationMS: match.DurationMS}, nil
-		}
-		if match != nil && match.Status == StatusLost {
-			return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, Error: match.Error, DurationMS: match.DurationMS}, nil
+		if match != nil && match.Status.Terminal() {
+			switch match.Status {
+			case StatusDead:
+				if match.ExitCode != nil || match.Signal != "" {
+					return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, SlotGroup: match.SlotGroup, ExitCode: match.ExitCode, Signal: match.Signal, DurationMS: match.DurationMS}, nil
+				}
+			case StatusLost, StatusDirty:
+				return RunInfo{RunID: match.RunID, Tag: match.Tag, PID: match.PID, StartedAt: match.StartedAt, Status: match.Status, Command: match.Command, Error: match.Error, DurationMS: match.DurationMS}, nil
+			}
 		}
 		select {
 		case <-ctx.Done():

@@ -126,6 +126,18 @@ const (
 	StatusDirty    RunStatus = "dirty"
 )
 
+// Terminal reports whether the run has reached an outcome that waiters should
+// observe without continuing to poll.
+func (status RunStatus) Terminal() bool {
+	switch status {
+	case StatusDead, StatusLost, StatusDirty:
+		return true
+	case StatusRunning, StatusQueued, StatusBlocked, StatusStalled, StatusStarting:
+		return false
+	}
+	return false
+}
+
 type Process struct {
 	PID              int       `json:"pid"`
 	PPID             int       `json:"ppid"`
@@ -493,7 +505,7 @@ func List(stateDir string) Listing {
 			if status == StatusStarting {
 				status = StatusQueued
 			}
-		} else if rec.Status == StatusLost || rec.Status == StatusDirty {
+		} else if rec.Status.Terminal() {
 			status = rec.Status
 		} else if live && identity == rec.StartedAt {
 			status = StatusRunning
@@ -508,7 +520,7 @@ func List(stateDir string) Listing {
 			if !rec.EnqueuedAt.IsZero() {
 				elapsed = now.Sub(rec.EnqueuedAt).Milliseconds()
 			}
-		} else if status != StatusDead && status != StatusDirty && !rec.StartedAtTime.IsZero() {
+		} else if !status.Terminal() && !rec.StartedAtTime.IsZero() {
 			elapsed = now.Sub(rec.StartedAtTime).Milliseconds()
 		}
 		position := 0
