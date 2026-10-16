@@ -9,12 +9,15 @@ import (
 )
 
 type procStat struct {
-	PID        int
-	Comm       string
-	State      byte
-	PPID       int
-	StartTicks int64
-	Identity   string
+	PID           int
+	Comm          string
+	State         byte
+	PPID          int
+	StartTicks    int64
+	UserTicks     int64
+	SystemTicks   int64
+	ResidentPages int64
+	Identity      string
 }
 
 // parseProcStat parses Linux /proc/<pid>/stat. Comm is parenthesized but may
@@ -31,7 +34,7 @@ func parseProcStat(data string) (procStat, error) {
 	}
 	fields := strings.Fields(data[close+1:])
 	// fields[0] is stat field 3 (state); field 22 is index 19 here.
-	if len(fields) <= 19 || len(fields[0]) != 1 {
+	if len(fields) <= 21 || len(fields[0]) != 1 {
 		return procStat{}, errors.New("proc stat does not contain required fields")
 	}
 	ppid, err := strconv.Atoi(fields[1])
@@ -42,7 +45,13 @@ func parseProcStat(data string) (procStat, error) {
 	if err != nil || startTicks < 0 {
 		return procStat{}, errors.New("parse proc stat start ticks: invalid value")
 	}
-	return procStat{PID: pid, Comm: data[open+1 : close], State: fields[0][0], PPID: ppid, StartTicks: startTicks, Identity: strconv.FormatInt(startTicks, 10)}, nil
+	userTicks, uErr := strconv.ParseInt(fields[11], 10, 64)
+	systemTicks, sErr := strconv.ParseInt(fields[12], 10, 64)
+	residentPages, rErr := strconv.ParseInt(fields[21], 10, 64)
+	if uErr != nil || sErr != nil || rErr != nil || residentPages < 0 {
+		return procStat{}, errors.New("proc stat has invalid CPU or resident memory fields")
+	}
+	return procStat{PID: pid, Comm: data[open+1 : close], State: fields[0][0], PPID: ppid, StartTicks: startTicks, UserTicks: userTicks, SystemTicks: systemTicks, ResidentPages: residentPages, Identity: strconv.FormatInt(startTicks, 10)}, nil
 }
 
 func parseProcBootTime(data string) (time.Time, error) {

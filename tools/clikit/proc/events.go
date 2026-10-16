@@ -22,6 +22,7 @@ func ParseEventFilter(value string) ([]EventType, error) {
 	allowed := map[EventType]bool{
 		EventQueued: true, EventBlocked: true, EventStart: true,
 		EventStall: true, EventExit: true, EventLost: true, EventTeardown: true,
+		EventPressure: true, EventOverBudget: true,
 	}
 	parts := strings.Split(value, ",")
 	filters := make([]EventType, 0, len(parts))

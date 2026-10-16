@@ -2,6 +2,21 @@
 
 package proc
 
+/*
+#cgo LDFLAGS: -lproc
+#include <libproc.h>
+#include <sys/proc.h>
+#include <stdint.h>
+
+static int kb_proc_metrics(pid_t pid, uint64_t *rss, uint64_t *cpu_ns) {
+	struct rusage_info_v2 usage;
+	if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)&usage) != 0) return 0;
+	*rss = usage.ri_resident_size;
+	*cpu_ns = usage.ri_user_time + usage.ri_system_time;
+	return 1;
+}
+*/
+import "C"
 import (
 	"bytes"
 	"encoding/binary"
@@ -24,11 +39,14 @@ func darwinProcessSnapshot(runID string) ([]Process, error) {
 			continue
 		}
 		started := time.Unix(info.Proc.P_starttime.Sec, int64(info.Proc.P_starttime.Usec)*1000)
+		var rss, cpuNS C.uint64_t
+		metricsAvailable := C.kb_proc_metrics(C.pid_t(info.Proc.P_pid), &rss, &cpuNS) != 0
 		processes = append(processes, Process{
 			PID: int(info.Proc.P_pid), PPID: int(info.Eproc.Ppid),
 			Command:   darwinCommandName(info.Proc.P_comm[:]),
 			StartedAt: started, ElapsedMS: max(int64(0), time.Since(started).Milliseconds()),
 			Identity: formatStart(&info), uid: info.Eproc.Ucred.Uid,
+			RSSBytes: uint64(rss), CPUSeconds: float64(cpuNS) / 1e9, MetricsAvailable: metricsAvailable,
 		})
 	}
 	candidates := processInspectionCandidates(processes, syscall.Getpid(), uint32(unix.Getuid()))

@@ -63,7 +63,7 @@ func GateStatus(stateDir, name string) (GateInfo, bool, error) {
 	return info, held, err
 }
 
-func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID int, parentIdentity string) error {
+func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID int, parentIdentity string, source ResourceSource) error {
 	if cfg.Slots < 0 || (cfg.SlotGroup == "") != (cfg.Slots == 0) {
 		return errors.New("proc: --slot-group and positive --slots must be supplied together")
 	}
@@ -81,17 +81,23 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 		if err != nil {
 			return err
 		}
+		known, err := readRecordsLocked(cfg.StateDir)
+		if err != nil {
+			return err
+		}
+		learned := learnedUsage(known, cfg.CostKey)
+		cost := effectiveResourceUsage(resourceUsage{MemoryBytes: cfg.MemoryBytes, MinCPUs: cfg.CPUsMin, DiskBytes: cfg.DiskBytes}, learned)
 		rec := record{
 			RunID: runID, Tag: cfg.Tag, LatestTag: cfg.LatestTag, PID: parentPID, StartedAt: parentIdentity,
 			Command: cfg.Command, StateDir: cfg.StateDir, Status: StatusQueued,
 			SlotGroup: cfg.SlotGroup, Slots: cfg.Slots, QueueOrder: order,
 			EnqueuedAt: time.Now().UTC(), WaitGate: cfg.WaitGate, HoldGate: cfg.HoldGate, MinFree: cfg.MinFree,
+			CostKey: cfg.CostKey, MemoryBytes: cost.MemoryBytes, CPUsMin: cost.MinCPUs, CPUsMax: cfg.CPUsMax, DiskBytes: cost.DiskBytes,
 		}
 		if err := writeRecordAtomic(rec); err != nil {
 			return fmt.Errorf("proc: record queued run: %w", err)
 		}
-		event := eventFor(rec, EventQueued)
-		return appendEvent(cfg.StateDir, event)
+		return appendEvent(cfg.StateDir, eventFor(rec, EventQueued))
 	}); err != nil {
 		return err
 	}
@@ -112,11 +118,30 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 			if err != nil {
 				return err
 			}
-			decision, err := admissionStateLocked(cfg.StateDir, rec)
+			decision, err := admissionStateLocked(cfg.StateDir, rec, source)
 			if err != nil {
 				return err
 			}
+			notice := resourceNotice(source.Snapshot())
 			if decision.Reason == "" {
+				quota, err := effectiveQuota(cfg.StateDir, source)
+				if err != nil {
+					return err
+				}
+				others, err := readRecordsLocked(cfg.StateDir)
+				if err != nil {
+					return err
+				}
+				usedCPUs := 0
+				for _, other := range others {
+					if other.RunID != rec.RunID && (other.Status == StatusStarting || other.Status == StatusRunning || other.Status == StatusStalled) {
+						usedCPUs += max(other.CPUsMin, other.GrantedCPUs)
+					}
+				}
+				if rec.CPUsMax > 0 {
+					rec.GrantedCPUs = min(rec.CPUsMax, max(rec.CPUsMin, quota.CPUs-usedCPUs))
+				}
+				rec.ResourceNotice = notice
 				rec.Status = StatusStarting
 				rec.WaitReason = ""
 				if err := writeRecordAtomic(rec); err != nil {
@@ -134,6 +159,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 				statusChanged := rec.Status != decision.Status
 				rec.Status = decision.Status
 				rec.WaitReason = decision.Reason
+				rec.ResourceNotice = notice
 				if err := writeRecordAtomic(rec); err != nil {
 					return err
 				}
@@ -151,6 +177,10 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 				event.DiskFreeBytes = decision.DiskFreeBytes
 				return appendEvent(cfg.StateDir, event)
 			}
+			if rec.ResourceNotice != notice {
+				rec.ResourceNotice = notice
+				return writeRecordAtomic(rec)
+			}
 			return nil
 		})
 		if err != nil {
@@ -167,7 +197,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 	}
 }
 
-func admissionStateLocked(stateDir string, candidate record) (admissionDecision, error) {
+func admissionStateLocked(stateDir string, candidate record, source ResourceSource) (admissionDecision, error) {
 	records, err := readRecordsLocked(stateDir)
 	if err != nil {
 		return admissionDecision{}, err
@@ -215,20 +245,126 @@ func admissionStateLocked(stateDir string, candidate record) (admissionDecision,
 			}
 		}
 	}
-	if candidate.MinFree > 0 {
+	quota, err := effectiveQuota(stateDir, source)
+	if err != nil {
+		return admissionDecision{}, err
+	}
+	activeUsage := resourceUsage{}
+	queuedBefore := 0
+	for _, rec := range records {
+		if rec.RunID == candidate.RunID {
+			continue
+		}
+		if (rec.Status == StatusQueued || rec.Status == StatusBlocked) && rec.QueueOrder < candidate.QueueOrder {
+			queuedBefore++
+		}
+		if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled {
+			activeUsage.MemoryBytes += rec.MemoryBytes
+			activeUsage.MinCPUs += max(rec.CPUsMin, rec.GrantedCPUs)
+			activeUsage.DiskBytes += rec.DiskBytes
+		}
+	}
+	if queuedBefore > 0 {
+		return admissionDecision{Reason: fmt.Sprintf("waiting behind %d earlier run(s)", queuedBefore), Status: StatusQueued, Position: position + queuedBefore}, nil
+	}
+	if reason, err := admissionPressureLocked(stateDir, candidate, source); err != nil {
+		return admissionDecision{}, err
+	} else if reason != "" {
+		return admissionDecision{Reason: reason, Status: StatusBlocked, Position: position}, nil
+	}
+	minFree := max(candidate.MinFree, quota.MinFree)
+	if candidate.DiskBytes > 0 || minFree > 0 {
 		free, err := freeDiskBytes(stateDir)
 		if err != nil {
 			return admissionDecision{}, err
 		}
-		if free < candidate.MinFree {
-			return admissionDecision{
-				Reason: fmt.Sprintf("disk budget: need %d bytes, have %d", candidate.MinFree, free),
-				Status: StatusBlocked, Position: position,
-				DiskNeedBytes: candidate.MinFree, DiskFreeBytes: free,
-			}, nil
+		if !diskFits(free, activeUsage.DiskBytes, candidate.DiskBytes, minFree) {
+			need := candidate.DiskBytes + minFree
+			reason := fmt.Sprintf("disk budget: need %s plus min-free %s, have %s with %s reserved", FormatResourceBytes(candidate.DiskBytes), FormatResourceBytes(minFree), FormatResourceBytes(free), FormatResourceBytes(activeUsage.DiskBytes))
+			return admissionDecision{Reason: reason, Status: StatusBlocked, Position: position, DiskNeedBytes: need, DiskFreeBytes: free}, nil
+		}
+	}
+	activeCostedRun := activeUsage.MemoryBytes > 0 || activeUsage.MinCPUs > 0 || activeUsage.DiskBytes > 0
+	candidateCostedRun := candidate.MemoryBytes > 0 || candidate.CPUsMin > 0 || candidate.DiskBytes > 0
+	if activeCostedRun && candidateCostedRun {
+		if !resourceFits(activeUsage, resourceUsage{MemoryBytes: candidate.MemoryBytes, MinCPUs: candidate.CPUsMin}, quota) {
+			reason := fmt.Sprintf("memory budget (reserved %s of %s, needs %s)", FormatResourceBytes(activeUsage.MemoryBytes), FormatResourceBytes(quota.MemoryBytes), FormatResourceBytes(candidate.MemoryBytes))
+			if activeUsage.MemoryBytes+candidate.MemoryBytes <= quota.MemoryBytes {
+				reason = fmt.Sprintf("cpu budget (reserved %d of %d, needs %d)", activeUsage.MinCPUs, quota.CPUs, candidate.CPUsMin)
+			}
+			return admissionDecision{Reason: reason, Status: StatusBlocked, Position: position}, nil
+		}
+		sample := source.Snapshot()
+		if sample.MemoryAvailableKnown && memoryUnavailable(candidate.MemoryBytes, sample.AvailableMemory) {
+			reason := fmt.Sprintf("available memory budget (have %s, needs %s)", FormatResourceBytes(sample.AvailableMemory), FormatResourceBytes(candidate.MemoryBytes))
+			return admissionDecision{Reason: reason, Status: StatusBlocked, Position: position}, nil
 		}
 	}
 	return admissionDecision{Status: StatusStarting, Position: position}, nil
+}
+
+func admissionPressureLocked(stateDir string, candidate record, source ResourceSource) (string, error) {
+	sample := source.Snapshot()
+	var hold pressureState
+	pressurePath := filepath.Join(stateDir, "pressure-state.json")
+	if data, readErr := os.ReadFile(pressurePath); readErr == nil {
+		if err := json.Unmarshal(data, &hold); err != nil {
+			return "", fmt.Errorf("decode pressure state: %w", err)
+		}
+	} else if !os.IsNotExist(readErr) {
+		return "", readErr
+	}
+	pressureKnown := pressureSignalsAvailable(sample)
+	elevated := isElevatedPressure(sample)
+	previousLevel := hold.Level
+	blocked := pressureKnown && hold.blocks(elevated, time.Now())
+	if pressureKnown {
+		hold.Level = sample.Pressure
+		if elevated {
+			hold.Level = pressureWaitReason(sample)
+		}
+		data, err := json.Marshal(hold)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(pressurePath, data, 0o600); err != nil {
+			return "", err
+		}
+		if previousLevel != hold.Level {
+			event := eventFor(candidate, EventPressure)
+			event.Reason = hold.Level
+			event.Pressure = sample
+			if err := appendEvent(stateDir, event); err != nil {
+				return "", err
+			}
+		}
+	}
+	if blocked {
+		return pressureWaitReason(sample), nil
+	}
+	return "", nil
+}
+
+func learnedUsage(records []record, key string) resourceUsage {
+	if key == "" {
+		return resourceUsage{}
+	}
+	var history []record
+	for _, rec := range records {
+		if rec.CostKey == key && rec.Status == StatusDead && !rec.MeasurementPartial && rec.PeakRSSBytes > 0 {
+			history = append(history, rec)
+		}
+	}
+	if len(history) > 5 {
+		history = history[len(history)-5:]
+	}
+	var peak record
+	for _, rec := range history {
+		if rec.PeakRSSBytes > peak.PeakRSSBytes {
+			peak = rec
+		}
+	}
+	return resourceUsage{MemoryBytes: peak.PeakRSSBytes, MinCPUs: int(peak.AverageCPU + 0.999)}
 }
 
 func withStateLock(stateDir string, action func() error) (err error) {
@@ -530,13 +666,15 @@ func updateRecord(stateDir, runID string, update func(*record) error) error {
 	})
 }
 
-func completeRecord(stateDir, runID string, code *int, signal string, duration time.Duration, observed []Process) error {
+func completeRecord(stateDir, runID string, code *int, signal string, duration time.Duration, final record) error {
 	return updateRecord(stateDir, runID, func(rec *record) error {
 		rec.Status = StatusDead
 		rec.ExitCode = code
 		rec.Signal = signal
 		rec.DurationMS = duration.Milliseconds()
-		rec.Observed = observed
+		rec.Observed = final.Observed
+		rec.PeakRSSBytes, rec.AverageCPU, rec.MeasurementPartial = final.PeakRSSBytes, final.AverageCPU, final.MeasurementPartial
+		rec.OverBudget, rec.LimitsAdvisory, rec.GrantedCPUs = final.OverBudget, final.LimitsAdvisory, final.GrantedCPUs
 		rec.WaitReason = ""
 		return nil
 	})

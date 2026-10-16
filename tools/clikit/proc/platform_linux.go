@@ -199,7 +199,12 @@ func allProcesses(runID string) ([]Process, error) {
 				elapsed = 0
 			}
 		}
-		out = append(out, Process{PID: pid, PPID: parsed.PPID, Command: command, StartedAt: started, ElapsedMS: elapsed, Identity: parsed.Identity, uid: statInfo.Uid})
+		out = append(out, Process{
+			PID: pid, PPID: parsed.PPID, Command: command, StartedAt: started,
+			ElapsedMS: elapsed, Identity: parsed.Identity, uid: statInfo.Uid,
+			RSSBytes:   uint64(parsed.ResidentPages) * uint64(os.Getpagesize()),
+			CPUSeconds: float64(parsed.UserTicks+parsed.SystemTicks) / float64(clockTicks), MetricsAvailable: true,
+		})
 	}
 	candidates := processInspectionCandidates(out, syscall.Getpid(), uid)
 	return applyProcessMarkers(out, candidates, runID, func(pid int, runID string) (bool, bool, error) {

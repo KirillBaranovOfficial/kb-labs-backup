@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -29,16 +30,21 @@ func TestInteractionPromptIsVisibleBeforePTYAnswer(t *testing.T) {
 	if err := command.Start(); err != nil {
 		t.Fatalf("start PTY test helper: %v", err)
 	}
+	readDone := make(chan struct{})
+	waited := false
 	t.Cleanup(func() {
 		_ = input.Close()
-		if command.Process != nil {
+		if !waited && command.Process != nil {
 			_ = command.Process.Kill()
+			_ = testutil.WaitAfterPipeRead(command, readDone)
+			waited = true
 		}
 	})
 
 	bytes := make(chan byte, 256)
 	readErrors := make(chan error, 1)
 	go func() {
+		defer close(readDone)
 		for {
 			var content [1]byte
 			_, readErr := output.Read(content[:])
@@ -66,8 +72,10 @@ func TestInteractionPromptIsVisibleBeforePTYAnswer(t *testing.T) {
 	if _, err := io.WriteString(input, "y\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := command.Wait(); err != nil {
-		t.Fatalf("PTY child failed: %v; output=%q", err, transcript.String())
+	waitErr := testutil.WaitAfterPipeRead(command, readDone)
+	waited = true
+	if waitErr != nil {
+		t.Fatalf("PTY child failed: %v; output=%q", waitErr, transcript.String())
 	}
 }
 
