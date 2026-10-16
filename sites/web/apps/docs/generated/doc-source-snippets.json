@@ -1,37 +1,43 @@
 {
-  "workflow run": {
-    "source": "plugins/workflow/entry/src/manifest.ts",
-    "examples": [
-      "kb workflow run --workflow-id=release-manager/create-release",
-      "kb workflow run --workflow-id=release-manager/create-release --isolation=strict --target-namespace=team-a/prod",
-      "kb workflow run --workflow-id=release-manager/create-release --target-environment-id=env-123 --json",
-      "kb workflow run --workflow-id=<workflow-id> --input='{\"key\":\"value\"}'"
-    ]
+  "commands": {
+    "workflow run": {
+      "source": "plugins/workflow/entry/src/manifest.ts",
+      "examples": [
+        "kb workflow run --workflow-id=release-manager/create-release",
+        "kb workflow run --workflow-id=release-manager/create-release --isolation=strict --target-namespace=team-a/prod",
+        "kb workflow run --workflow-id=release-manager/create-release --target-environment-id=env-123 --json",
+        "kb workflow run --workflow-id=<workflow-id> --input='{\"key\":\"value\"}'"
+      ]
+    },
+    "workflow runs list": {
+      "source": "plugins/workflow/entry/src/manifest.ts",
+      "examples": [
+        "kb workflow runs list",
+        "kb workflow runs list --status=failed",
+        "kb workflow runs list --status=failed --limit=5",
+        "kb workflow runs list --workflow=my-workflow --json"
+      ]
+    },
+    "workflow runs logs": {
+      "source": "plugins/workflow/entry/src/manifest.ts",
+      "examples": [
+        "kb workflow runs logs <runId>",
+        "kb workflow runs logs <runId> --log-failed",
+        "kb workflow runs logs <runId> --step=build",
+        "kb workflow runs logs <runId> --json"
+      ]
+    },
+    "workflow runs status": {
+      "source": "plugins/workflow/entry/src/manifest.ts",
+      "examples": [
+        "kb workflow runs status <runId>",
+        "kb workflow runs status --run-id=<runId>",
+        "kb workflow runs status <runId> --json"
+      ]
+    }
   },
-  "workflow runs list": {
-    "source": "plugins/workflow/entry/src/manifest.ts",
-    "examples": [
-      "kb workflow runs list",
-      "kb workflow runs list --status=failed",
-      "kb workflow runs list --status=failed --limit=5",
-      "kb workflow runs list --workflow=my-workflow --json"
-    ]
-  },
-  "workflow runs logs": {
-    "source": "plugins/workflow/entry/src/manifest.ts",
-    "examples": [
-      "kb workflow runs logs <runId>",
-      "kb workflow runs logs <runId> --log-failed",
-      "kb workflow runs logs <runId> --step=build",
-      "kb workflow runs logs <runId> --json"
-    ]
-  },
-  "workflow runs status": {
-    "source": "plugins/workflow/entry/src/manifest.ts",
-    "examples": [
-      "kb workflow runs status <runId>",
-      "kb workflow runs status --run-id=<runId>",
-      "kb workflow runs status <runId> --json"
-    ]
+  "nodePolicy": {
+    "source": "package.json",
+    "requiredMajor": 24
   }
 }

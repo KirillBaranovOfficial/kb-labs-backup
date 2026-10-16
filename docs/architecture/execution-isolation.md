@@ -320,8 +320,11 @@ interface RemoteExecutionStream {
 
 ### Образ
 
+Use the Node.js major declared by the root `package.json` `engines.node` for
+the platform runtime image:
+
 ```dockerfile
-FROM node:24-alpine
+FROM node:<PLATFORM_NODE_MAJOR>-alpine
 COPY --from=monorepo /workspace /workspace  # или mount
 RUN npm install -g @kb-labs/plugin-runtime-server
 CMD ["kb-runtime-server", "--port", "9000"]

@@ -38,7 +38,6 @@ const (
 // Error codes emitted by kb-create's operation layer.
 const (
 	CodeToolchainUnsupported      = "KB_INSTALL_TOOLCHAIN_UNSUPPORTED"
-	CodeNodeVersion               = "KB_INSTALL_NODE_VERSION"
 	CodeMemoryInsufficient        = "KB_INSTALL_MEMORY_INSUFFICIENT"
 	CodeResourceCheckFailed       = "KB_INSTALL_RESOURCE_CHECK_FAILED"
 	CodePackageManagerKilled      = "KB_INSTALL_PACKAGE_MANAGER_KILLED"

@@ -6,10 +6,10 @@
 // The test is opt-in: it requires Docker and takes on the order of a minute
 // for the first run (image build). Run it with:
 //
-//	go test ./... -v -timeout 10m
+//	./scripts/run.sh
 //
-// CI gates it behind a dedicated workflow; local runs set DELIVERY_E2E=1 to
-// avoid surprising `go test ./...` from the repo root.
+// CI gates it behind a dedicated workflow; the wrapper opts in so plain
+// `go test ./...` from the repo root skips this test.
 package delivery
 
 import (
@@ -39,7 +39,7 @@ func TestDelivery_EndToEnd(t *testing.T) {
 	if os.Getenv("DELIVERY_E2E") == "" {
 		t.Skip("DELIVERY_E2E not set — this test requires Docker and is opt-in.")
 	}
-	requireDocker(t)
+	composeBin := requireDocker(t)
 
 	repoRoot := findRepoRoot(t)
 	deliveryDir := filepath.Join(repoRoot, "e2e", "delivery")
@@ -50,7 +50,7 @@ func TestDelivery_EndToEnd(t *testing.T) {
 	// 2. Bring up the stack (verdaccio + two target containers).
 	stackDown(t, deliveryDir) // idempotent safety for prior runs
 	t.Cleanup(func() { stackDown(t, deliveryDir) })
-	runCmd(t, deliveryDir, "docker-compose", "up", "-d", "--build")
+	runCmd(t, deliveryDir, composeBin, "up", "-d", "--build")
 
 	waitTCP(t, "127.0.0.1:4873", 60*time.Second)
 	waitTCP(t, fmt.Sprintf("127.0.0.1:%d", target1Port), 60*time.Second)
@@ -209,15 +209,23 @@ rollout:
 `
 }
 
-func requireDocker(t *testing.T) {
+func requireDocker(t *testing.T) string {
 	t.Helper()
-	if _, err := exec.LookPath("docker-compose"); err != nil {
-		t.Skipf("docker-compose not found on PATH: %v", err)
-	}
+	composeBin := deliveryCompose(t)
 	out, err := exec.Command("docker", "info").CombinedOutput()
 	if err != nil {
 		t.Skipf("docker not running: %v\n%s", err, out)
 	}
+	return composeBin
+}
+
+func deliveryCompose(t *testing.T) string {
+	t.Helper()
+	composeBin := os.Getenv("KB_DELIVERY_COMPOSE_BIN")
+	if composeBin == "" {
+		t.Fatal("required tool docker-compose was not resolved; run e2e/delivery/scripts/run.sh so it can resolve docker-compose from PATH")
+	}
+	return composeBin
 }
 
 func findRepoRoot(t *testing.T) string {
@@ -262,7 +270,7 @@ func stackDown(t *testing.T, dir string) {
 		t.Log("KEEP_STACK set — leaving docker-compose stack running for debugging")
 		return
 	}
-	cmd := exec.Command("docker-compose", "down", "-v", "--remove-orphans")
+	cmd := exec.Command(deliveryCompose(t), "down", "-v", "--remove-orphans")
 	cmd.Dir = dir
 	_ = cmd.Run()
 }
@@ -272,7 +280,7 @@ func stackDown(t *testing.T, dir string) {
 func dumpContainerLogs(t *testing.T, dir string) {
 	t.Helper()
 	for _, svc := range []string{"target-1", "target-2", "verdaccio"} {
-		cmd := exec.Command("docker-compose", "logs", "--no-color", "--tail=100", svc)
+		cmd := exec.Command(deliveryCompose(t), "logs", "--no-color", "--tail=100", svc)
 		cmd.Dir = dir
 		out, _ := cmd.CombinedOutput()
 		t.Logf("=== docker-compose logs %s ===\n%s", svc, out)

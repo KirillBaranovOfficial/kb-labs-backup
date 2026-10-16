@@ -7,6 +7,7 @@ import os
 import subprocess
 import ast
 import platform
+import shutil
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from service_steps import FlowGraph, Journey
+from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
 
 
@@ -503,6 +505,9 @@ thread.join()
         versioned_platform.mkdir(parents=True)
         platform.mkdir(exist_ok=True)
         platform_current.symlink_to(Path("versions") / "2.120.1")
+        runtime_manifest = platform_current / "node_modules" / "@kb-labs" / "plugin-runtime" / "package.json"
+        runtime_manifest.parent.mkdir(parents=True)
+        shutil.copyfile(Path(__file__).resolve().parents[2] / "core/plugin-runtime/package.json", runtime_manifest)
         receipt = platform_current / ".kb" / "v2" / "receipt.json"
         receipt.parent.mkdir(parents=True)
         receipt.write_text(json.dumps({"id": "receipt-main",
@@ -532,12 +537,32 @@ thread.join()
 
         def fake_run(command, *, env=None, cwd=None, **_kwargs):
             argv = [str(item) for item in command]
-            if len(argv) > 1 and argv[1] in {"stop", "start"}:
+            if len(argv) > 1 and argv[1] in {"stop", "start"} and "--foreground" not in argv:
                 host_cycle.append(argv[1])
                 events.append(f"host:{argv[1]}")
             output = ""
+            returncode = 0
             if argv[0].endswith("install.sh"):
                 output = "installer ready"
+            elif argv[:2] == ["node", "--version"]:
+                output = "v24.18.1"
+            elif Path(argv[0]).name == "kb-create" and len(argv) > 1 and argv[1] == "start" and "--foreground" in argv and "--json" in argv:
+                workspace_root = Path(__file__).resolve().parents[2]
+                engine_helper = workspace_root / "core/plugin-runtime/src/platform-resolve/node-engine.mjs"
+                required_major = subprocess.run(
+                    ["node", str(engine_helper), "--required-major", str(runtime_manifest)],
+                    check=True, capture_output=True, text=True,
+                ).stdout.strip()
+                actual_version = "20.19.4"
+                details = {"requiredMajor": required_major, "actualVersion": actual_version}
+                error = {
+                    "code": "KB_NODE_VERSION_UNSUPPORTED",
+                    "message": catalogued_error_message("KB_NODE_VERSION_UNSUPPORTED").format_map(details),
+                    "details": details,
+                    "hint": catalogued_error_hint("KB_NODE_VERSION_UNSUPPORTED", **details),
+                }
+                output = json.dumps({"ok": False, "error": error})
+                returncode = 1
             elif argv[-1:] == ["--version"]:
                 output = "kb-create 2.120.1"
             elif "version" in argv and "--json" in argv:
@@ -612,7 +637,7 @@ thread.join()
                 output = json.dumps(result_record) + "\n" + json.dumps(terminal)
             else:
                 output = json.dumps({"ok": True, "data": {}})
-            return subprocess.CompletedProcess(command, 0, output, ""), 0.0
+            return subprocess.CompletedProcess(command, returncode, output, ""), 0.0
 
         def fake_http(_opener, request, **_kwargs):
             url = request.full_url
@@ -1083,9 +1108,18 @@ thread.join()
             selection = "S-042.1,S-042.2"
             selected_claims = selection.split(",")
             selected_owners = {f"claim {claim_id}": [claim_id] for claim_id in selected_claims}
+            workspace_root = Path(__file__).resolve().parents[2]
+            engine_helper = workspace_root / "core/plugin-runtime/src/platform-resolve/node-engine.mjs"
+            required_major = subprocess.run(
+                ["node", str(engine_helper), "--required-major", str(workspace_root / "package.json")],
+                check=True, capture_output=True, text=True,
+            ).stdout.strip()
+            expected_hint = catalogued_error_hint(
+                "KB_NODE_VERSION_UNSUPPORTED", requiredMajor=required_major, actualVersion="20.19.4",
+            )
             completed = subprocess.CompletedProcess(
                 ["install.sh", "--version"], 0,
-                stdout="KB_INSTALL_NODE_VERSION Node.js 24", stderr="",
+                stdout=f"KB_NODE_VERSION_UNSUPPORTED {expected_hint}", stderr="",
             )
 
             def run_node_guard(*_args, **_kwargs):

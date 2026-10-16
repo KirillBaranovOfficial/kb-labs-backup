@@ -1,11 +1,13 @@
 # Target host image for the kb-deploy cross-module e2e.
 #
-# Emulates a customer VPS: non-root "kb" user, openssh, Node 24, pnpm, and
-# pre-installed kb-create + kb-dev binaries under /usr/local/bin. The test
+# Emulates a customer VPS: non-root "kb" user, OpenSSH, the platform Node.js
+# major, pnpm, and pre-installed kb-create + kb-dev binaries under
+# /usr/local/bin. The test
 # drives this container over SSH exactly like a real host.
 FROM ubuntu:22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG NODE_MAJOR
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -15,8 +17,9 @@ RUN apt-get update \
       sudo \
  && rm -rf /var/lib/apt/lists/*
 
-# Node 24 via NodeSource for platform compatibility.
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+# Derive the NodeSource package from the platform policy provided by Compose.
+RUN test -n "$NODE_MAJOR" || { echo "NODE_MAJOR is required; derive it from root package.json engines.node with e2e/delivery/scripts/run.sh." >&2; exit 1; } \
+ && curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/* \
  && corepack enable \

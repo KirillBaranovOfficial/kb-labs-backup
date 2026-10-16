@@ -17,6 +17,7 @@ import (
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/stream"
+	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
 	"github.com/kb-labs/create/v2/gateway"
@@ -106,10 +107,7 @@ func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps 
 
 func applyPlan(ctx context.Context, input applyCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
 	if err := deps.NodeCheck(); err != nil {
-		failure := contracts.NewDiag(contracts.CodeNodeVersion,
-			"Node.js 24.x is required before installation.",
-			"Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`).", err)
-		return applyCommandResult{}, failure
+		return applyCommandResult{}, sharedtoolchain.NodeCheckDiagnostic(err)
 	}
 	started := time.Now()
 	outcome, errorCode := "failure", "KB_INSTALL_OPERATION_FAILED"

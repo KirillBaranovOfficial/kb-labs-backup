@@ -180,6 +180,12 @@ func FromCatalog(code string, values map[string]string, opts ...Opt) (*Diag, err
 	for _, option := range opts {
 		option(d)
 	}
+	envelope, err := ToEnvelope(d)
+	if err != nil {
+		return nil, err
+	}
+	d.Message = envelope.Message
+	d.Hint = envelope.Hint
 	return d, nil
 }
 

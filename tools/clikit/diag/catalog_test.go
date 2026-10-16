@@ -90,8 +90,8 @@ func TestCatalogGeneratesStructuredDetailFields(t *testing.T) {
 	if !ok {
 		t.Fatal("KB_AUTH_SESSION_REVOKED is absent from generated catalog")
 	}
-	if !reflect.DeepEqual(entry.StructuredDetailFields, []string{"reason"}) {
-		t.Fatalf("generated structured detail fields = %v, want [reason]", entry.StructuredDetailFields)
+	if !reflect.DeepEqual(entry.StructuredDetailFields, []string{"reason", "remoteCorrelationId"}) {
+		t.Fatalf("generated structured detail fields = %v, want [reason remoteCorrelationId]", entry.StructuredDetailFields)
 	}
 }
 

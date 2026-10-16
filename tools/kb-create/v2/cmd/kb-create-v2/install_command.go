@@ -12,6 +12,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	clikitresult "github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/clikit/stream"
+	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/preflight"
@@ -47,9 +48,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		out = clikitcommand.FromCommand(deps.Command).ProgressWriter()
 	}
 	if err := deps.NodeCheck(); err != nil {
-		failure := contracts.NewDiag(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.",
-			"Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`).", err)
-		return applyCommandResult{}, failure
+		return applyCommandResult{}, sharedtoolchain.NodeCheckDiagnostic(err)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

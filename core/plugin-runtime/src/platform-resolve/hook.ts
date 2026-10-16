@@ -12,15 +12,17 @@
  * `require` alike. It applies to the thread that registers it: a worker thread
  * must call {@link installPlatformResolveHook} itself.
  *
- * Requires Node >= 22.15 / 23.5 (`module.registerHooks`); the repository's
- * `engines` minimum is Node 24.
+ * Requires `module.registerHooks`; the supported Node major is declared by
+ * the workspace root and carried in this runtime package's `engines` field.
  */
 
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { createRequire, registerHooks, type ResolveFnOutput, type ResolveHookContext } from 'node:module';
+import * as nodeModule from 'node:module';
+import { createRequire, type ResolveFnOutput, type ResolveHookContext } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { IContextLogger } from '@kb-labs/core-platform';
+import { ensureNodeEngineSupported } from './node-engine.js';
 import { PlatformDuplicateError } from './errors.js';
 import { platformPackageOf } from './platform-package.js';
 
@@ -120,6 +122,7 @@ function resolveFrom(
  * one platform.
  */
 export function installPlatformResolveHook(options: PlatformResolveHookOptions): PlatformResolveHook {
+  ensureNodeEngineSupported(import.meta.url);
   const platformRoot = realpathSync(options.platformRoot);
   if (installed) {
     if (installed.platformRoot !== platformRoot) {
@@ -133,7 +136,7 @@ export function installPlatformResolveHook(options: PlatformResolveHookOptions):
   const anchorUrls = [join(platformRoot, 'package.json'), ...(options.anchors ?? [])].map(toFileUrl);
   const reported = new Set<string>();
 
-  const handle = registerHooks({
+  const handle = nodeModule.registerHooks({
     resolve(specifier, context, nextResolve) {
       const pkg = platformPackageOf(specifier);
       const requesterPath = context.parentURL === undefined ? undefined : urlToPath(context.parentURL);

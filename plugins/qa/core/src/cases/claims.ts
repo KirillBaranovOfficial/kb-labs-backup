@@ -101,6 +101,33 @@ function validateClaim(claim: QACaseClaim, cases: QACase[], file: string, line: 
   if (!testCase.steps.some(step => step.id === claim.id)) {diagnostics.push({ file, line, message: `claim references unknown step ${claim.id}` });}
 }
 
+function parsePythonCaseIds(value: string, cases: QACase[]): { ids: string[]; invalid: boolean } {
+  const ids: string[] = [];
+  for (const item of value.split(',').map(part => part.trim())) {
+    if (CLAIM_ID.test(item)) {
+      ids.push(item);
+      continue;
+    }
+    const range = /^((?:S|PC)-\d{3})\.(\d+)-\.(\d+)$/.exec(item);
+    if (!range) {return { ids, invalid: true };}
+    const caseId = range[1]!;
+    const first = Number(range[2]);
+    const last = Number(range[3]);
+    const testCase = cases.find(candidate => candidate.id === caseId);
+    if (!testCase) {
+      ids.push(`${caseId}.${first}`);
+      continue;
+    }
+    if (first < 1 || last < first || last - first + 1 > testCase.steps.length) {
+      return { ids, invalid: true };
+    }
+    for (let stepNumber = first; stepNumber <= last; stepNumber += 1) {
+      ids.push(`${caseId}.${stepNumber}`);
+    }
+  }
+  return { ids, invalid: ids.length === 0 };
+}
+
 export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACaseClaim[]; diagnostics: QACatalogDiagnostic[] } {
   const claims: QACaseClaim[] = [];
   const diagnostics: QACatalogDiagnostic[] = [];
@@ -150,6 +177,31 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
     }
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index] ?? '';
+      if (filePath.endsWith('.py')) {
+        const firstComment = line.match(/^\s*#\s*case:\s*(.+)$/);
+        if (!firstComment) {continue;}
+        const pythonClaims: string[] = [];
+        let commentIndex = index;
+        let invalid = false;
+        while (commentIndex < lines.length) {
+          const comment = (lines[commentIndex] ?? '').match(/^\s*#\s*case:\s*(.+)$/);
+          if (!comment) {break;}
+          const parsed = parsePythonCaseIds(comment[1]!, cases);
+          pythonClaims.push(...parsed.ids);
+          invalid ||= parsed.invalid;
+          commentIndex += 1;
+        }
+        const testLine = (lines[commentIndex] ?? '').match(/^\s*(?:async\s+)?def\s+(test\w+)/);
+        if (!testLine) {
+          diagnostics.push({ file, line: index + 1, message: '# case: must be directly above a Python test function' });
+        } else if (invalid) {
+          diagnostics.push({ file, line: index + 1, message: '# case: expected a case step or inclusive case step range' });
+        } else {
+          for (const stepId of pythonClaims) {add(stepId, 'unit', commentIndex + 1, testLine[1]!);}
+        }
+        index = commentIndex - 1;
+        continue;
+      }
       // Playwright titles carry tags at the title or describe block boundary.
       if (isPlaywrightSource && /\b(?:test|it)\s*\(/.test(line)) {
         const name = line.match(/\b(?:test|it)\s*\(\s*["'`]([^"'`]+)/)?.[1];
