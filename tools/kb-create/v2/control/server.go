@@ -190,7 +190,9 @@ func (s *Server) updateRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	request, err := s.queue.Add(input)
 	if errors.Is(err, errQueueFull) {
-		s.fail(w, http.StatusTooManyRequests, contracts.NewDiag("KB_RUNTIME_RATE_LIMITED", "Too many update requests are waiting.", "Wait for the pending update requests to be processed.", err))
+		limited := contracts.NewDiag("KB_RUNTIME_RATE_LIMITED", "Too many update requests are waiting.", "Wait for the pending update requests to be processed.", err)
+		limited.Meta = map[string]any{"retryAfter": "the pending update completes"}
+		s.fail(w, http.StatusTooManyRequests, limited)
 		return
 	}
 	if err != nil {
@@ -223,8 +225,10 @@ func (s *Server) fail(w http.ResponseWriter, status int, err *diag.Diag) {
 }
 
 func (s *Server) write(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	_ = diag.WriteHTTPJSON(w, status, body, func(cause error) any {
+		return ErrorResponse{OK: false, Error: contracts.NewDiag(
+			"KB_RUNTIME_UNEXPECTED", "The response could not be encoded.",
+			"Correct the launcher response data, then retry the request.", cause,
+		)}
+	})
 }

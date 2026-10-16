@@ -188,10 +188,10 @@ func LivePID(state host.State, platformRoot string) (int, bool) {
 func Refusal(record Record, requestedRoot string) *diag.Diag {
 	installationID, err := versionroot.InstallationIDForPath(requestedRoot)
 	if err == nil && record.InstallationID == installationID {
+		command := contracts.ShellCommand("kb-create", "status", "--platform-root", requestedRoot)
 		failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.",
-			"Use `"+contracts.ShellCommand("kb-create", "status", "--platform-root", requestedRoot)+"` or `"+
-				contracts.ShellCommand("kb-create", "restart", "--platform-root", requestedRoot)+"`.", nil)
-		failure.Meta = map[string]any{"pid": strconv.Itoa(record.PID), "platformRoot": record.PlatformRoot}
+			"Use `"+command+"` to inspect it.", nil)
+		failure.Meta = map[string]any{"pid": strconv.Itoa(record.PID), "platformRoot": record.PlatformRoot, "nextCommand": command}
 		return failure
 	}
 	return host.RootConflict(record.PlatformRoot, record.PID)

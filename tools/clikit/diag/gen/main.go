@@ -29,6 +29,7 @@ type entry struct {
 	Hint                      string            `json:"hint"`
 	HintWithoutCorrelationID  string            `json:"hintWithoutCorrelationId"`
 	RuntimeTemplateParameters map[string]string `json:"runtimeTemplateParameters"`
+	StructuredDetailFields    []string          `json:"structuredDetailFields"`
 }
 
 func main() {
@@ -67,10 +68,10 @@ func run() diag.ExitStatus {
 			hintWithoutCorrelationID = fmt.Sprintf(", HintWithoutCorrelationID: %q", item.HintWithoutCorrelationID)
 		}
 		if item.HTTPStatus == 0 {
-			_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringMapLiteral(item.RuntimeTemplateParameters))
+			_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringMapLiteral(item.RuntimeTemplateParameters))
 			continue
 		}
-		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringMapLiteral(item.RuntimeTemplateParameters))
+		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, HTTPStatus: %d, Area: %q, Stage: %q, Severity: %q, Retryable: %t, ProcessExitClass: ProcessExitClass(%q), Message: %q, Hint: %q%s, TemplateParameters: %s, RequiredTemplateParameters: %s, StructuredDetailFields: %s, RuntimeTemplateParameters: %s},\n", item.Code, item.Code, item.HTTPStatus, item.Area, item.Stage, item.Severity, item.Retryable, item.ProcessExitClass, item.Message, item.Hint, hintWithoutCorrelationID, stringSliceLiteral(templateParameters(item)), stringSliceLiteral(requiredTemplateParameters(item)), stringSliceLiteral(item.StructuredDetailFields), stringMapLiteral(item.RuntimeTemplateParameters))
 	}
 	_, _ = source.WriteString("}\n")
 	formatted, err := format.Source(source.Bytes())
@@ -98,6 +99,16 @@ func templateParameters(item entry) []string {
 		}
 	}
 	sort.Strings(names)
+	return names
+}
+
+func requiredTemplateParameters(item entry) []string {
+	var names []string
+	for _, name := range templateParameters(item) {
+		if item.RuntimeTemplateParameters[name] != "optional" {
+			names = append(names, name)
+		}
+	}
 	return names
 }
 
@@ -143,6 +154,19 @@ func validate(entries []entry) error {
 			if requirement != "required" && requirement != "optional" {
 				return fmt.Errorf("catalog entry %s has invalid runtime template parameter requirement %q", item.Code, requirement)
 			}
+		}
+		structured := make(map[string]struct{}, len(item.StructuredDetailFields))
+		for _, name := range item.StructuredDetailFields {
+			if strings.TrimSpace(name) == "" {
+				return fmt.Errorf("catalog entry %s declares an empty structured detail field", item.Code)
+			}
+			if _, exists := used[name]; exists {
+				return fmt.Errorf("catalog entry %s declares template parameter %s as a structured detail field", item.Code, name)
+			}
+			if _, exists := structured[name]; exists {
+				return fmt.Errorf("catalog entry %s declares duplicate structured detail field %s", item.Code, name)
+			}
+			structured[name] = struct{}{}
 		}
 		if item.ProcessExitClass != "input-refusal" && item.ProcessExitClass != "operation-failure" {
 			return fmt.Errorf("catalog entry %s has missing or invalid processExitClass %q", item.Code, item.ProcessExitClass)

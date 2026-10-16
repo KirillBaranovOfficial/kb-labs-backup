@@ -2,6 +2,7 @@ package result
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -67,8 +68,12 @@ func errorEnvelope(d *diag.Diag) diag.Envelope {
 	d = diag.FromError(d)
 	envelope, err := diag.ToEnvelope(d)
 	if err != nil {
-		fallback := diag.New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.")
-		envelope, _ = diag.ToEnvelope(fallback)
+		var violation *diag.Diag
+		if errors.As(err, &violation) {
+			envelope, _ = diag.ToEnvelope(violation)
+		} else {
+			envelope, _ = diag.ToEnvelope(diag.NewContractViolation(d.Code, "serialization"))
+		}
 	}
 	return envelope
 }

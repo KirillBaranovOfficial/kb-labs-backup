@@ -50,6 +50,7 @@ from marketplace_steps import _registry_version, _output
 from adapter_defaults_steps import _config_difference_keys, run_adapter_default_steps
 from analytics_steps import run_analytics_steps
 from gateway_steps import run_adapter_catalog_step, run_gateway_steps
+from installed_cli_contract_steps import run_installed_cli_contract_steps
 from worktree_steps import run_worktree_steps
 from project_identity_steps import run_project_identity_steps, run_project_registry_steps
 from workspace_steps import run_workspace_cli_steps, workspace_checkout_problem
@@ -841,6 +842,7 @@ def mcp_diagnostics(project_id: str, token: str) -> str | None:
 
 
 SERVICE_GROUPS = {
+    "cli": {"capabilities": {"cli"}, "depends_on": ()},
     "platform": {"capabilities": {"gateway"}, "depends_on": ("host-running", "project-registered", "service-api-session")},
     "auth": {"capabilities": {"auth.local", "auth.secured"}, "depends_on": ("host-running",),
              "produces": ("session",)},
@@ -942,6 +944,14 @@ def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runne
 
 def _run_installed_flows(journey: Journey, project_root: str, registry: str, graph: FlowGraph) -> None:
     env = os.environ.copy()
+    graph.flow(
+        "installed CLI help and unknown-command contract",
+        "cli",
+        "cli",
+        lambda: run_installed_cli_contract_steps(journey, env),
+        cases=["S-258.1"],
+        record_empty_success=False,
+    )
     graph.flow(
         "unexpected CLI error trail",
         "unexpected-error-trail",

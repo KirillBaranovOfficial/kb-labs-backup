@@ -20,6 +20,8 @@ import (
 	"os"
 	"regexp"
 	"runtime/debug"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -138,6 +140,49 @@ func New(code, message string, opts ...Opt) *Diag {
 	return d
 }
 
+// FromCatalog reconstructs canonical diagnostic text from structured catalog
+// values. Required template values and catalog-declared structured details are
+// retained; callers may add locally observed metadata through opts.
+func FromCatalog(code string, values map[string]string, opts ...Opt) (*Diag, error) {
+	entry, ok := LookupCatalog(code)
+	if !ok {
+		return nil, fmt.Errorf("error envelope code %q is absent from the platform catalog", code)
+	}
+	violations := make(map[string]struct{})
+	valueFields := make([]string, 0, len(values))
+	for key := range values {
+		valueFields = append(valueFields, key)
+	}
+	for _, key := range UndeclaredDetailFields(code, valueFields) {
+		violations[key] = struct{}{}
+	}
+	for _, name := range entry.RequiredTemplateParameters {
+		value, exists := values[name]
+		if !exists || strings.TrimSpace(value) == "" {
+			violations[name] = struct{}{}
+		}
+	}
+	if len(violations) > 0 {
+		fields := make([]string, 0, len(violations))
+		for field := range violations {
+			fields = append(fields, field)
+		}
+		sort.Strings(fields)
+		return nil, NewContractViolation(code, strings.Join(fields, ", "))
+	}
+	meta := make(map[string]any, len(values))
+	for key, value := range values {
+		if len(UndeclaredDetailFields(code, []string{key})) == 0 {
+			meta[key] = value
+		}
+	}
+	d := New(entry.Code, entry.Message, WithMeta(meta))
+	for _, option := range opts {
+		option(d)
+	}
+	return d, nil
+}
+
 // Wrap builds a Diag wrapping an underlying error (preserved for Unwrap).
 func Wrap(err error, code, message string, opts ...Opt) *Diag {
 	d := New(code, message, opts...)
@@ -215,24 +260,53 @@ func (d *Diag) UnmarshalJSON(data []byte) error {
 	}
 	entry, ok := LookupCatalog(envelope.Code)
 	if !ok {
-		return fmt.Errorf("error envelope code %q is absent from the platform catalog", envelope.Code)
+		*d = *ProtocolFailure(envelope.Code, "code")
+		return nil
 	}
 	if envelope.Area != entry.Area || envelope.Stage != entry.Stage || envelope.Severity != entry.Severity || envelope.Retryable != entry.Retryable {
-		return fmt.Errorf("error envelope metadata for %q does not match the platform catalog", envelope.Code)
+		*d = *ProtocolFailure(envelope.Code, "metadata")
+		return nil
 	}
 	if envelope.Message == "" || envelope.Hint == "" {
 		return fmt.Errorf("error envelope message and hint are required")
 	}
-	*d = *New(envelope.Code, envelope.Message, WithHint(envelope.Hint), WithCause(envelope.Cause), WithCorrelationID(envelope.CorrelationID))
-	if len(envelope.Details) > 0 {
-		d.Meta = make(map[string]any, len(envelope.Details))
-		for key, value := range envelope.Details {
-			d.Meta[key] = value
+	reconstructed, err := FromCatalog(envelope.Code, envelope.Details,
+		WithCause(envelope.Cause), WithCorrelationID(envelope.CorrelationID))
+	if err != nil {
+		fields := "details"
+		var violation *Diag
+		if errors.As(err, &violation) {
+			if value, ok := violation.Meta["fields"].(string); ok {
+				fields = value
+			}
 		}
+		*d = *ProtocolFailure(envelope.Code, fields)
+		return nil
 	}
+	canonical, err := ToEnvelope(reconstructed)
+	if err != nil {
+		*d = *ProtocolFailure(envelope.Code, "details")
+		return nil
+	}
+	reconstructed.Message = canonical.Message
+	reconstructed.Hint = canonical.Hint
+	*d = *reconstructed
 	d.Actions = append([]Action(nil), envelope.Actions...)
 	d.Docs = envelope.Docs
 	return nil
+}
+
+// ProtocolFailure returns a typed local diagnostic for a received envelope that does not
+// satisfy the shared catalog contract. The remote code and field names remain available.
+func ProtocolFailure(remoteCode, fields string) *Diag {
+	meta := make(map[string]any, 2)
+	if remoteCode != "" {
+		meta["remoteCode"] = remoteCode
+	}
+	if fields != "" {
+		meta["fields"] = fields
+	}
+	return New("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", "", WithMeta(meta))
 }
 
 // NewCorrelationID returns a correlation ID accepted by IsValidCorrelationID.

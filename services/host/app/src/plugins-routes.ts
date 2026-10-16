@@ -90,12 +90,12 @@ export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
       return reply;
     }
     try {
-      const projectRoot = await resolveProjectRoot(registry, projectId as string);
-      await marketplace.setEnabled({ packageId: packageId as string, scope: "project", projectRoot }, enabled);
+      const projectRoot = await resolveProjectRoot(registry, projectId);
+      await marketplace.setEnabled({ packageId, scope: "project", projectRoot }, enabled);
       return sendData(reply, { id: packageId, enabled, scope: "project" });
     } catch (error) {
       if (error instanceof MarketplaceClientError) {
-        return sendEnvelope(reply, marketplaceErrorEnvelope(error, packageId as string));
+        return sendEnvelope(reply, marketplaceErrorEnvelope(error, packageId));
       }
       return sendEnvelope(reply, projectErrorEnvelope(error));
     }
@@ -143,7 +143,7 @@ export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
         return sendData(reply, result, 201);
       } catch (error) {
         if (error instanceof MarketplaceClientError) {
-          return sendEnvelope(reply, marketplaceErrorEnvelope(error, spec as string));
+          return sendEnvelope(reply, marketplaceErrorEnvelope(error, spec));
         }
         return sendEnvelope(reply, projectErrorEnvelope(error));
       }
@@ -160,7 +160,7 @@ export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
         return sendData(reply, { id: packageId, removed: true });
       } catch (error) {
         if (error instanceof MarketplaceClientError) {
-          return sendEnvelope(reply, marketplaceErrorEnvelope(error, packageId as string));
+          return sendEnvelope(reply, marketplaceErrorEnvelope(error, packageId));
         }
         return sendEnvelope(reply, projectErrorEnvelope(error));
       }

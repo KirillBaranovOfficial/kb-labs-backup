@@ -8,17 +8,21 @@ const outputPath = resolve(packageRoot, 'src/error-envelope/error-codes.generate
 const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
 const entries = [...catalog.codes].sort((left, right) => left.code < right.code ? -1 : left.code > right.code ? 1 : 0);
 const codes = [...new Set(entries.map(({ code }) => code))];
-const templateParameters = entries.map((entry) => {
+const templateParameterMetadata = entries.map((entry) => {
   const templates = [entry.message, entry.hint, entry.hintWithoutCorrelationId].filter(Boolean);
   const names = [...new Set(templates.flatMap((template) => [...template.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map((match) => match[1])))].sort();
   const runtime = entry.runtimeTemplateParameters ?? {};
   for (const name of Object.keys(runtime)) {
     if (!names.includes(name)) throw new Error(`${entry.code} declares unused runtime template parameter ${name}`);
   }
+  const requiredNames = names.filter((name) => runtime[name] !== 'optional');
+  const structuredDetailFields = entry.structuredDetailFields ?? [];
+  if (new Set(structuredDetailFields).size !== structuredDetailFields.length) throw new Error(`${entry.code} declares duplicate structured detail fields`);
   const renderRecord = (fields) => fields.length === 0 ? 'Record<never, never>' : `{ ${fields.join('; ')} }`;
   const allType = renderRecord(names.map((name) => `${JSON.stringify(name)}: string`));
-  return `  ${JSON.stringify(entry.code)}: ${allType};`;
+  return { code: entry.code, names, requiredNames, structuredDetailFields, type: `  ${JSON.stringify(entry.code)}: ${allType};` };
 });
+const templateParameters = templateParameterMetadata.map(({ type }) => type);
 const parametersForTemplate = (entry, fields) => {
   const runtime = entry.runtimeTemplateParameters ?? {};
   const templates = fields.map((field) => entry[field]).filter(Boolean);
@@ -45,6 +49,18 @@ const output = [
   'export interface CatalogTemplateParameters {',
   ...templateParameters,
   '}',
+  '',
+  'export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {',
+  ...templateParameterMetadata.map(({ code, requiredNames }) => `  ${JSON.stringify(code)}: ${JSON.stringify(requiredNames)},`),
+  '};',
+  '',
+  'export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, readonly string[]>> = {',
+  ...templateParameterMetadata.map(({ code, names }) => `  ${JSON.stringify(code)}: ${JSON.stringify(names)},`),
+  '};',
+  '',
+  'export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, readonly string[]>> = {',
+  ...templateParameterMetadata.map(({ code, structuredDetailFields }) => `  ${JSON.stringify(code)}: ${JSON.stringify(structuredDetailFields)},`),
+  '};',
   '',
   'export interface CatalogMessageTemplateParameters {',
   ...messageTemplateParameters,

@@ -15,6 +15,7 @@ import type {
   ErrorEnvelope,
   PlatformDiagnostic,
 } from './types.js';
+import { catalogRequiredTemplateParameters, catalogStructuredDetailFields, catalogTemplateParameterNames } from './error-codes.generated.js';
 import type { CatalogHintTemplateParameters, CatalogMessageTemplateParameters, CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from './error-codes.generated.js';
 
 // The JSON is validated structurally by the catalog lint test; the cast keeps
@@ -38,13 +39,27 @@ export function mapErrorEnvelopeToExitCode(code: ErrorCode): number {
   return code === 'KB_RUNTIME_INPUT_INVALID' || code === 'KB_RUNTIME_UNKNOWN_COMMAND' ? 2 : 1;
 }
 
-/** Fills `{name}` placeholders from `values`; an unresolved catalog parameter is a defect. */
-export function renderTemplate(template: string, values: Readonly<Record<string, string>> = {}): string {
-  return template.replace(/\{([A-Za-z0-9_]+)\}/g, (_match, key: string) => {
-    const value = values[key];
-    if (value === undefined) throw new Error(`unrendered template parameter: ${key}`);
-    return value;
-  });
+/** Substitutes only catalogue-declared names; all other brace text remains literal. */
+export function renderTemplate(
+  template: string,
+  values: Readonly<Record<string, string>> = {},
+  declaredNames: readonly string[] = [],
+): string {
+  const declared = new Set(declaredNames);
+  let rendered = '';
+  let remaining = template;
+  while (remaining.length > 0) {
+    const opening = remaining.indexOf('{');
+    if (opening < 0) return rendered + remaining;
+    rendered += remaining.slice(0, opening);
+    const closing = remaining.indexOf('}', opening + 1);
+    if (closing < 0) return rendered + remaining.slice(opening);
+    const name = remaining.slice(opening + 1, closing);
+    const literal = remaining.slice(opening, closing + 1);
+    rendered += declared.has(name) && values[name] !== undefined ? values[name] : literal;
+    remaining = remaining.slice(closing + 1);
+  }
+  return rendered;
 }
 
 type DataTemplateParameters<C extends PlatformErrorCode> = CatalogTemplateParameters[C];
@@ -98,7 +113,6 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOp
     throw new Error(`Unknown error code "${code}": add it to errors.catalog.json`);
   }
   const details = options.details ?? {};
-  const templateValues = { ...details, ...options.templateValues };
   if (typeof details !== 'object' || details === null || Array.isArray(details)) {
     throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
   }
@@ -110,19 +124,35 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOp
       throw createErrorDetailsContractViolation(key, 'contains serialized JSON');
     }
   }
+  const parameterNames = catalogTemplateParameterNames[code];
+  const allowedDetails = new Set([...parameterNames, ...catalogStructuredDetailFields[code]]);
+  const templateValues: Record<string, string> = {
+    ...details,
+    ...options.templateValues,
+    ...(options.correlationId ? { correlationId: options.correlationId } : {}),
+  };
+  const violationFields = [
+    ...Object.keys(details).filter((key) => !allowedDetails.has(key)),
+    ...Object.keys(options.templateValues ?? {}).filter((key) => !parameterNames.includes(key)),
+  ];
+  for (const name of catalogRequiredTemplateParameters[code]) {
+    if (templateValues[name] === undefined || templateValues[name].trim() === '') violationFields.push(name);
+  }
+  if (violationFields.length > 0) {
+    return createDiagnosticContractViolation(code, [...new Set(violationFields)].sort());
+  }
   const envelope: ErrorEnvelope = {
     code: entry.code,
     area: entry.area,
     stage: entry.stage,
     severity: options.severity ?? entry.severity,
     retryable: entry.retryable,
-    message: options.message ?? renderTemplate(entry.message, templateValues),
-    hint: options.hint ?? renderTemplate(!options.correlationId && entry.hintWithoutCorrelationId
-      ? entry.hintWithoutCorrelationId
-      : entry.hint, {
-      ...templateValues,
-      ...(options.correlationId ? { correlationId: options.correlationId } : {}),
-    }),
+    message: options.message ?? renderTemplate(entry.message, templateValues, parameterNames),
+    hint: options.hint ?? renderTemplate(
+      !options.correlationId && entry.hintWithoutCorrelationId ? entry.hintWithoutCorrelationId : entry.hint,
+      templateValues,
+      parameterNames,
+    ),
   };
   if (options.cause && options.cause !== envelope.message) {
     envelope.cause = options.cause;
@@ -143,6 +173,12 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOp
     envelope.diagnostics = options.diagnostics;
   }
   return envelope;
+}
+
+function createDiagnosticContractViolation(originalCode: string, fields: readonly string[]): ErrorEnvelope {
+  return createErrorEnvelope('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION', {
+    details: { originalCode, fields: fields.join(', ') },
+  });
 }
 
 export function isSerializedStructuredValue(value: string): boolean {

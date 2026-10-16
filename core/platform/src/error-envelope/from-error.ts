@@ -13,6 +13,7 @@ import { ErrorEnvelopeError, type ErrorEnvelope, type ProductErrorCode } from '.
 import { isErrorEnvelope, validateErrorEnvelope } from './validate.js';
 
 export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions<never>, 'correlationId' | 'actions' | 'docs' | 'diagnostics'> & { binary?: string };
+export type DecodeEnvelopeOptions = ToEnvelopeOptions & { protocolDetails?: Readonly<Record<string, string>> };
 
 /** Read a validated platform envelope carried by a typed error wrapper. */
 export function errorEnvelopeFrom(error: unknown): ErrorEnvelope | undefined {
@@ -301,6 +302,38 @@ export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEn
       });
     }
     throw cause;
+  }
+}
+
+/** Reconstructs a received catalogued envelope from its code and generated structured-detail contract. */
+export function decodeErrorEnvelope(envelope: ErrorEnvelope, options: DecodeEnvelopeOptions = {}): ErrorEnvelope {
+  const { protocolDetails = {}, ...envelopeOptions } = options;
+  if (!isErrorCode(envelope.code)) return canonicalizeErrorEnvelope(envelope, envelopeOptions);
+
+  const details = envelope.details ?? {};
+
+  try {
+    const reconstructed = createErrorEnvelope(envelope.code, {
+      ...envelopeOptions,
+      ...(envelope.correlationId ? { correlationId: envelope.correlationId } : {}),
+      ...(Object.keys(details).length > 0 ? { details } : {}),
+    });
+    if (reconstructed.code === 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION') {
+      return createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
+        ...envelopeOptions,
+        details: {
+          ...protocolDetails,
+          remoteCode: envelope.code,
+          fields: reconstructed.details?.fields ?? 'details',
+        },
+      });
+    }
+    return reconstructed;
+  } catch {
+    return createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
+      ...envelopeOptions,
+      details: { ...protocolDetails, remoteCode: envelope.code },
+    });
   }
 }
 

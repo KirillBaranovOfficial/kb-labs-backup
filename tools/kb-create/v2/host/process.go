@@ -253,7 +253,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 			if record.InstallationID != r.InstallationID {
 				return Info{}, RootConflict(record.PlatformRoot, record.PID)
 			}
-			return Info{}, hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil, pidDetail(record.PID))
+			return Info{}, hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)+"` to inspect it.", nil, map[string]string{"pid": strconv.Itoa(record.PID), "nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", r.PlatformRoot)})
 		case ProcessIdentityMismatch:
 			if processAlive(record.PID) {
 				return Info{}, StaleProcessIdentityFailure(r.State.HostPID(), "host", record.PID, r.PlatformRoot, record.HealthURL)
@@ -496,6 +496,13 @@ func (r *ProcessRunner) environment() ([]string, error) {
 // StartFailure is the single diagnostic builder for failed launcher host starts.
 func StartFailure(state State, cause error, evidence map[string]string) *diag.Diag {
 	details := map[string]string{"log": state.HostLog(), "launcherLog": state.LauncherLog()}
+	evidenceFields := make([]string, 0, len(evidence))
+	for key := range evidence {
+		evidenceFields = append(evidenceFields, key)
+	}
+	if undeclared := diag.UndeclaredDetailFields("KB_HOST_START_FAILED", evidenceFields); len(undeclared) > 0 {
+		return diag.NewContractViolation("KB_HOST_START_FAILED", strings.Join(undeclared, ", "))
+	}
 	for key, value := range evidence {
 		details[key] = redactHostOutput(value, nil)
 	}
@@ -519,6 +526,12 @@ func StartFailure(state State, cause error, evidence map[string]string) *diag.Di
 		}
 		if err := appendLauncherFailure(state, typed); err != nil {
 			typed.Meta["launcherLogError"] = err.Error()
+		}
+		if _, err := diag.ToEnvelope(typed); err != nil {
+			var violation *diag.Diag
+			if errors.As(err, &violation) {
+				return violation
+			}
 		}
 		return typed
 	}
@@ -879,9 +892,11 @@ func RootConflict(platformRoot string, pid int) *diag.Diag {
 	pidText := strconv.Itoa(pid)
 	meta := map[string]string{"platformRoot": platformRoot, "pid": pidText}
 	if platformRoot == "" {
+		meta["nextCommand"] = contracts.ShellCommand("kb-create", "status")
 		return hostError("KB_HOST_ALREADY_RUNNING", "A KB Labs host started by an earlier launcher is already running (pid "+pidText+").", "Stop process "+pidText+", then rerun the command.", nil, meta)
 	}
 	command := contracts.ShellCommand("kb-create", "stop", "--platform-root", platformRoot)
+	meta["nextCommand"] = command
 	return hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host for platform root "+platformRoot+" is already running (pid "+pidText+").", "Stop that platform first with `"+command+"`.", nil, meta)
 }
 
