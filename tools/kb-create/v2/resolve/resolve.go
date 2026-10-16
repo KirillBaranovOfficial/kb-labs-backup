@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	packageartifacts "github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/semrange"
@@ -249,6 +250,23 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	sortArtifacts(artifacts)
 	if err := annotateArtifactResolution(request, artifacts); err != nil {
 		return contracts.ResolvedInstallPlan{}, err
+	}
+	provenanceByPackage := make(map[string]catalog.ArtifactProvenance, len(source.Provenance))
+	for _, item := range source.Provenance {
+		provenanceByPackage[item.Package+"@"+item.Version] = item
+	}
+	for index := range artifacts {
+		if artifacts[index].IsBinary() {
+			continue
+		}
+		key := artifacts[index].Package + "@" + artifacts[index].Version
+		if item, ok := provenanceByPackage[key]; ok {
+			artifacts[index].Provenance = contracts.ArtifactProvenance{SourceRevision: item.SourceRevision, Integrity: item.Integrity, DistSHA256: item.DistSHA256}
+		}
+		packagePath := filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(artifacts[index].Package)))
+		if err := packageartifacts.ValidatePackageProvenance(artifacts[index], packagePath); err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
 	}
 	bindings = uniqueBindings(bindings)
 	patches, err := configPatches(platform, artifacts, bindings, source, request)

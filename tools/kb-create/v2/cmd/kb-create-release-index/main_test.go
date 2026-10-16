@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 )
@@ -20,6 +24,94 @@ func TestRunSealsNormalizedReleaseExport(t *testing.T) {
 	sealed, err := catalog.LoadFile(output)
 	if err != nil || sealed.Digest == "" {
 		t.Fatalf("sealed/error = %#v / %v", sealed, err)
+	}
+}
+
+func TestRunDigestWritesVersionedOwnerJSON(t *testing.T) {
+	dist := filepath.Join(t.TempDir(), "dist")
+	if err := os.MkdirAll(dist, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, "index.js"), []byte("owner bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := artifacts.DistDigest(dist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runDigest([]string{dist}, bytes.NewReader(nil), &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Schema string `json:"schema"`
+		Digest string `json:"digest"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Schema != "kb-dist-digest/v1" || result.Digest != expected {
+		t.Fatalf("digest JSON = %#v, want schema kb-dist-digest/v1 and digest %s", result, expected)
+	}
+}
+
+func TestRunDigestPackageSetWritesVersionedOwnerJSON(t *testing.T) {
+	packagesDir := t.TempDir()
+	packages := []artifacts.PackageManifestInput{}
+	expected, err := artifacts.PackageSetContentDigest(packagesDir, packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := json.Marshal(packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runDigest([]string{"package-set", packagesDir}, bytes.NewReader(input), &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Schema string `json:"schema"`
+		Digest string `json:"digest"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Schema != "kb-package-set-digest/v1" || result.Digest != expected {
+		t.Fatalf("package set JSON = %#v, want owner digest %s", result, expected)
+	}
+}
+
+func TestRunSealsProducerProvenanceBeforeComputingDigest(t *testing.T) {
+	input, output, manifestRoot := validReleaseSealerFixture(t)
+	data, err := os.ReadFile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source catalog.Catalog
+	if err := json.Unmarshal(data, &source); err != nil {
+		t.Fatal(err)
+	}
+	if len(source.Provenance) == 0 {
+		t.Fatal("release-index fixture omitted producer-generated provenance")
+	}
+	data, err = json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(input, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(input, output, manifestRoot); err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := catalog.LoadFile(output)
+	if err != nil || len(sealed.Provenance) != len(source.Provenance) {
+		t.Fatalf("sealed provenance = %d, err = %v", len(sealed.Provenance), err)
+	}
+	sealed.Provenance[0].DistSHA256 = "edited-after-seal"
+	if err := catalog.Verify(sealed); err == nil {
+		t.Fatal("edited provenance survived the immutable digest check")
 	}
 }
 
@@ -77,6 +169,14 @@ func validReleaseSealerFixture(t *testing.T) (input, output, manifestRoot string
 		if err := os.WriteFile(filepath.Join(packageDir, "kb-create.manifest.json"), manifest, 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	refreshFixtureProvenance(t, &source, manifestRoot)
+	export, err = json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(input, export, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	return input, output, manifestRoot
 }
@@ -240,6 +340,87 @@ func compatibilityRelationExists(relations []catalog.CompatibilityRelation, want
 	return false
 }
 
+func refreshFixtureProvenance(t *testing.T, source *catalog.Catalog, manifestRoot string) {
+	t.Helper()
+	components := []catalog.Component{}
+	for _, platform := range source.Platforms {
+		components = append(components, catalog.Component{ID: platform.ID, Version: platform.Version, Package: platform.Package})
+		components = append(components, platform.Members...)
+	}
+	components = append(components, source.SDKs...)
+	components = append(components, source.Plugins...)
+	for _, adapter := range source.Adapters {
+		components = append(components, adapter.Component)
+	}
+	packagesRoot := filepath.Join(t.TempDir(), "packages")
+	entries := make([]map[string]string, 0, len(components))
+	for index, component := range components {
+		packageDir := filepath.Join(manifestRoot, "node_modules", filepath.FromSlash(component.Package))
+		packageJSON, err := json.Marshal(map[string]string{"name": component.Package, "version": component.Version})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(packageDir, "package.json"), packageJSON, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(packageDir, "dist"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(packageDir, "dist", "index.js"), []byte("release fixture: "+component.Package), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		packageArchiveRoot := filepath.Join(packagesRoot, fmt.Sprintf("package-%03d", index))
+		if err := os.MkdirAll(packageArchiveRoot, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.CopyFS(filepath.Join(packageArchiveRoot, "package"), os.DirFS(packageDir)); err != nil {
+			t.Fatal(err)
+		}
+		tarball := fmt.Sprintf("package-%03d.tgz", index)
+		command := exec.Command("tar", "-czf", filepath.Join(packagesRoot, tarball), "-C", packageArchiveRoot, "package")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("pack release fixture %s: %v: %s", component.Package, err, output)
+		}
+		entries = append(entries, map[string]string{"name": component.Package, "version": component.Version, "tarball": tarball})
+	}
+	manifest, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packagesRoot, "manifest.json"), manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		tarball := filepath.Join(packagesRoot, entry["tarball"])
+		extracted := t.TempDir()
+		command := exec.Command("tar", "-xzf", tarball, "-C", extracted)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("extract provenance package: %v: %s", err, output)
+		}
+		distDigest, err := artifacts.DistDigest(filepath.Join(extracted, "package", "dist"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		integrity, err := artifacts.TarballIntegrity(tarball)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.Provenance = append(source.Provenance, catalog.ArtifactProvenance{
+			Package: entry["name"], Version: entry["version"],
+			ArtifactProvenance: contracts.ArtifactProvenance{
+				SourceRevision: "test-source-revision", Integrity: integrity, DistSHA256: distDigest,
+			},
+		})
+	}
+	lock := "lockfileVersion: '9.0'\npackages:\n"
+	for _, item := range source.Provenance {
+		lock += fmt.Sprintf("  '%s@%s':\n    resolution:\n      integrity: %s\n", item.Package, item.Version, item.Integrity)
+	}
+	if err := os.WriteFile(filepath.Join(manifestRoot, "pnpm-lock.yaml"), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunRejectsUnrelatedTargetSDKForShippedBinary(t *testing.T) {
 	input, output, manifestRoot := validReleaseSealerFixture(t)
 	writeSealerCandidate(t, input, manifestRoot, "2.120.3", false)
@@ -291,13 +472,6 @@ func writeSealerCandidate(t *testing.T, inputPath, manifestRoot, version string,
 	}
 	labels = append(labels, catalog.CompatibilityLabel{ID: "binary:kb-create@2.120.1:darwin/arm64", Kind: "binary", ArtifactID: "kb-create", Version: "2.120.1", Requires: binaryRequires, Status: "prepared", ValidatedBy: []string{"stage"}})
 	source.Compatibility = &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: labels}
-	encoded, err := json.Marshal(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(inputPath, encoded, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	err = filepath.WalkDir(manifestRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -321,6 +495,14 @@ func writeSealerCandidate(t *testing.T, inputPath, manifestRoot, version string,
 		return os.WriteFile(path, updated, 0o600)
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	refreshFixtureProvenance(t, &source, manifestRoot)
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inputPath, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

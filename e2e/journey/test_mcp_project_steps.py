@@ -435,12 +435,24 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             return (401, {"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                 "area": "auth", "stage": "login", "severity": "error", "retryable": False,
-                "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>"), "correlationId": "corr-auth",
+                "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000"),
+                "correlationId": "corr-auth", "details": {"gatewayUrl": "http://127.0.0.1:4000"},
             }}, {})
 
         with patch("service_runner.request_mcp", side_effect=fake_request):
             self.assertIsNone(secured_auth("prj_a"))
         self.assertEqual(calls, ["", "not-a-real-token"])
+
+    def test_secured_auth_compares_the_catalog_hint_for_the_returned_gateway(self):
+        gateway_url = "http://127.0.0.1:4000"
+        response = (401, {"ok": False, "error": {
+            "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
+            "area": "auth", "stage": "run", "severity": "error", "retryable": False,
+            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl=gateway_url),
+            "correlationId": "corr-auth", "details": {"gatewayUrl": gateway_url},
+        }}, {})
+        with patch("service_runner.request_mcp", return_value=response):
+            self.assertIsNone(secured_auth("prj_a"))
 
     def test_secured_auth_rejects_http_401_without_the_catalog_envelope(self):
         with patch("service_runner.request_mcp", return_value=(401, {"ok": False, "error": "unauthorized"}, {})):
@@ -451,7 +463,8 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (401, {"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                 "area": "auth", "stage": "login", "severity": "error", "retryable": False,
-                "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>"), "correlationId": "corr-auth",
+                "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4000"),
+                "correlationId": "corr-auth", "details": {"gatewayUrl": "http://127.0.0.1:4000"},
             }}, {}),
             (200, {"result": {"tools": []}}, {}),
         ])

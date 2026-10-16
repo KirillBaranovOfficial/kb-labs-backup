@@ -4,10 +4,12 @@
 # inside that tarball; pnpm publish <tarball> can resolve the package from its
 # current working directory and republish workspace:* metadata.
 #
-# Idempotent for matching package bytes on warm Verdaccio volumes.
-# Runs once and exits 0 — Docker Compose waits for this to complete
-# before starting the platform container.
+# Existing package versions are immutable conflicts, even when bytes match.
+# A successful run publishes every package before Docker Compose starts platform.
 set -e
+
+KB_ERROR_CATALOG_PATH="${KB_ERROR_CATALOG_PATH:-/errors.catalog.json}"
+export KB_ERROR_CATALOG_PATH
 
 REGISTRY="${VERDACCIO_URL:-http://verdaccio:4873}"
 REGISTRY_HOST="${REGISTRY#http://}"
@@ -105,7 +107,7 @@ for path in sorted(glob.glob(f"{base_dir}/*.tgz")):
 PY
 }
 
-# Worker: published-or-identical-conflict → echo ✓/~ and exit 0; otherwise exit 1.
+# Worker: a new immutable version publishes; every existing-version conflict fails.
 # REGISTRY is exported above; the worker reads it from env.
 WORKER='
   tarball="$1"
@@ -123,30 +125,38 @@ WORKER='
       if [ "$version" != "$latest_version" ]; then tag_args="--tag journey-${version}"; fi
       ;;
   esac
-  OUTPUT=$(npm publish "$tarball" --registry "$REGISTRY" $tag_args 2>&1) && {
+  if OUTPUT=$(npm publish "$tarball" --registry "$REGISTRY" $tag_args 2>&1); then
     echo "  ✓ $pkg"
     exit 0
-  } || true
-  if echo "$OUTPUT" | grep -qi "409\|E409\|already present\|already exists\|EPUBLISHCONFLICT\|is already published\|cannot publish over the previously published versions"; then
-    remote_integrity=$(npm view "$name@$version" dist.integrity --registry "$REGISTRY" 2>/dev/null || true)
-    remote_shasum=$(npm view "$name@$version" dist.shasum --registry "$REGISTRY" 2>/dev/null || true)
+  fi
+  if remote_integrity=$(npm view "$name@$version" dist.integrity --registry "$REGISTRY" 2>/dev/null); then
+    if ! remote_shasum=$(npm view "$name@$version" dist.shasum --registry "$REGISTRY" 2>/dev/null); then
+      remote_shasum=""
+    fi
     local_integrity=$(python3 -c "import base64,hashlib,sys; data=open(sys.argv[1],\"rb\").read(); print(\"sha512-\"+base64.b64encode(hashlib.sha512(data).digest()).decode())" "$tarball")
     local_shasum=$(python3 -c "import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],\"rb\").read()).hexdigest())" "$tarball")
-    if [ -n "$remote_integrity" ] && [ "$remote_integrity" = "$local_integrity" ]; then
-      echo "  ~ $name@$version (already exists; matching tarball digest: $local_integrity)"
-      exit 0
-    fi
-    if [ -z "$remote_integrity" ] && [ -n "$remote_shasum" ] && [ "$remote_shasum" = "$local_shasum" ]; then
-      echo "  ~ $name@$version (already exists; matching tarball digest: sha1-$local_shasum)"
-      exit 0
-    fi
-    registry_digest="${remote_integrity:-${remote_shasum:-unavailable}}"
+    registry_digest="$remote_integrity"
     local_digest="$local_integrity"
-    if [ -z "$remote_integrity" ] && [ -n "$remote_shasum" ]; then
-      local_digest="sha1-$local_shasum"
+    if [ -z "$registry_digest" ]; then
+      if [ -n "$remote_shasum" ]; then
+        registry_digest="sha1-$remote_shasum"
+        local_digest="sha1-$local_shasum"
+      else
+        registry_digest="unavailable (registry metadata lookup returned no digest)"
+      fi
     fi
-    echo "ERROR: $name@$version already exists in Verdaccio with different tarball bytes (registry digest: $registry_digest; local digest: $local_digest)."
-    echo "Hint: start from an empty registry with docker volume rm e2e_verdaccio-storage or bump the package version."
+    python3 - "$KB_ERROR_CATALOG_PATH" "$name" "$version" "$registry_digest" "$local_digest" <<'CATALOG_PY'
+import json
+import sys
+
+catalog_path, package, version, registry_digest, local_digest = sys.argv[1:]
+catalog = json.load(open(catalog_path, encoding="utf8"))
+entry = next(item for item in catalog["codes"] if item["code"] == "KB_RELEASE_VERSION_CONFLICT")
+message = entry["message"].replace("{package}", package).replace("{version}", version)
+print(f"ERROR KB_RELEASE_VERSION_CONFLICT: {message}")
+print(entry["hint"])
+print(f"Registry digest: {registry_digest}; local digest: {local_digest}.")
+CATALOG_PY
     exit 1
   fi
   echo "  ✗ $pkg"

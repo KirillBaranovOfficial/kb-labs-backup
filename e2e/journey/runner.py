@@ -1710,7 +1710,8 @@ def _main(*, update_variant_runner=None):
                     mode=mode, launcher=launcher, stable_index=stable_index,
                     update_index=container_update_indexes["update"],
                     jump_index=container_update_indexes["jump"], canary_index=canary_index,
-                    platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command)
+                    platform_root=PLATFORM, secret_value=installer_secret, registry=REGISTRY,
+                    run_command=installer_command)
                 register_supplied_password_absence_step(
                     fixture_journey, Path(env["HOME"]), installer_secret)
                 return fixture_journey

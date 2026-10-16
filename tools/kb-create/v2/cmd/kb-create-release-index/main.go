@@ -8,11 +8,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/release"
@@ -20,7 +22,113 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "digest":
+			command.Exit(executeDigest(os.Args[2:]))
+			return
+		case "provenance":
+			command.Exit(executeProvenance(os.Args[2:]))
+			return
+		}
+	}
 	command.Exit(execute())
+}
+
+func executeProvenance(args []string) diag.ExitStatus {
+	if err := runProvenance(args, os.Stdin, os.Stdout); err == nil {
+		return diag.SuccessStatus()
+	} else {
+		return digestFailure(err)
+	}
+}
+
+func runProvenance(args []string, input io.Reader, output io.Writer) error {
+	if len(args) != 2 || args[0] == "" || args[1] == "" {
+		return fmt.Errorf("usage: kb-create-release-index provenance <packages-directory> <source-revision>")
+	}
+	var packages []artifacts.PackageManifestInput
+	if err := json.NewDecoder(input).Decode(&packages); err != nil {
+		return err
+	}
+	sealed, err := artifacts.SealPackageProvenance(args[0], packages, args[1])
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(sealed)
+}
+
+func executeDigest(args []string) diag.ExitStatus {
+	if err := runDigest(args, os.Stdin, os.Stdout); err == nil {
+		return diag.SuccessStatus()
+	} else {
+		return digestFailure(err)
+	}
+}
+
+func runDigest(args []string, input io.Reader, output io.Writer) error {
+	var result any
+	var err error
+	switch {
+	case len(args) == 2 && args[0] == "package-set":
+		var packages []artifacts.PackageManifestInput
+		if err = json.NewDecoder(input).Decode(&packages); err == nil {
+			var digest string
+			digest, err = artifacts.PackageSetContentDigest(args[1], packages)
+			result = struct {
+				Schema string `json:"schema"`
+				Digest string `json:"digest"`
+			}{Schema: "kb-package-set-digest/v1", Digest: digest}
+		}
+	case len(args) == 1:
+		var digest string
+		digest, err = artifacts.DistDigest(args[0])
+		result = struct {
+			Schema string `json:"schema"`
+			Digest string `json:"digest"`
+		}{Schema: artifacts.DistDigestVersion, Digest: digest}
+	case len(args) == 2 && args[0] == "package":
+		var digest string
+		digest, err = artifacts.PackageDistDigest(args[1])
+		result = struct {
+			Schema string `json:"schema"`
+			Digest string `json:"digest"`
+		}{Schema: artifacts.DistDigestVersion, Digest: digest}
+	case len(args) == 2 && args[0] == "integrity":
+		var integrity string
+		integrity, err = artifacts.TarballIntegrity(args[1])
+		result = struct {
+			Schema    string `json:"schema"`
+			Integrity string `json:"integrity"`
+		}{Schema: "kb-tarball-integrity/v1", Integrity: integrity}
+	case len(args) == 2 && args[0] == "sha256":
+		var digest string
+		digest, err = artifacts.SHA256File(args[1])
+		result = struct {
+			Schema string `json:"schema"`
+			Digest string `json:"digest"`
+		}{Schema: "kb-file-sha256/v1", Digest: digest}
+	default:
+		err = fmt.Errorf("usage: kb-create-release-index digest <dist-directory> | digest package <dist-directory> | digest package-set <packages-directory> (package JSON on stdin) | digest integrity <tarball> | digest sha256 <file>")
+	}
+	if err == nil {
+		return json.NewEncoder(output).Encode(result)
+	}
+	return err
+}
+
+func digestFailure(err error) diag.ExitStatus {
+	failure, status, envelopeErr := sealingFailureResult(&sealingFailure{
+		gate: "package content digest", rule: err.Error(),
+		hint: "Fix the packed package input, then rerun release-index preparation.", err: err,
+	})
+	if envelopeErr != nil {
+		fmt.Fprintf(os.Stderr, "kb-create-release-index: failed to format digest diagnostic: %v\n", envelopeErr)
+		return diag.ExitCode(diag.New("KB_RUNTIME_UNEXPECTED", "The package digest failure could not be formatted.",
+			diag.WithCauseAndReason(envelopeErr.Error()), diag.WithHint("Check the release-index diagnostic and rerun release-index preparation.")))
+	}
+	_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"ok": false, "error": failure})
+	return status
 }
 
 func execute() diag.ExitStatus {

@@ -19,7 +19,7 @@ func hostCatalog(host *contracts.HostSpec) catalog.Catalog {
 // launcher will run must be in it, copied from the platform the user selected.
 func TestPlanCarriesThePlatformsHost(t *testing.T) {
 	declared := &contracts.HostSpec{Command: "node_modules/.bin/kb-host", Args: []string{"--flag"}, HealthURL: "http://127.0.0.1:4000/health", Recover: &contracts.ToolSpec{Command: "node_modules/.bin/kb-recover"}}
-	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(declared))
+	plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(declared))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestPlanCarriesThePlatformsHost(t *testing.T) {
 }
 
 func TestPlanRejectsAPlatformThatDeclaresNoHost(t *testing.T) {
-	_, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(nil))
+	_, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(nil))
 	launcherErr, ok := err.(*diag.Diag)
 	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents {
 		t.Fatalf("err = %#v", err)
@@ -42,11 +42,11 @@ func TestPlanRejectsAPlatformThatDeclaresNoHost(t *testing.T) {
 }
 
 func TestPlanHashCoversTheHost(t *testing.T) {
-	first, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(&contracts.HostSpec{Command: "a", HealthURL: "http://127.0.0.1:4000/health"}))
+	first, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(&contracts.HostSpec{Command: "a", HealthURL: "http://127.0.0.1:4000/health"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(&contracts.HostSpec{Command: "b", HealthURL: "http://127.0.0.1:4000/health"}))
+	second, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(&contracts.HostSpec{Command: "b", HealthURL: "http://127.0.0.1:4000/health"}))
 	if err != nil {
 		t.Fatal(err)
 	}

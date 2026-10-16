@@ -4,12 +4,12 @@
 // copied into the image. The registry manifest remains the E2E composition
 // source, while the sealed index is the only input consumed by kb-create.
 
-import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { prepareJourneyUpdatePackages, releasePackageNames } from './journey-update-packages.mjs';
+import { deriveCandidateVersion, prepareJourneyUpdatePackages, releasePackageNames } from './journey-update-packages.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
+import { invokePackageProvenanceOwner } from './package-provenance.mjs';
 import { readPlatformReleaseConfig } from '../../tools/kb-create/scripts/platform-release-config.mjs';
 
 const args = process.argv.slice(2);
@@ -32,6 +32,7 @@ const binaryManifest = resolve(required('--binary-manifest'));
 const binaryManifestTool = resolve(required('--binary-manifest-tool'));
 const binaryChecksums = resolve(required('--binary-checksums'));
 const binaryVersion = required('--binary-version');
+const sourceRevision = required('--source-revision');
 const binaryRepository = value('--binary-repository') ?? 'kb-labs-team/kb-labs';
 const binaryReleaseTag = value('--binary-release-tag') ?? 'journey-candidate';
 const binaryBaseUrl = value('--binary-base-url') ?? 'http://origin:8080/journey-candidate';
@@ -50,7 +51,10 @@ for (const filename of readdirSync(packagesDir).filter(name => name.endsWith('.t
   const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', tarball, 'package/package.json'], { encoding: 'utf8' }));
   if (wantedSet.has(packageJSON.name)) {
     copyFileSync(tarball, join(stage, filename));
-    packages.set(packageJSON.name, { name: packageJSON.name, version: packageJSON.version, tarball: filename, sha256: sha256(tarball) });
+    packages.set(packageJSON.name, {
+      name: packageJSON.name, version: packageJSON.version, tarball: filename,
+      sha256: invokePackageProvenanceOwner(sealer, ['digest', 'sha256', tarball]).digest,
+    });
   }
 }
 
@@ -59,6 +63,7 @@ for (const name of wanted) {
 }
 
 writeFileSync(join(stage, 'manifest.json'), `${JSON.stringify([...packages.values()], null, 2)}\n`);
+const provenanceManifest = writeProvenanceManifest(stage, sourceRevision);
 
 const releaseConfig = readPlatformReleaseConfig(releaseConfigPath);
 const adapterConfig = JSON.stringify(releaseConfig.adapters);
@@ -90,6 +95,7 @@ const result = spawnSync(process.execPath, [
   '--flow', 'platform',
   '--channel', 'stable',
   '--artifacts-dir', stage,
+  '--provenance-manifest', provenanceManifest,
   '--binary-manifest', binaryManifest,
   // The platform composition under test needs a log store: workflow run logs
   // (GET /runs/:id/logs, the logs WS channel) are served by platform.logs,
@@ -118,19 +124,21 @@ if (result.status !== 0) process.exit(result.status ?? 1);
 const baseVersion = stablePlatformVersion(JSON.parse(readFileSync(output, 'utf8')));
 const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(baseVersion ?? '');
 if (!match) throw new Error(`platform release version is not a stable semantic version: ${baseVersion}`);
-const updateVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
+const updateVersion = deriveCandidateVersion(`${match[1]}.${match[2]}.${Number(match[3]) + 1}`, stage, registryManifest, sealer);
 const jumpVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 2}`;
 const minorVersion = `${match[1]}.${Number(match[2]) + 1}.0`;
 const updateOutput = join(resolve(output, '..'), 'release-index-update.json');
 const updatePackagesDir = join(resolve(output, '..'), 'update-packages');
 // Derive from the sealed base stage (exactly the wanted packages, one version
 // each); the registry publisher reads packagesDir.
-prepareJourneyUpdatePackages(stage, updatePackagesDir, updateVersion, { publishDir: packagesDir });
+prepareJourneyUpdatePackages(stage, updatePackagesDir, updateVersion, { publishDir: packagesDir, digestTool: sealer });
+const updateProvenance = writeProvenanceManifest(updatePackagesDir, sourceRevision);
 const update = spawnSync(process.execPath, [
   prepareScript,
   '--flow', 'platform',
   '--channel', 'stable',
   '--artifacts-dir', updatePackagesDir,
+  '--provenance-manifest', updateProvenance,
   '--binary-manifest', binaryManifest,
   '--platform-version', updateVersion,
   '--platform-requires', platformRequires,
@@ -148,7 +156,8 @@ if (update.status !== 0) process.exit(update.status ?? 1);
 // A direct N-to-N+2 candidate proves that the resolver accepts a matrix-valid
 // jump without requiring an intermediate update invocation.
 const jumpPackagesDir = join(resolve(output, '..'), 'jump-packages');
-prepareJourneyUpdatePackages(stage, jumpPackagesDir, jumpVersion, { publishDir: packagesDir });
+prepareJourneyUpdatePackages(stage, jumpPackagesDir, jumpVersion, { publishDir: packagesDir, digestTool: sealer });
+const jumpProvenance = writeProvenanceManifest(jumpPackagesDir, sourceRevision);
 const jumpOutput = join(resolve(output, '..'), 'release-index-update-jump.json');
 const jumpHistoryArgs = ['--history-index', output, '--history-index', updateOutput];
 const jump = spawnSync(process.execPath, [
@@ -156,6 +165,7 @@ const jump = spawnSync(process.execPath, [
   '--flow', 'platform',
   '--channel', 'stable',
   '--artifacts-dir', jumpPackagesDir,
+  '--provenance-manifest', jumpProvenance,
   '--binary-manifest', binaryManifest,
   '--platform-version', jumpVersion,
   '--platform-requires', platformRequires,
@@ -172,11 +182,12 @@ const jump = spawnSync(process.execPath, [
 if (jump.status !== 0) process.exit(jump.status ?? 1);
 
 const minorPackagesDir = join(resolve(output, '..'), 'minor-packages');
-prepareJourneyUpdatePackages(stage, minorPackagesDir, minorVersion, { publishDir: packagesDir });
+prepareJourneyUpdatePackages(stage, minorPackagesDir, minorVersion, { publishDir: packagesDir, digestTool: sealer });
+const minorProvenance = writeProvenanceManifest(minorPackagesDir, sourceRevision);
 const minorOutput = join(resolve(output, '..'), 'release-index-update-minor.json');
 const minor = spawnSync(process.execPath, [
   prepareScript, '--flow', 'platform', '--channel', 'stable',
-  '--artifacts-dir', minorPackagesDir, '--binary-manifest', binaryManifest,
+  '--artifacts-dir', minorPackagesDir, '--provenance-manifest', minorProvenance, '--binary-manifest', binaryManifest,
   '--platform-version', minorVersion, '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig, '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers, '--adapter-overrides', adapterOverrides,
@@ -190,14 +201,17 @@ const failedHostVersion = `${match[1]}.${Number(match[2]) + 2}.0`;
 const failedHostPackagesDir = join(resolve(output, '..'), 'failed-host-packages');
 prepareJourneyUpdatePackages(stage, failedHostPackagesDir, failedHostVersion, {
   publishDir: packagesDir,
+  digestTool: sealer,
   failingServicePackage: '@kb-labs/gateway-app',
 });
+const failedHostProvenance = writeProvenanceManifest(failedHostPackagesDir, sourceRevision);
 const failedHostOutput = join(resolve(output, '..'), 'release-index-update-failed-host.json');
 const failedHost = spawnSync(process.execPath, [
   prepareScript,
   '--flow', 'platform',
   '--channel', 'stable',
   '--artifacts-dir', failedHostPackagesDir,
+  '--provenance-manifest', failedHostProvenance,
   '--binary-manifest', binaryManifest,
   '--platform-version', failedHostVersion,
   '--platform-requires', platformRequires,
@@ -216,13 +230,15 @@ if (failedHost.status !== 0) process.exit(failedHost.status ?? 1);
 // release and proves the last-healthy root is pruned only after health passes.
 const healthyHostVersion = `${match[1]}.${Number(match[2]) + 2}.1`;
 const healthyHostPackagesDir = join(resolve(output, '..'), 'healthy-host-packages');
-prepareJourneyUpdatePackages(stage, healthyHostPackagesDir, healthyHostVersion, { publishDir: packagesDir });
+prepareJourneyUpdatePackages(stage, healthyHostPackagesDir, healthyHostVersion, { publishDir: packagesDir, digestTool: sealer });
+const healthyHostProvenance = writeProvenanceManifest(healthyHostPackagesDir, sourceRevision);
 const healthyHostOutput = join(resolve(output, '..'), 'release-index-update-healthy-host.json');
 const healthyHost = spawnSync(process.execPath, [
   prepareScript,
   '--flow', 'platform',
   '--channel', 'stable',
   '--artifacts-dir', healthyHostPackagesDir,
+  '--provenance-manifest', healthyHostProvenance,
   '--binary-manifest', binaryManifest,
   '--platform-version', healthyHostVersion,
   '--platform-requires', platformRequires,
@@ -255,6 +271,7 @@ const badChecksum = spawnSync(process.execPath, [
   '--flow', 'platform',
   '--channel', 'stable',
   '--artifacts-dir', updatePackagesDir,
+  '--provenance-manifest', updateProvenance,
   '--binary-manifest', binaryManifest,
   '--platform-version', updateVersion,
   '--platform-requires', platformRequires,
@@ -304,13 +321,15 @@ for (const candidate of stagedFailureCandidates) {
   const candidatePackages = join(resolve(output, '..'), `staged-${candidate.key}-packages`);
   prepareJourneyUpdatePackages(stage, candidatePackages, candidate.version, {
     publishDir: packagesDir,
+    digestTool: sealer,
     requiredConfigPackage: '@kb-labs/adapters-vibeproxy',
     requiredConfig: candidate.requirement,
   });
+  const candidateProvenance = writeProvenanceManifest(candidatePackages, sourceRevision);
   const candidateOutput = join(resolve(output, '..'), `release-index-update-${candidate.key}-failure.json`);
   const sealed = spawnSync(process.execPath, [
     prepareScript, '--flow', 'platform', '--channel', 'stable', '--artifacts-dir', candidatePackages,
-    '--binary-manifest', binaryManifest, '--platform-version', candidate.version,
+    '--provenance-manifest', candidateProvenance, '--binary-manifest', binaryManifest, '--platform-version', candidate.version,
     '--platform-requires', platformRequires, '--platform-adapter-config', adapterConfig,
     '--platform-adapter-options', adapterOptions, '--platform-member-packages', platformMembers,
     '--adapter-overrides', adapterOverrides, '--registry', 'http://verdaccio:4873',
@@ -324,13 +343,15 @@ for (const candidate of stagedFailureCandidates) {
 // rewrite of the installed platform or a resolver shortcut.
 const canaryVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 2}-canary.1`;
 const canaryPackagesDir = join(resolve(output, '..'), 'canary-packages');
-prepareJourneyUpdatePackages(stage, canaryPackagesDir, canaryVersion, { publishDir: packagesDir });
+prepareJourneyUpdatePackages(stage, canaryPackagesDir, canaryVersion, { publishDir: packagesDir, digestTool: sealer });
+const canaryProvenance = writeProvenanceManifest(canaryPackagesDir, sourceRevision);
 const canaryOutput = join(resolve(output, '..'), 'release-index-canary.json');
 const canary = spawnSync(process.execPath, [
   prepareScript,
   '--flow', 'platform',
   '--channel', 'canary',
   '--artifacts-dir', canaryPackagesDir,
+  '--provenance-manifest', canaryProvenance,
   '--binary-manifest', binaryManifest,
   '--platform-version', canaryVersion,
   '--platform-requires', platformRequires,
@@ -345,6 +366,11 @@ const canary = spawnSync(process.execPath, [
 ], { stdio: 'inherit' });
 if (canary.status !== 0) process.exit(canary.status ?? 1);
 
-function sha256(path) {
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
+function writeProvenanceManifest(directory, revision) {
+  const packageManifest = JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8'));
+  const provenance = invokePackageProvenanceOwner(sealer,
+    ['provenance', directory, revision], JSON.stringify(packageManifest));
+  const path = join(directory, 'provenance.json');
+  writeFileSync(path, `${JSON.stringify(provenance, null, 2)}\n`);
+  return path;
 }

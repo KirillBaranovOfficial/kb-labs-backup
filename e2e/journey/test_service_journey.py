@@ -1778,6 +1778,8 @@ raise SystemExit(1)
             if not line.lstrip().startswith("COPY "):
                 continue
             tokens = shlex.split(line)
+            if any(token.startswith("--from=") for token in tokens[1:-1]):
+                continue
             destination = tokens[-1]
             for source in tokens[1:-1]:
                 for path in root.glob(source):

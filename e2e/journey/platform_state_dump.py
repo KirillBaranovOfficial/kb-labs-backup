@@ -311,6 +311,9 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         for source in sorted(snapshots.glob("*.json")):
             add(source, Path(layout_value("installerRecords.snapshots")) / source.name)
         receipt_path = installed_path(root, 'currentLink', '.kb/v2/receipt.json')
+        provenance_path = active / ".kb/v2/installed-provenance.json"
+        if provenance_path.is_file():
+            add(provenance_path, Path("installed-package-provenance.json"))
         try:
             receipt_value = json.loads(receipt_path.read_text())
             artifacts = receipt_value.get("plan", {}).get("artifacts", [])

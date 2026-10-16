@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import test from 'node:test';
-import { prepareJourneyUpdatePackages, releasePackageNames } from './journey-update-packages.mjs';
+import test, { after } from 'node:test';
+import { deriveCandidateVersion, prepareJourneyUpdatePackages, releasePackageNames } from './journey-update-packages.mjs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
+
+const digestToolDirectory = mkdtempSync(join(tmpdir(), 'kb-journey-digest-tool-'));
+const digestTool = join(digestToolDirectory, 'kb-create-release-index');
+execFileSync('go', ['build', '-trimpath', '-o', digestTool, './v2/cmd/kb-create-release-index'], {
+  cwd: resolve(dirname(fileURLToPath(import.meta.url)), '../../tools/kb-create'),
+});
+after(() => rmSync(digestToolDirectory, { recursive: true, force: true }));
 
 function packageFilename(name, version) {
   return `${name.replace(/^@/, '').replaceAll('/', '-')}-${version}.tgz`;
@@ -20,6 +27,7 @@ function seedReleasePackages(root, packages, manifest = registryManifest, extraN
     mkdirSync(join(packageRoot, 'dist'), { recursive: true });
     writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name, version: '3.0.0' }));
     writeFileSync(join(packageRoot, 'index.js'), `${name} bytes`);
+    writeFileSync(join(packageRoot, 'dist/index.js'), `${name} dist bytes`);
     if (name === '@kb-labs/gateway-app') {
       writeFileSync(join(packageRoot, 'dist/bin.js'), '#!/usr/bin/env node\nconsole.log("healthy");\n');
       writeFileSync(join(packageRoot, 'kb-create.requirements.json'), JSON.stringify({
@@ -31,6 +39,54 @@ function seedReleasePackages(root, packages, manifest = registryManifest, extraN
   return packageNames;
 }
 
+test('candidate version changes when packed package content changes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'journey-candidate-version-'));
+  try {
+    const first = join(root, 'first');
+    const changed = join(root, 'changed');
+    seedReleasePackages(root, first, registryManifest);
+    seedReleasePackages(root, changed, registryManifest);
+    const changedTarball = join(changed, packageFilename('@kb-labs/commit-entry', '3.0.0'));
+    const unpack = join(root, 'unpack');
+    mkdirSync(unpack);
+    execFileSync('tar', ['-xzf', changedTarball, '-C', unpack]);
+    const distBytes = readFileSync(join(unpack, 'package', 'dist/index.js'));
+    distBytes[distBytes.length - 1] ^= 1;
+    writeFileSync(join(unpack, 'package', 'dist/index.js'), distBytes);
+    execFileSync('tar', ['-czf', changedTarball, '-C', unpack, 'package']);
+
+    const firstVersion = deriveCandidateVersion('3.0.1', first, registryManifest, digestTool);
+    const changedVersion = deriveCandidateVersion('3.0.1', changed, registryManifest, digestTool);
+    assert.match(firstVersion, /^3\.0\.1-cand\.[0-9a-f]{12}$/);
+    assert.notEqual(firstVersion, changedVersion);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('candidate version is idempotent when unchanged dist bytes are repacked with different mtimes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'journey-candidate-version-mtime-'));
+  try {
+    const first = join(root, 'first');
+    const repacked = join(root, 'repacked');
+    seedReleasePackages(root, first, registryManifest);
+    seedReleasePackages(root, repacked, registryManifest);
+    const filename = packageFilename('@kb-labs/commit-entry', '3.0.0');
+    const archive = join(repacked, filename);
+    const unpack = join(root, 'unpack');
+    mkdirSync(unpack);
+    execFileSync('tar', ['-xzf', archive, '-C', unpack]);
+    const distFile = join(unpack, 'package', 'dist/index.js');
+    utimesSync(distFile, new Date('2001-01-01T00:00:00Z'), new Date('2001-01-01T00:00:00Z'));
+    execFileSync('tar', ['-czf', archive, '-C', unpack, 'package']);
+
+    assert.equal(deriveCandidateVersion('3.0.1', first, registryManifest, digestTool),
+      deriveCandidateVersion('3.0.1', repacked, registryManifest, digestTool));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('versions every release-manifest artifact and preserves package code', () => {
   const root = mkdtempSync(join(tmpdir(), 'journey-update-packages-'));
   try {
@@ -38,7 +94,7 @@ test('versions every release-manifest artifact and preserves package code', () =
     const update = join(root, 'update');
     const packageNames = seedReleasePackages(root, packages, registryManifest, ['@kb-labs/not-in-release']);
 
-    prepareJourneyUpdatePackages(packages, update, '3.0.1', { publishDir: packages, registryManifest });
+    prepareJourneyUpdatePackages(packages, update, '3.0.1', { publishDir: packages, digestTool, registryManifest });
 
     const manifest = JSON.parse(readFileSync(join(update, 'manifest.json'), 'utf8'));
     const versionedNames = releasePackageNames(registryManifest);
@@ -75,6 +131,7 @@ test('release-index Docker stage copies the package preparation helper', () => {
   const platformDirectory = dirname(fileURLToPath(import.meta.url));
   const dockerfile = readFileSync(join(platformDirectory, 'Dockerfile'), 'utf8');
   assert.match(dockerfile, /COPY e2e\/platform\/journey-update-packages\.mjs \/src\/journey-update-packages\.mjs/);
+  assert.match(dockerfile, /COPY e2e\/platform\/package-provenance\.mjs \/src\/package-provenance\.mjs/);
 });
 
 test('builds a versioned failing service artifact for restart health recovery', () => {
@@ -86,6 +143,7 @@ test('builds a versioned failing service artifact for restart health recovery', 
 
     prepareJourneyUpdatePackages(packages, update, '3.0.3', {
       publishDir: packages,
+      digestTool,
       failingServicePackage: '@kb-labs/gateway-app',
       registryManifest,
     });
@@ -113,6 +171,7 @@ test('seals gateway packages with staged config and doctor failure requirements'
     };
     prepareJourneyUpdatePackages(packages, update, '3.0.2', {
       publishDir: packages,
+      digestTool,
       requiredConfigPackage: '@kb-labs/gateway-app',
       requiredConfig: requirement,
       registryManifest,
@@ -141,6 +200,7 @@ test('release package set follows the manifest when a plugin is removed or added
     const withoutNames = seedReleasePackages(root, droppedPackages, withoutCommit);
     prepareJourneyUpdatePackages(droppedPackages, droppedUpdate, '3.0.1', {
       publishDir: droppedPackages,
+      digestTool,
       registryManifest: withoutCommit,
     });
     const droppedNames = JSON.parse(readFileSync(join(droppedUpdate, 'manifest.json'), 'utf8')).map(item => item.name);
@@ -155,6 +215,7 @@ test('release package set follows the manifest when a plugin is removed or added
     const withNames = seedReleasePackages(root, addedPackages, withNewPlugin);
     prepareJourneyUpdatePackages(addedPackages, addedUpdate, '3.0.2', {
       publishDir: addedPackages,
+      digestTool,
       registryManifest: withNewPlugin,
     });
     const addedEntries = JSON.parse(readFileSync(join(addedUpdate, 'manifest.json'), 'utf8'));

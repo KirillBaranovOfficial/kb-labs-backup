@@ -39,10 +39,13 @@ RUN cd /src/kb-devkit && go build -o /out/kb-devkit .
 # exposes through Verdaccio. This uses the same sealer as the release pipeline.
 FROM node:24-bookworm AS release-index-builder
 
+ARG SOURCE_REVISION
+
 WORKDIR /src
 COPY e2e/packages /src/packages
 COPY e2e/platform/registry-manifest.json /src/registry-manifest.json
 COPY e2e/platform/prepare-release-index.mjs /src/prepare-release-index.mjs
+COPY e2e/platform/package-provenance.mjs /src/package-provenance.mjs
 COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
 COPY e2e/platform/release-index-version.mjs /src/release-index-version.mjs
 COPY tools/kb-create/scripts/prepare-binary-manifest.mjs /src/kb-create/scripts/prepare-binary-manifest.mjs
@@ -68,6 +71,7 @@ RUN sha256sum /out/binaries/kb-create-linux-amd64 /out/binaries/kb-create-linux-
       --binary-manifest-tool /src/kb-create/scripts/prepare-binary-manifest.mjs \
       --binary-checksums /out/binary-checksums.txt \
       --binary-version "$BINARY_VERSION" \
+      --source-revision "$SOURCE_REVISION" \
       --output /out/release-index.json
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────

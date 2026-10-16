@@ -1,0 +1,227 @@
+{
+  "schema": "kb-dist-digest/v1",
+  "vectors": [
+    {
+      "name": "nested-prefix-order",
+      "entries": [
+        {
+          "path": "a.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "root"
+        },
+        {
+          "path": "a/index.js",
+          "type": "file",
+          "mode": "0755",
+          "content": "nested"
+        }
+      ],
+      "digest": "2d76d5f4e69ff58b1636fa8fec657477037fbf0ab1beeb5943666457671b0d16"
+    },
+    {
+      "name": "nested-prefix-a-js-vs-a-index-js",
+      "entries": [
+        {
+          "path": "a.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "2e7121a057436b125cdcda7843a61b74322c4c2c0ca2a629240b40974451f816"
+    },
+    {
+      "name": "nested-prefix-a-index-js",
+      "entries": [
+        {
+          "path": "a/index.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "b9fe45082b81bbff461f8871da11999596529db7bf52f589b51989d035702342"
+    },
+    {
+      "name": "nested-prefix-a-vs-a-js",
+      "entries": [
+        {
+          "path": "a",
+          "type": "file",
+          "mode": "0644",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "1ea790383bea12c2e1c6937f89054842bdd17e2ab83080feb92f88f552598576"
+    },
+    {
+      "name": "length-split-left",
+      "entries": [
+        {
+          "path": "a",
+          "type": "file",
+          "mode": "0644",
+          "content": "foo\u0001b\u0000bar"
+        }
+      ],
+      "digest": "0c70728ae1e930b5dd9a60fbfeb405dc37c94ad6071e8a80c3475db19483a9c6"
+    },
+    {
+      "name": "length-split-right",
+      "entries": [
+        {
+          "path": "a",
+          "type": "file",
+          "mode": "0644",
+          "content": "foo"
+        },
+        {
+          "path": "b",
+          "type": "file",
+          "mode": "0644",
+          "content": "bar"
+        }
+      ],
+      "digest": "6297043437f7b2f27d66acbf2ef043ef831c51ab38b9b2246c10335797222775"
+    },
+    {
+      "name": "byte-flip-before",
+      "entries": [
+        {
+          "path": "entry.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "bd8cca543098fb0e71e51f77eeb8a580ef0f466f95511e1eb21c730634472799"
+    },
+    {
+      "name": "byte-flip-after",
+      "entries": [
+        {
+          "path": "entry.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "same byteS"
+        }
+      ],
+      "digest": "31872c1740ac4f0c0fa6c1db5949aa1d054f8d1c97fa1af7902c4477652a416a"
+    },
+    {
+      "name": "rename-before",
+      "entries": [
+        {
+          "path": "entry.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "bd8cca543098fb0e71e51f77eeb8a580ef0f466f95511e1eb21c730634472799"
+    },
+    {
+      "name": "rename-after",
+      "entries": [
+        {
+          "path": "moved.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "0ee69b4e32a23915e63e4b549a890cd5d41d3016293fe45ca027d516b7106a5a"
+    },
+    {
+      "name": "exec-bit-before",
+      "entries": [
+        {
+          "path": "entry.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "bd8cca543098fb0e71e51f77eeb8a580ef0f466f95511e1eb21c730634472799"
+    },
+    {
+      "name": "exec-bit-after",
+      "entries": [
+        {
+          "path": "entry.js",
+          "type": "file",
+          "mode": "0755",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "414f58a11ebfc0c1590c0ef3ef322a2d2fa97b3faf4fd463fd99c0c516a75957"
+    },
+    {
+      "name": "symlink-vs-file",
+      "entries": [
+        {
+          "path": "entry.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "bd8cca543098fb0e71e51f77eeb8a580ef0f466f95511e1eb21c730634472799"
+    },
+    {
+      "name": "symlink-vs-file-link",
+      "entries": [
+        {
+          "path": "entry.js",
+          "type": "symlink",
+          "target": "target.js"
+        },
+        {
+          "path": "target.js",
+          "type": "file",
+          "mode": "0644",
+          "content": "same bytes"
+        }
+      ],
+      "digest": "3b6e8892e8c99fb102664434d5d3c483bf101cbac5136a27d60529ba5505458b"
+    }
+  ],
+  "pairs": [
+    {
+      "name": "nested-prefix-a.js-vs-a/index.js",
+      "left": "nested-prefix-a-js-vs-a-index-js",
+      "right": "nested-prefix-a-index-js"
+    },
+    {
+      "name": "nested-prefix-a-vs-a.js",
+      "left": "nested-prefix-a-vs-a-js",
+      "right": "nested-prefix-a-js-vs-a-index-js"
+    },
+    {
+      "name": "length-split-collision",
+      "left": "length-split-left",
+      "right": "length-split-right"
+    },
+    {
+      "name": "byte-flip",
+      "left": "byte-flip-before",
+      "right": "byte-flip-after"
+    },
+    {
+      "name": "rename",
+      "left": "rename-before",
+      "right": "rename-after"
+    },
+    {
+      "name": "exec-bit",
+      "left": "exec-bit-before",
+      "right": "exec-bit-after"
+    },
+    {
+      "name": "symlink-vs-file",
+      "left": "symlink-vs-file",
+      "right": "symlink-vs-file-link"
+    }
+  ]
+}

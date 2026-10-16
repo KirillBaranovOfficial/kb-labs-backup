@@ -17,7 +17,7 @@ RUNNER_DOCKERFILE = JOURNEY_DIR / "Dockerfile.runner"
 
 
 def _docker_copy_resources() -> list[tuple[str, str]]:
-    return copy_instructions(RUNNER_DOCKERFILE)
+    return copy_instructions(RUNNER_DOCKERFILE, final_stage_only=True)
 
 
 def _docker_installed_runner_modules(resources: list[tuple[str, str]], journey_root: Path) -> set[str]:

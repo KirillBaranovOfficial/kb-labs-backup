@@ -85,6 +85,7 @@ const (
 	CodeOperationLockUnsupported  = "KB_HOST_OPERATION_LOCK_UNSUPPORTED"
 	CodeHostProcessIdentityStale  = "KB_HOST_PROCESS_IDENTITY_STALE"
 	CodeGatewayIndexUnavailable   = "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE"
+	CodeProvenanceMismatch        = "KB_INSTALL_PROVENANCE_MISMATCH"
 )
 
 const (

@@ -6,6 +6,8 @@ from journey_values import journey_value
 
 import json
 import hashlib
+import base64
+import copy
 import os
 import platform
 import re
@@ -15,8 +17,12 @@ import socket
 import stat
 import sys
 import tempfile
+import tarfile
+import threading
+import urllib.request
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 from urllib.parse import urlsplit
 
@@ -38,6 +44,9 @@ from invocations import (
     decode_ux_success_result,
     read_kb_create_cli_result,
     read_kb_create_cli_stream,
+    catalogued_error_hint,
+    catalogued_error_message,
+    open_http,
     read_ux_cli_result,
     run_command as evidence_run_command,
 )
@@ -59,6 +68,308 @@ def parse_install_refusal(result: CompletedProcess[str]) -> dict | None:
         return None
     return next((decode_ux_error_result(record) for record in envelope[:-1]
                  if record.get("ok") is False), None)
+
+
+def verify_installed_candidate_provenance(active_root: Path) -> None:
+    """Compare executed package bytes reported by the verifier with the receipt."""
+    active_root = Path(active_root)
+    installed_path = active_root / ".kb/v2/installed-provenance.json"
+    if not installed_path.is_file():
+        raise RuntimeError("installed candidate omitted verifier-produced package provenance")
+    installed = json.loads(installed_path.read_text())
+    packages = installed.get("packages", [])
+    if not packages or any(not all(package.get(field) for field in
+                                   ("name", "version", "integrity", "installedPath", "sourceRevision", "contentDigest"))
+                           for package in packages):
+        raise RuntimeError("installed candidate provenance omitted a resolved identity field")
+    receipt = json.loads((active_root / ".kb/v2/receipt.json").read_text())
+    sealed = {
+        (artifact.get("package"), artifact.get("version")): artifact.get("provenance", {}).get("distSha256")
+        for artifact in receipt.get("plan", {}).get("artifacts", [])
+        if artifact.get("package")
+    }
+    executed = {
+        (package.get("name"), package.get("version")): package.get("contentDigest")
+        for package in packages
+    }
+    if not executed or any(sealed.get(identity) != digest for identity, digest in executed.items()):
+        raise RuntimeError("installed executed package dist digests differ from the sealed provenance manifest")
+
+
+def _candidate_package_records(index: dict) -> list[dict]:
+    records = []
+    for platform_bundle in index.get("platforms", []):
+        records.append(platform_bundle)
+        records.extend(platform_bundle.get("members", []))
+    records.extend(index.get("sdks", []))
+    records.extend(index.get("plugins", []))
+    records.extend(index.get("adapters", []))
+    return [record for record in records
+            if isinstance(record, dict) and all(isinstance(record.get(field), str) and record[field]
+                                                for field in ("package", "version", "tarball", "sha256"))]
+
+
+def _extract_candidate_tarball(tarball: Path, package_root: Path, package: str) -> None:
+    with tarfile.open(tarball, "r:gz") as archive:
+        for member in archive.getmembers():
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != "package":
+                raise RuntimeError(f"candidate tarball for {package} has an unsafe member path")
+            if member.issym() or member.islnk():
+                raise RuntimeError(f"candidate tarball for {package} contains a symlink")
+            if member.isdir():
+                continue
+            if not member.isfile():
+                raise RuntimeError(f"candidate tarball for {package} contains a non-file member")
+            relative = Path(*path.parts[1:])
+            destination = package_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = archive.extractfile(member)
+            if source is None:
+                raise RuntimeError(f"candidate tarball for {package} contains an unreadable file")
+            with source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output)
+
+
+def _mutate_candidate_dist(source_tarball: Path, destination: Path, package: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="pc001-package-unpack-") as temporary:
+        extracted = Path(temporary)
+        _extract_candidate_tarball(source_tarball, extracted, package)
+        dist = extracted / "dist"
+        dist_files = sorted(path for path in dist.rglob("*") if path.is_file())
+        if not dist_files:
+            raise RuntimeError(f"candidate package {package} has no regular file under dist")
+        changed = dist_files[0]
+        data = changed.read_bytes()
+        changed.write_bytes(bytes([data[0] ^ 1]) + data[1:] if data else b"\0")
+        with tarfile.open(destination, "w:gz") as archive:
+            for path in sorted(extracted.rglob("*")):
+                archive.add(path, arcname=Path("package") / path.relative_to(extracted), recursive=False)
+
+
+def _extract_candidate_package(tarball: Path, manifest_root: Path, package: str) -> None:
+    package_root = manifest_root / "node_modules" / Path(*PurePosixPath(package).parts)
+    _extract_candidate_tarball(tarball, package_root, package)
+
+
+def _repack_candidate_with_changed_mtimes(source: Path, destination: Path) -> None:
+    with tarfile.open(source, "r:gz") as original, tarfile.open(destination, "w:gz") as repacked:
+        for member in original.getmembers():
+            changed = copy.copy(member)
+            changed.mtime += 120
+            if member.isfile():
+                contents = original.extractfile(member)
+                if contents is None:
+                    raise RuntimeError(f"candidate archive member {member.name} could not be read")
+                with contents:
+                    repacked.addfile(changed, contents)
+            else:
+                repacked.addfile(changed)
+
+
+def _serve_candidate_directory(directory: Path):
+    handler = lambda *args, **kwargs: SimpleHTTPRequestHandler(*args, directory=str(directory), **kwargs)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, name="pc001-provenance-origin", daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+@contextmanager
+def _candidate_origin(directory: Path):
+    yield from _serve_candidate_directory(directory)
+
+
+def _build_candidate_provenance_mutation(*, index_path: Path, directory: Path,
+                                         sealer: str, install_receipt: dict,
+                                         origin_base: str) -> tuple[Path, str, str, str, Path]:
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    provenance = {(item["package"], item["version"]): item
+                  for item in index.get("provenance", [])}
+    selected = next((item for item in install_receipt.get("plan", {}).get("artifacts", [])
+                     if (item.get("package"), item.get("version")) in provenance), None)
+    if selected is None:
+        raise RuntimeError("candidate has no selected package artifact with sealed provenance")
+    identity = (selected["package"], selected["version"])
+    records = _candidate_package_records(index)
+    changed_record = next((item for item in records
+                           if (item["package"], item["version"]) == identity), None)
+    if changed_record is None:
+        raise RuntimeError(f"sealed candidate omits package record {identity[0]}@{identity[1]}")
+
+    directory.mkdir(parents=True, exist_ok=True)
+    original = directory / "original-package.tgz"
+    request = urllib.request.Request(changed_record["tarball"])
+    status, body, _ = open_http(urllib.request.urlopen, request, timeout=60, env=os.environ)
+    if status != 200:
+        raise RuntimeError(f"candidate package request returned HTTP {status}")
+    original.write_bytes(body)
+    mutated = directory / "mutated-package.tgz"
+    _mutate_candidate_dist(original, mutated, identity[0])
+    expected_dist = provenance[identity]["distSha256"]
+    mutated_name = f"{identity[0].replace('/', '-')}-{identity[1]}-mutated.tgz"
+    served_tarball = directory / mutated_name
+    mutated.replace(served_tarball)
+    for item in records:
+        if (item["package"], item["version"]) == identity:
+            item["tarball"] = f"{origin_base}/{mutated_name}"
+            item["sha256"] = hashlib.sha256(served_tarball.read_bytes()).hexdigest()
+            item["sizeBytes"] = served_tarball.stat().st_size
+
+    manifest_root = directory / "manifest-root"
+    source_tarballs: dict[tuple[str, str], Path] = {}
+    for item in records:
+        key = item["package"], item["version"]
+        if key in source_tarballs:
+            continue
+        if key == identity:
+            source_tarball = original
+        else:
+            source_tarball = directory / f"package-{len(source_tarballs)}.tgz"
+            status, body, _ = open_http(urllib.request.urlopen,
+                                       urllib.request.Request(item["tarball"]),
+                                       timeout=60, env=os.environ)
+            if status != 200:
+                raise RuntimeError(f"candidate package request returned HTTP {status}")
+            source_tarball.write_bytes(body)
+        source_tarballs[key] = source_tarball
+        package_tarball = served_tarball if key == identity else source_tarball
+        _extract_candidate_package(package_tarball, manifest_root, item["package"])
+
+    original_set = directory / "candidate-packages-original"
+    repacked_set = directory / "candidate-packages-repacked"
+    changed_set = directory / "candidate-packages-changed"
+    for package_set in (original_set, repacked_set, changed_set):
+        package_set.mkdir()
+    for position, item in enumerate(index.get("provenance", [])):
+        key = item["package"], item["version"]
+        source_tarball = source_tarballs.get(key)
+        if source_tarball is None:
+            raise RuntimeError(f"candidate provenance has no package record for {key[0]}@{key[1]}")
+        filename = f"candidate-{position}.tgz"
+        copy = original_set / filename
+        shutil.copyfile(source_tarball, copy)
+        changed_copy = changed_set / filename
+        shutil.copyfile(served_tarball if key == identity else source_tarball, changed_copy)
+        _repack_candidate_with_changed_mtimes(source_tarball, repacked_set / filename)
+
+    producer = workspace_resource("e2e", "platform", "journey-update-packages.mjs")
+    def candidate_version(package_set: Path) -> str:
+        result = evidence_run_command(["node", str(producer), "--base-version", "1.0.0",
+                                       "--packages-dir", str(package_set),
+                                       "--digest-tool", sealer], timeout=300)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+            raise RuntimeError(f"candidate content version calculation failed: {detail}")
+        return result.stdout.strip()
+
+    original_version = candidate_version(original_set)
+    if original_version != candidate_version(repacked_set):
+        raise RuntimeError("candidate version changed when unchanged package bytes were repacked with different mtimes")
+    changed_version = candidate_version(changed_set)
+    if original_version == changed_version:
+        raise RuntimeError("candidate version did not change when one packed dist byte changed")
+
+    mutated_index = directory / "release-index-provenance-mismatch.json"
+    candidate_input = directory / "candidate-index.json"
+    candidate_input.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+    result = evidence_run_command([sealer, "--input", str(candidate_input), "--manifest-root", str(manifest_root),
+                                   "--output", str(mutated_index)], timeout=300)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"could not seal the candidate-derived provenance mutation index: {detail}")
+    return mutated_index, identity[0], identity[1], expected_dist, served_tarball
+
+
+def assert_provenance_mismatch_refusal(result: CompletedProcess[str], *, install_root: Path,
+                                       package: str, expected_dist: str) -> None:
+    _, error = _diagnostic(result, "PC-001.19 tampered candidate install")
+    if error.get("code") != "KB_INSTALL_PROVENANCE_MISMATCH":
+        raise RuntimeError("tampered candidate install did not return the catalogued provenance-mismatch code")
+    details = error.get("details", {})
+    actual_dist = details.get("actual") if isinstance(details, dict) else None
+    package_path = f"node_modules/{package}"
+    template_values = {
+        "package": package, "field": "digest", "expected": expected_dist,
+        "actual": actual_dist, "packagePath": package_path, "digestVersion": "kb-dist-digest/v1",
+    }
+    if (not isinstance(details, dict) or details.get("field") != "digest"
+            or details.get("expected") != expected_dist or details.get("package") != package
+            or details.get("packagePath") != package_path
+            or details.get("digestVersion") != "kb-dist-digest/v1"
+            or not isinstance(actual_dist, str) or len(actual_dist) != 64 or actual_dist == expected_dist
+            or error.get("message") != catalogued_error_message("KB_INSTALL_PROVENANCE_MISMATCH").format_map(template_values)
+            or error.get("hint") != catalogued_error_hint("KB_INSTALL_PROVENANCE_MISMATCH", **template_values)):
+        raise RuntimeError("provenance refusal omitted its catalogued field, values, package path, or digest version")
+    current = install_root / layout_value("currentLink")
+    versions = install_root / layout_value("versionRoots.path")
+    if current.exists() or current.is_symlink():
+        raise RuntimeError("provenance mismatch changed current before install activation")
+    if versions.exists() and any(versions.iterdir()):
+        raise RuntimeError("provenance mismatch created a version root before install activation")
+
+
+def assert_immutable_publish_conflict(result: CompletedProcess[str], *, package: str,
+                                      version: str, changed_tarball: Path) -> None:
+    output = f"{result.stdout}\n{result.stderr}"
+    expected_message = catalogued_error_message("KB_RELEASE_VERSION_CONFLICT").format(
+        package=package, version=version)
+    expected_hint = catalogued_error_hint("KB_RELEASE_VERSION_CONFLICT", package=package, version=version)
+    if result.returncode == 0 or "KB_RELEASE_VERSION_CONFLICT" not in output:
+        raise RuntimeError("publisher accepted a package version that already exists in the immutable registry")
+    if expected_message not in output or expected_hint not in output:
+        raise RuntimeError("publisher conflict omitted its catalogued message or hint")
+    registry_line = next((line for line in output.splitlines() if line.startswith("Registry digest:")), "")
+    local_integrity = f"sha512-{base64.b64encode(hashlib.sha512(changed_tarball.read_bytes()).digest()).decode()}"
+    registry_digest, separator, local_digest = registry_line.removeprefix("Registry digest: ").partition("; local digest: ")
+    local_digest = local_digest.removesuffix(".")
+    if (not separator or not registry_digest or not local_digest or registry_digest == local_digest
+            or local_integrity != local_digest):
+        raise RuntimeError("publisher conflict omitted the registry and changed tarball digests")
+
+
+def run_candidate_provenance_mismatch_step(*, launcher: str, candidate_index: Path,
+                                           installed_root: Path, registry: str,
+                                           run_command: CommandRunner) -> None:
+    sealer = shutil.which("kb-create-release-index")
+    if not sealer:
+        raise RuntimeError("journey runner is missing kb-create-release-index; run `docker compose -f e2e/journey/docker-compose.yml build runner`, then rerun `KB_JOURNEY_CASES=PC-001.19 e2e/journey/run.sh --no-build`")
+    receipt = json.loads((installed_root / ".kb/v2/receipt.json").read_text(encoding="utf-8"))
+    with tempfile.TemporaryDirectory(prefix="pc001-provenance-mismatch-") as temporary:
+        directory = Path(temporary)
+        with _candidate_origin(directory) as origin_base:
+            mutated_index, package, version, expected_dist, changed_tarball = _build_candidate_provenance_mutation(
+                index_path=candidate_index, directory=directory, sealer=sealer,
+                install_receipt=receipt, origin_base=origin_base)
+            disposable_root = directory / "install-root"
+            disposable_root.mkdir()
+            result = run_command([launcher, "install", "--json", "--index", str(mutated_index),
+                                  "--platform-root", str(disposable_root), "--registry", registry,
+                                  "--service-profile", "default", "--scenario", "commit"])
+            assert_provenance_mismatch_refusal(result, install_root=disposable_root,
+                                               package=package, expected_dist=expected_dist)
+            publisher_dir = directory / "publisher-conflict"
+            publisher_dir.mkdir()
+            publisher_tarball = publisher_dir / changed_tarball.name
+            shutil.copyfile(changed_tarball, publisher_tarball)
+            publisher_environment = dict(os.environ)
+            publisher_environment.update({
+                "PUBLISH_PACKAGES_DIR": str(publisher_dir),
+                "PUBLISH_PARALLELISM": "1",
+                "VERDACCIO_URL": registry,
+                "KB_ERROR_CATALOG_PATH": str(workspace_resource(
+                    "core", "platform", "src", "error-envelope", "errors.catalog.json")),
+            })
+            conflict = evidence_run_command(["sh", str(workspace_resource(
+                "e2e", "publisher", "publish.sh"))], env=publisher_environment, timeout=180)
+            assert_immutable_publish_conflict(conflict, package=package, version=version,
+                                              changed_tarball=publisher_tarball)
 
 
 def _hint_has_argv(text: str, expected: list[str]) -> bool:
@@ -383,12 +694,14 @@ def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
     return journey
 
 
-def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandRunner) -> CompletedProcess:
+def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandRunner,
+                     *, input_text: str | None = None) -> CompletedProcess:
     """Run the CLI installed for the requested root, independent of PATH shim ownership."""
     executable = active_platform_root(platform_root) / ".kb/v2/bin/kb"
     if not executable.is_file():
         raise RuntimeError(f"platform CLI is missing for {platform_root}: {executable}")
-    return run_command(kb_command(args, executable=executable))
+    options = {"input": input_text} if input_text is not None else {}
+    return run_command(kb_command(args, executable=executable), **options)
 
 
 def installer_primary_host_guard(root: Path, launcher: str,
@@ -719,7 +1032,8 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
 
 
 def run_secondary_root_gateway_isolation_step(*, mode: str, launcher: str, primary_root: Path,
-                                             secondary_root: Path, run_command: CommandRunner) -> Journey:
+                                             secondary_root: Path, admin_password: str,
+                                             run_command: CommandRunner) -> Journey:
     """Check the secondary root while live, then verify its stopped-host error."""
     journey = Journey(mode, f"secondary-gateway-isolation-{mode}")
     try:
@@ -745,6 +1059,13 @@ def run_secondary_root_gateway_isolation_step(*, mode: str, launcher: str, prima
             for root in (primary_root, secondary_root):
                 if not initial[root]:
                     lifecycle.set_running(root, True)
+
+            admin_email = "journey-admin@example.test"
+            login = run_platform_cli(secondary_root, [
+                "auth", "login", "--gateway-url", gateway_url, "--email", admin_email, "--password-stdin",
+            ], run_command, input_text=admin_password + "\n")
+            if login.returncode != 0:
+                raise RuntimeError("could not authenticate to the secured secondary Gateway with its fixture admin")
 
             live = run_platform_cli(secondary_root, ["adapter", "list", "--json"], run_command)
             _, live_data = _payload(live, "secondary root adapter list while running")
@@ -1324,7 +1645,8 @@ def run_apply_scenario_step(*, mode: str, launcher: str, stable_index: Path,
 def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                              update_index: Path, jump_index: Path,
                              canary_index: Path, platform_root: Path,
-                             secret_value: str, run_command: CommandRunner) -> Journey:
+                             secret_value: str, registry: str,
+                             run_command: CommandRunner) -> Journey:
     """Claim request, configuration, doctor-repair, and compatibility cases.
 
     Install roots used by the request-selection steps are children of the
@@ -1350,6 +1672,12 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         return journey
 
     journey.step_guard = installer_primary_host_guard(platform_root, launcher, run_command)
+    journey.step("compare installed candidate bytes with sealed provenance", "platform.install",
+                 lambda: verify_installed_candidate_provenance(installed_root), cases=["PC-001.19"])
+    journey.step("refuse candidate-derived package bytes that disagree with provenance", "platform.install",
+                 lambda: run_candidate_provenance_mismatch_step(
+                     launcher=launcher, candidate_index=stable_index, installed_root=installed_root,
+                     registry=registry, run_command=run_command), cases=["PC-001.19"])
 
     fixture_dir = installer_case_fixture_root()
     root = str(platform_root)
@@ -1403,6 +1731,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 if (result.get("operation") != "apply" or sorted(path.name for path in parent.iterdir()) != ["install"]
                         or not current.is_symlink() or current_target.is_absolute()):
                     raise RuntimeError("fresh install wrote outside its container or omitted the relative current link")
+                verify_installed_candidate_provenance(current.resolve())
                 resolved = current.resolve(strict=True)
                 if resolved.parent != versions.resolve(strict=True) or not (resolved / ".kb/v2/receipt.json").is_file():
                     raise RuntimeError("current did not resolve to a complete version root inside the container")
@@ -1746,7 +2075,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     run_fixture_group(journey, "secondary root gateway isolation", lambda: run_secondary_root_gateway_isolation_step(
         mode=mode, launcher=launcher, primary_root=platform_root,
-        secondary_root=secret_root, run_command=run_command))
+        secondary_root=secret_root, admin_password=secret_value, run_command=run_command))
 
     def repair_dangling_shim() -> None:
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"

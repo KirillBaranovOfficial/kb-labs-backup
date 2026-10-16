@@ -34,6 +34,7 @@ const sdkPackage = value('--sdk-package') ?? '@kb-labs/sdk';
 const binaryManifestPath = value('--binary-manifest') ? resolve(value('--binary-manifest')) : undefined;
 if (flow === 'platform' && !binaryManifestPath) throw new Error('--binary-manifest is required for the unified platform release-index');
 const minLauncherVersion = value('--min-launcher-version');
+const provenanceManifestPath = resolve(required('--provenance-manifest'));
 const releaseNotes = value('--release-notes');
 const sealerBin = value('--sealer-bin') ? resolve(value('--sealer-bin')) : undefined;
 const historyIndexes = values('--history-index').map(path => resolve(path));
@@ -374,6 +375,7 @@ const host = {
 };
 
 const exportValue = {
+  provenance: JSON.parse(readFileSync(provenanceManifestPath, 'utf8')),
   channels: { [channel]: resolvedPlatformVersion },
   compatibility: {
     schema: 'kb.release-compatibility/2',
