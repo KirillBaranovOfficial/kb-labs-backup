@@ -41,8 +41,8 @@ services:
   publisher:
     image: ${KB_E2E_PUBLISHER_IMAGE:-kb-e2e-ci-publisher:latest}
     build:
-      context: ./
-      dockerfile: publisher/Dockerfile
+      context: ../
+      dockerfile: e2e/publisher/Dockerfile
     depends_on:
       verdaccio:
         condition: service_healthy
@@ -55,6 +55,8 @@ services:
     build:
       context: ../
       dockerfile: e2e/platform/Dockerfile
+      args:
+        SOURCE_REVISION: ${KB_JOURNEY_GIT_REVISION:-}
     depends_on:
       verdaccio:
         condition: service_healthy

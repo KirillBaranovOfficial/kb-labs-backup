@@ -1,9 +1,10 @@
-import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
+import { invokePackageProvenanceOwner } from './package-provenance.mjs';
+import { fileURLToPath } from 'node:url';
 
 export function releasePackageNames(manifest = registryManifest) {
   return [...new Set([
@@ -14,6 +15,23 @@ export function releasePackageNames(manifest = registryManifest) {
   ].filter(Boolean))];
 }
 
+export function deriveCandidateVersion(baseVersion, packagesDir, releaseManifest = registryManifest, digestTool) {
+  const wanted = new Set(releasePackageNames(releaseManifest));
+  const packages = [];
+  for (const filename of readdirSync(resolve(packagesDir)).filter(name => name.endsWith('.tgz')).sort()) {
+    const path = join(resolve(packagesDir), filename);
+    const packageJSON = JSON.parse(execFileSync('tar', ['-xOzf', path, 'package/package.json'], { encoding: 'utf8' }));
+    if (wanted.has(packageJSON.name)) {
+      packages.push({ name: packageJSON.name, version: packageJSON.version, tarball: filename });
+      wanted.delete(packageJSON.name);
+    }
+  }
+  if (wanted.size > 0) throw new Error(`candidate packages are missing from the packed set: ${[...wanted].join(', ')}`);
+  const digest = invokePackageProvenanceOwner(digestTool,
+    ['digest', 'package-set', resolve(packagesDir)], JSON.stringify(packages)).digest.slice(0, 12);
+  return `${baseVersion}-cand.${digest}`;
+}
+
 // Build a release stage for a journey-only platform version from an existing
 // stage: every selected release artifact is reused unchanged except its
 // package version, which advances to the requested update version. The target
@@ -21,7 +39,9 @@ export function releasePackageNames(manifest = registryManifest) {
 // release-index preparer reads; generated tarballs are also written to
 // publishDir so the local registry can serve them.
 export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion,
-  { publishDir, failingServicePackage, requiredConfigPackage, requiredConfig, registryManifest: releaseManifest = registryManifest } = {}) {
+  { publishDir, failingServicePackage, requiredConfigPackage, requiredConfig, digestTool,
+    registryManifest: releaseManifest = registryManifest } = {}) {
+  if (!digestTool) throw new Error('kb-create-release-index owner is required');
   const versionedPackages = new Set(releasePackageNames(releaseManifest));
   const sourceDir = resolve(packagesDir);
   const targetDir = resolve(updatePackagesDir);
@@ -53,7 +73,8 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
         const updateTarball = join(targetDir, filename);
         execFileSync('tar', ['-czf', updateTarball, '-C', unpacked, 'package']);
         copyFileSync(updateTarball, join(registryDir, filename));
-        manifest.push({ name: packageJSON.name, version: updateVersion, tarball: filename, sha256: sha256(updateTarball) });
+        manifest.push({ name: packageJSON.name, version: updateVersion, tarball: filename,
+          sha256: sha256(updateTarball, digestTool) });
         generatedFiles.push(filename);
       } finally {
         rmSync(unpacked, { recursive: true, force: true });
@@ -77,14 +98,16 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
         const updateTarball = join(targetDir, filename);
         execFileSync('tar', ['-czf', updateTarball, '-C', unpacked, 'package']);
         copyFileSync(updateTarball, join(registryDir, filename));
-        manifest.push({ name: packageJSON.name, version: updateVersion, tarball: filename, sha256: sha256(updateTarball) });
+        manifest.push({ name: packageJSON.name, version: updateVersion, tarball: filename,
+          sha256: sha256(updateTarball, digestTool) });
         generatedFiles.push(filename);
       } finally {
         rmSync(unpacked, { recursive: true, force: true });
       }
     } else {
       copyFileSync(source, join(targetDir, filename));
-      manifest.push({ name: packageJSON.name, version: packageJSON.version, tarball: filename, sha256: sha256(source) });
+      manifest.push({ name: packageJSON.name, version: packageJSON.version, tarball: filename,
+        sha256: sha256(source, digestTool) });
     }
   }
 
@@ -103,7 +126,8 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
       const updateTarball = join(targetDir, filename);
       execFileSync('tar', ['-czf', updateTarball, '-C', unpacked, 'package']);
       copyFileSync(updateTarball, join(registryDir, filename));
-      manifest.push({ name: packageName, version: updateVersion, tarball: filename, sha256: sha256(updateTarball) });
+      manifest.push({ name: packageName, version: updateVersion, tarball: filename,
+        sha256: sha256(updateTarball, digestTool) });
       generatedFiles.push(filename);
     } finally {
       rmSync(unpacked, { recursive: true, force: true });
@@ -119,6 +143,19 @@ function filenameFor(name, version) {
 }
 
 
-function sha256(path) {
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
+function sha256(path, digestTool) {
+  return invokePackageProvenanceOwner(digestTool, ['digest', 'sha256', path]).digest;
+}
+
+const value = name => {
+  const index = process.argv.indexOf(name);
+  return index < 0 ? undefined : process.argv[index + 1];
+};
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const baseVersion = value('--base-version');
+  const packagesDir = value('--packages-dir');
+  const digestTool = value('--digest-tool');
+  if (!baseVersion || !packagesDir || !digestTool) throw new Error('usage: journey-update-packages.mjs --base-version <version> --packages-dir <dir> --digest-tool <kb-create-release-index>');
+  process.stdout.write(`${deriveCandidateVersion(baseVersion, packagesDir, registryManifest, digestTool)}\n`);
 }

@@ -47,7 +47,7 @@ class PublisherConflictTest(unittest.TestCase):
             "if [ \"$PUBLISH_REJECT_OLD_LATEST\" = 1 ] && [ \"$metadata\" = '@kb-labs/sample@2.120.1' ] && [ \"$tag\" = latest ]; then echo 'npm ERR! Cannot implicitly apply latest because 2.120.2 is higher'; exit 1; fi; "
             "if [ \"$PUBLISH_CONFLICT\" = 1 ]; then echo 'npm ERR! code EPUBLISHCONFLICT: 409 already exists'; exit 1; fi; "
             "echo published; exit 0 ;;\n"
-            "  view) case \"$*\" in *dist.integrity*) printf '%s\\n' \"$REGISTRY_INTEGRITY\" ;; "
+            "  view) [ \"$PUBLISH_CONFLICT\" = 1 ] || exit 1; case \"$*\" in *dist.integrity*) printf '%s\\n' \"$REGISTRY_INTEGRITY\" ;; "
             "*) printf '%s\\n' \"$REGISTRY_SHASUM\" ;; esac ;;\n"
             "  *) exit 2 ;;\n"
             "esac\n",
@@ -81,6 +81,7 @@ class PublisherConflictTest(unittest.TestCase):
             {
                 "PATH": f"{self.bin}:{env['PATH']}",
                 "VERDACCIO_URL": "http://registry.invalid",
+                "KB_ERROR_CATALOG_PATH": str(ROOT / "core/platform/src/error-envelope/errors.catalog.json"),
                 "PUBLISH_PACKAGES_DIR": str(packages_dir or self.packages),
                 "PUBLISH_LOG": str(self.publish_log),
                 "PUBLISH_TAG_LOG": str(self.tag_log),
@@ -120,17 +121,17 @@ class PublisherConflictTest(unittest.TestCase):
         )
 
     # case: S-195.1
-    def test_matching_registry_digest_skips_conflict(self):
+    def test_matching_registry_digest_conflict_is_refused(self):
         result = self.publish(self.local_integrity)
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("matching tarball digest", result.stdout)
-        self.assertIn("@kb-labs/sample@1.2.3", result.stdout)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("KB_RELEASE_VERSION_CONFLICT", result.stdout)
+        self.assertIn("bash e2e/journey/prepare-candidate.sh", result.stdout)
 
     # case: S-195.1
-    def test_matching_registry_shasum_skips_conflict(self):
+    def test_matching_registry_shasum_conflict_is_refused(self):
         result = self.publish(registry_shasum=self.local_shasum)
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn(f"matching tarball digest: sha1-{self.local_shasum}", result.stdout)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("KB_RELEASE_VERSION_CONFLICT", result.stdout)
 
     # case: S-195.4
     def test_pr_tarball_supersedes_same_version_base_tarball(self):
@@ -155,8 +156,8 @@ class PublisherConflictTest(unittest.TestCase):
         self.assertIn("@kb-labs/sample@1.2.3", result.stdout)
         self.assertIn(registry_integrity, result.stdout)
         self.assertIn(self.local_integrity, result.stdout)
-        self.assertIn("docker volume rm e2e_verdaccio-storage", result.stdout)
-        self.assertIn("bump the package version", result.stdout)
+        self.assertIn("KB_RELEASE_VERSION_CONFLICT", result.stdout)
+        self.assertIn("bash e2e/journey/prepare-candidate.sh", result.stdout)
 
 
 class VerdaccioStorageWarningTest(unittest.TestCase):

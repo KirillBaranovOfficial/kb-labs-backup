@@ -38,7 +38,7 @@ func TestValidJourneyReleaseIndexResolvesPolicyIncompatibility(t *testing.T) {
 		Platform: contracts.VersionSelector{Version: "3.2.0"},
 		SDK:      contracts.VersionSelector{Version: "3.2.0"},
 		Policy:   contracts.PolicyStrict}
-	_, err = PlanWith(request, index, Options{OS: "linux", Arch: "arm64"})
+	_, err = planWithFixtureProvenanceOptions(request, index, Options{OS: "linux", Arch: "arm64"})
 	launcherErr, ok := err.(*diag.Diag)
 	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents ||
 		launcherErr.Meta["kind"] != "sdk" || launcherErr.Meta["id"] != "sdk" || launcherErr.Meta["selectedVersion"] != "3.2.0" ||
@@ -47,20 +47,20 @@ func TestValidJourneyReleaseIndexResolvesPolicyIncompatibility(t *testing.T) {
 		t.Fatalf("strict policy did not produce the indexed SDK incompatibility: %#v", err)
 	}
 	request.Policy = contracts.PolicyCompatible
-	if _, err := PlanWith(request, index, Options{OS: "linux", Arch: "arm64"}); err != nil {
+	if _, err := planWithFixtureProvenanceOptions(request, index, Options{OS: "linux", Arch: "arm64"}); err != nil {
 		t.Fatalf("compatible policy rejected the SDK admitted by the valid fixture: %v", err)
 	}
 }
 
 func TestStrictRequiresExactMatrixRelationAndCompatibleUsesMatrixRange(t *testing.T) {
 	request := contracts.InstallRequest{PlatformRoot: "/tmp/kb-policy", Platform: contracts.VersionSelector{Version: "3.2.0"}, SDK: contracts.VersionSelector{Version: "3.2.0"}, Policy: contracts.PolicyStrict}
-	if _, err := Plan(request, policyCatalog()); err == nil {
+	if _, err := planWithFixtureProvenance(request, policyCatalog()); err == nil {
 		t.Fatal("strict policy accepted an SDK without an exact matrix relation")
 	} else if launcherErr, ok := err.(*diag.Diag); !ok || launcherErr.Code != contracts.CodeIncompatibleComponents || launcherErr.Meta["kind"] != "sdk" || launcherErr.Meta["id"] != "sdk" || launcherErr.Meta["selectedVersion"] != "3.2.0" || launcherErr.Meta["requiredRange"] != ">=3.0.0 <4.0.0" || launcherErr.Hint != "Use an exact platform/SDK pair from the release matrix or choose --policy compatible." {
 		t.Fatalf("strict matrix error = %#v", err)
 	}
 	request.Policy = contracts.PolicyCompatible
-	plan, err := Plan(request, policyCatalog())
+	plan, err := planWithFixtureProvenance(request, policyCatalog())
 	if err != nil {
 		t.Fatalf("compatible policy rejected SDK admitted by the matrix range: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestCompatiblePolicyUsesPrereleaseAwareComparatorRanges(t *testing.T) {
 	source.Compatibility.Labels = append(source.Compatibility.Labels, catalog.CompatibilityLabel{ID: "sdk@3.3.0-rc.2", Kind: "sdk", ArtifactID: "sdk", Version: "3.3.0-rc.2", Status: "prepared", ValidatedBy: []string{"test"}})
 	source.Compatibility.Labels[2].Requires = append(source.Compatibility.Labels[2].Requires, catalog.CompatibilityRelation{Label: "sdk@3.3.0-rc.2"})
 	request := contracts.InstallRequest{PlatformRoot: "/tmp/kb-policy", Platform: contracts.VersionSelector{Version: "3.2.0"}, SDK: contracts.VersionSelector{Version: "3.3.0-rc.2"}, Policy: contracts.PolicyCompatible}
-	if _, err := Plan(request, source); err != nil {
+	if _, err := planWithFixtureProvenance(request, source); err != nil {
 		t.Fatalf("compatible policy rejected a prerelease admitted by the range: %v", err)
 	}
 }
@@ -146,7 +146,7 @@ func TestPlanRefusesPluginOutsideChannelSelectedSDKRange(t *testing.T) {
 		Plugins:      []contracts.ComponentRequest{{ID: "fixture-sdk-incompat", Version: contracts.VersionSelector{Version: "1.0.0"}}},
 		Policy:       contracts.PolicyCompatible,
 	}
-	_, err := Plan(request, source)
+	_, err := planWithFixtureProvenance(request, source)
 	if err == nil {
 		t.Fatal("expected plan to refuse plugin outside channel-selected SDK range")
 	}
@@ -186,7 +186,7 @@ func TestPlanMissingPlatformProducesCanonicalPlatformIdentity(t *testing.T) {
 		PlatformRoot: t.TempDir(),
 		Platform:     contracts.VersionSelector{Version: "9.9.9"},
 	}
-	_, err := Plan(request, source)
+	_, err := planWithFixtureProvenance(request, source)
 	if err == nil {
 		t.Fatal("expected plan to refuse absent platform")
 	}

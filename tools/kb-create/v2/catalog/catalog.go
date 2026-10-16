@@ -26,6 +26,15 @@ type Catalog struct {
 	SDKs          []Component                  `json:"sdks"`
 	Plugins       []Component                  `json:"plugins"`
 	Adapters      []Adapter                    `json:"adapters"`
+	Provenance    []ArtifactProvenance         `json:"provenance,omitempty"`
+}
+
+// ArtifactProvenance binds an immutable package version to the exact source
+// revision and dist files that were packed into its registry tarball.
+type ArtifactProvenance struct {
+	contracts.ArtifactProvenance
+	Package string `json:"package"`
+	Version string `json:"version"`
 }
 
 // CompatibilityMatrix is release-owned evidence for all currently published
@@ -79,6 +88,17 @@ func Validate(source Catalog) error {
 	}
 	if len(source.Platforms) == 0 {
 		return fmt.Errorf("release index contains no platform bundles")
+	}
+	provenanceVersions := make(map[string]struct{}, len(source.Provenance))
+	for _, provenance := range source.Provenance {
+		if provenance.Package == "" || provenance.Version == "" || provenance.SourceRevision == "" || provenance.Integrity == "" || provenance.DistSHA256 == "" {
+			return fmt.Errorf("artifact provenance must declare package, version, source revision, tarball integrity and dist digest")
+		}
+		key := provenance.Package + "@" + provenance.Version
+		if _, exists := provenanceVersions[key]; exists {
+			return fmt.Errorf("duplicate artifact provenance for %s", key)
+		}
+		provenanceVersions[key] = struct{}{}
 	}
 	if source.Compatibility != nil {
 		if err := validateCompatibility(*source.Compatibility, source); err != nil {

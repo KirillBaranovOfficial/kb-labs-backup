@@ -39,9 +39,14 @@ def is_dockerignored(path, rules):
     return ignored
 
 
-def copy_instructions(dockerfile):
+def copy_instructions(dockerfile, *, final_stage_only=False):
     resources = []
-    for line in dockerfile.read_text().splitlines():
+    lines = dockerfile.read_text().splitlines()
+    if final_stage_only:
+        stage_starts = [index for index, line in enumerate(lines) if line.lstrip().startswith("FROM ")]
+        if stage_starts:
+            lines = lines[stage_starts[-1]:]
+    for line in lines:
         if not line.lstrip().startswith("COPY "):
             continue
         instruction = line.strip()[len("COPY "):]
@@ -53,6 +58,8 @@ def copy_instructions(dockerfile):
                 resources.append((source, target))
             continue
         tokens = shlex.split(instruction)
+        if any(token.startswith("--from=") for token in tokens):
+            continue
         source_tokens = []
         for token in tokens[:-1]:
             if token.startswith("--"):

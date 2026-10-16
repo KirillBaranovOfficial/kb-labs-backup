@@ -1546,6 +1546,26 @@
       "hint": "Register it with \"kb project add {path}\"."
     },
     {
+      "code": "KB_RELEASE_VERSION_CONFLICT",
+      "area": "release",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "Package {package}@{version} already exists in the immutable registry.",
+      "hint": "After assigning a new package version in the source, run `bash e2e/journey/prepare-candidate.sh` to rebuild the immutable candidate."
+    },
+    {
+      "code": "KB_INSTALL_PROVENANCE_MISMATCH",
+      "area": "install",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "Installed package {package} differs at {field}: expected {expected}, actual {actual} (path {packagePath}; digest version {digestVersion}).",
+      "hint": "Inspect {packagePath}; compare {field}, expected {expected} and actual {actual} using {digestVersion}, then rerun kb-create install."
+    },
+    {
       "code": "KB_RELEASE_BASELINE_DRIFT",
       "area": "release",
       "stage": "preflight",

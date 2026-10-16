@@ -288,8 +288,13 @@ jobs:
         env:
           FLOW: ${{ inputs.flow }}
           CHANNEL: ${{ inputs.channel }}
+          SOURCE_REVISION: ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
+          node e2e/platform/package-provenance.mjs \
+            --packages-dir .kb/release/artifacts \
+            --source-revision "$SOURCE_REVISION" \
+            --output .kb/release/provenance.json
           config_json="$(node --input-type=module -e '
             import { readPlatformReleaseConfig } from "./tools/kb-create/scripts/platform-release-config.mjs";
             process.stdout.write(JSON.stringify(readPlatformReleaseConfig("./.kb/kb.config.jsonc")));
@@ -302,6 +307,7 @@ jobs:
             --flow "$FLOW" \
             --channel "$CHANNEL" \
             --artifacts-dir .kb/release/artifacts \
+            --provenance-manifest .kb/release/provenance.json \
             --binary-manifest .kb/release/binary-manifest.json \
             --platform-member-packages "$platform_members" \
             --platform-requires "$platform_requires" \

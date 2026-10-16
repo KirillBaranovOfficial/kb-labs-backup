@@ -94,12 +94,18 @@ func (p Pnpm) Install(items []contracts.Artifact) error {
 		return err
 	}
 	if len(specs) == 0 {
-		return p.materializeManifests(items)
+		if err := p.materializeManifests(items); err != nil {
+			return err
+		}
+		return p.verifyAndRecord(items)
 	}
 	if err := p.run("add", specs...); err != nil {
 		return err
 	}
-	return p.materializeManifests(items)
+	if err := p.materializeManifests(items); err != nil {
+		return err
+	}
+	return p.verifyAndRecord(items)
 }
 
 func (p Pnpm) materializeManifests(items []contracts.Artifact) error {
@@ -126,7 +132,25 @@ func (p Pnpm) Restore(items []contracts.Artifact) error {
 	if err := p.run("install"); err != nil {
 		return err
 	}
-	return p.materializeManifests(items)
+	if err := p.materializeManifests(items); err != nil {
+		return err
+	}
+	return p.verifyAndRecord(items)
+}
+
+func (p Pnpm) verifyAndRecord(items []contracts.Artifact) error {
+	verified, err := VerifyInstalledProvenance(p.Root, items)
+	if err != nil {
+		return err
+	}
+	return p.accept(verified)
+}
+
+func (p Pnpm) accept(verified VerifiedArtifactSet) error {
+	if len(verified.Manifest().Packages) > 0 {
+		return WriteInstalledProvenance(p.Root, verified.Manifest())
+	}
+	return nil
 }
 func (p Pnpm) Uninstall(items []contracts.Artifact) error {
 	if err := p.prepare(); err != nil {

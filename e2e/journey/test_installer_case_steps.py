@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import base64
 import fnmatch
+import hashlib
 import subprocess
 import shlex
 import tempfile
@@ -34,6 +36,8 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
 from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
                                   verify_stable_installation_spellings)
+from installer_case_steps import (assert_immutable_publish_conflict,
+                                  assert_provenance_mismatch_refusal)
 from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_create_cli_result
 from journey_resources import active_platform_root, case_catalog_root
 from test_install_layout import create_test_install_container, move_test_platform_into_container
@@ -145,6 +149,79 @@ def journey_layout_path_violations(journey_root: Path, layout: dict, owner_modul
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_immutable_publish_conflict_assertion_uses_catalogue_and_compares_digests(self):
+        package = "@kb-labs/sample"
+        version = "1.0.0-cand.abcdef123456"
+        with tempfile.TemporaryDirectory(prefix="journey-publish-conflict-") as temporary:
+            tarball = Path(temporary) / "sample.tgz"
+            tarball.write_bytes(b"changed package bytes")
+            local_integrity = "sha512-" + base64.b64encode(
+                hashlib.sha512(tarball.read_bytes()).digest()).decode()
+            message = installer_case_steps.catalogued_error_message(
+                "KB_RELEASE_VERSION_CONFLICT").format(package=package, version=version)
+            hint = installer_case_steps.catalogued_error_hint(
+                "KB_RELEASE_VERSION_CONFLICT", package=package, version=version)
+            result = subprocess.CompletedProcess(
+                ["sh", "publish.sh"], 1,
+                f"ERROR KB_RELEASE_VERSION_CONFLICT: {message}\n{hint}\n"
+                f"Registry digest: sha512-existing; local digest: {local_integrity}.\n", "")
+
+            assert_immutable_publish_conflict(result, package=package, version=version,
+                                              changed_tarball=tarball)
+
+            with self.assertRaisesRegex(RuntimeError, "accepted a package version"):
+                assert_immutable_publish_conflict(
+                    subprocess.CompletedProcess(result.args, 0, result.stdout, ""),
+                    package=package, version=version, changed_tarball=tarball)
+
+    def test_provenance_mismatch_assertion_requires_catalogued_refusal_and_unactivated_root(self):
+        expected = "a" * 64
+        actual = "b" * 64
+        with tempfile.TemporaryDirectory(prefix="journey-provenance-refusal-") as temporary:
+            install_root = Path(temporary) / "install"
+            install_root.mkdir()
+            package = "@kb-labs/sample"
+            package_path = f"node_modules/{package}"
+            values = {"package": package, "field": "digest", "expected": expected,
+                      "actual": actual, "packagePath": package_path,
+                      "digestVersion": "kb-dist-digest/v1"}
+            result = subprocess.CompletedProcess(
+                ["kb-create", "install", "--json"], 1,
+                kb_create_stream({"ok": False, "error": {
+                    "code": "KB_INSTALL_PROVENANCE_MISMATCH",
+                    "message": installer_case_steps.catalogued_error_message(
+                        "KB_INSTALL_PROVENANCE_MISMATCH").format_map(values),
+                    "hint": installer_case_steps.catalogued_error_hint(
+                        "KB_INSTALL_PROVENANCE_MISMATCH", **values),
+                    "cause": f"expected dist digest {expected}; actual dist digest {actual}",
+                    "details": {**values},
+                }}, 1), "")
+
+            assert_provenance_mismatch_refusal(
+                result, install_root=install_root, package=package,
+                expected_dist=expected)
+
+            partial_version = install_root / "versions" / "partial"
+            partial_version.mkdir(parents=True)
+            with self.assertRaisesRegex(RuntimeError, "created a version root"):
+                assert_provenance_mismatch_refusal(
+                    result, install_root=install_root, package=package,
+                    expected_dist=expected)
+
+    def test_installed_candidate_provenance_compares_executed_package_digests(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installed-candidate-provenance-") as temporary:
+            root = Path(temporary)
+            (root / ".kb/v2").mkdir(parents=True)
+            (root / ".kb/v2/installed-provenance.json").write_text(json.dumps({
+                "packages": [{"name": "@kb-labs/sample", "version": "1.0.0",
+                              "integrity": "sha512-sample", "installedPath": "node_modules/@kb-labs/sample",
+                              "sourceRevision": "revision", "contentDigest": "installed-digest"}]}))
+            (root / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {"artifacts": [{
+                "package": "@kb-labs/sample", "version": "1.0.0",
+                "provenance": {"distSha256": "sealed-digest"}}]}}))
+            with self.assertRaisesRegex(RuntimeError, "installed executed package dist digests differ"):
+                installer_case_steps.verify_installed_candidate_provenance(root)
+
     def test_journey_steps_resolve_layout_paths_by_identity(self):
         journey_root = Path(__file__).parents[2]
         layout = json.loads((journey_root / "tools/kb-create/v2/contracts/platform-layout.json").read_text())
@@ -969,8 +1046,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 move_test_platform_into_container(root)
             calls = []
 
-            def run_command(args):
-                calls.append(args)
+            def run_command(args, **kwargs):
+                calls.append((args, kwargs))
                 if args[0] == "kb-create":
                     command = args[1]
                     root = Path(args[args.index("--platform-root") + 1])
@@ -987,6 +1064,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     return subprocess.CompletedProcess(args, 0,
                         json.dumps({"ok": True, "data": data}), "")
                 root = secondary
+                if "login" in args:
+                    self.assertIn("--password-stdin", args)
+                    self.assertNotIn("fixture-admin-secret", args)
+                    self.assertEqual(kwargs.get("input"), "fixture-admin-secret\n")
+                    return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{}}', "")
                 if running[root]:
                     payload = {"ok": True, "data": {"adapters": [{"id": "analytics-sqlite"}]}}
                     return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
@@ -999,15 +1081,18 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
             journey = run_secondary_root_gateway_isolation_step(
                 mode="local", launcher="kb-create", primary_root=primary,
-                secondary_root=secondary, run_command=run_command,
+                secondary_root=secondary, admin_password="fixture-admin-secret", run_command=run_command,
             )
 
         self.assertEqual(journey.steps[0].cases, ["PC-001.12"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
         self.assertFalse(running[primary])
         self.assertFalse(running[secondary])
-        adapter_calls = [args for args in calls if args[0].endswith("/.kb/v2/bin/kb")]
+        adapter_calls = [args for args, _ in calls if args[0].endswith("/.kb/v2/bin/kb") and "adapter" in args]
         self.assertEqual(len(adapter_calls), 2)
+        login_calls = [(args, kwargs) for args, kwargs in calls if "login" in args]
+        self.assertEqual(len(login_calls), 1)
+        self.assertNotIn("fixture-admin-secret", repr(login_calls[0][0]))
 
     # case: S-054.23
     def test_stable_layout_contract_refusal_restores_both_contract_paths(self):
@@ -1369,7 +1454,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 journey = run_installer_case_steps(
                     mode="local", launcher="kb-create", stable_index=stable,
                     update_index=update, jump_index=jump, canary_index=canary,
-                    platform_root=root, secret_value="secret", run_command=lambda args: calls.append(args),
+                    platform_root=root, secret_value="secret", registry="http://registry.test",
+                    run_command=lambda args: calls.append(args),
                 )
 
         self.assertEqual(len(journey.steps), 1)
@@ -1745,10 +1831,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                    update_index=update, jump_index=jump, canary_index=canary,
                                                    platform_root=installed,
                                                    secret_value="journey-test-secret",
+                                                   registry="http://registry.test",
                                                    run_command=fail_every_command)
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
-            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
+            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2", "S-054.23",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",

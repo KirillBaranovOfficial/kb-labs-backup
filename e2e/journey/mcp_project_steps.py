@@ -241,10 +241,13 @@ def secured_auth(project_id: str) -> str | None:
             return f"secured tools/list with {'missing' if not token else 'invalid'} token returned HTTP {status}, expected 401"
         machine_result = body if isinstance(body, dict) else None
         envelope = machine_result.get("error") if isinstance(machine_result, dict) else None
+        details = envelope.get("details") if isinstance(envelope, dict) else None
+        gateway_url = details.get("gatewayUrl") if isinstance(details, dict) else None
         if (not isinstance(envelope, dict)
                 or machine_result.get("ok") is not False
                 or envelope.get("code") != "KB_AUTH_REQUIRED"
-                or envelope.get("hint") != catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="<url>")
+                or not isinstance(gateway_url, str)
+                or envelope.get("hint") != catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl=gateway_url)
                 or not isinstance(envelope.get("correlationId"), str)
                 or not envelope["correlationId"].strip()):
             return f"secured tools/list with {'missing' if not token else 'invalid'} token returned no KB_AUTH_REQUIRED envelope"

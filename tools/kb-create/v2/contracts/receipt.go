@@ -31,7 +31,14 @@ type Artifact struct {
 	// Registry names the discovery kind ("plugin" or "adapter") of an artifact
 	// that is installed under another Kind, e.g. a platform member that is also
 	// a catalog plugin/adapter. Empty for artifacts that are not registry entities.
-	Registry string `json:"registry,omitempty"`
+	Registry   string              `json:"registry,omitempty"`
+	Provenance ArtifactProvenance `json:"provenance"`
+}
+
+type ArtifactProvenance struct {
+	SourceRevision string `json:"sourceRevision"`
+	Integrity      string `json:"integrity"`
+	DistSHA256     string `json:"distSha256"`
 }
 
 // Identity is the single installed-unit identity shared by plan producers and
