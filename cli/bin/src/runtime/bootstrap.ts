@@ -1,3 +1,4 @@
+import { cliBinaryName } from './cli-binary.js';
 import { randomUUID } from "node:crypto";
 import {
   createJsonPresenter,
@@ -74,11 +75,12 @@ export function createUnknownCommandError(
   const nextStep = remediation.length > 0
     ? remediation.join(' ')
     : 'Run "kb marketplace plugins doctor --scope platform".';
-  return createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
+  return createErrorEnvelope("KB_RUNTIME_UNKNOWN_COMMAND", {
+    templateValues: { binary: cliBinaryName },
     message: `Unknown command: ${input}`,
-    hint: failedPlugins.length > 0
-      ? `Enabled plugin ${failedPlugins.map(item => `${item.pluginId} (${item.code})`).join(', ')} failed to load. ${nextStep} Then retry.`
-      : "Check the command name or run \"kb --help\" to list available commands.",
+    ...(failedPlugins.length > 0 ? {
+      hint: `Enabled plugin ${failedPlugins.map(item => `${item.pluginId} (${item.code})`).join(', ')} failed to load. ${nextStep} Then retry; run "${cliBinaryName} --help" to review commands.`,
+    } : {}),
     details: {
       command: input,
       ...(suggestions.length > 0 ? { suggestions: suggestions.join(", ") } : {}),

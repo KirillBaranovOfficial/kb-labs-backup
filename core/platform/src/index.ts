@@ -24,7 +24,7 @@
 // ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
 
-export { AdapterUnavailableError, AdapterCredentialsMissingError, AdapterOperationError, AdapterConfigError, AdapterProjectScopeError, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError } from "./errors.js";
+export { AdapterUnavailableError, AdapterCredentialsMissingError, AdapterOperationError, AdapterConfigError, AdapterProjectScopeError, getAdapterConfigurationCommand, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError } from "./errors.js";
 export type { TypedPlatformError } from "./errors.js";
 export { getHostServiceAddress, HostServiceAddressError } from "./host-service-address.js";
 export { PLATFORM_AUDIT_COLLECTION, PlatformAuditStore } from './audit-store.js';

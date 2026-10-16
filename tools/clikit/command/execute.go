@@ -130,9 +130,18 @@ func StreamWriter(command *cobra.Command) io.Writer {
 
 // Execute runs a Cobra tree and renders its outcome exactly once.
 func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) diag.ExitStatus {
+	if HandleCobraHelp(root, args, stdout) {
+		return diag.SuccessStatus()
+	}
 	InstallInputBoundary(root)
+	_, _, findErr := root.Find(args)
+	if status, handled := HandleUnknownCommand(root, args, stdout, stderr, modeForArgs(args), findErr == nil); handled {
+		return status
+	}
 	if err := resetFlags(root); err != nil {
-		return result.RenderDiag(stdout, stderr, diag.FromError(err), modeForArgs(args))
+		failure := diag.FromError(err)
+		failure.Binary = root.Name()
+		return result.RenderDiag(stdout, stderr, failure, modeForArgs(args))
 	}
 	captured := &captureBuffer{}
 	restoreOutput := SetOutputWriter(captured)
@@ -164,19 +173,23 @@ func Execute(root *cobra.Command, args []string, stdout, stderr io.Writer) diag.
 			}
 			encoded, marshalErr := json.MarshalIndent(data, "", "  ")
 			if marshalErr != nil {
-				return result.RenderDiag(stdout, stderr, diag.FromError(marshalErr), mode)
+				failure := diag.FromError(marshalErr)
+				failure.Binary = root.Name()
+				return result.RenderDiag(stdout, stderr, failure, mode)
 			}
 			human = string(encoded)
 		}
 		if failure := result.EmitReturned(err, func() error {
 			return result.Render(stdout, result.Success(human, data), mode)
 		}); failure != nil {
+			failure.Binary = root.Name()
 			return result.RenderDiag(stderr, stderr, failure, result.ModeHuman)
 		}
 		return diag.SuccessStatus()
 	}
 	if err != nil {
 		diagnostic := diag.FromError(err)
+		diagnostic.Binary = root.Name()
 		if mode == result.ModeHuman {
 			if human := captured.String(); human != "" {
 				_, _ = io.WriteString(stdout, human)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/spf13/cobra"
 
 	"github.com/kb-labs/clikit/diag"
@@ -58,6 +59,14 @@ Examples:
 // humans; {ok:false,error:{…}} for machines) and the process exits with the
 // shared diagnostic and exit code. Unknown errors are normalized by clikit.
 func Execute() diag.ExitStatus {
+	args := os.Args[1:]
+	if clikitcommand.HandleCobraHelp(rootCmd, args, os.Stdout) {
+		return diag.SuccessStatus()
+	}
+	_, _, findErr := rootCmd.Find(args)
+	if status, handled := clikitcommand.HandleUnknownCommand(rootCmd, args, os.Stdout, os.Stderr, outputMode(), findErr == nil); handled {
+		return status
+	}
 	_, err := rootCmd.ExecuteC()
 	if err == nil {
 		return diag.SuccessStatus()
@@ -66,6 +75,7 @@ func Execute() diag.ExitStatus {
 		return status
 	}
 	d := diag.FromError(err)
+	d.Binary = rootCmd.Name()
 	return result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
 }
 

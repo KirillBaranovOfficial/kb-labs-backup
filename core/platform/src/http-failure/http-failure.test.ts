@@ -8,7 +8,7 @@ describe('shared HTTP failure boundary', () => {
     const error = createErrorEnvelope('KB_PROJECT_UNKNOWN', {
       message: 'Project missing',
       hint: 'Register the project first.',
-      details: { projectId: 'project-1' },
+      details: { path: 'project-1' },
     });
 
     expect(statusForHttpFailure({ error }, 500)).toBe(404);

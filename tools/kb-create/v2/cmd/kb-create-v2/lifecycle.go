@@ -41,8 +41,9 @@ func refuseRunningHost(platformRoot string) *diag.Diag {
 	if identityErr != nil || record.InstallationID != installationID {
 		return supervisor.Refusal(record, platformRoot)
 	}
-	failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create update\" to change an installed platform, or \"kb-create stop\" before a fresh apply.", nil)
-	failure.Meta = map[string]any{"pid": fmt.Sprint(record.PID), "platformRoot": record.PlatformRoot}
+	command := contracts.ShellCommand("kb-create", "status", "--platform-root", platformRoot)
+	failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `"+command+"` to inspect it.", nil)
+	failure.Meta = map[string]any{"pid": fmt.Sprint(record.PID), "platformRoot": record.PlatformRoot, "nextCommand": command}
 	return failure
 }
 

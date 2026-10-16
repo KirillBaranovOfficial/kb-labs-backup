@@ -860,8 +860,8 @@ func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 		t.Fatalf("start platform B: %d %s", code, output)
 	}
 	hint, _ := payload["error"].(map[string]any)["hint"].(string)
-	commandText := strings.TrimSuffix(strings.TrimPrefix(hint, "Stop that platform first with "), ".")
-	commandText = strings.TrimSuffix(strings.TrimPrefix(commandText, "`"), "`")
+	commandText := strings.TrimPrefix(hint, "Use `")
+	commandText = strings.TrimSuffix(commandText, "` to inspect or stop the already-running host.")
 	commands, err := contracts.ParseShellCommands(commandText)
 	want := []string{"kb-create", "stop", "--platform-root", layoutA.InstallRoot()}
 	if err != nil || len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {

@@ -2,6 +2,7 @@ package result
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -12,8 +13,8 @@ import (
 
 // DecodeResult validates a shared UX-result envelope. On success it decodes
 // data into out. On failure it reconstructs a local diagnostic from the
-// shared catalog; no free text or optional context from the remote response is
-// retained.
+// shared catalog. Remote message and hint text are discarded; only
+// generated template values and locally observed request context survive.
 func DecodeResult(content []byte, out any) (*diag.Diag, error) {
 	return DecodeResultWithContext(content, out, RemoteFailureContext{})
 }
@@ -28,8 +29,9 @@ type RemoteFailureContext struct {
 
 // DecodeResultWithContext validates a UX-result envelope and annotates a
 // reconstructed failure with the request stage and HTTP status observed by
-// the caller. Remote message, hint, cause, details, actions, and docs are
-// discarded; only a validated correlation ID survives as structured metadata.
+// the caller. Remote message, hint, cause, actions, and docs are discarded;
+// only generated catalog template values and validated correlation IDs from
+// the response survive alongside locally observed request context.
 func DecodeResultWithContext(content []byte, out any, context RemoteFailureContext) (*diag.Diag, error) {
 	if err := ValidateMachineResult(content); err != nil {
 		return nil, fmt.Errorf("invalid UX result envelope: %w", err)
@@ -44,12 +46,13 @@ func DecodeResultWithContext(content []byte, out any, context RemoteFailureConte
 	}
 	if !envelope.OK {
 		var failure struct {
-			Code          string `json:"code"`
-			Area          string `json:"area"`
-			Stage         string `json:"stage"`
-			Severity      string `json:"severity"`
-			Retryable     bool   `json:"retryable"`
-			CorrelationID string `json:"correlationId"`
+			Code          string            `json:"code"`
+			Area          string            `json:"area"`
+			Stage         string            `json:"stage"`
+			Severity      string            `json:"severity"`
+			Retryable     bool              `json:"retryable"`
+			CorrelationID string            `json:"correlationId"`
+			Details       map[string]string `json:"details"`
 		}
 		if err := json.Unmarshal(envelope.Error, &failure); err != nil {
 			return nil, fmt.Errorf("invalid UX failure envelope: %w", err)
@@ -66,15 +69,17 @@ func DecodeResultWithContext(content []byte, out any, context RemoteFailureConte
 		}
 		entry, ok := diag.LookupCatalog(failure.Code)
 		if !ok || failure.Area != entry.Area || failure.Stage != entry.Stage || failure.Severity != entry.Severity || failure.Retryable != entry.Retryable {
-			local := diag.New("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", "The remote service returned an unrecognized diagnostic.")
-			if len(meta) > 0 {
-				local.Meta = meta
-			}
-			return local, nil
+			return gatewayProtocolFailure(meta, failure.Code), nil
 		}
-		local := diag.New(entry.Code, entry.Message, diag.WithHint(entry.Hint))
-		if len(meta) > 0 {
-			local.Meta = meta
+		local, err := diag.FromCatalog(entry.Code, failure.Details, diag.WithMeta(meta))
+		if err != nil {
+			var violation *diag.Diag
+			if errors.As(err, &violation) {
+				if fields, ok := violation.Meta["fields"].(string); ok {
+					meta["fields"] = fields
+				}
+			}
+			return gatewayProtocolFailure(meta, failure.Code), nil
 		}
 		return local, nil
 	}
@@ -82,6 +87,13 @@ func DecodeResultWithContext(content []byte, out any, context RemoteFailureConte
 		return nil, fmt.Errorf("invalid UX result data: %w", err)
 	}
 	return nil, nil
+}
+
+func gatewayProtocolFailure(meta map[string]any, remoteCode string) *diag.Diag {
+	if remoteCode != "" {
+		meta["remoteCode"] = remoteCode
+	}
+	return diag.New("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", "", diag.WithMeta(meta))
 }
 
 var catalogCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$`)

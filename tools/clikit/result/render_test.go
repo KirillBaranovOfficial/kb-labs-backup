@@ -79,6 +79,7 @@ func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
 
 func TestRenderDiag_JSONKeepsStructuredFailureDataAtResultLevel(t *testing.T) {
 	d := diag.New("KB_RUNTIME_COMMAND_FAILED", "The command could not complete.",
+		diag.WithBinary("kb-devkit"),
 		diag.WithData(map[string]any{
 			"summary": map[string]int{"scheduled": 3, "failed": 1, "skipped": 2},
 			"results": []map[string]any{{"package": "@fixture/core", "ok": false}},

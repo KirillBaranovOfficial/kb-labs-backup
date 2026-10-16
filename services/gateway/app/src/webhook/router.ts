@@ -176,7 +176,7 @@ export async function registerWebhookRoutes(
         return reply.code(404).send({ error: 'Webhook not found' });
       }
 
-      return handleWebhook({ request, reply, entry, namespaceHeader: request.headers['x-kb-namespace'], instanceId: undefined, secretStore, idempotencyStore, broker, logger, historyStore, ingress });
+      return handleWebhook({ request, reply, entry, namespaceHeader: request.headers['x-kb-namespace'], instanceId: undefined, secretStore, idempotencyStore, broker, logger, historyStore, ingress, gatewayUrl: options.baseUrl });
     },
   );
 
@@ -191,7 +191,7 @@ export async function registerWebhookRoutes(
         return reply.code(404).send({ error: 'Webhook not found' });
       }
 
-      return handleWebhook({ request, reply, entry, namespaceHeader: request.headers['x-kb-namespace'], instanceId, secretStore, idempotencyStore, broker, logger, historyStore, ingress });
+      return handleWebhook({ request, reply, entry, namespaceHeader: request.headers['x-kb-namespace'], instanceId, secretStore, idempotencyStore, broker, logger, historyStore, ingress, gatewayUrl: options.baseUrl });
     },
   );
 
@@ -212,6 +212,7 @@ interface HandleWebhookArgs {
   logger: ILogger;
   historyStore: WebhookHistoryStore;
   ingress: WeakMap<FastifyRequest, { webhookId: string; startedAt: number }>;
+  gatewayUrl?: string;
 }
 
 async function handleWebhook({
@@ -226,6 +227,7 @@ async function handleWebhook({
   logger,
   historyStore,
   ingress,
+  gatewayUrl,
 }: HandleWebhookArgs): Promise<unknown> {
   const { pluginId, decl, pluginRoot, manifest } = entry;
 
@@ -267,7 +269,7 @@ async function handleWebhook({
     const authResult = await verifyWebhookAuth(decl.auth, authReq, secretStore, authBackend, pluginRoot);
     if (!authResult.valid) {
       await writeHistory(historyStore, request, entry, instanceId, context, {
-        type: 'rejected', code: createErrorEnvelope('KB_AUTH_REQUIRED').code,
+        type: 'rejected', code: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: gatewayUrl ?? 'the configured Gateway URL' } }).code,
       });
       return sendAuthError(reply, 401);
     }
@@ -283,7 +285,7 @@ async function handleWebhook({
     acquired = await broker.tryAcquire(rateResource);
     if (!acquired.allowed) {
       await writeHistory(historyStore, request, entry, instanceId, context, {
-        type: 'rejected', code: createErrorEnvelope('KB_RUNTIME_RATE_LIMITED').code,
+        type: 'rejected', code: createErrorEnvelope('KB_RUNTIME_RATE_LIMITED', { details: { retryAfter: acquired.waitTimeMs ? `${acquired.waitTimeMs} ms` : 'the configured retry interval' } }).code,
       });
       const retryAfterSec = acquired.waitTimeMs ? Math.max(1, Math.ceil(acquired.waitTimeMs / 1000)) : 1;
       return reply.code(429).header('Retry-After', String(retryAfterSec)).send({

@@ -818,7 +818,7 @@ func TestGatewayFailureEnvelopePreservesDiagnosticWithoutSecrets(t *testing.T) {
 		}
 		w.Header().Set("X-Debug-Credential", headerSecret)
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>; token=`+bodySecret+`","cause":"token=`+bodySecret+`","correlationId":"`+gatewayCorrelationID+`","details":{"leak":"`+bodySecret+`"}}}`)
+		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>; token=`+bodySecret+`","cause":"token=`+bodySecret+`","correlationId":"`+gatewayCorrelationID+`","details":{"permission":"health:read"}}}`)
 	}))
 	defer server.Close()
 	store := secrets.Store{PlatformRoot: t.TempDir()}

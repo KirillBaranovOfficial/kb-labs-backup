@@ -65,8 +65,8 @@ class FakeGitHub:
 class UninstallShimResultTest(unittest.TestCase):
     def test_agent_uninstall_requires_shim_disposition_and_canonical_owner_when_left(self):
         with tempfile.TemporaryDirectory(prefix="journey-uninstall-shim-") as temp:
-            root = Path(temp) / "platform"
-            root.mkdir()
+            root = Path(temp) / "noncanonical" / ".." / "platform"
+            root.mkdir(parents=True)
             canonical = str(root.resolve())
             alias = Path(temp) / "platform-alias"
             alias.symlink_to(root, target_is_directory=True)
@@ -81,7 +81,7 @@ class UninstallShimResultTest(unittest.TestCase):
     def test_human_uninstall_requires_shim_disposition_and_canonical_owner_when_left(self):
         with tempfile.TemporaryDirectory(prefix="journey-uninstall-shim-") as temp:
             root = Path(temp) / "platform"
-            root.mkdir()
+            root.mkdir(parents=True)
             self.assertTrue(uninstall_human_summary_has_shim_result(
                 "Platform uninstalled. The kb command was removed.", root))
             self.assertTrue(uninstall_human_summary_has_shim_result(

@@ -33,6 +33,10 @@ function failureParts(payload: unknown, statusCode: number, limitBytes?: number)
   const nested = payload && typeof payload === 'object' && 'error' in payload ? payload.error : undefined;
   const candidate = hasCode(nested) ? nested : hasCode(payload) ? payload : undefined;
   if (candidate !== undefined) {
+    if (statusCode === 413 && isErrorCode(candidate.code)) {
+      const code = fallbackCodeForStatus(statusCode);
+      return { code, cataloguedPayload: false, error: createFallbackError(code, limitBytes) };
+    }
     const error = toErrorEnvelope(candidate);
     if (statusCode !== 413 || error.area === 'product') {
       return { code: error.code, cataloguedPayload: isErrorCode(candidate.code), error };
@@ -45,11 +49,23 @@ function failureParts(payload: unknown, statusCode: number, limitBytes?: number)
 }
 
 function createFallbackError(code: CatalogErrorCode, limitBytes?: number): ErrorEnvelope {
+  if (code === 'KB_AUTH_REQUIRED') {
+    return createErrorEnvelope(code, {
+      message: 'Authentication is required.',
+      hint: 'Run `kb auth login --help` to configure Gateway authentication, then retry.',
+    });
+  }
+  if (code === 'KB_AUTH_FORBIDDEN') {
+    return createErrorEnvelope(code, {
+      message: 'Permission denied.',
+      hint: 'Ask your administrator for permission to perform the requested operation.',
+    });
+  }
   if (code !== 'KB_RUNTIME_PAYLOAD_TOO_LARGE') return createErrorEnvelope(code);
-  const details: Record<string, string> = limitBytes === undefined
-    ? { limit: 'the configured receiving-service limit' }
-    : { limit: formatByteLimit(limitBytes), limitBytes: String(limitBytes) };
-  return createErrorEnvelope(code, { details });
+  if (limitBytes === undefined) {
+    return createErrorEnvelope(code, { details: { limit: 'the configured receiving-service limit' } });
+  }
+  return createErrorEnvelope(code, { details: { limit: formatByteLimit(limitBytes), limitBytes: String(limitBytes) } });
 }
 
 function formatByteLimit(limitBytes: number): string {

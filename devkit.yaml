@@ -116,6 +116,7 @@ workspace:
         - "tools/kb-deploy"
         - "tools/kb-monitor"
         - "tools/kb-env"
+        - "tools/kb-runner"
       language: go
       preset: go-binary
 

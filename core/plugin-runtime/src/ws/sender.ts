@@ -1,4 +1,4 @@
-import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, getAdapterConfigurationCommand } from '@kb-labs/core-platform';
 import type { IWebSocketHostOperations } from '@kb-labs/core-platform/adapters';
 import type { WSConnectionReference, WSInputReference, WSMessage, WSSender } from '@kb-labs/plugin-contracts';
 
@@ -28,7 +28,7 @@ export function rehydrateWSInput(input: WSInputReference, operations: IWebSocket
   if (input.event === 'disconnect') return input;
   if (!operations) {
     throw new ErrorEnvelopeError(createErrorEnvelope('KB_ADAPTER_NOT_CONFIGURED', {
-      details: { adapter: 'websocket' },
+      details: { service: 'websocket', adapter: 'websocket', command: getAdapterConfigurationCommand('websocket') },
     }));
   }
   return { ...input, sender: createWSSender(input.connection, operations) };

@@ -310,10 +310,10 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			return resolvedPlan{}, asDiag(claimErr)
 		}
 		if claimed {
-			diagnostic := contracts.NewDiag(contracts.CodePortInUse,
-				"Gateway address "+selectedURL+" is already assigned to installed root "+claimant.PlatformRoot+".",
-				"Choose another `--gateway-url`, then rerun `kb-create apply`.", nil)
-			diagnostic.Meta = map[string]any{"address": selectedURL, "platformRoot": claimant.PlatformRoot}
+			diagnostic, diagnosticErr := gatewayAddressClaimConflict(selectedURL, claimant.PlatformRoot, input.Operation)
+			if diagnosticErr != nil {
+				return resolvedPlan{}, failure(contracts.CodeHostSpecInvalid, "the selected Gateway address is invalid", "choose a valid loopback Gateway URL, then rerun `kb-create "+input.Operation+"`", diagnosticErr)
+			}
 			return resolvedPlan{}, diagnostic
 		}
 		if selectedURL != response.Plan.Request.GatewayURL {
@@ -335,6 +335,19 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		}
 	}
 	return resolvedPlan{Catalog: source, Plan: *response.Plan, State: state}, nil
+}
+
+func gatewayAddressClaimConflict(gatewayURL, platformRoot, operation string) (*diag.Diag, error) {
+	parsed, err := url.Parse(gatewayURL)
+	if err != nil || parsed.Port() == "" {
+		return nil, fmt.Errorf("Gateway address %q has no valid port", gatewayURL)
+	}
+	diagnostic := contracts.NewDiag(contracts.CodePortInUse,
+		"Gateway address "+gatewayURL+" is already assigned to installed root "+platformRoot+".",
+		"Choose another loopback Gateway URL, then rerun `"+contracts.ShellCommand("kb-create", operation, "--gateway-url", "<url>")+"`.", nil)
+	diagnostic.Meta = map[string]any{"address": gatewayURL, "port": parsed.Port(), "platformRoot": platformRoot}
+	diagnostic.Meta["operation"] = operation
+	return diagnostic, nil
 }
 
 func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {

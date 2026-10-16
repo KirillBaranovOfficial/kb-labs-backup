@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { HostCallDispatcher } from '../dispatcher.js';
 import type { IAgentSocket } from '../dispatcher.js';
-import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
+import { AdapterCredentialsMissingError, ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
 import { serialize } from '@kb-labs/core-platform/serializable';
 
 function makeMockSocket(): { socket: IAgentSocket; sent: unknown[] } {
@@ -159,9 +159,8 @@ describe('HostCallDispatcher', () => {
       dispatcher.registerConnection('host-1', 'ns-1', socket);
       const callPromise = dispatcher.call('ns-1', 'host-1', 'filesystem', 'read', []);
       const requestId = (sent[0] as { requestId: string }).requestId;
-      const envelope = createErrorEnvelope('KB_ADAPTER_CREDENTIALS_MISSING', {
+      const envelope = toErrorEnvelope(new AdapterCredentialsMissingError('llm', 'OPENAI_API_KEY', 'platform.adapters.llm.apiKey'), {
         correlationId: 'execution-correlation',
-        details: { adapter: 'llm', credential: 'OPENAI_API_KEY' },
       });
 
       dispatcher.handleInbound({ type: 'error', requestId, error: envelope });

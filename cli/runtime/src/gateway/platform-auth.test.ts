@@ -183,7 +183,7 @@ describe('platform auth verification cache', () => {
       authenticated: false,
       error: {
         code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
-        message: 'Gateway protocol failure during Gateway verification: expected a canonical UX result from https://gateway.test (HTTP 503).',
+        message: 'The Gateway returned an invalid UX result.',
         hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
         details: { status: '503', operation: 'Gateway verification', gatewayUrl: 'https://gateway.test' },
         correlationId: expect.any(String),

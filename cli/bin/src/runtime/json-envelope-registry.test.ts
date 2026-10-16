@@ -385,6 +385,13 @@ describe('JSON envelope coverage for the live CLI registry', () => {
         const error = createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'https://gateway.test' } });
         return Promise.resolve(new Response(JSON.stringify({ ok: false, error }), { status: 401 }));
       }
+      if (String(input).includes('/api/v1/webhooks/history/')) {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { record: {
+          webhookId: 'fixture-webhook-id', project: 'local', receivedAt: '2026-10-16T08:00:00.000Z',
+          pluginId: '@kb-labs/fixture', event: 'fixture', handler: './handler.js#default', instanceId: null,
+          outcome: { type: 'delivered' }, durationMs: 1, correlationId: 'fixture-request',
+        } } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
       return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { webhooks: [], tokens: [] } }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -708,7 +715,7 @@ describe('JSON envelope coverage for the live CLI registry', () => {
         invalidSegments[invalidSegments.length - 1] += '__unknown__';
         const invalid = await runAndCapture([...invalidSegments, '--json']);
         expect(invalid.exitCode, invalidSegments.join(' ')).toBe(2);
-        expect(invalid.result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
+        expect(invalid.result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNKNOWN_COMMAND' } });
       }
     }
   }, 120_000);

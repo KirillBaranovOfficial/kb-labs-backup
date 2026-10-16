@@ -1010,11 +1010,15 @@ func TestRegistrationFailuresNeverCopyRemoteTextIntoDiagnostics(t *testing.T) {
 				if !ok {
 					t.Fatalf("test code %q is absent from the platform catalog", code)
 				}
+				details := make(map[string]string, len(catalog.TemplateParameters))
+				for _, name := range catalog.TemplateParameters {
+					details[name] = "machine:register"
+				}
 				body, err := json.Marshal(map[string]any{"ok": false, "error": map[string]any{
 					"code": code, "area": catalog.Area, "stage": catalog.Stage, "severity": catalog.Severity, "retryable": catalog.Retryable,
 					"message": password + " " + token, "hint": token + " " + password,
 					"cause": password + " " + token, "correlationId": requestID,
-					"details": map[string]string{"remote": password + " " + token},
+					"details": details,
 				}})
 				if err != nil {
 					t.Fatal(err)

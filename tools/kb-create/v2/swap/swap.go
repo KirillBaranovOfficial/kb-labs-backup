@@ -70,9 +70,10 @@ func Run(ctx context.Context, host Host, op Operation) (Outcome, error) {
 		failure := contracts.NewDiag(contracts.CodeUpdateApplyFailed,
 			fmt.Sprintf("The %s could not be applied; the previous version %s was restored.", op.Name, op.PreviousVersion),
 			"Inspect the local log and the diagnostic dossier, fix the reported cause and run the command again.", changeErr)
+		failure.Meta = map[string]any{"version": op.PreviousVersion}
 		if wasRunning {
 			if resumeErr := host.Resume(recovery); resumeErr != nil {
-				failure.Meta = map[string]any{"hostRestart": resumeErr.Error()}
+				failure.Meta["hostRestart"] = resumeErr.Error()
 			}
 		}
 		return outcome, failure
@@ -95,7 +96,7 @@ func Run(ctx context.Context, host Host, op Operation) (Outcome, error) {
 	failure := contracts.NewDiag(contracts.CodeUpdateHostNotHealthy,
 		fmt.Sprintf("The host did not become healthy after the %s; the previous version %s was restored.", op.Name, op.PreviousVersion),
 		"Read the host log in the install-root host-state directory reported by `kb-create doctor` and report the correlationId.", resumeErr)
-	failure.Meta = map[string]any{"snapshot": recoveryPoint}
+	failure.Meta = map[string]any{"snapshot": recoveryPoint, "version": op.PreviousVersion}
 	return outcome, failure
 }
 

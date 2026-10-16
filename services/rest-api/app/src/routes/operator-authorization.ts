@@ -13,6 +13,10 @@ export async function requireRestOperator(request: FastifyRequest, reply: Fastif
   const statusCode = identity.kind === 'rejected' ? 401 : 403;
   const code = identity.kind === 'rejected' ? 'KB_AUTH_REQUIRED' : 'KB_AUTH_FORBIDDEN';
   return reply.code(statusCode).send({
-    error: createErrorEnvelope(code, { correlationId: String(request.id) }),
+    error: createErrorEnvelope(code, {
+      correlationId: String(request.id),
+      ...(code === 'KB_AUTH_FORBIDDEN' ? { details: { permission: PERMISSIONS.USERS_READ } } : {}),
+      ...(code === 'KB_AUTH_REQUIRED' ? { hint: 'Run `kb auth login --help` to configure Gateway authentication, then retry.' } : {}),
+    }),
   });
 }

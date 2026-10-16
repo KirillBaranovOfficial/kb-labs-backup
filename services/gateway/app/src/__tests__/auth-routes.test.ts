@@ -103,6 +103,7 @@ describe('POST /auth/register', () => {
     expect(res.json()).toMatchObject({ ok: false, error: {
       code: 'KB_AUTH_FORBIDDEN',
       message: 'Permission denied: machine:register',
+		details: { permission: 'machine:register' },
     } });
     expect(authService.register).not.toHaveBeenCalled();
   });
