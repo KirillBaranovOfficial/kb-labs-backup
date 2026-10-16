@@ -226,12 +226,41 @@ exit 2
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["env"]["BATCH_BASELINE"], "${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}")
         self.assertEqual(entries[0]["env"]["KB_DEVKIT_BASE_REF"], "${{ github.event.pull_request.base.sha || env.JOURNEY_DEFAULT_BRANCH }}")
-        self.assertEqual(steps[2]["with"]["go-version-file"], "tools/kb-devkit/go.mod")
+        pnpm_steps = [step for step in steps if step.get("uses", "").startswith("pnpm/action-setup@")]
+        self.assertEqual(len(pnpm_steps), 1)
+        pnpm_step = pnpm_steps[0]
+        node_step = next(step for step in steps if step.get("uses", "").startswith("actions/setup-node@"))
+        self.assertLess(steps.index(pnpm_step), steps.index(node_step))
+        self.assertNotIn("version", pnpm_step.get("with", {}))
+        package = json.loads((REPO / "package.json").read_text())
+        self.assertIn("packageManager", package)
+        go_step = next(step for step in steps if step.get("uses", "").startswith("actions/setup-go@"))
+        self.assertEqual(go_step["with"]["go-version-file"], "tools/kb-devkit/go.mod")
         self.assertEqual(sum("journey-local" in step.get("with", {}).get("name", "") for step in steps), 1)
         self.assertEqual(sum("journey-secured" in step.get("with", {}).get("name", "") for step in steps), 1)
         artifact_steps = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
         self.assertEqual([step["with"]["path"].rsplit("/", 2)[-2] for step in artifact_steps], ["local", "secured"])
-        self.assertEqual(steps[1]["with"]["node-version-file"], "package.json")
+        self.assertEqual([step["with"]["if-no-files-found"] for step in artifact_steps], ["warn", "warn"])
+        self.assertEqual(node_step["with"]["node-version-file"], "package.json")
+        summary_step = next(step for step in steps if step.get("name") == "Add batch summary")
+        self.assertEqual(summary_step["if"], "always()")
+        failed_step_expression = summary_step["env"]["FAILED_STEP"]
+        self.assertIn("steps.node.outcome == 'failure' && 'Set up Node'", failed_step_expression)
+        self.assertIn("steps.pnpm.outcome == 'failure' && 'Set up pnpm'", failed_step_expression)
+        summary_result = self.root / "github-step-summary.md"
+        env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary_result), "FAILED_STEP": "Set up pnpm"}
+        summary_command = summary_step["run"].replace("${{ github.run_id }}", "test-run")
+        missing_summary = subprocess.run(
+            ["sh", "-c", summary_command],
+            cwd=self.root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(missing_summary.returncode, 0, missing_summary.stderr)
+        self.assertEqual(missing_summary.stderr, "")
+        self.assertEqual(summary_result.read_text(), "batch did not start: Set up pnpm\n")
         commands = [step.get("run", "") for step in steps]
         self.assertFalse(any("e2e/journey/run.sh" in command for command in commands))
         self.assertFalse(any("prepare-candidate.sh" in command for command in commands))
