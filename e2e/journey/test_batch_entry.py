@@ -213,13 +213,19 @@ exit 2
         import json
         spec = json.loads(parsed.stdout)
         self.assertIn("workflow_dispatch", spec["on"])
+        self.assertEqual(spec["on"]["push"]["branches"], ["batch/**"])
         self.assertIn("pull_request", spec["on"])
         self.assertIn("baseline", spec["on"]["workflow_dispatch"]["inputs"])
+        self.assertIn("recorded in batch metadata", spec["on"]["workflow_dispatch"]["inputs"]["baseline"]["description"])
         self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
         self.assertEqual(spec["jobs"]["journey"]["timeout-minutes"], 180)
         steps = spec["jobs"]["journey"]["steps"]
+        job_env = spec["jobs"]["journey"]["env"]
+        self.assertEqual(job_env["JOURNEY_DEFAULT_BRANCH"], "${{ github.event.repository.default_branch }}")
         entries = [step for step in steps if "e2e/journey/batch.sh" in step.get("run", "")]
         self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["env"]["BATCH_BASELINE"], "${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}")
+        self.assertEqual(entries[0]["env"]["KB_DEVKIT_BASE_REF"], "${{ github.event.pull_request.base.sha || env.JOURNEY_DEFAULT_BRANCH }}")
         self.assertEqual(steps[2]["with"]["go-version-file"], "tools/kb-devkit/go.mod")
         self.assertEqual(sum("journey-local" in step.get("with", {}).get("name", "") for step in steps), 1)
         self.assertEqual(sum("journey-secured" in step.get("with", {}).get("name", "") for step in steps), 1)
