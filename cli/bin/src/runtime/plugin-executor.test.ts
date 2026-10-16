@@ -73,7 +73,6 @@ describe('plugin executor adapter errors', () => {
       logger: undefined,
     } as Parameters<typeof executePlugin>[0]['context'];
     const platform = {
-      getSocketPath: () => '/tmp/platform.sock',
       getAdapter: () => ({ listenAddress: () => ({ host: '127.0.0.1', port: 43323 }) }),
     } as unknown as Parameters<typeof executePlugin>[0]['platform'];
 
@@ -129,7 +128,6 @@ describe('plugin executor adapter errors', () => {
         platformRoot: "/platform",
         netOffset: 200,
         platform: {
-          getSocketPath: () => '/tmp/platform.sock',
           getAdapter: () => ({ listenAddress: () => undefined }),
         } as unknown as Parameters<typeof executePlugin>[0]['platform'],
       });
@@ -173,7 +171,6 @@ describe('plugin executor adapter errors', () => {
         platformRoot: "/platform",
         netOffset: 0,
         platform: {
-          getSocketPath: () => '/tmp/platform.sock',
           getAdapter: () => ({ listenAddress: () => undefined }),
         } as unknown as Parameters<typeof executePlugin>[0]['platform'],
       })).rejects.toMatchObject({ name: 'ServicePortConfigError', envVar: 'GATEWAY_PORT' });
@@ -213,7 +210,6 @@ describe('plugin executor adapter errors', () => {
     expect(handlers.length).toBeGreaterThan(0);
 
     const platform = {
-      getSocketPath: () => '/tmp/plugin-execution-registry.sock',
       getAdapter: () => undefined,
     } as unknown as Parameters<typeof executePlugin>[0]['platform'];
     const context = {
@@ -300,7 +296,6 @@ describe('plugin executor adapter errors', () => {
       for (const { registered, commandPath, handler } of handlers) {
         output.mockClear();
         const platform = {
-          getSocketPath: () => '/tmp/plugin-execution-registry.sock',
           getAdapter: () => undefined,
           executionBackend: {
             async execute(request: { descriptor: { requestId: string }; context?: { commandPath?: string } }) {

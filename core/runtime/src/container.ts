@@ -112,7 +112,6 @@ export type PlatformLifecyclePhase =
 export interface PlatformLifecycleContext {
   phase: PlatformLifecyclePhase;
   cwd?: string;
-  isChildProcess?: boolean;
   reason?: string;
   error?: unknown;
   metadata?: Record<string, unknown>;
@@ -564,7 +563,6 @@ export class PlatformContainer {
   private _cron?: ICronManager;
   private _resources?: IResourceManager;
   private _resourceBroker?: IResourceBroker;
-  private _socketServer?: { getSocketPath(): string };
   private _executionBackend?: ExecutionBackend;
   private _environmentManager?: EnvironmentManager;
   private _workspaceManager?: WorkspaceManager;
@@ -668,22 +666,6 @@ export class PlatformContainer {
    */
   initResourceBroker(broker: IResourceBroker): void {
     this._resourceBroker = broker;
-  }
-
-  /**
-   * Initialize Unix socket server.
-   * Called internally by initPlatform() in parent process.
-   */
-  initSocketServer(server: { getSocketPath(): string }): void {
-    this._socketServer = server;
-  }
-
-  /**
-   * Get socket path for IPC communication.
-   * Returns undefined if not running in parent process.
-   */
-  getSocketPath(): string | undefined {
-    return this._socketServer?.getSocketPath();
   }
 
   /**
@@ -820,7 +802,6 @@ export class PlatformContainer {
     this._cron = undefined;
     this._resources = undefined;
     this._resourceBroker = undefined;
-    this._socketServer = undefined;
     this._executionBackend = undefined;
     this._environmentManager = undefined;
     this._workspaceManager = undefined;

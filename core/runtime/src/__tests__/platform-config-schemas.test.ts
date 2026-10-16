@@ -55,9 +55,7 @@ describe('validatePlatformUserConfig', () => {
   })
 
   it('validates the execution section through the existing schema', () => {
-    expect(validatePlatformUserConfig({ platform: { execution: { mode: 'container' } } })[0]?.path).toBe(
-      'platform.execution.container',
-    )
+    expect(validatePlatformUserConfig({ platform: { execution: { mode: 'container' } } })).toEqual([])
     expect(validatePlatformUserConfig({ platform: { execution: { mode: 'bogus' } } })[0]?.path).toBe(
       'platform.execution.mode',
     )

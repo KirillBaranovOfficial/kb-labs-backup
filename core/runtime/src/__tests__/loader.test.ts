@@ -21,7 +21,8 @@ import { tmpdir } from 'node:os';
 import { createDegradedAdapterProxy, fillAdapterFallbacksAndRecord, initPlatform, resetPlatform } from '../loader.js';
 import { platform } from '../container.js';
 import { getAdapterStatusFor, resetAdapterStatus } from '../adapter-status.js';
-import { AdapterUnavailableError } from '@kb-labs/core-platform';
+import { AdapterUnavailableError, type IEnvironmentProvider } from '@kb-labs/core-platform';
+import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
 
 describe('Platform Loader', () => {
   beforeEach(() => {
@@ -603,15 +604,6 @@ describe('Platform Loader', () => {
       // Even if ResourceBroker fails, platform should work with fallbacks
     });
 
-    it('should continue if UnixSocketServer fails to start', async () => {
-      // Socket server might fail if port is taken or permissions issue
-      await initPlatform({});
-
-      // Platform should still initialize
-      expect(platform.isInitialized).toBe(true);
-      // CLI should work even without socket server (V3 plugins won't work, but V2 will)
-    });
-
     it('should initialize all components independently', async () => {
       await initPlatform({});
 
@@ -657,6 +649,65 @@ describe('Platform Loader', () => {
   });
 
   describe('ExecutionBackend Initialization', () => {
+    // case: S-244.4
+    it.each([
+      ['no environment adapter', false],
+      ['an environment adapter without attached start support', true],
+    ])('returns the catalogued provider diagnostic through container execution when %s', async (_setup, configureProvider) => {
+      await initPlatform({ execution: { mode: 'container' } });
+
+      if (configureProvider) {
+        const providerWithoutAttachedStart: IEnvironmentProvider = {
+          async create() {
+            throw new Error('create must not be reached before provider capability validation');
+          },
+          async getStatus() {
+            throw new Error('getStatus must not be reached before provider capability validation');
+          },
+          async destroy() {},
+          getExecutionStream() {
+            throw new Error('getExecutionStream must not be reached before provider capability validation');
+          },
+        };
+        platform.setAdapter('environment', providerWithoutAttachedStart);
+      }
+
+      expect(platform.executionBackend.executionMode).toBe('container');
+      expect(platform.getAdapter<IEnvironmentProvider>('environment') !== undefined).toBe(configureProvider);
+
+      const request: ExecutionRequest = {
+        executionId: 'provider-diagnostic-test',
+        pluginRoot: process.cwd(),
+        handlerRef: './unused-handler.js',
+        input: {},
+        descriptor: {
+          hostType: 'cli',
+          hostContext: { host: 'cli', argv: [], flags: {} },
+          pluginId: '@kb-labs/test-plugin',
+          pluginVersion: '1.0.0',
+          requestId: 'provider-diagnostic-request',
+          permissions: {},
+        },
+      };
+
+      try {
+        const result = await platform.executionBackend.execute(request);
+
+        expect(result.ok).toBe(false);
+        if (result.ok) {
+          throw new Error('container execution unexpectedly succeeded without an attached environment provider');
+        }
+        expect(result.error.code).toBe('KB_RUNTIME_CONTAINER_UNAVAILABLE');
+        expect(result.error.envelope.hint).toContain(configureProvider
+          ? 'the configured environment provider does not support attached reserve()/start()'
+          : 'the container environment provider is not configured');
+        expect(result.error.envelope.hint).toContain('kb marketplace install @kb-labs/adapters-environment-docker --scope platform');
+        expect(result.error.envelope.hint).not.toContain('Docker daemon logs');
+      } finally {
+        await platform.executionBackend.shutdown();
+      }
+    });
+
     it('should initialize ExecutionBackend by default', async () => {
       await initPlatform({});
 

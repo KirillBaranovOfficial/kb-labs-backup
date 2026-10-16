@@ -18,20 +18,6 @@ import { z } from 'zod';
 import { flattenZodIssues, registerZodEnumIssueHint } from '@kb-labs/core-config';
 import { RESOLVED_EXECUTION_MODES, ROADMAP_EXECUTION_MODES } from '@kb-labs/core-contracts';
 
-// ── ContainerExecutionConfig ──────────────────────────────────────────────────
-
-export const ContainerExecutionConfigSchema = z.object({
-  /** Internal secret for the dispatch endpoint. */
-  gatewayInternalSecret: z.string().min(1, {
-    message: 'execution.container.gatewayInternalSecret must not be empty. Use ${ENV_VAR} to reference an environment variable.',
-  }),
-  // gatewayWsUrl and gatewayJwtSecret moved to adapterOptions.environment.gateway
-  // (adapter-owned: DockerEnvironmentAdapter injects them during reserve()+start())
-  image: z.string().optional(),
-  pullPolicy: z.enum(['Always', 'IfNotPresent', 'Never']).optional(),
-  dockerFlags: z.array(z.string()).optional(),
-}).strict();
-
 // ── ExecutionRetryConfig ──────────────────────────────────────────────────────
 
 export const ExecutionRetryConfigSchema = z.object({
@@ -82,8 +68,6 @@ export const ExecutionConfigSchema = z.object({
     }).optional(),
   }).optional(),
 
-  container: ContainerExecutionConfigSchema.optional(),
-
   workspaceAgent: z.object({
     enabled: z.boolean(),
     internalSecret: z.string().min(1),
@@ -91,17 +75,7 @@ export const ExecutionConfigSchema = z.object({
   }).strict().optional(),
 
   retry: ExecutionRetryConfigSchema.optional(),
-}).superRefine((cfg, ctx) => {
-  // If mode=container, container config must be present
-  if (cfg.mode === 'container' && !cfg.container) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['container'],
-      message: 'execution.container is required when mode is "container"',
-    });
-  }
-
-});
+}).strict();
 
 export type ExecutionConfigParsed = z.output<typeof ExecutionConfigSchema>;
 

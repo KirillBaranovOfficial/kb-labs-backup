@@ -5,6 +5,7 @@
  */
 
 import type { ExecutionDescriptorCore } from './execution-request.js';
+import type { IPlatformAdapters } from '../platform-adapters.js';
 import type { RunResult } from './execution-response.js';
 
 // Re-export for convenience
@@ -17,11 +18,8 @@ export interface SubprocessRunOptions {
   /** Plugin context descriptor */
   descriptor: ExecutionDescriptorCore | unknown;
 
-  /** Platform socket path (Unix socket) */
-  platformSocketPath: string;
-
-  /** Platform auth token for gateway security */
-  platformAuthToken: string;
+  /** Host platform adapters, served to the child over the framed stdio channel. */
+  platform: IPlatformAdapters;
 
   /** Handler file path */
   handlerPath: string;
@@ -59,7 +57,7 @@ export interface SubprocessRunOptions {
  */
 export interface ISubprocessRunner {
   /**
-   * Run handler in subprocess with IPC communication.
+   * Run handler in a subprocess using the shared framed stdio channel.
    *
    * @throws {PluginError} Handler execution failed
    * @throws {TimeoutError} Execution exceeded timeout

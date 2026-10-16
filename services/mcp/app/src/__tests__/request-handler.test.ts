@@ -104,7 +104,7 @@ const tool: McpTool = {
   permissions: {},
 };
 
-const container = { logger: {}, getSocketPath: () => '/tmp/s' } as unknown as PlatformContainer;
+const container = { logger: {} } as unknown as PlatformContainer;
 const resolvePlatform = () => container;
 const requestLogger = { error: vi.fn() } as unknown as ILogger;
 

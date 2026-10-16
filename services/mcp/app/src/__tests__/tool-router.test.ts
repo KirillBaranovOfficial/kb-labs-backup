@@ -34,7 +34,6 @@ const container = {
     fatal: vi.fn(),
     child: () => container.logger,
   },
-  getSocketPath: () => '/tmp/sock',
 } as unknown as PlatformContainer;
 const resolvePlatform = vi.fn(() => container);
 

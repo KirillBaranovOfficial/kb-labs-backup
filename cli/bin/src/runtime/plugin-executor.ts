@@ -127,7 +127,6 @@ export async function executePlugin(
     }
 
     const platformServices = createPlatformServices(platform);
-    const socketPath = platform.getSocketPath();
     const quotas = permissions?.quotas;
 
     // Execute plugin. Pass the discovered `pkgRoot` explicitly so project-
@@ -146,7 +145,6 @@ export async function executePlugin(
           ui,
           platform: platformServices,
           platformContainer: platform,
-          socketPath,
           cwd: context.cwd || process.cwd(),
           devMode: process.env.NODE_ENV === "development",
           permissions,

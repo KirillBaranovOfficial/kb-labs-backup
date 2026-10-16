@@ -22,6 +22,10 @@ export interface TransportExecutionResult {
   data: unknown;
 }
 
+export interface ExecutionTransportOptions {
+  signal?: AbortSignal;
+}
+
 /**
  * Transport abstraction — sends an execution request to a remote runtime
  * and returns the result.
@@ -42,5 +46,5 @@ export interface IExecutionTransport {
    * Send an execution request and wait for the result.
    * Throws on transport-level errors (connection refused, timeout, etc.).
    */
-  execute(request: ExecutionRequest): Promise<TransportExecutionResult>;
+  execute(request: ExecutionRequest, options?: ExecutionTransportOptions): Promise<TransportExecutionResult>;
 }

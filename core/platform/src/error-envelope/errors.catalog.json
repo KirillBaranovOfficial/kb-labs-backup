@@ -1760,6 +1760,39 @@
       "hint": "Run `kb --help` to review available commands, then rerun the command."
     },
     {
+      "code": "KB_RUNTIME_CONTAINER_UNAVAILABLE",
+      "httpStatus": 503,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "The container runtime could not start the plugin execution environment.",
+      "hint": "Container startup failed because {cause}. To fix this, {fix}"
+    },
+    {
+      "code": "KB_RUNTIME_CONTAINER_NETWORK_UNSUPPORTED",
+      "httpStatus": 400,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "Container mode cannot run a plugin that declares network permissions.",
+      "hint": "Container mode currently supports only network-free plugins. Run this plugin in subprocess mode or wait for the network broker roadmap item."
+    },
+    {
+      "code": "KB_RUNTIME_CONTAINER_TEARDOWN_FAILED",
+      "httpStatus": 500,
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "processExitClass": "operation-failure",
+      "message": "The container execution environment could not be removed.",
+      "hint": "Run `docker rm -f {container}` to remove the remaining container, then retry the execution."
+    },
+    {
       "code": "KB_RUNTIME_CONFIRMATION_REQUIRED",
       "area": "runtime",
       "stage": "run",
@@ -2388,6 +2421,16 @@
       "message": "WebSocket connection {connectionId} is unknown or closed.",
       "hint": "Reconnect the WebSocket client to obtain an active connection, then retry the operation.",
       "processExitClass": "operation-failure"
+    },
+    {
+      "code": "KB_RUNTIME_FRAME_TOO_LARGE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "The child process sent a control frame larger than the supported limit.",
+      "hint": "Reduce the plugin platform RPC payload, then retry the command."
     }
   ]
 }

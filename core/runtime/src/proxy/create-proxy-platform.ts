@@ -1,16 +1,15 @@
 /**
  * @module @kb-labs/core-runtime/proxy/create-proxy-platform
- * Create platform container with proxy adapters for subprocess execution.
+ * Create platform container with proxy adapters for host-managed service calls.
  *
  * This function creates a PlatformContainer where all adapters are proxies
- * that forward calls to the parent process via IPC (Unix socket).
+ * that forward calls through the supplied host-owned transport.
  *
- * Used in subprocess workers to access real platform services from parent.
+ * Used by execution hosts to route platform requests to their configured service transport.
  */
 
 import type { PlatformContainer } from '../container.js';
 import type { ITransport } from '../transport/transport.js';
-import { UnixSocketTransport } from '../transport/unix-socket-transport.js';
 import { CacheProxy } from './cache-proxy.js';
 import { LLMProxy } from './llm-proxy.js';
 import { EmbeddingsProxy } from './embeddings-proxy.js';
@@ -22,24 +21,14 @@ import type { ILogger, IEventBus, IAnalytics } from '@kb-labs/core-platform';
 import { ProcessExecutorProxy } from './process-executor-proxy.js';
 
 export interface CreateProxyPlatformOptions {
-  /**
-   * Path to Unix socket for IPC communication.
-   * Should match the socket path used by UnixSocketServer in parent process.
-   * Default: /tmp/kb-ipc.sock
-   */
-  socketPath?: string;
+  /** Required host-owned transport for platform RPC. */
+  transport: ITransport;
 
   /**
    * Logger for subprocess (can be noop or local file logger).
    * Note: This logger is NOT proxied - logs are local to subprocess.
    */
   logger?: ILogger;
-
-  /**
-   * Custom transport (for testing).
-   * If not provided, UnixSocketTransport will be created.
-   */
-  transport?: ITransport;
 }
 
 /**
@@ -70,7 +59,7 @@ function createNoopLogger(): ILogger {
 /**
  * Create platform container with proxy adapters.
  *
- * All adapters (except logger) forward calls to parent process via IPC.
+ * All adapters (except logger) forward calls over the supplied host-owned transport.
  * This allows subprocess handlers to access real platform services.
  *
  * @param options - Configuration options
@@ -82,7 +71,7 @@ function createNoopLogger(): ILogger {
  * import { createProxyPlatform } from '@kb-labs/core-runtime/proxy';
  *
  * const platform = await createProxyPlatform({
- *   socketPath: process.env.KB_IPC_SOCKET_PATH,
+ *   transport,
  *   logger: createFileLogger('/tmp/worker.log'),
  * });
  *
@@ -92,16 +81,9 @@ function createNoopLogger(): ILogger {
  * ```
  */
 export async function createProxyPlatform(
-  options: CreateProxyPlatformOptions = {}
+  options: CreateProxyPlatformOptions
 ): Promise<PlatformContainer> {
-  // Create transport (Unix socket by default)
-  const transport = options.transport ?? new UnixSocketTransport({
-    socketPath: options.socketPath ?? '/tmp/kb-ipc.sock',
-  });
-
-  // Connect to parent process
-  // TODO: Re-enable when transport interface is updated
-  // await transport.connect();
+  const { transport } = options;
 
   // Create proxy adapters
   const cache = new CacheProxy(transport);
@@ -158,7 +140,7 @@ export async function createProxyPlatform(
  *
  * @example
  * ```typescript
- * const platform = await createProxyPlatform();
+ * const platform = await createProxyPlatform({ transport: gatewayTransport });
  * // ... use platform ...
  * await closeProxyPlatform(platform);
  * ```

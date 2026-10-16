@@ -88,12 +88,15 @@ import { runInSubprocess } from '@kb-labs/plugin-runtime-v3/sandbox';
 
 const result = await runInSubprocess({
   descriptor,
-  socketPath: '/path/to/unix.sock', // IPC socket
+  platform,
   handlerPath: '/path/to/handler.js',
   input: { data: 'test' },
+  cwd: '/path/to/workspace',
   timeoutMs: 30000,
 });
 ```
+
+The host and child exchange execution control, platform adapter calls, and plugin logs over one length-prefixed stdio stream. The host serves platform calls through that stream; subprocess and container execution use the same protocol.
 
 ## Context Structure
 
@@ -346,7 +349,7 @@ See [ADR-0001](docs/adr/ADR-0001-adapter-pipeline.md) for the full design ration
                 │    └─ Execute in same process
                 │
                 └─ Production: runInSubprocess()
-                     ├─ fork(bootstrap.js)
+                     ├─ spawn(bootstrap.js, stdin/stdout pipes)
                      ├─ IPC communication
                      ├─ Sandboxed execution
                      └─ Return result via IPC

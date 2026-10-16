@@ -189,15 +189,6 @@ export interface ExecutionConfig {
   mode?: "auto" | ResolvedExecutionMode;
 
   /**
-   * Container execution options (used when mode=container).
-   * RoutingBackend dispatches via Gateway to isolated containers.
-  */
-  container?: {
-    /** Internal secret for the dispatch endpoint */
-    gatewayInternalSecret: string;
-  };
-
-  /**
    * Workspace Agent routing options.
    * When enabled, requests with target.type === 'workspace-agent' are dispatched
    * to connected Workspace Agents via Gateway.

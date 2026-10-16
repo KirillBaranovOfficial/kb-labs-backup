@@ -144,29 +144,8 @@ export {
 // IPC & TRANSPORT (Re-exported from @kb-labs/core-ipc)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// IPC Servers (Parent Process Side)
-export {
-  UnixSocketServer,
-  type UnixSocketServerConfig,
-  IPCServer,
-  createIPCServer,
-} from "@kb-labs/core-ipc";
-
-// Transport Layer (Child Process Side)
-export {
-  type ITransport,
-  type TransportConfig,
-  type PendingRequest,
-  TransportError,
-  TimeoutError,
-  CircuitOpenError,
-  isRetryableError,
-  IPCTransport,
-  createIPCTransport,
-  UnixSocketTransport,
-  createUnixSocketTransport,
-  type UnixSocketConfig,
-} from "@kb-labs/core-ipc";
+// Transport abstraction used by platform proxy adapters.
+export type { ITransport } from "./transport/transport.js";
 
 // Bulk Transfer (Large Message Optimization)
 export {

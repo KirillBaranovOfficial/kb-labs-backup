@@ -90,6 +90,7 @@ export interface CreateFSShimOptions {
   permissions: PermissionSpec;
   cwd: string;
   outdir?: string;
+  strictPermissions?: boolean;
 }
 
 /**
@@ -117,17 +118,17 @@ function matchesGlobPattern(filePath: string, pattern: string, cwd: string): boo
  * Create a sandboxed filesystem shim
  */
 export function createFSShim(options: CreateFSShimOptions): FSShim {
-  const { permissions, cwd, outdir } = options;
+  const { permissions, cwd, outdir, strictPermissions = false } = options;
 
   // Store patterns for glob matching (not resolved to absolute paths yet)
   const readablePatterns: string[] = [
-    '.', // cwd always allowed for reading
+    ...(strictPermissions ? [] : ['.']), // trusted/local execution retains cwd access
     ...(permissions.fs?.read ?? []),
   ];
 
   // Store patterns for writing
   const writablePatterns: string[] = [
-    outdir ? path.relative(cwd, path.resolve(outdir)) : '.kb/output', // outdir always allowed
+    ...(strictPermissions ? [] : [outdir ? path.relative(cwd, path.resolve(outdir)) : '.kb/output']),
     ...(permissions.fs?.write ?? []),
   ];
   let realTempDirPromise: Promise<string> | undefined;
