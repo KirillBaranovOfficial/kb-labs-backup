@@ -71,7 +71,10 @@ function main() {
 
     const directivePattern = /<CommandExamples\s+command="([^"]+)"(?:\s+match="([^"]+)")?\s*\/>/g;
     for (const match of content.matchAll(directivePattern)) {
-      sourceReferences.push({ doc: relativeDoc, command: match[1], ...(match[2] ? { exampleMatch: match[2] } : {}) });
+      sourceReferences.push({ doc: relativeDoc, reference: match[1], ...(match[2] ? { exampleMatch: match[2] } : {}) });
+    }
+    if (content.includes('<NodePolicy />')) {
+      sourceReferences.push({ doc: relativeDoc, reference: 'NodePolicy' });
     }
 
     const lines = content.split('\n');
@@ -94,7 +97,7 @@ function main() {
     '',
     `Checked ${mdxFiles.length} MDX files.`,
     sourceReferences.length
-      ? `Resolved ${sourceReferences.length} generated command example reference(s): ${sourceReferences.map((ref) => `\`${ref.doc}\` → \`${ref.command}${ref.exampleMatch ? ` (${ref.exampleMatch})` : ''}\``).join(', ')}.`
+      ? `Resolved ${sourceReferences.length} generated source reference(s): ${sourceReferences.map((ref) => `\`${ref.doc}\` → \`${ref.reference}${ref.exampleMatch ? ` (${ref.exampleMatch})` : ''}\``).join(', ')}.`
       : 'No generated source references found.',
     failures.length ? `Found ${failures.length} issue(s).` : 'No stale command examples or broken source references found.',
     '',

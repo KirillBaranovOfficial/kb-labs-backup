@@ -32,10 +32,21 @@ describe('mapErrorEnvelopeToExitCode', () => {
 });
 
 describe('catalog producer contract', () => {
-  it('requires generated parameters even when a caller overrides the catalog hint', () => {
+  it('does not require a runtime parameter for an overridden catalog hint', () => {
     expect(createErrorEnvelope('KB_RUNTIME_UNKNOWN_COMMAND', { hint: 'Use the command registry.' })).toMatchObject({
-      code: 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION',
-      details: { originalCode: 'KB_RUNTIME_UNKNOWN_COMMAND', fields: 'binary' },
+      code: 'KB_RUNTIME_UNKNOWN_COMMAND',
+      hint: 'Use the command registry.',
+    });
+  });
+
+  it('does not require parameters when both catalog templates are overridden', () => {
+    expect(createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      message: 'command failed',
+      hint: 'Resolve the failure, then retry.',
+    })).toMatchObject({
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      message: 'command failed',
+      hint: 'Resolve the failure, then retry.',
     });
   });
 });
@@ -203,6 +214,7 @@ describe('errors.catalog.json lint', () => {
       ADAPTER: 'plugin',
       UPDATE: 'update',
       RUNTIME: 'runtime',
+      NODE: 'runtime',
       DEPLOY: 'runtime',
       DEVKIT: 'runtime',
       SERVICE: 'runtime',

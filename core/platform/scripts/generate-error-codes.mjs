@@ -31,6 +31,13 @@ const parametersForTemplate = (entry, fields) => {
 };
 const messageTemplateParameters = entries.map((entry) => `  ${JSON.stringify(entry.code)}: ${parametersForTemplate(entry, ['message'])};`);
 const hintTemplateParameters = entries.map((entry) => `  ${JSON.stringify(entry.code)}: ${parametersForTemplate(entry, ['hint', 'hintWithoutCorrelationId'])};`);
+const requiredForTemplate = (entry, fields) => {
+  const runtime = entry.runtimeTemplateParameters ?? {};
+  const templates = fields.map((field) => entry[field]).filter(Boolean);
+  return [...new Set(templates.flatMap((template) => [...template.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map((match) => match[1])))].filter((name) => runtime[name] !== 'optional').sort();
+};
+const requiredMessageParameters = entries.map((entry) => `  ${JSON.stringify(entry.code)}: ${JSON.stringify(requiredForTemplate(entry, ['message']))},`);
+const requiredHintParameters = entries.map((entry) => `  ${JSON.stringify(entry.code)}: ${JSON.stringify(requiredForTemplate(entry, ['hint', 'hintWithoutCorrelationId']))},`);
 const runtimeTemplateParameters = entries.map((entry) => {
   const runtime = entry.runtimeTemplateParameters ?? {};
   const fields = Object.entries(runtime).map(([name, requirement]) => `${JSON.stringify(name)}${requirement === 'optional' ? '?' : ''}: string`);
@@ -52,6 +59,14 @@ const output = [
   '',
   'export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {',
   ...templateParameterMetadata.map(({ code, requiredNames }) => `  ${JSON.stringify(code)}: ${JSON.stringify(requiredNames)},`),
+  '};',
+  '',
+  'export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {',
+  ...requiredMessageParameters,
+  '};',
+  '',
+  'export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {',
+  ...requiredHintParameters,
   '};',
   '',
   'export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, readonly string[]>> = {',

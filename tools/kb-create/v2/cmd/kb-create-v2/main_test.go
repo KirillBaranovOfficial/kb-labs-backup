@@ -25,6 +25,7 @@ import (
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/stream"
+	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -1783,7 +1784,7 @@ func TestInstallChecksNodeBeforeQuestions(t *testing.T) {
 	_, path := installOutput(t)
 	var screen bytes.Buffer
 	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", InstallInput: strings.NewReader("\n"), InstallOutput: &screen, NodePreflight: func() error { return errors.New("node missing") }})
-	if code != 1 || failure == nil || failure.Code != contracts.CodeNodeVersion || strings.Contains(screen.String(), "Platform channel") {
+	if code != 1 || failure == nil || failure.Code != "KB_INSTALL_NODE_MISSING" || strings.Contains(screen.String(), "Platform channel") {
 		t.Fatalf("code/failure/output = %d / %#v / %s", code, failure, screen.String())
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -1792,13 +1793,32 @@ func TestInstallChecksNodeBeforeQuestions(t *testing.T) {
 }
 
 func TestApplyReportsNodeVersionCodeBeforeResolution(t *testing.T) {
-	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "apply", NodePreflight: func() error { return errors.New("Node.js v22.11.0 is unsupported") }})
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "apply", NodePreflight: func() error { return sharedtoolchain.ValidateNode("v22.11.0") }})
 	if failure == nil {
 		t.Fatalf("expected Node version failure, exit=%d", code)
 	}
-	data := fmt.Sprint(failure) + " " + failure.Hint
-	if code != 1 || failure.Code != contracts.CodeNodeVersion || !strings.Contains(data, "Install Node.js 24") || strings.Contains(data, "KB_INSTALL_INPUT_REQUIRED") {
-		t.Fatalf("code/output = %d / %s", code, data)
+	if code != 1 || failure.Code != "KB_NODE_VERSION_UNSUPPORTED" || strings.Contains(fmt.Sprint(failure), "KB_INSTALL_INPUT_REQUIRED") {
+		t.Fatalf("code/output = %d / %#v", code, failure)
+	}
+	entry, ok := diag.LookupCatalog(failure.Code)
+	if !ok {
+		t.Fatal("Node policy error is absent from the catalog")
+	}
+	values := map[string]string{"requiredMajor": fmt.Sprint(sharedtoolchain.SupportedNodeMajor), "actualVersion": "22.11.0"}
+	expected, err := diag.FromCatalog(entry.Code, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedEnvelope, err := diag.ToEnvelope(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualEnvelope, err := diag.ToEnvelope(failure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actualEnvelope.Hint != expectedEnvelope.Hint {
+		t.Fatalf("hint = %q; want contract-checked catalog hint %q", actualEnvelope.Hint, expectedEnvelope.Hint)
 	}
 }
 

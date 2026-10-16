@@ -20,7 +20,7 @@ func Ensure(out io.Writer) error {
 func EnsureNode(out io.Writer) error {
 	node, err := sharedtoolchain.Version("node")
 	if err != nil {
-		return fmt.Errorf("Node.js preflight failed: %w", err)
+		return sharedtoolchain.NodeMissingDiagnostic()
 	}
 	if err := sharedtoolchain.ValidateNode(node); err != nil {
 		return err
@@ -37,7 +37,7 @@ func EnsureNode(out io.Writer) error {
 func EnsureWith(read func(string) (string, error), out io.Writer) error {
 	node, err := read("node")
 	if err != nil {
-		return fmt.Errorf("Node.js preflight failed: %w", err)
+		return sharedtoolchain.NodeMissingDiagnostic()
 	}
 	if err := sharedtoolchain.ValidateNode(node); err != nil {
 		return err

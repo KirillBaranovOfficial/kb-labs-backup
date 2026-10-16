@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/dev/internal/manager"
 	"github.com/spf13/cobra"
@@ -18,12 +20,12 @@ func ensureSupportedRuntime(cmd *cobra.Command, mgr *manager.Manager) error {
 	if err == nil || jsonMode {
 		return err
 	}
-	issue, ok := err.(*sharedtoolchain.ValidationError)
-	if !ok || issue.Tool != "Node.js" {
+	var issue *diag.Diag
+	if !errors.As(err, &issue) || issue.Code != "KB_NODE_VERSION_UNSUPPORTED" {
 		return err
 	}
 	interaction := clikitcommand.FromCommand(cmd)
-	answer, refusal := interaction.Ask(issue.Error()+"\nWould you like to update now? [y/N] ", "Run `nvm install 24 && nvm use 24` to install the required runtime, then rerun this kb-dev command.")
+	answer, refusal := interaction.Ask(issue.Error()+"\nWould you like to update now? [y/N] ", issue.Hint)
 	if refusal != nil {
 		// Nobody to ask (script, hook, pipe): the unsupported runtime is the failure, not the missing terminal.
 		return err

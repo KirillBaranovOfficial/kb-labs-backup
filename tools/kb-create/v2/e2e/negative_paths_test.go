@@ -2,7 +2,9 @@ package e2e
 
 import (
 	"errors"
+	"fmt"
 	"github.com/kb-labs/clikit/diag"
+	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,8 +67,8 @@ func TestV2ToolchainFailureIsActionableForNodeAndPnpm(t *testing.T) {
 		versions map[string]string
 		want     string
 	}{
-		{name: "node", versions: map[string]string{"node": "v20.18.0", "pnpm": "11.4.0"}, want: "Node.js 24.x only"},
-		{name: "pnpm", versions: map[string]string{"node": "v24.18.0", "pnpm": "10.9.0"}, want: "pnpm 11.x"},
+		{name: "node", versions: map[string]string{"node": "v20.18.0", "pnpm": "11.4.0"}, want: "Node.js 20.18.0 is unsupported"},
+		{name: "pnpm", versions: map[string]string{"node": fmt.Sprintf("v%d.18.0", sharedtoolchain.SupportedNodeMajor), "pnpm": "10.9.0"}, want: "pnpm 11.x"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

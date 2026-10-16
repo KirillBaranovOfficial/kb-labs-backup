@@ -828,8 +828,11 @@ func TestGatewayFailureEnvelopePreservesDiagnosticWithoutSecrets(t *testing.T) {
 	if !errors.As(err, &diagnostic) {
 		t.Fatalf("Gateway failure = %T %v, want catalogued diagnostic", err, err)
 	}
-	entry, _ := diag.LookupCatalog("KB_AUTH_FORBIDDEN")
-	if diagnostic.Code != "KB_AUTH_FORBIDDEN" || diagnostic.Message != entry.Message || diagnostic.Hint != entry.Hint {
+	expected, expectedErr := diag.FromCatalog("KB_AUTH_FORBIDDEN", map[string]string{"permission": "health:read"})
+	if expectedErr != nil {
+		t.Fatal(expectedErr)
+	}
+	if diagnostic.Code != expected.Code || diagnostic.Message != expected.Message || diagnostic.Hint != expected.Hint {
 		t.Fatalf("Gateway failure diagnostic = %#v", diagnostic)
 	}
 	if diagnostic.Meta["remoteCorrelationId"] != gatewayCorrelationID {
