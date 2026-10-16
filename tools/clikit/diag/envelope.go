@@ -2,6 +2,7 @@ package diag
 
 import (
 	"fmt"
+	"strings"
 )
 
 // Action is a copy-ready recovery action in the platform error envelope.
@@ -38,8 +39,11 @@ func ToEnvelope(d *Diag) (Envelope, error) {
 		return Envelope{}, fmt.Errorf("diagnostic code %q is absent from the platform catalog", d.Code)
 	}
 	hint := d.Hint
-	if hint == "" {
+	if hint == "" || hint == entry.Hint {
 		hint = entry.Hint
+		if d.CorrelationID == "" && entry.HintWithoutCorrelationID != "" {
+			hint = entry.HintWithoutCorrelationID
+		}
 	}
 	message := d.Message
 	if message == "" {
@@ -52,6 +56,14 @@ func ToEnvelope(d *Diag) (Envelope, error) {
 		Actions: append([]Action(nil), d.Actions...), Docs: d.Docs,
 		CorrelationID: d.CorrelationID,
 	}
+	templateValues := make(map[string]string, len(d.Meta)+1)
+	for key, value := range d.Meta {
+		templateValues[key] = fmt.Sprint(value)
+	}
+	if d.CorrelationID != "" {
+		templateValues["correlationId"] = d.CorrelationID
+	}
+	envelope.Hint = renderTemplate(hint, templateValues)
 	if envelope.Cause == "" {
 		envelope.Cause = d.Reason
 	}
@@ -62,4 +74,33 @@ func ToEnvelope(d *Diag) (Envelope, error) {
 		}
 	}
 	return envelope, nil
+}
+
+// renderTemplate resolves catalog placeholders from diagnostic details and the
+// correlation ID. Missing values use the same "unknown" value as the platform
+// TypeScript renderer, so template syntax never leaks into rendered output.
+func renderTemplate(template string, values map[string]string) string {
+	var rendered strings.Builder
+	for len(template) > 0 {
+		opening := strings.IndexByte(template, '{')
+		if opening < 0 {
+			rendered.WriteString(template)
+			break
+		}
+		rendered.WriteString(template[:opening])
+		template = template[opening+1:]
+		closing := strings.IndexByte(template, '}')
+		if closing < 0 {
+			rendered.WriteString("unknown")
+			break
+		}
+		key := template[:closing]
+		value, ok := values[key]
+		if !ok {
+			value = "unknown"
+		}
+		rendered.WriteString(value)
+		template = template[closing+1:]
+	}
+	return rendered.String()
 }

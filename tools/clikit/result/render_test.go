@@ -49,6 +49,10 @@ func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
 	d := diag.New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.",
 		diag.WithReason("health gate timed out"),
 		diag.WithCorrelationID("corr-test"))
+	want, err := diag.ToEnvelope(d)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var out, herr bytes.Buffer
 	code := RenderDiag(&out, &herr, d, ModeJSON)
 	if code != diag.ExitCode(d) {
@@ -62,8 +66,11 @@ func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
 		t.Errorf("ok = %v", env["ok"])
 	}
 	e := env["error"].(map[string]any)
-	if e["code"] != "KB_RUNTIME_UNEXPECTED" || e["message"] != "An unexpected error occurred." || e["hint"] != "Re-run with --debug and include the correlationId in a report." || e["correlationId"] != "corr-test" {
+	if e["code"] != "KB_RUNTIME_UNEXPECTED" || e["message"] != "An unexpected error occurred." || e["hint"] != want.Hint || e["correlationId"] != "corr-test" {
 		t.Errorf("error payload = %v", e)
+	}
+	if hint, ok := e["hint"].(string); !ok || strings.ContainsAny(hint, "{}") {
+		t.Errorf("JSON hint contains an unresolved template marker: %v", e["hint"])
 	}
 	if len(env) != 2 || len(e) != 9 {
 		t.Errorf("failure envelope has extra fields: %v", env)
@@ -113,13 +120,20 @@ func TestRenderDiag_HumanShowsReasonAndHint(t *testing.T) {
 	d := diag.New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.",
 		diag.WithReason("shipped without a service manifest"),
 		diag.WithCorrelationID("corr-human"))
+	want, err := diag.ToEnvelope(d)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var out, herr bytes.Buffer
 	RenderDiag(&out, &herr, d, ModeHuman)
 	h := herr.String()
-	for _, want := range []string{"KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", "why:", "shipped without", "Hint: Re-run with --debug", "correlationId:", "corr-human"} {
-		if !strings.Contains(h, want) {
-			t.Errorf("human diag missing %q in:\n%s", want, h)
+	for _, part := range []string{"KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", "why:", "shipped without", "Hint: " + want.Hint, "correlationId:", "corr-human"} {
+		if !strings.Contains(h, part) {
+			t.Errorf("human diag missing %q in:\n%s", part, h)
 		}
+	}
+	if strings.ContainsAny(want.Hint, "{}") || strings.Contains(h, "Hint: ") && strings.ContainsAny(strings.SplitN(h, "Hint: ", 2)[1], "{}") {
+		t.Errorf("human hint contains an unresolved template marker:\n%s", h)
 	}
 }
 
