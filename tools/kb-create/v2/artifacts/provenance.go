@@ -169,6 +169,7 @@ func packageIdentity(name, version string) string {
 }
 
 type lockPackage struct {
+	Version    string `yaml:"version"`
 	Resolution *struct {
 		Integrity *string `yaml:"integrity"`
 	} `yaml:"resolution"`
@@ -177,7 +178,12 @@ type lockPackage struct {
 func lockIntegrity(packages map[string]lockPackage, name, version string) contracts.ObservedProvenanceValue {
 	identity := name + "@" + version
 	for key, item := range packages {
-		if key == identity || strings.HasPrefix(key, identity+"(") {
+		registryIdentity := key == identity || strings.HasPrefix(key, identity+"(")
+		fileOverrideIdentity := lockFileOverridePackage(key) == name
+		if fileOverrideIdentity && item.Version != version {
+			return contracts.PresentProvenanceValue("pnpm-lock version " + item.Version)
+		}
+		if registryIdentity || fileOverrideIdentity {
 			if item.Resolution != nil && item.Resolution.Integrity != nil {
 				return contracts.PresentProvenanceValue(*item.Resolution.Integrity)
 			}
@@ -185,6 +191,14 @@ func lockIntegrity(packages map[string]lockPackage, name, version string) contra
 		}
 	}
 	return contracts.MissingProvenanceValue("pnpm-lock: packages/" + identity)
+}
+
+func lockFileOverridePackage(key string) string {
+	packageName, _, fileOverride := strings.Cut(key, "@file:")
+	if !fileOverride {
+		return ""
+	}
+	return packageName
 }
 
 func WriteInstalledProvenance(root string, manifest InstalledProvenanceManifest) error {

@@ -194,7 +194,7 @@ func TestBuiltCLIAllocatesAndRetainsSecondaryGatewayOffsets(t *testing.T) {
 	}}
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
 		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}

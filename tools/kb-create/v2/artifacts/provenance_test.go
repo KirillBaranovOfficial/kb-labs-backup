@@ -70,6 +70,35 @@ func TestVerifyInstalledProvenanceRejectsMissingRecord(t *testing.T) {
 	}
 }
 
+func TestVerifyInstalledProvenanceMatchesPnpmFileOverrideByPackageVersion(t *testing.T) {
+	root := t.TempDir()
+	const integrity = "sha512-file-override-integrity"
+	lock := "lockfileVersion: '9.0'\npackages:\n  '@kb-labs/sample@file:../../state/cache/packages/archive.tgz':\n    resolution: {integrity: " + integrity + ", tarball: file:../../state/cache/packages/archive.tgz}\n    version: 1.0.0\n"
+	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	packageRoot := filepath.Join(root, "node_modules", "@kb-labs", "sample")
+	if err := os.MkdirAll(filepath.Join(packageRoot, "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), []byte(`{"name":"@kb-labs/sample","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "dist", "index.js"), []byte("sealed bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := DistDigest(filepath.Join(packageRoot, "dist"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := contracts.Artifact{Package: "@kb-labs/sample", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
+		SourceRevision: "test-revision", Integrity: integrity, DistSHA256: digest,
+	}}
+	if _, err := VerifyInstalledProvenance(root, []contracts.Artifact{item}); err != nil {
+		t.Fatalf("installed package with pnpm file override was refused: %v", err)
+	}
+}
+
 // case: PC-001.19
 func TestVerifyInstalledProvenanceReportsStructuredMismatchFields(t *testing.T) {
 	tests := []struct {
