@@ -6,12 +6,13 @@ export const INTERNAL_SECRET_HEADER = 'x-internal-secret';
 export const FORWARDED_IDENTITY_HEADER_NAMES = [
   'x-kb-auth-type',
   'x-kb-auth-user-id',
+  'x-kb-auth-token-id',
   'x-kb-auth-namespace-id',
   'x-kb-auth-tier',
   'x-kb-auth-permissions',
 ] as const;
 
-const [TYPE_HEADER, USER_ID_HEADER, NAMESPACE_ID_HEADER, TIER_HEADER, PERMISSIONS_HEADER] =
+const [TYPE_HEADER, USER_ID_HEADER, TOKEN_ID_HEADER, NAMESPACE_ID_HEADER, TIER_HEADER, PERMISSIONS_HEADER] =
   FORWARDED_IDENTITY_HEADER_NAMES;
 
 export type ForwardedIdentityHeaders = Readonly<
@@ -45,6 +46,7 @@ export function forwardedIdentityHeaders(
   if (!auth) { return headers; }
   headers[TYPE_HEADER] = auth.type;
   headers[USER_ID_HEADER] = auth.userId;
+  if (auth.tokenId) { headers[TOKEN_ID_HEADER] = auth.tokenId; }
   headers[NAMESPACE_ID_HEADER] = auth.namespaceId;
   headers[TIER_HEADER] = auth.tier;
   headers[PERMISSIONS_HEADER] = JSON.stringify(auth.permissions);
@@ -82,6 +84,7 @@ export function readForwardedIdentity(
   const parsed = AuthContextSchema.safeParse({
     type: header(headers, TYPE_HEADER),
     userId: header(headers, USER_ID_HEADER),
+    tokenId: header(headers, TOKEN_ID_HEADER),
     namespaceId: header(headers, NAMESPACE_ID_HEADER),
     tier: header(headers, TIER_HEADER),
     permissions,

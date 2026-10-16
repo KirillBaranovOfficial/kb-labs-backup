@@ -41,7 +41,6 @@ import {
   ApiTokensStore,
   InvitesStore,
   PasswordResetStore,
-  AuthAuditStore,
   ProviderRegistry,
   type SessionsStoreOptions,
   createTenantResolver,
@@ -53,6 +52,7 @@ import {
   AuthService,
   type JwtConfig,
 } from '@kb-labs/gateway-auth';
+import { PlatformAuditStore } from '@kb-labs/core-platform';
 import { createUserAuthMiddleware } from '../user-auth-middleware.js';
 import { createAuthMiddleware } from '../middleware.js';
 import { registerAuthRoutes, type MachineAuthRoutesUserExt } from '../routes.js';
@@ -112,7 +112,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   const apiTokens = new ApiTokensStore(docs);
   const invites = new InvitesStore(docs);
   const passwordResets = new PasswordResetStore(docs);
-  const authAudit = new AuthAuditStore(docs);
+  const authAudit = new PlatformAuditStore(docs);
   const providers = new ProviderRegistry();
 
   const emailPwd = createEmailPasswordProvider({
