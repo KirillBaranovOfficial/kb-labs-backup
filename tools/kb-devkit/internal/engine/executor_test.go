@@ -41,7 +41,7 @@ func TestExecutorStoresAndRestoresOutputsThroughCache(t *testing.T) {
 	}
 	manifests := cache.NewManifestStore(cacheRoot)
 	states := cache.NewStateStore(cacheRoot)
-	exec := NewExecutor(store, manifests, states, root, false)
+	exec := NewExecutor(store, manifests, states, root, cacheRoot, false)
 
 	pkgDir := filepath.Join(root, "pkg")
 	writeFile(t, filepath.Join(pkgDir, "input.txt"), "hello")
@@ -104,7 +104,7 @@ func TestExecutorWritesCleanStateOnSuccess(t *testing.T) {
 		t.Fatalf("NewLocalStore error: %v", err)
 	}
 	states := cache.NewStateStore(cacheRoot)
-	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, false)
+	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, cacheRoot, false)
 
 	pkgDir := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
@@ -130,7 +130,7 @@ func TestExecutorWritesDirtyStateOnFailure(t *testing.T) {
 		t.Fatalf("NewLocalStore error: %v", err)
 	}
 	states := cache.NewStateStore(cacheRoot)
-	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, false)
+	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, cacheRoot, false)
 
 	pkgDir := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
@@ -156,7 +156,7 @@ func TestExecutorWritesStateForNoCacheTasks(t *testing.T) {
 		t.Fatalf("NewLocalStore error: %v", err)
 	}
 	states := cache.NewStateStore(cacheRoot)
-	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, false)
+	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), states, root, cacheRoot, false)
 
 	pkgDir := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
@@ -192,7 +192,7 @@ func TestExecutorDoesNotReplayCachedFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalStore error: %v", err)
 	}
-	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), cache.NewStateStore(cacheRoot), root, false)
+	exec := NewExecutor(store, cache.NewManifestStore(cacheRoot), cache.NewStateStore(cacheRoot), root, cacheRoot, false)
 
 	pkgDir := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,7 +22,7 @@ func writePkgJSON(t *testing.T, dir, content string) {
 	}
 }
 
-// case: S-179.19
+// case: S-179.19, S-179.37
 func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T) {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -71,6 +72,7 @@ func TestWorkspaceBuildGraphOrdersEveryDeclaredWorkspaceDependency(t *testing.T)
 			}
 			depKey := nodeKey{pkg: depName, task: "build"}
 			if _, scheduled := nodes[depKey]; !scheduled {
+				t.Errorf("%s build depends on %s, but the dependency has no build task node", key.pkg, depName)
 				continue
 			}
 			found := false
@@ -138,6 +140,40 @@ func TestBuildPkgDepMapKeepsLegitDeps(t *testing.T) {
 	deps := depMap["@kb/app"]
 	if len(deps) != 1 || deps[0] != "@kb/types" {
 		t.Fatalf("@kb/app deps = %v, want [@kb/types]", deps)
+	}
+}
+
+// case: S-179.37
+func TestBuildDAGRejectsWorkspaceBuildDependencyWithoutTaskNode(t *testing.T) {
+	root := t.TempDir()
+	coreDir := filepath.Join(root, "core")
+	writePkgJSON(t, coreDir, `{"name":"@fixture/core"}`)
+	runtimeDir := filepath.Join(root, "runtime")
+	writePkgJSON(t, runtimeDir, `{"name":"@fixture/runtime","dependencies":{"@fixture/core":"workspace:*"}}`)
+	appDir := filepath.Join(root, "app")
+	writePkgJSON(t, appDir, `{"name":"@fixture/app","dependencies":{"@fixture/runtime":"workspace:*"}}`)
+
+	pkgs := []workspace.Package{
+		{Name: "@fixture/core", Dir: coreDir, Category: "libraries"},
+		{Name: "@fixture/runtime", Dir: runtimeDir, Category: "runtime"},
+		{Name: "@fixture/app", Dir: appDir, Category: "applications"},
+	}
+	cfg := &config.DevkitConfig{
+		Tasks: map[string]config.TaskConfig{
+			"build": {
+				{Categories: []string{"libraries", "applications"}, Command: "true", Deps: []string{"^build"}},
+			},
+		},
+	}
+
+	_, err := buildDAG(pkgs, []string{"build"}, cfg, &workspace.Workspace{Root: root, Packages: pkgs})
+	var graphErr *TaskGraphError
+	if !errors.As(err, &graphErr) {
+		t.Fatal("build DAG accepted @fixture/app -> @fixture/runtime -> @fixture/core without a runtime build task")
+	}
+	if graphErr.Package != "@fixture/app" || graphErr.Dependency != "@fixture/runtime" ||
+		graphErr.Task != "build" || graphErr.DependencyTask != "build" {
+		t.Fatalf("task graph error = %+v, want the omitted runtime build node", graphErr)
 	}
 }
 

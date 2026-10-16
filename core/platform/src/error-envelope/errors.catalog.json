@@ -440,6 +440,36 @@
       "hint": "Rerun this check alone with `kb-devkit check --only {check}`, then correct the check's execution problem."
     },
     {
+      "code": "KB_DEVKIT_TASK_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "A workspace task failed.",
+      "hint": "Read the failed task log with `cat {logPath}`, correct the cause, then rerun `kb-devkit run {task} --packages {package}`."
+    },
+    {
+      "code": "KB_DEVKIT_TASK_LOG_UNAVAILABLE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "A workspace task failed and its log could not be saved.",
+      "hint": "Check write access to {logDirectory}, then rerun `kb-devkit run {task} --packages {package}`."
+    },
+    {
+      "code": "KB_DEVKIT_TASK_GRAPH_INVALID",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "input-refusal",
+      "message": "The workspace task graph is incomplete.",
+      "hint": "Add a {dependencyTask} variant for {dependency} in devkit.yaml, then rerun `kb-devkit run {task}`."
+    },
+    {
       "code": "KB_DEVKIT_STANDARDS_VIOLATIONS",
       "area": "runtime",
       "stage": "run",

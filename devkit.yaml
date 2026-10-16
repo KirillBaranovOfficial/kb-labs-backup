@@ -496,7 +496,7 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [ts-lib, ts-app, adapter]
+    - categories: [ts-lib, ts-app, adapter, core-runtime]
       command: tsup
       inputs:
         - "src/**"

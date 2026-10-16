@@ -43,6 +43,9 @@ export type CatalogErrorCode =
   | "KB_DEPLOY_WAVE_FAILED"
   | "KB_DEVKIT_CHECK_EXECUTION_FAILED"
   | "KB_DEVKIT_STANDARDS_VIOLATIONS"
+  | "KB_DEVKIT_TASK_FAILED"
+  | "KB_DEVKIT_TASK_GRAPH_INVALID"
+  | "KB_DEVKIT_TASK_LOG_UNAVAILABLE"
   | "KB_ENV_PROFILE_MISMATCH"
   | "KB_HOST_ADAPTER_UNAVAILABLE"
   | "KB_HOST_ALREADY_RUNNING"
@@ -295,6 +298,9 @@ export interface CatalogTemplateParameters {
   "KB_DEPLOY_WAVE_FAILED": Record<never, never>;
   "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string };
   "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<never, never>;
+  "KB_DEVKIT_TASK_FAILED": { "logPath": string; "package": string; "task": string };
+  "KB_DEVKIT_TASK_GRAPH_INVALID": { "dependency": string; "dependencyTask": string; "task": string };
+  "KB_DEVKIT_TASK_LOG_UNAVAILABLE": { "logDirectory": string; "package": string; "task": string };
   "KB_ENV_PROFILE_MISMATCH": Record<never, never>;
   "KB_HOST_ADAPTER_UNAVAILABLE": { "reason": string; "slot": string };
   "KB_HOST_ALREADY_RUNNING": Record<never, never>;
@@ -547,6 +553,9 @@ export interface CatalogMessageTemplateParameters {
   "KB_DEPLOY_WAVE_FAILED": Record<never, never>;
   "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string };
   "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<never, never>;
+  "KB_DEVKIT_TASK_FAILED": Record<never, never>;
+  "KB_DEVKIT_TASK_GRAPH_INVALID": Record<never, never>;
+  "KB_DEVKIT_TASK_LOG_UNAVAILABLE": Record<never, never>;
   "KB_ENV_PROFILE_MISMATCH": Record<never, never>;
   "KB_HOST_ADAPTER_UNAVAILABLE": { "reason": string; "slot": string };
   "KB_HOST_ALREADY_RUNNING": Record<never, never>;
@@ -799,6 +808,9 @@ export interface CatalogHintTemplateParameters {
   "KB_DEPLOY_WAVE_FAILED": Record<never, never>;
   "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string };
   "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<never, never>;
+  "KB_DEVKIT_TASK_FAILED": { "logPath": string; "package": string; "task": string };
+  "KB_DEVKIT_TASK_GRAPH_INVALID": { "dependency": string; "dependencyTask": string; "task": string };
+  "KB_DEVKIT_TASK_LOG_UNAVAILABLE": { "logDirectory": string; "package": string; "task": string };
   "KB_ENV_PROFILE_MISMATCH": Record<never, never>;
   "KB_HOST_ADAPTER_UNAVAILABLE": { "slot": string };
   "KB_HOST_ALREADY_RUNNING": Record<never, never>;
@@ -1051,6 +1063,9 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_DEPLOY_WAVE_FAILED": Record<never, never>;
   "KB_DEVKIT_CHECK_EXECUTION_FAILED": Record<never, never>;
   "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<never, never>;
+  "KB_DEVKIT_TASK_FAILED": Record<never, never>;
+  "KB_DEVKIT_TASK_GRAPH_INVALID": Record<never, never>;
+  "KB_DEVKIT_TASK_LOG_UNAVAILABLE": Record<never, never>;
   "KB_ENV_PROFILE_MISMATCH": Record<never, never>;
   "KB_HOST_ADAPTER_UNAVAILABLE": Record<never, never>;
   "KB_HOST_ALREADY_RUNNING": Record<never, never>;

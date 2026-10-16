@@ -67,8 +67,8 @@ describe('Docker execution policy integration', () => {
     expect(cleanupFailures).toEqual([]);
   }, 30_000);
 
-  // case: S-244.1
   // Image startup and Docker daemon inspection can take longer than Vitest's default 5 seconds.
+  // case: S-244.1
   it('provisions only permission mounts and declared environment with Docker networking disabled', async ({ skip }) => {
     if (!dockerAvailable) skip(`Docker is unavailable: ${dockerSkipReason}`);
     const runId = `policy-${process.pid}-${Date.now()}`;
@@ -111,8 +111,8 @@ describe('Docker execution policy integration', () => {
     if (ownerIndex >= 0) { owners.splice(ownerIndex, 1); }
   }, 120_000);
 
-  // case: S-244.3
   // The image is already available; bound namespace setup plus the two-second TCP probe.
+  // case: S-244.3
   it('blocks a raw outbound TCP socket in the container network namespace', async ({ skip }) => {
     if (!dockerAvailable) skip(`Docker is unavailable: ${dockerSkipReason}`);
     const runtimeCommand = [
@@ -130,8 +130,8 @@ describe('Docker execution policy integration', () => {
     expect(spawnSync('docker', ['inspect', String(started.metadata?.containerId)], { encoding: 'utf8' }).status).not.toBe(0);
   }, 30_000);
 
-  // case: S-244.10
   // A host process crash closes its Docker client's stdin; bootstrap EOF handling must remove the attached container.
+  // case: S-244.10
   it('exits and removes the container when the host-side client process dies', async ({ skip }) => {
     if (!dockerAvailable) skip(`Docker is unavailable: ${dockerSkipReason}`);
     const runId = `host-death-${process.pid}-${Date.now()}`;

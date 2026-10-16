@@ -23,17 +23,19 @@ type Executor struct {
 	manifests          *cache.ManifestStore
 	states             *cache.StateStore
 	wsRoot             string
+	logRoot            string
 	liveOutput         bool // stream stdout/stderr while running
 	runtimeFingerprint string
 }
 
 // NewExecutor creates an Executor backed by the given cache stores.
-func NewExecutor(objects cache.ObjectStore, manifests *cache.ManifestStore, states *cache.StateStore, wsRoot string, liveOutput bool) *Executor {
+func NewExecutor(objects cache.ObjectStore, manifests *cache.ManifestStore, states *cache.StateStore, wsRoot, cacheRoot string, liveOutput bool) *Executor {
 	return &Executor{
 		objects:            objects,
 		manifests:          manifests,
 		states:             states,
 		wsRoot:             wsRoot,
+		logRoot:            filepath.Join(cacheRoot, "logs"),
 		liveOutput:         liveOutput,
 		runtimeFingerprint: cache.RuntimeFingerprint(),
 	}
@@ -60,11 +62,21 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	}
 	inputHash, err := cache.HashInputsWithFingerprint(pkg.Dir, depDirs, inputs, e.taskFingerprint(def))
 	if err != nil {
-		return TaskResult{
+		failure := fmt.Sprintf("hash inputs: %v", err)
+		logPath, logErr := e.writeTaskLog(pkg.Name, def.Name, "", "", failure)
+		result := TaskResult{
 			Package: pkg.Name, Task: def.Name,
-			OK:    false,
-			Error: fmt.Sprintf("hash inputs: %v", err),
+			OK:      false,
+			Error:   failure,
+			LogPath: logPath,
 		}
+		if logErr != nil {
+			result.LogError = logErr.Error()
+			result.LogDirectory = e.logRoot
+			result.Error = fmt.Sprintf("%s; write task log: %v", failure, logErr)
+		}
+		_ = e.states.SetDirty(pkg.Name, def.Name, "last_run_failed")
+		return result
 	}
 
 	// 2. Cache lookup (skip if cache:false or --no-cache).
@@ -104,6 +116,19 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	}
 	if runErr != nil {
 		result.Error = runErr.Error()
+	} else if !result.OK {
+		result.Error = fmt.Sprintf("command exited with code %d", exitCode)
+	}
+	if !result.OK {
+		logPath, logErr := e.writeTaskLog(pkg.Name, def.Name, stdout, stderr, result.Error)
+		if logErr != nil {
+			result.LogError = logErr.Error()
+			result.LogDirectory = e.logRoot
+			result.LogPath = logPath
+			result.Error = fmt.Sprintf("%s; write task log: %v", result.Error, logErr)
+		} else {
+			result.LogPath = logPath
+		}
 	}
 
 	// 4. Cache successful results only. Failed tasks depend on execution state
@@ -140,6 +165,38 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	}
 
 	return result
+}
+
+func (e *Executor) writeTaskLog(pkgName, taskName, stdout, stderr, runError string) (string, error) {
+	key := sha256.Sum256([]byte(pkgName + "\x00" + taskName))
+	path := filepath.Join(e.logRoot, hex.EncodeToString(key[:])+".log")
+	if err := os.MkdirAll(e.logRoot, 0o700); err != nil {
+		return path, err
+	}
+	var content strings.Builder
+	if stdout != "" {
+		content.WriteString("stdout:\n")
+		content.WriteString(stdout)
+		if !strings.HasSuffix(stdout, "\n") {
+			content.WriteByte('\n')
+		}
+	}
+	if stderr != "" {
+		content.WriteString("stderr:\n")
+		content.WriteString(stderr)
+		if !strings.HasSuffix(stderr, "\n") {
+			content.WriteByte('\n')
+		}
+	}
+	if runError != "" {
+		content.WriteString("error:\n")
+		content.WriteString(runError)
+		content.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(content.String()), 0o600); err != nil {
+		return path, err
+	}
+	return path, nil
 }
 
 func (e *Executor) taskFingerprint(def TaskDef) string {
