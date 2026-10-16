@@ -7,12 +7,14 @@ from pathlib import Path
 
 
 SOURCE = Path(__file__).resolve().parents[2].parent / "reports" / "x53-cutover" / "journey-batch.sh"
+WORKFLOW_PATH = ".github/workflows/journey-batch.yml"
 
 
 class RemoteJourneyBatchTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="journey-batch-remote-")
         self.root = Path(self.temporary.name)
+        self.workflow_path = WORKFLOW_PATH
         self.bin = self.root / "stub-bin"
         self.bin.mkdir()
         self.logs = self.root / "logs"
@@ -54,7 +56,6 @@ exit 0
         self._script(self.bin / "gh", '''#!/bin/sh
 printf 'gh %s\\n' "$*" >> "$CALLS"
 case "$1 $2" in
-  'run list') [ "${GH_FAIL:-}" = appearance ] && exit 0; echo 98765; exit 0 ;;
   'run watch') [ "${GH_FAIL:-}" = watch ] && exit 1; exit 0 ;;
   'run download')
     name=; destination=
@@ -71,6 +72,23 @@ case "$1 $2" in
     exit 0
     ;;
 esac
+if [ "$1" = api ]; then
+  endpoint="$2"
+  shift 2
+  jq_filter=
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --jq ]; then shift; jq_filter="$1"; fi
+    shift
+  done
+  # Serve the REST Actions runs payload shape and apply the harness filter with real jq.
+  if [ "${GH_FAIL:-}" = appearance ]; then
+    payload='{"total_count":0,"workflow_runs":[]}'
+  else
+    payload="{\\"total_count\\":2,\\"workflow_runs\\":[{\\"id\\":11111,\\"path\\":\\".github/workflows/ci.yml\\"},{\\"id\\":98765,\\"path\\":\\"$EXPECTED_WORKFLOW_PATH\\"}]}"
+  fi
+  printf '%s\\n' "$payload" | jq -r "$jq_filter"
+  exit 0
+fi
 exit 2
 ''')
         self._script(self.bin / "sleep", '''#!/bin/sh
@@ -90,6 +108,7 @@ exit 0
             "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
             "HOME": str(self.root / "home"),
             "CALLS": str(self.calls),
+            "EXPECTED_WORKFLOW_PATH": self.workflow_path,
             "KBLABS_WORKTREES_ROOT": str(self.root),
             "BATCH_TREE": "checkout",
             "KB_BATCH_SUPERVISED": "1",
@@ -123,8 +142,10 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         calls = self.calls.read_text()
         self.assertIn("git push --force-with-lease=refs/heads/batch/batch-test: backup HEAD:refs/heads/batch/batch-test", calls)
-        self.assertIn("gh run list --repo KirillBaranovOfficial/kb-labs-backup --workflow journey-batch.yml --branch batch/batch-test --commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", calls)
-        self.assertNotIn("gh workflow run", calls)
+        self.assertIn("gh api repos/KirillBaranovOfficial/kb-labs-backup/actions/runs?branch=batch/batch-test&head_sha=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef&event=push", calls)
+        self.assertIn(f'--jq .workflow_runs[] | select(.path == "{self.workflow_path}") | .id', calls)
+        self.assertNotIn("--workflow", calls)
+        self.assertNotIn("Journey batch", calls)
         self.assertIn("gh run watch 98765 --repo KirillBaranovOfficial/kb-labs-backup --exit-status", calls)
         for mode in ("local", "secured"):
             self.assertIn(f"gh run download 98765 --repo KirillBaranovOfficial/kb-labs-backup --name journey-{mode}", calls)
@@ -171,9 +192,9 @@ exit 0
         result = self._run("--remote", "batch-missing", "j28", failure="appearance")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no journey workflow run appeared for batch/batch-missing at deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", result.stderr)
-        self.assertIn("gh run list --repo KirillBaranovOfficial/kb-labs-backup --workflow journey-batch.yml --branch batch/batch-missing --commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", result.stderr)
+        self.assertIn('gh api "repos/KirillBaranovOfficial/kb-labs-backup/actions/runs?branch=batch/batch-missing&head_sha=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef&event=push"', result.stderr)
         calls = self.calls.read_text().splitlines()
-        self.assertEqual(sum(row.startswith("gh run list ") for row in calls), 12)
+        self.assertEqual(sum(row.startswith("gh api ") for row in calls), 12)
         self.assertEqual(sum(row.startswith("sleep 5") for row in calls), 11)
         self.assertFalse(any("gh workflow run" in row for row in calls))
 
