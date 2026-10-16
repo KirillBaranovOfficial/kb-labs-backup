@@ -4,7 +4,7 @@ import { AuthService, type JwtConfig } from '@kb-labs/gateway-auth';
 import type { TokenVerification } from '@kb-labs/gateway-auth';
 import type { FastifyRequest } from 'fastify';
 
-export type AuthRejectionReason = 'expired' | 'invalid' | 'unknown-issuer' | 'inactive' | 'revoked';
+export type AuthRejectionReason = 'expired' | 'invalid' | 'unknown-issuer' | 'inactive' | 'revoked' | 'reissue-required';
 
 export function gatewayRequestUrl(request: FastifyRequest): string {
   return `${request.protocol}://${request.headers.host ?? request.hostname}`;
@@ -17,6 +17,8 @@ export function authRejectionEnvelope(
 ): ErrorEnvelope {
   const code = reason === 'expired'
     ? 'KB_AUTH_TOKEN_EXPIRED'
+    : reason === 'reissue-required'
+      ? 'KB_AUTH_TOKEN_REISSUE_REQUIRED'
     : reason === 'revoked'
       ? 'KB_AUTH_SESSION_REVOKED'
       : reason === 'inactive'

@@ -29,13 +29,17 @@ export function rejectsUnauthenticatedRequest(
   return mode === "secured" && !authenticated;
 }
 
-export function mcpUnauthenticatedResponse(gatewayUrl = '<url>'): {
+export function mcpUnauthenticatedResponse(
+  gatewayUrl = '<url>',
+  reason: 'missing-identity' | 'unsupported-credential' = 'missing-identity',
+): {
   statusCode: 401;
   body: ReturnType<typeof createUxFailureResult>;
 } {
+  const code = reason === 'unsupported-credential' ? 'KB_AUTH_MCP_CREDENTIAL_REQUIRED' : 'KB_AUTH_REQUIRED';
   return {
     statusCode: 401,
-    body: createUxFailureResult(createErrorEnvelope('KB_AUTH_REQUIRED', {
+    body: createUxFailureResult(createErrorEnvelope(code, {
       details: { gatewayUrl }, correlationId: randomUUID(),
     })),
   };

@@ -192,6 +192,28 @@
       "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
+      "code": "KB_AUTH_TOKEN_REISSUE_REQUIRED",
+      "httpStatus": 401,
+      "area": "auth",
+      "stage": "recover",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "This access token no longer satisfies the Gateway token contract.",
+      "hint": "For a machine client, exchange its clientId and clientSecret at POST /auth/token or rotate its refreshToken at POST /auth/refresh. For a user client, refresh its session at POST /auth/refresh/cli or sign in again with \"kb auth login --gateway-url {gatewayUrl} --email <email>\"."
+    },
+    {
+      "code": "KB_AUTH_MCP_CREDENTIAL_REQUIRED",
+      "httpStatus": 401,
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "processExitClass": "operation-failure",
+      "message": "This credential cannot authenticate to secured MCP.",
+      "hint": "Use a user access token from \"kb auth login --gateway-url {gatewayUrl} --email <email>\", an API token created with \"kb auth tokens\", or a machine access token issued by POST /auth/token. The opaque credential from POST /hosts/register authenticates host connections only."
+    },
+    {
       "code": "KB_AUTH_SESSION_REVOKED",
       "httpStatus": 401,
       "area": "auth",

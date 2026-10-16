@@ -66,6 +66,7 @@ export const JwtPayloadSchema = z.object({
   type: TokenTypeSchema,
   /** Permissions embedded in the token at issuance time. */
   permissions: z.array(z.string()).optional(),
+  jti: z.string().min(1),
   iat: z.number(),
   exp: z.number(),
 });

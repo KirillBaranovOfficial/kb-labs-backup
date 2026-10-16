@@ -47,6 +47,7 @@ export interface SignAccessTokenOptions {
 
 export interface MachineAccessPayload extends Omit<JwtPayload, 'type'> {
   type: 'machine_access';
+  jti: string;
 }
 
 export async function signAccessToken(
@@ -55,12 +56,14 @@ export async function signAccessToken(
 ): Promise<{ token: string; expiresIn: number }> {
   const key = getSecretKey(config.secret);
   const now = Math.floor(Date.now() / 1000);
+  const jti = randomUUID();
 
   const token = await new SignJWT({
     namespaceId: opts.namespaceId,
     tier: opts.tier,
     type: opts.type,
     permissions: opts.permissions ?? [],
+    jti,
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuer(KB_JWT_ISSUER)
@@ -96,9 +99,11 @@ export async function verifyAccessToken(
   try {
     const key = getSecretKey(config.secret);
     const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'], issuer: KB_JWT_ISSUER });
+    if (payload.type !== 'machine_access') {return { ok: false, reason: 'invalid' };}
     const parsed = JwtPayloadSchema.safeParse(payload);
-    if (!parsed.success || parsed.data.type !== 'machine_access') {return { ok: false, reason: 'invalid' };}
-    return { ok: true, payload: { ...parsed.data, type: 'machine_access' } };
+    if (!parsed.success) {return { ok: false, reason: 'reissue-required' };}
+    const { jti } = parsed.data;
+    return { ok: true, payload: { ...parsed.data, jti, type: 'machine_access' } };
   } catch (error) {
     return verificationFailure(error);
   }
@@ -148,7 +153,7 @@ export interface UserAccessPayload {
 
 export type TokenVerification<T> =
   | { ok: true; payload: T }
-  | { ok: false; reason: 'expired' | 'invalid' | 'unknown-issuer' | 'inactive' | 'revoked' };
+  | { ok: false; reason: 'expired' | 'invalid' | 'unknown-issuer' | 'inactive' | 'revoked' | 'reissue-required' };
 
 export interface UserRefreshPayload {
   userId: string;
@@ -307,8 +312,9 @@ export async function verifyUserAccessToken(
   try {
     const key = getSecretKey(config.secret);
     const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'], issuer: KB_JWT_ISSUER });
+    if (payload.type !== 'user_access') {return { ok: false, reason: 'invalid' };}
     const normalised = normaliseAccess(payload as RawUserClaims);
-    return normalised ? { ok: true, payload: normalised } : { ok: false, reason: 'invalid' };
+    return normalised ? { ok: true, payload: normalised } : { ok: false, reason: 'reissue-required' };
   } catch (error) {
     return verificationFailure(error);
   }

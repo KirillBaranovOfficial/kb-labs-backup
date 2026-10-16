@@ -202,6 +202,7 @@ export class McpDaemonServer {
       if (rejectsUnauthenticatedRequest(this.opts.authMode ?? 'secured', securedTokenIdentity)) {
         const unauthenticated = mcpUnauthenticatedResponse(
           this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL ?? '<url>',
+          authCtx ? 'unsupported-credential' : 'missing-identity',
         );
         return reply.code(unauthenticated.statusCode).send(unauthenticated.body);
       }
