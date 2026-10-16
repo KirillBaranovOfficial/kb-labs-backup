@@ -61,6 +61,7 @@ from mcp_project_steps import (
     invalid_arguments,
     local_auth,
     mcp_ux_result_contract,
+    opaque_host_credential_mcp_rejection,
     project_isolation,
     project_plugin_catalog_isolation,
     project_readonly_tool_isolation,
@@ -606,6 +607,9 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         yield service_check("project MCP secured missing and invalid token rejection", "mcp",
                             lambda: secured_auth(pid()), cases=["S-045.5", "S-140.6"],
                             runners=("service-secured:explore",))
+        yield service_check("project MCP refuses host-registration credentials", "mcp",
+                            lambda: opaque_host_credential_mcp_rejection(pid(), auth_token()),
+                            cases=["S-045.10"], runners=("service-secured:explore",))
     yield service_check("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid(), auth_token()),
                         cases=["S-140.1"])
     project_root = (service_project(graph)["root"]

@@ -162,7 +162,7 @@ describe("kb-host project routing", () => {
     expect(fromA.path).toBe("/rest/api/v1/whoami");
   });
 
-  // case: S-124.13, S-192.2, S-192.3, S-192.4, S-191.2
+  // case: S-124.13, S-192.1, S-192.2, S-192.3, S-192.4, S-191.2
   it("reloads the registered project runtime when its Commit lock changes", async () => {
     const project = await registered();
     execFileSync("git", ["init", "--quiet"], { cwd: project.root });
@@ -273,7 +273,7 @@ describe("kb-host project routing", () => {
       );
       expect(unknownService.status).toBe(404);
       expect((await unknownService.json() as PluginRouteBody).error?.code)
-        .toBe("KB_RUNTIME_RESOURCE_NOT_FOUND");
+        .toBe("KB_PROJECT_SERVICE_NOT_FOUND");
       const healthBeforeKnownService = await running.fetchGateway("/health");
       const healthBeforeBody = await readUxSuccessResult<HealthBody>(healthBeforeKnownService);
       expect(healthBeforeBody.projectRuntimes.runtimes).toEqual([]);

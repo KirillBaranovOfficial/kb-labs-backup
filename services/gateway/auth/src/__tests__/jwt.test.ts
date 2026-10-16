@@ -32,6 +32,15 @@ describe('signAccessToken / verifyAccessToken', () => {
     expect(payload.payload.type).toBe('machine_access');
   });
 
+  // case: S-259.1
+  it('classifies a validly signed machine access token that misses a current required claim for reissue', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({ namespaceId: 'ns1', tier: 'free', type: 'machine_access', permissions: [] })
+      .setProtectedHeader({ alg: 'HS256' }).setIssuer(KB_JWT_ISSUER).setSubject('host-1')
+      .setIssuedAt(now).setExpirationTime(now + 900).sign(new TextEncoder().encode(config.secret));
+    await expect(verifyAccessToken(token, config)).resolves.toEqual({ ok: false, reason: 'reissue-required' });
+  });
+
   // case: S-203.20
   it('classifies an unknown issuer for machine access and refresh tokens', async () => {
     const now = Math.floor(Date.now() / 1000);

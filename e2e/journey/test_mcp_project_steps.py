@@ -16,7 +16,7 @@ from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_ar
                                mcp_ux_result_contract, project_isolation, project_plugin_catalog_isolation,
                                project_readonly_tool_isolation,
                                run_agent_session_steps,
-                               secured_auth, secured_project_catalog_isolation, unknown_tool)
+                               opaque_host_credential_mcp_rejection, secured_auth, secured_project_catalog_isolation, unknown_tool)
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint
 import service_runner
@@ -62,6 +62,29 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def tearDown(self):
         self.installed_contract_patch.stop()
+
+    # case: S-045.10
+    def test_opaque_host_credential_is_refused_by_catalogue_and_deregistered(self):
+        from invocations import catalogued_error_hint
+        host = {"hostId": "host-fixture-1", "machineToken": "opaque-host-token"}
+        profile = (200, {"tenantId": "tenant-fixture"}, {})
+        register = (201, json.dumps(host).encode(), {})
+        deregister = (204, b"", {})
+        error = {"ok": False, "error": {
+            "code": "KB_AUTH_MCP_CREDENTIAL_REQUIRED",
+            "hint": catalogued_error_hint("KB_AUTH_MCP_CREDENTIAL_REQUIRED", gatewayUrl="https://gateway.test"),
+            "details": {"gatewayUrl": "https://gateway.test"}, "correlationId": "corr-fixture",
+        }}
+        with patch("service_runner.request", side_effect=[profile, register, deregister]) as gateway_request, \
+             patch("service_runner.request_mcp", return_value=(401, error, {})) as mcp_request:
+            result = opaque_host_credential_mcp_rejection("prj_a", "user-access-token")
+
+        self.assertIsNone(result)
+        self.assertEqual(gateway_request.call_args_list[0].args[0], "/auth/me")
+        self.assertEqual(gateway_request.call_args_list[1].args[0], "/hosts/register")
+        self.assertEqual(gateway_request.call_args_list[1].kwargs["payload"]["namespaceId"], "tenant-fixture")
+        self.assertEqual(gateway_request.call_args_list[2].kwargs["method"], "DELETE")
+        self.assertEqual(mcp_request.call_args.kwargs["token"], "opaque-host-token")
 
     # case: S-141.1, S-141.2, S-141.3, S-141.4, S-141.5, S-141.6
     def test_agent_session_steps_reject_fake_failures_then_claim_full_lifecycle(self):

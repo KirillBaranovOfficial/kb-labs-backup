@@ -3775,6 +3775,7 @@
     "gateway extras",
     "archive runtime service logs",
     "project MCP secured missing and invalid token rejection",
+    "project MCP refuses host-registration credentials",
     "project MCP commit mutation",
     "MCP UX result contract from live registry",
     "project MCP cross-project isolation",
