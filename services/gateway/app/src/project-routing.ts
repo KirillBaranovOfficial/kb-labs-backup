@@ -373,11 +373,13 @@ export async function registerProjectRoutes(
           const code = upstreamStatus === 404 ? "KB_RUNTIME_RESOURCE_NOT_FOUND"
             : upstreamStatus === 400 ? "KB_RUNTIME_INPUT_INVALID"
               : upstreamStatus === 401 ? "KB_AUTH_REQUIRED"
-                : upstreamStatus === 403 ? "KB_AUTH_FORBIDDEN"
+                : upstreamStatus === 403 ? "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE"
                   : "KB_RUNTIME_COMMAND_FAILED";
           const route = `${request.method} ${path}`;
           const error = createErrorEnvelope(code, {
-            details: { upstreamStatus: String(upstreamStatus), route },
+            details: code === "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE"
+              ? { requestStage: route, httpStatus: String(upstreamStatus) }
+              : { upstreamStatus: String(upstreamStatus), route },
             correlationId: String(request.id),
           });
           return reply.code(upstreamStatus).send(createUxFailureResult(error));

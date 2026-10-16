@@ -53,8 +53,16 @@ func TestInstallerPreflightMatchesRuntimeCatalogForOlderAndNewerMajors(t *testin
 			"requiredMajor": fmt.Sprint(sharedtoolchain.SupportedNodeMajor),
 			"actualVersion": strings.TrimPrefix(version, "v"),
 		}
-		if envelope.Code != entry.Code || envelope.Message != diag.RenderTemplate(entry.Message, values) || envelope.Hint != diag.RenderTemplate(entry.Hint, values) {
-			t.Fatalf("preflight envelope differs from catalog for %s: %#v", version, envelope)
+		expected, err := diag.FromCatalog(entry.Code, values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedEnvelope, err := diag.ToEnvelope(expected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if envelope.Code != entry.Code || envelope.Message != expectedEnvelope.Message || envelope.Hint != expectedEnvelope.Hint {
+			t.Fatalf("preflight envelope differs from contract-checked catalog for %s: %#v", version, envelope)
 		}
 	}
 }

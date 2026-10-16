@@ -21,6 +21,7 @@ import (
 	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/proc"
+	"github.com/kb-labs/clikit/result"
 )
 
 func main() {
@@ -28,13 +29,25 @@ func main() {
 }
 
 func executeCommand(args []string, stdout, stderr io.Writer) diag.ExitStatus {
+	return executeInvocation(os.Args[0], args, stdout, stderr)
+}
+
+func executeInvocation(invocation string, args []string, stdout, stderr io.Writer) diag.ExitStatus {
+	root := command.InvocationRoot(invocation)
 	if len(args) > 0 && args[0] == "__keeper" {
 		return diag.ProcessExitStatus(proc.KeeperMain())
 	}
-	code, err := execute(args, stdout, stderr)
+	if command.HandleRootHelp(args, root, "<run|gate|ps|wait|events|proc|quota|own|gc> [flags]", stdout) {
+		return diag.SuccessStatus()
+	}
+	code, err := executeRoot(root, args, stdout, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return diag.SuccessStatus()
+	}
 	if err != nil {
 		var diagnostic *diag.Diag
 		if errors.As(err, &diagnostic) {
+			diagnostic.Binary = root.Name()
 			fmt.Fprintln(stderr, renderDiagnostic(diagnostic))
 		} else {
 			fmt.Fprintln(stderr, err)
@@ -44,8 +57,12 @@ func executeCommand(args []string, stdout, stderr io.Writer) diag.ExitStatus {
 }
 
 func execute(args []string, stdout, stderr io.Writer) (int, error) {
+	return executeRoot(command.InvocationRoot(os.Args[0]), args, stdout, stderr)
+}
+
+func executeRoot(root command.Root, args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
-		return 2, errors.New("usage: kb-runner <run|gate|ps|wait|events|proc|quota|own|gc> [flags]")
+		return 2, fmt.Errorf("usage: %s <run|gate|ps|wait|events|proc|quota|own|gc> [flags]", root.Name())
 	}
 	switch args[0] {
 	case "run":
@@ -67,7 +84,8 @@ func execute(args []string, stdout, stderr io.Writer) (int, error) {
 	case "gc":
 		return gcCommand(args[1:], stdout)
 	default:
-		return 2, fmt.Errorf("kb-runner: unknown command %q; next: kb-runner --help", args[0])
+		status, _ := command.HandleUnknownCommand(root, args, stdout, stderr, result.ResolveMode(false, false, ""), false)
+		return status.Code(), nil
 	}
 }
 

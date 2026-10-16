@@ -204,9 +204,10 @@ describe('REST production route declarations', () => {
           });
         }
         if (failure === 'plain') {
-          const error = new Error('fixture plain failure') as Error & { statusCode: number; code: string };
+          const error = new Error('fixture plain failure') as Error & { statusCode: number; code: string; details: { path: string } };
           error.statusCode = 409;
           error.code = 'KB_PROJECT_ALREADY_REGISTERED';
+          error.details = { path: '/fixture/project' };
           throw error;
         }
         if (failure === 'raw-reply') return reply.code(400).send({ error: { code: 'KB_RUNTIME_INPUT_INVALID' } });

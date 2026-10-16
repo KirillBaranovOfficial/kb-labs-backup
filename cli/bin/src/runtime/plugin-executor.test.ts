@@ -272,6 +272,7 @@ describe('plugin executor adapter errors', () => {
         code: 'KB_PLUGIN_COMMAND_FAILED',
         buildEnvelope: (correlationId: string) => createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
           correlationId,
+          details: { command: 'test command', failureReason: 'injected test failure', plugin: 'test-plugin' },
         }),
         error: () => new Error('registry plain failure'),
       },

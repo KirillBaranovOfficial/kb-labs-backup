@@ -16,6 +16,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/render"
 	"github.com/kb-labs/create/v2/resolve"
@@ -52,11 +53,7 @@ func (a *offlineArtifacts) Install(items []contracts.Artifact) error {
 			continue
 		}
 		dir := filepath.Join(a.root, "node_modules", filepath.FromSlash(item.Package))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-		manifest := `{"name":"` + item.Package + `","version":"` + item.Version + `"}`
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(manifest), 0o644); err != nil {
+		if err := testfixtures.WritePackage(dir, item.Package, item.Version, nil); err != nil {
 			return err
 		}
 		if err := installed.Write(a.root, item); err != nil {
@@ -269,7 +266,11 @@ func TestTransportMatrixUsesOneResolvedPluginWorkflowPath(t *testing.T) {
 		},
 		Plugins: []catalog.Component{{ID: "user-plugin", Version: "1.0.0", Package: "@kb/user-plugin", Tarball: "https://example.test/user-plugin.tgz", SHA256: "user-plugin", PlatformRange: "^2.0.0"}},
 	}
-	sealed, err := catalog.Seal(source)
+	withProvenance, err := testfixtures.SealCatalog(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := catalog.Seal(withProvenance)
 	if err != nil {
 		t.Fatal(err)
 	}

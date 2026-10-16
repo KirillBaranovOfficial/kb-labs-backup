@@ -2,7 +2,7 @@ import { createErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform"
 
 /**
  * A project-runtime failure that maps to a catalog error code
- * (`KB_PROJECT_RUNTIME_START_FAILED`, `KB_PROJECT_RUNTIME_RELOAD_FAILED`,
+ * (`KB_PROJECT_RUNTIME_PROCESS_START_FAILED`, `KB_PROJECT_RUNTIME_RELOAD_FAILED`,
  * `KB_PROJECT_RUNTIME_LIMIT`). Carries the unified error envelope so the
  * gateway can answer with it.
  */
@@ -32,8 +32,8 @@ export function runtimeStartFailed(
     );
   }
   return new ProjectRuntimeError(
-    createErrorEnvelope("KB_PROJECT_RUNTIME_START_FAILED", {
-      details: { project: projectId },
+    createErrorEnvelope("KB_PROJECT_RUNTIME_PROCESS_START_FAILED", {
+      details: { projectId },
       cause,
     }),
   );

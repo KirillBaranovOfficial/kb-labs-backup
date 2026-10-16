@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 	"github.com/spf13/cobra"
@@ -48,11 +49,20 @@ Commands:
 
 // Execute renders any error as a structured diagnostic and sets the exit code.
 func Execute() diag.ExitStatus {
+	args := os.Args[1:]
+	if clikitcommand.HandleCobraHelp(rootCmd, args, os.Stdout) {
+		return diag.SuccessStatus()
+	}
+	_, _, findErr := rootCmd.Find(args)
+	if status, handled := clikitcommand.HandleUnknownCommand(rootCmd, args, os.Stdout, os.Stderr, outputMode(), findErr == nil); handled {
+		return status
+	}
 	_, err := rootCmd.ExecuteC()
 	if err == nil {
 		return diag.SuccessStatus()
 	}
 	d := diag.FromError(err)
+	d.Binary = rootCmd.Name()
 	return result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
 }
 

@@ -65,7 +65,7 @@ func RestartWithRecovery(ctx context.Context, root string, previous *ProcessRunn
 		fmt.Sprintf("The installed version failed its restart health check; snapshot %s was restored and the last healthy version was started.", metadata.SnapshotID),
 		"Run `"+contracts.ShellCommand("kb-create", "status", "--platform-root", root)+"` to confirm the restored version is healthy.", nil)
 	failure.Meta = map[string]any{"attemptedRoot": filepath.Clean(active.TreeRoot), "recoveryRoot": filepath.Clean(failedRoot), "recoveryStage": "restored-last-healthy",
-		"runningVersion": restored.Identity.PlatformVersion, "snapshotId": metadata.SnapshotID, "logPath": filepath.Join(layout.InstallRoot(), metadata.LogPath),
+		"version": restored.Identity.PlatformVersion, "runningVersion": restored.Identity.PlatformVersion, "snapshotId": metadata.SnapshotID, "logPath": filepath.Join(layout.InstallRoot(), metadata.LogPath),
 		"nextCommand": contracts.ShellCommand("kb-create", "status", "--platform-root", root), "failureReason": "target host did not pass its health check"}
 	return RestartOutcome{Stopped: stopped, Info: restoredInfo, Runner: restored}, failure
 }

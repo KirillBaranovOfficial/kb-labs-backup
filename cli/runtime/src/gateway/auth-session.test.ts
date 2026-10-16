@@ -87,7 +87,7 @@ describe('AuthSessionOwner', () => {
     });
     stores.machineError = null;
     stores.session = { gatewayUrl: 'https://gateway.test', accessToken: 'old', refreshToken: 'refresh', expiresAt: 0 };
-    const failure = createErrorEnvelope('KB_AUTH_SESSION_REVOKED');
+    const failure = createErrorEnvelope('KB_AUTH_SESSION_REVOKED', { details: { gatewayUrl: 'https://gateway.test' } });
     const required = createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'https://gateway.test' } });
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: false, error: failure }), { status: 401 }))

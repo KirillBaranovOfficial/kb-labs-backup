@@ -3,6 +3,18 @@ import { createProductErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-pl
 import { handleError, renderErrorEnvelope } from '../utils/errors.js';
 
 describe('handleError', () => {
+  it('uses and preserves the invocation correlation id', () => {
+    const failure = handleError(new Error('request failed'), 'request-123');
+    expect(failure).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_UNEXPECTED',
+        correlationId: 'request-123',
+        hint: expect.stringContaining('request-123'),
+      },
+    });
+  });
+
   it('renders structured gate diagnostics as a list before the next-step hint', () => {
     expect(renderErrorEnvelope({
       code: 'KB_RUNTIME_COMMAND_FAILED',

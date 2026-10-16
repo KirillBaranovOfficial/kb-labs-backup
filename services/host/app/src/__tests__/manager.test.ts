@@ -401,16 +401,20 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     expect(subject.status().runtimes[0]?.restarts).toBeGreaterThanOrEqual(1);
   });
 
-  it("reports KB_PROJECT_RUNTIME_START_FAILED with the cause when the process exits during start", async () => {
+  it("reports KB_PROJECT_RUNTIME_PROCESS_START_FAILED with the cause when the process exits during start", async () => {
     const a = await project({ exitBeforeReady: 3 });
     const subject = manager();
 
     const error = await expectRuntimeError(
       subject.acquire(a),
-      "KB_PROJECT_RUNTIME_START_FAILED",
+      "KB_PROJECT_RUNTIME_PROCESS_START_FAILED",
     );
 
-    expect(error.envelope.details).toEqual({ project: a.id });
+    expect(error.envelope.details).toEqual({ projectId: a.id });
+    expect(error.envelope.message).toContain(a.id);
+    expect(error.envelope.message).not.toMatch(/\{[^}]+\}/);
+    expect(error.envelope.hint).toContain("kb logs query");
+    expect(error.envelope.hint).not.toMatch(/\{[^}]+\}/);
     expect(error.envelope.cause).toContain("code 3");
     expect(error.envelope.cause).toContain("refusing to start");
     expect(subject.status().runtimes[0]).toMatchObject({ state: "failed" });
@@ -429,7 +433,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
 
     const error = await expectRuntimeError(
       subject.acquire(a),
-      "KB_PROJECT_RUNTIME_START_FAILED",
+      "KB_PROJECT_RUNTIME_PROCESS_START_FAILED",
     );
 
     expect(error.envelope.cause).toContain("not healthy within 1500 ms");
@@ -458,7 +462,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     expect(subject.status().runtimes).toEqual([]);
     await expectRuntimeError(
       subject.acquire(a),
-      "KB_PROJECT_RUNTIME_START_FAILED",
+      "KB_PROJECT_RUNTIME_PROCESS_START_FAILED",
     );
   });
 

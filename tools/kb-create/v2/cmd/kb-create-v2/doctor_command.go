@@ -249,16 +249,20 @@ func executeDoctorFix(input doctorCommandInput, response doctor.Response) (docto
 		if err != nil {
 			return doctorFixResult{}, asDiag(err)
 		}
-		origin := recordedGatewayURL(active)
-		if active.Plan.Host == nil || origin == "" {
-			return doctorFixResult{}, contracts.NewDiag(contracts.CodeGatewayIndexUnavailable,
-				"the validated installation receipt has no Gateway address to restore", "inspect the active receipt before rebuilding the launcher Gateway index", nil)
-		}
 		launcherState, err := host.StateHome()
 		if err != nil {
 			return doctorFixResult{}, asDiag(err)
 		}
-		registry := gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json"), OperationRoot: input.PlatformRoot}
+		registryPath := filepath.Join(launcherState.Dir, "gateway-roots.json")
+		origin := recordedGatewayURL(active)
+		if active.Plan.Host == nil || origin == "" {
+			reason := "the validated installation receipt has no Gateway address to restore"
+			failure := (gateway.Registry{Path: registryPath, OperationRoot: input.PlatformRoot}).Unavailable(reason, nil,
+				"the validated installation receipt has no Gateway address to restore",
+				"inspect the active receipt before rebuilding the launcher Gateway index")
+			return doctorFixResult{}, failure
+		}
+		registry := gateway.Registry{Path: registryPath, OperationRoot: input.PlatformRoot}
 		if err := registry.Register(activeRoot, origin); err != nil {
 			return doctorFixResult{}, asDiag(err)
 		}

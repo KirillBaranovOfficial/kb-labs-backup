@@ -124,7 +124,8 @@ describe('Error Handling', () => {
       expect(error.details?.retryAfter).toBe('5s');
     });
 
-    it('should create PlatformError with service name', () => {
+    // case: S-203.6
+    it('should create PlatformError details that satisfy the catalog template', () => {
       const error = new PlatformError('llm', 'LLM service unavailable', {
         statusCode: '503',
       });
@@ -132,7 +133,8 @@ describe('Error Handling', () => {
       expect(error).toBeInstanceOf(PlatformError);
       expect(error.code).toBe('KB_HOST_ADAPTER_UNAVAILABLE');
       expect(error.service).toBe('llm');
-      expect(error.details?.service).toBe('llm');
+      expect(error.details?.slot).toBe('llm');
+      expect(error.details?.reason).toBe('LLM service unavailable');
       expect(error.details?.statusCode).toBe('503');
     });
   });

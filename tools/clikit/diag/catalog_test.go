@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -44,8 +45,14 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 		}
 		entries[entry.Code] = CatalogEntry(entry)
 		entryCodes[entry.Code] = struct{}{}
-		if embedded, ok := LookupCatalog(entry.Code); !ok || embedded != CatalogEntry(entry) {
-			t.Errorf("clikit metadata for %s differs from the platform catalog", entry.Code)
+		if embedded, ok := LookupCatalog(entry.Code); ok {
+			embedded.TemplateParameters = nil
+			embedded.RequiredTemplateParameters = nil
+			if !reflect.DeepEqual(embedded, CatalogEntry(entry)) {
+				t.Errorf("clikit metadata for %s differs from the platform catalog", entry.Code)
+			}
+		} else {
+			t.Errorf("clikit metadata for %s is missing", entry.Code)
 		}
 	}
 	if len(catalogEntries) != len(entries) {
@@ -65,6 +72,26 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 			}
 		}
 		t.Errorf("Go tool emits uncatalogued code %s in %s", code, strings.Join(relative, ", "))
+	}
+}
+
+func TestCatalogGeneratesRequiredTemplateParameters(t *testing.T) {
+	entry, ok := LookupCatalog("KB_AUTH_FORBIDDEN")
+	if !ok {
+		t.Fatal("KB_AUTH_FORBIDDEN is absent from generated catalog")
+	}
+	if !reflect.DeepEqual(entry.RequiredTemplateParameters, []string{"permission"}) {
+		t.Fatalf("generated required parameters = %v, want [permission]", entry.RequiredTemplateParameters)
+	}
+}
+
+func TestCatalogGeneratesStructuredDetailFields(t *testing.T) {
+	entry, ok := LookupCatalog("KB_AUTH_SESSION_REVOKED")
+	if !ok {
+		t.Fatal("KB_AUTH_SESSION_REVOKED is absent from generated catalog")
+	}
+	if !reflect.DeepEqual(entry.StructuredDetailFields, []string{"reason", "remoteCorrelationId"}) {
+		t.Fatalf("generated structured detail fields = %v, want [reason remoteCorrelationId]", entry.StructuredDetailFields)
 	}
 }
 

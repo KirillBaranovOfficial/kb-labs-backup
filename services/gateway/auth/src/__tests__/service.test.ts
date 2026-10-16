@@ -105,6 +105,7 @@ describe('AuthService', () => {
       if (ctx.ok) {
         expect(ctx.payload.type).toBe('machine');
         expect(ctx.payload.namespaceId).toMatch(/^ns_/);
+        expect(ctx.payload.tokenId).toEqual(expect.any(String));
       }
     });
 

@@ -34,23 +34,25 @@ func (e *ValidationError) Error() string {
 }
 
 func NodeRemediation() string {
-	entry, ok := diag.LookupCatalog("KB_NODE_VERSION_UNSUPPORTED")
-	if !ok {
-		panic("Node.js unsupported diagnostic is missing from the platform catalog")
+	diagnostic, err := nodeVersionDiagnostic("unknown")
+	if err != nil {
+		panic(err)
 	}
-	return diag.RenderTemplate(entry.Hint, map[string]string{"requiredMajor": strconv.Itoa(SupportedNodeMajor)})
+	envelope, err := diag.ToEnvelope(diagnostic)
+	if err != nil {
+		panic(err)
+	}
+	return envelope.Hint
 }
 func PnpmRemediation() string { return fmt.Sprintf("Install pnpm@%s and retry", SupportedPnpm) }
 
 // NodeMissingDiagnostic reports that Node.js could not be executed at all.
 func NodeMissingDiagnostic() *diag.Diag {
-	entry, ok := diag.LookupCatalog("KB_INSTALL_NODE_MISSING")
-	if !ok {
-		panic("Node.js missing diagnostic is missing from the platform catalog")
+	diagnostic, err := diag.FromCatalog("KB_INSTALL_NODE_MISSING", map[string]string{"requirement": "Node.js"})
+	if err != nil {
+		panic(err)
 	}
-	values := map[string]string{"requirement": "Node.js"}
-	return diag.New(entry.Code, diag.RenderTemplate(entry.Message, values),
-		diag.WithHint(diag.RenderTemplate(entry.Hint, values)), diag.WithMeta(map[string]any{"requirement": values["requirement"]}))
+	return diagnostic
 }
 
 // NodeCheckDiagnostic preserves a structured preflight failure or reports that
@@ -77,21 +79,21 @@ func Version(binary string) (string, error) {
 func ValidateNode(version string) error {
 	major, err := major(version)
 	if err != nil || major != SupportedNodeMajor {
-		entry, ok := diag.LookupCatalog("KB_NODE_VERSION_UNSUPPORTED")
-		if !ok {
-			panic("Node.js unsupported diagnostic is missing from the platform catalog")
-		}
 		actualVersion := strings.TrimPrefix(strings.TrimSpace(version), "v")
-		values := map[string]string{
-			"requiredMajor": strconv.Itoa(SupportedNodeMajor),
-			"actualVersion": actualVersion,
+		diagnostic, diagnosticErr := nodeVersionDiagnostic(actualVersion)
+		if diagnosticErr != nil {
+			return diagnosticErr
 		}
-		return diag.New(entry.Code, diag.RenderTemplate(entry.Message, values),
-			diag.WithHint(diag.RenderTemplate(entry.Hint, values)), diag.WithMeta(map[string]any{
-				"requiredMajor": values["requiredMajor"], "actualVersion": values["actualVersion"],
-			}))
+		return diagnostic
 	}
 	return nil
+}
+
+func nodeVersionDiagnostic(actualVersion string) (*diag.Diag, error) {
+	return diag.FromCatalog("KB_NODE_VERSION_UNSUPPORTED", map[string]string{
+		"requiredMajor": strconv.Itoa(SupportedNodeMajor),
+		"actualVersion": actualVersion,
+	})
 }
 
 func ValidatePnpm(version string) error {

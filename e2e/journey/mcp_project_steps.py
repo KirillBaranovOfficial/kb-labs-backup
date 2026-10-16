@@ -7,6 +7,7 @@ import json
 import os
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 from invocations import catalogued_error_hint, invocation_context, run_command
 from journey_resources import read_installed_platform_resource
@@ -254,6 +255,71 @@ def secured_auth(project_id: str) -> str | None:
         if isinstance(body, dict) and isinstance(body.get("result"), dict) and body["result"].get("tools"):
             return "secured tools/list returned a tool catalog without valid authentication"
     return None
+
+
+def opaque_host_credential_mcp_rejection(project_id: str, cleanup_token: str) -> str | None:
+    """Prove a registered host credential is refused by secured project MCP."""
+    from service_runner import request as gateway_request
+
+    host_id = None
+    failure = None
+    try:
+        profile_status, profile, _ = gateway_request(
+            "/auth/me", token=cleanup_token, step="resolve host registration namespace",
+        )
+        namespace_id = profile.get("tenantId") if isinstance(profile, dict) else None
+        if profile_status != 200 or not isinstance(namespace_id, str) or not namespace_id:
+            return f"authenticated Gateway profile did not provide a tenantId (HTTP {profile_status})"
+        status, raw, _ = gateway_request(
+            "/hosts/register", method="POST",
+            payload={"name": "journey-mcp-opaque-auth", "namespaceId": namespace_id,
+                     "capabilities": [], "workspacePaths": []},
+            response_kind="raw", step="register disposable MCP auth host",
+        )
+        if status != 201:
+            return f"host registration returned HTTP {status}, expected HTTP 201"
+        try:
+            registration = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            return f"host registration returned invalid JSON: {error}"
+        host_id = registration.get("hostId") if isinstance(registration, dict) else None
+        token = registration.get("machineToken") if isinstance(registration, dict) else None
+        if not isinstance(host_id, str) or not isinstance(token, str):
+            return "host registration omitted hostId or machineToken"
+
+        status, body, _ = _request(
+            project_service_path(project_id, "mcp"), method="POST", token=token,
+            payload={"jsonrpc": "2.0", "id": 14510, "method": "tools/list", "params": {}},
+            step="secured project MCP opaque host credential check",
+            accept="application/json, text/event-stream",
+        )
+        machine_result = body if isinstance(body, dict) else None
+        envelope = machine_result.get("error") if isinstance(machine_result, dict) else None
+        details = envelope.get("details") if isinstance(envelope, dict) else None
+        gateway_url = details.get("gatewayUrl") if isinstance(details, dict) else None
+        if (status != 401 or machine_result is None or machine_result.get("ok") is not False
+                or not isinstance(envelope, dict)
+                or envelope.get("code") != "KB_AUTH_MCP_CREDENTIAL_REQUIRED"
+                or not isinstance(gateway_url, str)
+                or envelope.get("hint") != catalogued_error_hint("KB_AUTH_MCP_CREDENTIAL_REQUIRED", gatewayUrl=gateway_url)
+                or not isinstance(envelope.get("correlationId"), str)
+                or not envelope["correlationId"].strip()):
+            failure = "secured project MCP did not refuse the opaque host credential with its catalogued 401 envelope"
+    except Exception as error:
+        failure = f"opaque host credential MCP check failed: {error}"
+    finally:
+        if host_id:
+            try:
+                status, _, _ = gateway_request(
+                    f"/hosts/{quote(host_id, safe='')}", method="DELETE", token=cleanup_token,
+                    response_kind="raw", step="remove disposable MCP auth host",
+                )
+                if status != 204 and failure is None:
+                    failure = f"disposable host cleanup returned HTTP {status}, expected HTTP 204"
+            except Exception as error:
+                if failure is None:
+                    failure = f"disposable host cleanup failed: {error}"
+    return failure
 
 
 def secured_project_catalog_isolation(project_a: str, project_b: str, token: str) -> str | None:

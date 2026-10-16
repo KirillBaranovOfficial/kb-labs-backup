@@ -15,7 +15,6 @@ import (
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
-	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/spf13/cobra"
@@ -297,7 +296,7 @@ func TestJSONInstallProgressEndsWithTerminalRecord(t *testing.T) {
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Host = testHostOnFreePort(t)
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +355,7 @@ func TestPlanRejectsExplicitEmptyProviderValuesAtExecuteBoundary(t *testing.T) {
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
 	source.Platforms[0].Host = testHostOnFreePort(t)
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}

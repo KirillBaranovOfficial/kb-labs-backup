@@ -88,7 +88,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData 
           });
           return;
         } catch (err) {
-          return handleError(err);
+          return handleError(err, ctx.requestId);
         }
       }
 
@@ -101,7 +101,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData 
         tarball = await packPlugin(pluginDir);
         packMs = Date.now() - t1;
       } catch (err) {
-        return handleError(err);
+        return handleError(err, ctx.requestId);
       }
 
       try {
@@ -135,7 +135,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData 
 
         return result;
       } catch (err) {
-        const failure = handleError(err);
+        const failure = handleError(err, ctx.requestId);
         if (!flags.json) {
           const message = err instanceof Error ? err.message : String(err);
           ctx.ui?.chain?.([

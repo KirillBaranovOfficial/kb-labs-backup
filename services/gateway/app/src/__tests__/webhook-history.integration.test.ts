@@ -138,7 +138,9 @@ describe('Gateway webhook history through createServer', () => {
       expect(JSON.stringify(successHistory.json())).not.toContain('safe test payload');
       expect(JSON.stringify(successHistory.json())).not.toContain(secret);
 
-      const error = new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED'));
+      const error = new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+        details: { plugin: 'test-plugin', command: 'test command', failureReason: 'test failure' },
+      }));
       mockDispatcher.call.mockRejectedValueOnce(error);
       const failed = await app.inject({
         method: 'POST', url: `/webhooks/${pluginId}/${event}`,
@@ -205,7 +207,9 @@ describe('Gateway webhook history through createServer', () => {
       const deliveredId = delivered.headers.get('x-webhook-id');
       expect(deliveredId).toBeTruthy();
 
-      mockDispatcher.call.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED')));
+      mockDispatcher.call.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+        details: { plugin: 'test-plugin', command: 'test command', failureReason: 'test failure' },
+      })));
       const errored = await deliver('live-error-correlation');
       expect(errored.status).toBe(500);
       const erroredId = errored.headers.get('x-webhook-id');

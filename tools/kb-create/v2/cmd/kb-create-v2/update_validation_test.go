@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
@@ -59,7 +58,7 @@ func assertEqualVersionUpdateDoesNotRequireProjectDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	index, err := catalog.Seal(testReleaseCatalog(t, "3.2.0"))
+	index, err := sealTestCatalog(t, testReleaseCatalog(t, "3.2.0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +148,7 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 			}
 
 			index := testReleaseCatalog(t, test.target)
-			sealed, err := catalog.Seal(index)
+			sealed, err := sealTestCatalog(t, index)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -211,7 +210,7 @@ func TestUpdateMapsTargetPlanCompatibilityToUpdateCode(t *testing.T) {
 	index := filepath.Join(t.TempDir(), "release-index.json")
 	source := testReleaseCatalog(t, "3.2.0")
 	source.Platforms[0].SDKRange = "<3.0.0"
-	sealed, err := catalog.Seal(source)
+	sealed, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}

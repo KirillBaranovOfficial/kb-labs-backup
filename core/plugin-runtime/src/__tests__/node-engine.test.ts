@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ErrorEnvelopeError, getCatalogEntry, renderTemplate } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, getCatalogEntry } from '@kb-labs/core-platform';
 import { ensureNodeEngineSupported } from '../platform-resolve/node-engine.js';
 import { parseNodeEnginePolicy } from '../platform-resolve/node-engine.mjs';
 
@@ -39,12 +39,14 @@ describe('installed runtime Node.js engine', () => {
 
       expect(caught).toBeInstanceOf(ErrorEnvelopeError);
       const envelope = (caught as ErrorEnvelopeError).envelope;
-      const values = { requiredMajor: '24', actualVersion };
+      const expected = createErrorEnvelope('KB_NODE_VERSION_UNSUPPORTED', {
+        details: { requiredMajor: '24', actualVersion },
+      });
       expect(envelope).toMatchObject({
         code: 'KB_NODE_VERSION_UNSUPPORTED',
-        details: values,
-        message: renderTemplate(entry!.message, values),
-        hint: renderTemplate(entry!.hint, values),
+        details: { requiredMajor: '24', actualVersion },
+        message: expected.message,
+        hint: expected.hint,
       });
     }
   });

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GatewayClient } from '../ws/gateway-client.js';
 import { EventEmitter } from 'node:events';
-import { ErrorEnvelopeError, createErrorEnvelope } from '@kb-labs/core-platform';
+import { AdapterCredentialsMissingError, ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
 
 /**
  * Mock WebSocket that simulates Gateway WS connection.
@@ -249,9 +249,8 @@ describe('GatewayClient capability handler errors', () => {
 
   it('preserves a typed platform envelope across the reverse host path', async () => {
     const { client, ws } = createConnectedClient();
-    const failure = createErrorEnvelope('KB_ADAPTER_CREDENTIALS_MISSING', {
+    const failure = toErrorEnvelope(new AdapterCredentialsMissingError('llm', 'OPENAI_API_KEY', 'platform.adapters.llm.apiKey'), {
       correlationId: 'host-call-correlation',
-      details: { adapter: 'llm', credential: 'OPENAI_API_KEY' },
     });
     client.registerHandler('llm', async () => { throw new ErrorEnvelopeError(failure); });
     await (client as unknown as { handleCall(call: { requestId: string; adapter: string }): Promise<void> })

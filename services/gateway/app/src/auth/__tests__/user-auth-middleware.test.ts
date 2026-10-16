@@ -56,6 +56,7 @@ beforeEach(async () => {
 
   app.get('/echo', async (req) => ({
     auth: req.userAuthContext ?? null,
+    tokenId: req.authContext?.tokenId,
     namespaceId: req.authContext?.namespaceId,
     permissions: req.authContext?.permissions,
   }));
@@ -80,13 +81,13 @@ const seedUserAndToken = async (
     tenantId: opts.tenantId,
     deviceCtx: {},
   });
-  const { token } = await signUserAccessToken({
+  const { token, jti } = await signUserAccessToken({
     userId: opts.userId,
     tenantId: opts.tenantId,
     familyId: sess.familyId,
     ttlSec: 900,
   }, jwtConfig);
-  return { token, familyId: sess.familyId };
+  return { token, familyId: sess.familyId, jti };
 };
 
 describe('no cookie present', () => {
@@ -102,14 +103,15 @@ describe('no cookie present', () => {
 });
 
 describe('happy path', () => {
-  it('sets authContext to a user with userId, tenantId, familyId', async () => {
-    const { token, familyId } = await seedUserAndToken();
+  it('sets authContext to a user with userId, tokenId, tenantId, familyId', async () => {
+    const { token, familyId, jti } = await seedUserAndToken();
     const r = await app.inject({
       method: 'GET',
       url: '/echo',
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${token}` },
     });
     expect(r.statusCode).toBe(200);
+    expect(r.json().tokenId).toBe(jti);
     expect(r.json().auth).toMatchObject({
       type: 'user',
       source: 'cookie',
@@ -227,13 +229,14 @@ describe('cross-tenant guard', () => {
 
 describe('Bearer user token (CLI session — no cookie involved)', () => {
   it('a valid user access token via Authorization: Bearer sets authContext identically to the cookie path', async () => {
-    const { token, familyId } = await seedUserAndToken();
+    const { token, familyId, jti } = await seedUserAndToken();
     const r = await app.inject({
       method: 'GET',
       url: '/echo',
       headers: { host: 'kblabs-cloud.kblabs.ru', authorization: `Bearer ${token}` },
     });
     expect(r.statusCode).toBe(200);
+    expect(r.json().tokenId).toBe(jti);
     expect(r.json().auth).toMatchObject({
       type: 'user',
       userId: 'u1',

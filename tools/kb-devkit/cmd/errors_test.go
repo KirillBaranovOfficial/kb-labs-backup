@@ -57,6 +57,8 @@ func TestTaskFailureWithoutPersistedLogUsesCataloguedRecovery(t *testing.T) {
 		"logDirectory": "/workspace/.kb/devkit/logs", "logError": "permission denied",
 	})
 	if envelope.Code != "KB_DEVKIT_TASK_LOG_UNAVAILABLE" || envelope.Hint != expected.Hint ||
+		envelope.Details["package"] != "@fixture/app" ||
+		envelope.Details["logPath"] != "/workspace/.kb/devkit/logs/task.log" ||
 		envelope.Details["logError"] != "permission denied" {
 		t.Fatalf("task log diagnosis = %+v", envelope)
 	}

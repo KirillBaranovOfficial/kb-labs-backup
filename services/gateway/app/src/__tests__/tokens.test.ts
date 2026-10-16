@@ -19,6 +19,7 @@ describe('authRejectionEnvelope', () => {
     const gatewayUrl = 'https://gateway.example.test:444';
     const expectedCodes = [
       ['expired', 'KB_AUTH_TOKEN_EXPIRED'],
+      ['reissue-required', 'KB_AUTH_TOKEN_REISSUE_REQUIRED'],
       ['revoked', 'KB_AUTH_SESSION_REVOKED'],
       ['inactive', 'KB_AUTH_USER_INACTIVE'],
       ['invalid', 'KB_AUTH_REQUIRED'],

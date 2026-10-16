@@ -23,37 +23,17 @@ func planWithFixtureProvenance(request contracts.InstallRequest, source catalog.
 }
 
 func planWithFixtureProvenanceOptions(request contracts.InstallRequest, source catalog.Catalog, options Options) (contracts.ResolvedInstallPlan, error) {
-	add := func(pkg, version string) {
-		for _, existing := range source.Provenance {
-			if existing.Package == pkg && existing.Version == version {
-				return
-			}
-		}
-		source.Provenance = append(source.Provenance, catalog.ArtifactProvenance{
-			Package: pkg, Version: version, ArtifactProvenance: contracts.ArtifactProvenance{
-				SourceRevision: "resolve-test-fixture", Integrity: "sha512-resolve-test-fixture", DistSHA256: strings.Repeat("a", 64),
-			},
-		})
+	sealed, err := testfixtures.SealCatalog(source)
+	if err != nil {
+		return contracts.ResolvedInstallPlan{}, err
 	}
-	for _, platform := range source.Platforms {
-		add(platform.Package, platform.Version)
-		for _, member := range platform.Members {
-			add(member.Package, member.Version)
-		}
-	}
-	for _, component := range append(append([]catalog.Component(nil), source.SDKs...), source.Plugins...) {
-		add(component.Package, component.Version)
-	}
-	for _, adapter := range source.Adapters {
-		add(adapter.Package, adapter.Version)
-	}
-	return PlanWith(request, source, options)
+	return PlanWith(request, sealed, options)
 }
 
 // case: S-181.4
 func TestOfflinePlanReportsChecksumVerifiedCacheResolutionPerArtifact(t *testing.T) {
 	root := t.TempDir()
-	data := []byte("sealed package bytes")
+	data := testfixtures.PackageTarball("@kb/platform", "2.0.0", nil)
 	digest := sha256.Sum256(data)
 	hash := hex.EncodeToString(digest[:])
 	cachePath := filepath.Join(root, "state", "cache", "packages", hash+".tgz")
@@ -474,7 +454,9 @@ func TestPlanRecordsBundledSDKOnceUnderItsSelectedRole(t *testing.T) {
 			records = append(records, item)
 		}
 	}
-	if len(records) != 1 || records[0].Kind != "sdk" || records[0].Version != "2.0.0" || records[0].SHA256 != "sdk-2.0.0" {
+	sdkArchive := testfixtures.PackageTarball("@kb/sdk", "2.0.0", nil)
+	sdkDigest := sha256.Sum256(sdkArchive)
+	if len(records) != 1 || records[0].Kind != "sdk" || records[0].Version != "2.0.0" || records[0].SHA256 != hex.EncodeToString(sdkDigest[:]) {
 		t.Fatalf("bundled SDK selected by the request must be one sdk record, got %#v", records)
 	}
 	unselected, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: t.TempDir()}, bundledSDKCatalog())

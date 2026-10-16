@@ -163,9 +163,11 @@ func updateSecretDiagnostic(root, secret, index, requestFile string) *diag.Diag 
 	}
 	applyArgs = append(applyArgs, "--secret-env", secret+"=ENV_VAR")
 	command := stopCommand + " && " + contracts.ShellCommand(applyArgs...)
-	return contracts.NewDiag(contracts.CodeUpdateSecretRefused,
+	failure := contracts.NewDiag(contracts.CodeUpdateSecretRefused,
 		"Update cannot create or change installation secret "+secret+".",
 		"Set the environment variable configured for this secret to the intended value, then run `"+command+"`.", nil)
+	failure.Meta = map[string]any{"secret": secret}
+	return failure
 }
 
 func refuseUpdateSecretChanges(input updateCommandInput, root string, store secrets.Store) *diag.Diag {
@@ -183,7 +185,9 @@ func refuseUpdateSecretChanges(input updateCommandInput, root string, store secr
 			if errors.Is(err, secrets.ErrUnsupportedSecretStoreFormat) {
 				return asDiag(err)
 			}
-			return contracts.NewDiag(contracts.CodeUpdateSecretRefused, "the stored installation secret could not be compared", "run `kb-create doctor` before changing installation secrets", err)
+			failure := contracts.NewDiag(contracts.CodeUpdateSecretRefused, "the stored installation secret could not be compared", "run `kb-create doctor` before changing installation secrets", err)
+			failure.Meta = map[string]any{"secret": name}
+			return failure
 		}
 		if !exists || stored != value {
 			return updateSecretDiagnostic(root, name, input.Index, input.RequestFile)

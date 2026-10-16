@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { getCatalogEntry, renderTemplate } from '@kb-labs/core-platform';
+import { createErrorEnvelope, getCatalogEntry } from '@kb-labs/core-platform';
 import { describe, expect, it } from 'vitest';
 import { nodeVersionSupported, readNodeEnginePolicy } from '../platform-resolve/node-engine.mjs';
 
@@ -51,12 +51,14 @@ describe('built runtime Node.js engine boundary', () => {
     expect(response.unexpectedSuccess).toBeUndefined();
     const catalog = getCatalogEntry('KB_NODE_VERSION_UNSUPPORTED');
     expect(catalog).toBeDefined();
-    const values = { requiredMajor, actualVersion };
+    const expected = createErrorEnvelope('KB_NODE_VERSION_UNSUPPORTED', {
+      details: { requiredMajor, actualVersion },
+    });
     expect(response.envelope).toMatchObject({
       code: 'KB_NODE_VERSION_UNSUPPORTED',
       details: { requiredMajor, actualVersion },
-      message: renderTemplate(catalog!.message, values),
-      hint: renderTemplate(catalog!.hint, values),
+      message: expected.message,
+      hint: expected.hint,
     });
   }, 20000);
 });

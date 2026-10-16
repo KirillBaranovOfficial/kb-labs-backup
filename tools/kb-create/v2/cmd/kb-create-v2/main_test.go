@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,11 +26,11 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/stream"
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
+	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
-	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
@@ -123,7 +125,7 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}}}}
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
 		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +202,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
 		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}
 	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,6 +219,31 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		deps.Command = cmd
 		return deps
 	}
+	t.Cleanup(func() {
+		var statusOutput, statusError bytes.Buffer
+		statusCode := clikitcommand.Execute(newRootCommand(), []string{"status", "--platform-root", root, "--json"}, &statusOutput, &statusError)
+		var status struct {
+			Data struct {
+				Host struct {
+					State string `json:"state"`
+				} `json:"host"`
+			} `json:"data"`
+		}
+		if statusCode.Code() != 0 {
+			t.Errorf("read test host state during cleanup: %s %s", statusOutput.String(), statusError.String())
+			return
+		}
+		if err := json.Unmarshal(statusOutput.Bytes(), &status); err != nil {
+			t.Errorf("decode test host state during cleanup: %v", err)
+			return
+		}
+		if status.Data.Host.State == host.StateRunning {
+			var stopOutput, stopError bytes.Buffer
+			if code := clikitcommand.Execute(newRootCommand(), []string{"stop", "--platform-root", root, "--json"}, &stopOutput, &stopError); code.Code() != 0 {
+				t.Errorf("stop test host during cleanup: %s %s", stopOutput.String(), stopError.String())
+			}
+		}
+	})
 	var installOutput, installError bytes.Buffer
 	installCode := clikitcommand.Execute(newRootCommandWithDependencyFactory(commandFactory), []string{"install", "--json", "--index", indexPath,
 		"--platform-root", root, "--service-profile", "default", "--scenario", "explore"}, &installOutput, &installError)
@@ -226,13 +253,6 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		supervisorLog, _ := os.ReadFile(state.SupervisorLog())
 		t.Fatalf("install argv exit=%d: stdout=%s stderr=%s hostLog=%s supervisorLog=%s", installCode.Code(), installOutput.String(), installError.String(), hostLog, supervisorLog)
 	}
-	t.Cleanup(func() {
-		var stdout, stderr bytes.Buffer
-		code := clikitcommand.Execute(newRootCommand(), []string{"stop", "--platform-root", root, "--json"}, &stdout, &stderr)
-		if code.Code() != 0 {
-			t.Errorf("stop installed test host: code=%d stdout=%s stderr=%s", code.Code(), stdout.String(), stderr.String())
-		}
-	})
 	layout, err := versionroot.New(root)
 	if err != nil {
 		t.Fatal(err)
@@ -382,7 +402,7 @@ func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}}}}
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
 		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -499,7 +519,7 @@ func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
 	source.Platforms[0].Host = testHostOnFreePort(t)
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +574,7 @@ func TestUpdatePlanPreservesLivePlatformDatabaseFiles(t *testing.T) {
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
 	source.Platforms[0].Host = testHostOnFreePort(t)
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -692,6 +712,31 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 	if err != nil {
 		return err
 	}
+	layout, err := versionroot.New(a.root)
+	if err != nil {
+		return err
+	}
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.IsBinary() {
+			continue
+		}
+		archive := testfixtures.PackageTarball(item.Package, item.Version, nil)
+		archiveDigest := sha256.Sum256(archive)
+		if hex.EncodeToString(archiveDigest[:]) != item.SHA256 {
+			return fmt.Errorf("test package archive for %s@%s differs from sealed fixture sha256", item.Package, item.Version)
+		}
+		path := filepath.Join(cacheRoot, "packages", item.SHA256+".tgz")
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, archive, 0o600); err != nil {
+			return err
+		}
+	}
 	if progress != nil {
 		if err := progress("Download and verify artifacts", true); err != nil {
 			return err
@@ -703,32 +748,20 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 			return err
 		}
 	}
-	bin := filepath.Join(root, "node_modules", "@kb-labs", "cli-bin", "dist")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		if progress != nil {
-			err = errors.Join(err, progress("Install packages", false))
-		}
-		return err
-	}
-	err = os.WriteFile(filepath.Join(bin, "bin.js"), []byte("export {};\n"), 0o644)
-	// Like a real install, every artifact package lands with its package.json;
-	// the platform lock hashes it for discovery's integrity check.
-	for _, item := range items {
-		if err != nil || item.Package == "" {
-			continue
-		}
-		dir := filepath.Join(root, "node_modules", filepath.FromSlash(item.Package))
-		if err = os.MkdirAll(dir, 0o755); err == nil {
-			err = os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"`+item.Package+`","version":"`+item.Version+`"}`), 0o644)
-		}
-		if err == nil {
-			err = installed.Write(root, item)
-		}
-	}
+	pnpm := artifacts.Pnpm{Root: root, CacheRoot: cacheRoot, Runner: testPnpmRunner{}}
+	err = pnpm.Install(items)
 	if progress != nil {
 		progress("Install packages", false)
 	}
 	return err
+}
+
+type testPnpmRunner struct{}
+
+func (testPnpmRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Stdout, command.Stderr = output, output
+	return command.Run()
 }
 
 func (a installArtifacts) installRoot() (string, error) {
@@ -782,6 +815,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	source.Provenance = nil
 	graph := source.Platforms[0].Profiles["default"]
 	baseGatewayPort := 0
 	highestServicePort := 0
@@ -797,7 +831,7 @@ func TestInstallCommandClassifiesInstallRootTargets(t *testing.T) {
 		t.Fatal("default service graph has no Gateway port")
 	}
 	source.Platforms[0].Host = testHostOnFreePortWithPortHeadroom(t, highestServicePort)
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -998,6 +1032,7 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	source.Provenance = nil
 	graph := source.Platforms[0].Profiles["default"]
 	services := graph.Services
 	minPort, maxPort, gatewayPort := 65535, 0, 0
@@ -1030,7 +1065,7 @@ func TestExecuteShimOwnershipSurvivesOtherInstallationRemoval(t *testing.T) {
 	graph.Services = services
 	source.Platforms[0].Profiles["default"] = graph
 	source.Platforms[0].Host = testHostOnFreePortWithPortHeadroom(t, maxPort-minPort+1500)
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1260,7 +1295,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
 		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}
 	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1414,7 +1449,7 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}
 	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1560,7 +1595,7 @@ func writeJSONInstallFixture(t *testing.T, home string) string {
 	source.Adapters = []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "1.0.0",
 		Package: "@kb/sqlite-stores", Tarball: "https://example.test/sqlite-stores.tgz", SHA256: "sqlite-stores"},
 		Provides: []string{"documentDatabase"}}}
-	release, err := catalog.Seal(source)
+	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1770,8 +1805,20 @@ func TestApplyReportsNodeVersionCodeBeforeResolution(t *testing.T) {
 		t.Fatal("Node policy error is absent from the catalog")
 	}
 	values := map[string]string{"requiredMajor": fmt.Sprint(sharedtoolchain.SupportedNodeMajor), "actualVersion": "22.11.0"}
-	if failure.Hint != diag.RenderTemplate(entry.Hint, values) {
-		t.Fatalf("hint = %q; want catalog rendering %q", failure.Hint, diag.RenderTemplate(entry.Hint, values))
+	expected, err := diag.FromCatalog(entry.Code, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedEnvelope, err := diag.ToEnvelope(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualEnvelope, err := diag.ToEnvelope(failure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actualEnvelope.Hint != expectedEnvelope.Hint {
+		t.Fatalf("hint = %q; want contract-checked catalog hint %q", actualEnvelope.Hint, expectedEnvelope.Hint)
 	}
 }
 
@@ -1860,6 +1907,19 @@ func testListenerWithPortHeadroom(t *testing.T, headroom int) net.Listener {
 	return nil
 }
 
+func sealTestCatalog(t *testing.T, source catalog.Catalog) (catalog.Catalog, error) {
+	t.Helper()
+	withProvenance, err := testfixtures.SealCatalog(source)
+	if err != nil {
+		return catalog.Catalog{}, err
+	}
+	sealed, err := catalog.Seal(withProvenance)
+	if err != nil {
+		return catalog.Catalog{}, err
+	}
+	return sealed, nil
+}
+
 func testReleaseCatalog(t *testing.T, platformVersion string) catalog.Catalog {
 	t.Helper()
 	data := testfixtures.ReleaseIndexJSON(platformVersion, platformVersion, goruntime.GOOS, goruntime.GOARCH)
@@ -1867,7 +1927,13 @@ func testReleaseCatalog(t *testing.T, platformVersion string) catalog.Catalog {
 	if err := json.Unmarshal(data, &source); err != nil {
 		t.Fatal(err)
 	}
-	return source
+	source.Platforms[0].Members = []catalog.Component{{ID: "cli-bin", Version: platformVersion, Package: "@kb-labs/cli-bin",
+		Tarball: "https://example.test/cli-bin.tgz", SHA256: "cli-bin"}}
+	sealed, err := testfixtures.SealCatalog(source)
+	if err != nil {
+		t.Fatalf("seal command release fixture: %v", err)
+	}
+	return sealed
 }
 
 func TestParseProvidersSupportsCommaSeparatedPreferences(t *testing.T) {

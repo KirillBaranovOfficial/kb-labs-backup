@@ -1,3 +1,4 @@
+import { cliBinaryName } from './cli-binary.js';
 /**
  * CLI UI Facade factory.
  *
@@ -139,7 +140,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
 
     error: (err: Error | string, options?: MessageOptions) => {
       if (err instanceof AdapterUnavailableError && err.reason === 'not-configured') {
-        const envelope = toErrorEnvelope(err);
+        const envelope = toErrorEnvelope(err, { binary: cliBinaryName });
         const command = envelope.actions?.[0]?.command;
         if (jsonMode()) {
           writeResult({ ok: false, error: envelope });
@@ -153,7 +154,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
 
       const message = err instanceof Error ? err.message : err;
       if (jsonMode()) {
-        writeResult({ ok: false, error: toErrorEnvelope(err) });
+        writeResult({ ok: false, error: toErrorEnvelope(err, { binary: cliBinaryName }) });
         return;
       }
       const sections = [...(options?.sections ?? [])];

@@ -170,7 +170,7 @@ describe('marketplace:publish', () => {
   });
 
   // case: S-203.1
-  it('keeps publish failures identical in human and JSON modes', async () => {
+  it('keeps publish failure content identical in human and JSON modes', async () => {
     mockedPackPlugin.mockRejectedValue(new Error('package archive failed'));
     const { ui } = createCapturedUI();
     const ctx = createCtxWithHandle(ui);
@@ -178,8 +178,16 @@ describe('marketplace:publish', () => {
     mockedPackPlugin.mockRejectedValue(new Error('package archive failed'));
     const jsonResult = await publishCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(humanResult).toHaveProperty('ok', false);
-    expect(jsonResult).toEqual(humanResult);
+    if (!humanResult || !jsonResult || !('error' in humanResult) || !('error' in jsonResult)) {
+      throw new Error('publish failure results were not returned');
+    }
+    expect(jsonResult.error).toMatchObject({
+      code: humanResult.error.code,
+      message: humanResult.error.message,
+      hint: humanResult.error.hint,
+      correlationId: ctx.requestId,
+    });
+    expect(humanResult.error.correlationId).toBe(ctx.requestId);
   });
 
   it('PB-09: registry HTTP error — exitCode 1, error shown in chain', async () => {

@@ -12,7 +12,7 @@ export class PlatformDuplicateError extends Error {
   constructor(details: { plugin: string; package: string; ownCopy: string; requester: string }) {
     const envelope = createErrorEnvelope('KB_PLUGIN_PLATFORM_DUPLICATE', {
       cause: `"${details.requester}" resolved ${details.package} to ${details.ownCopy}, outside the platform, and the host has no copy of it.`,
-      details,
+      details: { plugin: details.plugin, package: details.package },
     });
     super(`${envelope.code}: ${envelope.message} ${envelope.hint}`);
     this.name = 'PlatformDuplicateError';

@@ -162,7 +162,7 @@ describe("registerProjectRoutes", () => {
     expect(seen).toHaveLength(wireReplies.length);
   });
 
-  // case: S-192.5
+  // case: S-192.1
   it("returns the catalogued not-found error for an undeclared service without acquiring a runtime", async () => {
     let acquired = false;
     await setup(() => ({
@@ -419,6 +419,28 @@ describe("registerProjectRoutes", () => {
         code: "KB_RUNTIME_RESOURCE_NOT_FOUND",
         ...expectedText,
         details: { upstreamStatus: "404" },
+        correlationId: expect.any(String),
+      },
+    });
+  });
+
+  // case: S-203.2
+  it("wraps a non-envelope upstream 403 without inventing a permission detail", async () => {
+    await setup((port) => ({
+      resolveProjectService: async () => ({ baseUrl: `http://127.0.0.1:${port}`, pathPrefix: "/rest", headers: {}, release: () => undefined }),
+    }), { statusCode: 403, body: '{"error":"Forbidden"}' });
+
+    if (!app) throw new Error("project routing app was not initialized");
+    const res = await app.inject({ method: "GET", url: "/api/v1/projects/p/rest/api/v1/private" });
+
+    expect(res.statusCode).toBe(403);
+    const expectedText = catalogueText("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", {});
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE",
+        ...expectedText,
+        details: { requestStage: "GET /rest/api/v1/api/v1/private", httpStatus: "403" },
         correlationId: expect.any(String),
       },
     });

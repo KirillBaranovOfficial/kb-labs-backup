@@ -159,6 +159,8 @@ export interface ErrorCatalogEntry {
   hint: string;
   /** Hint used when the error has no correlation ID to fill its normal hint. */
   hintWithoutCorrelationId?: string;
+  runtimeTemplateParameters?: Record<string, 'required' | 'optional'>;
+  structuredDetailFields?: string[];
   deprecated?: boolean;
 }
 

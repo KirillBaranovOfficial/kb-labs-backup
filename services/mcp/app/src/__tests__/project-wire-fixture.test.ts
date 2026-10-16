@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
-import { PLATFORM_AUDIT_COLLECTION } from '@kb-labs/core-platform';
+import { createErrorEnvelope, PLATFORM_AUDIT_COLLECTION } from '@kb-labs/core-platform';
 import { createInMemoryDocumentDatabase, InMemoryCache } from '@kb-labs/core-platform/inmemory';
 import type { BaseDocument } from '@kb-labs/core-platform/adapters';
 import { forwardedIdentityHeaders } from '@kb-labs/gateway-contracts';
@@ -131,7 +131,7 @@ describe('project MCP wire fixture producer', () => {
     }));
   });
 
-  // case: S-253.3
+  // case: S-253.3, S-045.10
   it('audits secured tool outcomes with forwarded identity while analytics stays separate', async () => {
     projectRoot = await mkdtemp(join(tmpdir(), 'kb-mcp-audit-'));
     const pluginRoot = join(projectRoot, 'plugins', 'audit-fixture');
@@ -163,6 +163,7 @@ describe('project MCP wire fixture producer', () => {
         analytics: { track }, documentDatabase: docs,
       } as unknown as PlatformContainer,
       projectRoot,
+      gatewayUrl: 'https://gateway.example.test',
       policy: { schemaVersion: '1.0', default: 'allow', rules: [] } satisfies Policy,
       authMode: 'secured',
     });
@@ -176,11 +177,25 @@ describe('project MCP wire fixture producer', () => {
       type: 'user', userId: 'user-audit-1',
       namespaceId: 'project-a', tier: 'free', permissions: [],
     }, secret);
+    const opaqueHostIdentity = forwardedIdentityHeaders({
+      type: 'machine', userId: 'host-agent-1', namespaceId: 'project-a', tier: 'free', permissions: ['host:connect'],
+    }, secret);
 
     const rejected = await postMcp(port, 0, 'tools/call', {
       name: 'fixture-audit-plugin__mutate', arguments: { value: 'must not run' },
     }, noTokenIdentity);
     expect(rejected.status).toBe(401);
+    expect(executeCommandV3).not.toHaveBeenCalled();
+
+    const opaqueRejected = await postMcp(port, 4, 'tools/list', {}, opaqueHostIdentity);
+    expect(opaqueRejected.status).toBe(401);
+    expect(JSON.parse(opaqueRejected.body)).toMatchObject({
+      ok: false,
+      error: {
+        ...createErrorEnvelope('KB_AUTH_MCP_CREDENTIAL_REQUIRED', { details: { gatewayUrl: 'https://gateway.example.test' } }),
+        correlationId: expect.any(String),
+      },
+    });
     expect(executeCommandV3).not.toHaveBeenCalled();
 
     const success = await postMcp(port, 1, 'tools/call', {

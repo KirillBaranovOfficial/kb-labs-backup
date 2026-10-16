@@ -35,9 +35,9 @@ export function validationError(
  * Return a typed runtime/API failure for the shared command renderer.
  * Call in catch blocks, right before returning the command result.
  */
-export function handleError(err: unknown): CommandFailure {
+export function handleError(err: unknown, correlationId?: string): CommandFailure {
   const source = err !== null && typeof err === 'object' && 'envelope' in err ? err.envelope : err;
-  const typedEnvelope = toErrorEnvelope(source);
+  const typedEnvelope = toErrorEnvelope(source, correlationId ? { correlationId } : {});
   return {
     ok: false,
     error: {
@@ -45,6 +45,7 @@ export function handleError(err: unknown): CommandFailure {
       message: typedEnvelope.message,
       ...(typedEnvelope.cause ? { cause: typedEnvelope.cause } : {}),
       hint: typedEnvelope.hint,
+      ...(typedEnvelope.correlationId ? { correlationId: typedEnvelope.correlationId } : {}),
       ...(typedEnvelope.details ? { details: typedEnvelope.details } : {}),
       ...(typedEnvelope.diagnostics ? { diagnostics: typedEnvelope.diagnostics } : {}),
     },
