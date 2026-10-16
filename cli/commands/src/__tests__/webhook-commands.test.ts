@@ -36,6 +36,7 @@ vi.stubGlobal('fetch', mockFetch);
 import { webhookProvision } from '../commands/system/webhook/webhook-provision.js';
 import { webhookList } from '../commands/system/webhook/webhook-list.js';
 import { webhookRevoke } from '../commands/system/webhook/webhook-revoke.js';
+import { webhookHistory } from '../commands/system/webhook/webhook-history.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -333,6 +334,37 @@ describe('kb webhook list', () => {
 
     const opts = mockFetch.mock.calls[0]![1] as RequestInit;
     expect((opts.headers as Record<string, string>).Authorization).toBe('Bearer tok_test');
+  });
+});
+
+// ── webhook history ───────────────────────────────────────────────────────────
+
+describe('kb webhook history', () => {
+  it('reads and prints the validated Gateway history record', async () => {
+    mockFetch.mockResolvedValueOnce(makeJsonResponse({ record: {
+      webhookId: 'delivery-01', project: 'local', receivedAt: '2026-10-16T08:00:00.000Z',
+      pluginId: '@org/plugin', event: 'alert', handler: './handler.js#default', instanceId: null,
+      outcome: { type: 'handler_error', code: 'KB_PLUGIN_COMMAND_FAILED' }, durationMs: 14,
+      correlationId: 'request-01',
+    } }));
+    const captured: Captured = { errors: [], output: [], json: [] };
+    const exitCode = await webhookHistory.run(makeCtx(captured), ['delivery-01'], {});
+    expect(exitCode).toBe(0);
+    expect(mockFetch.mock.calls[0]![0]).toBe('http://localhost:4000/api/v1/webhooks/history/delivery-01');
+    expect(captured.output.join('')).toContain('handler_error (KB_PLUGIN_COMMAND_FAILED)');
+    expect(captured.output.join('')).not.toContain('payload');
+  });
+
+  it('returns the record in JSON output', async () => {
+    mockFetch.mockResolvedValueOnce(makeJsonResponse({ record: {
+      webhookId: 'delivery-02', project: 'local', receivedAt: '2026-10-16T08:00:00.000Z',
+      pluginId: 'fixture', event: 'alert', handler: './handler.js#default', instanceId: null,
+      outcome: { type: 'delivered' }, durationMs: 2, correlationId: 'request-02',
+    } }));
+    const captured: Captured = { errors: [], output: [], json: [] };
+    const exitCode = await webhookHistory.run(makeCtx(captured), ['delivery-02'], { json: true });
+    expect(exitCode).toBe(0);
+    expect(captured.json[0]).toMatchObject({ ok: true, data: { record: { webhookId: 'delivery-02' } } });
   });
 });
 

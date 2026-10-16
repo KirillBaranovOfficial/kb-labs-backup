@@ -12,6 +12,8 @@ import { createHmac } from 'node:crypto';
 import type { ILogger } from '@kb-labs/core-platform';
 import type { ManifestV3, WebhookHandlerDecl } from '@kb-labs/plugin-contracts';
 import { InMemoryCache } from '@kb-labs/core-platform/inmemory';
+import { createInMemoryDocumentDatabase } from '@kb-labs/sdk/testing';
+import { WebhookHistoryStore } from '../webhook/history-store.js';
 import { WebhookSecretStore } from '../webhook/secret-store.js';
 
 // ── Mock globalDispatcher before importing router ──────────────────────────────
@@ -91,6 +93,7 @@ async function buildApp(
     broker: broker as never,
     logger: noopLogger,
     manifests,
+    historyStore: new WebhookHistoryStore(createInMemoryDocumentDatabase()),
   });
   await app.ready();
   return app;
@@ -117,6 +120,7 @@ describe('registerWebhookRoutes — startup validation', () => {
         broker: broker as never,
         logger: noopLogger,
         manifests: [{ pluginId: PLUGIN_ID, manifest, pluginRoot: PLUGIN_ROOT }],
+        historyStore: new WebhookHistoryStore(createInMemoryDocumentDatabase()),
       }),
     ).rejects.toThrow(`webhook '${PLUGIN_ID}/push' has no auth config`);
     await app.close();
@@ -135,6 +139,7 @@ describe('registerWebhookRoutes — startup validation', () => {
       broker: broker as never,
       logger: noopLogger,
       manifests: [{ pluginId: PLUGIN_ID, manifest, pluginRoot: PLUGIN_ROOT }],
+      historyStore: new WebhookHistoryStore(createInMemoryDocumentDatabase()),
     });
     expect(count).toBe(2);
     await app.ready();

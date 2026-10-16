@@ -1,7 +1,7 @@
 ---
 title: "Webhooks"
 description: "Receive events from external services — GitHub, Stripe, Slack, and anything else that speaks HTTP POST."
-updatedAt: "2026-05-29"
+updatedAt: "2026-10-16"
 order: 6
 ---
 
@@ -329,6 +329,9 @@ kb webhook provision --plugin <id> --event <name> [--instance <id>] [--json]
 # List declared webhooks and provisioned status
 kb webhook list [--plugin <id>] [--json]
 
+# Inspect a delivery record
+kb webhook history <webhookId> [--json]
+
 # Revoke a secret
 kb webhook revoke --plugin <id> --event <name> [--instance <id>] [--json]
 ```
@@ -355,6 +358,20 @@ GATEWAY_PUBLIC_URL=https://my-gateway.example.com kb-dev start gateway
 ```
 
 If unset, defaults to `http://localhost:<port>`.
+
+## Delivery history
+
+The Gateway stores one payload-free record for each declared webhook delivery, including successful handling, catalogued handler failures, invalid signatures, and oversized-body rejections. Each record includes its webhook ID, project, received-at time, plugin and handler identity, outcome, duration, and correlation ID. The record never contains the request body or a webhook secret.
+
+Inspect a delivery with the authenticated REST API or CLI:
+
+```bash
+kb webhook history <webhookId>
+curl https://my-gateway.example.com/api/v1/webhooks/history/<webhookId> \
+  -H "Authorization: Bearer <token>"
+```
+
+The Gateway keeps the latest 100 records per project, plugin, event, and instance by default. The limit is declared by the Gateway webhook history store; pruning runs through the store as records are written.
 
 ## Delivery URL format
 
