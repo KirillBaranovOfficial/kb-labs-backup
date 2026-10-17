@@ -18,7 +18,7 @@ As a KB Labs maintainer, I can see clean-machine CI evidence for every registere
 
 | # | Action | Expected |
 |---|---|---|
-| S-261.1 | Run `kb-devkit check` in the workspace | The local suite check reads the devkit `go-binary` registry and runs every registered module's non-e2e Go tests with a fresh `HOME`, cleared `KB_PLATFORM_ROOT`, `KB_HOME`, `KB_NET_OFFSET` and `GOFLAGS`, and both configured temporary-directory variants. Empty registry discovery or a discovery error fails the gate. A failing check's JSON output retains its issue detail and the exact `kb-devkit check --only <name>` rerun command. |
+| S-261.1 | Run `kb-devkit check` in the workspace | The local suite check reads the devkit `go-binary` registry and runs every registered module's non-e2e Go tests with a fresh `HOME`, cleared `KB_PLATFORM_ROOT`, `KB_HOME`, `KB_NET_OFFSET` and `GOFLAGS`, and two real-world temporary-directory variants: a short child of `/tmp` and one short child of the platform default temp directory. Before testing, it derives the host's Unix socket pathname capacity and refuses a variant that cannot fit the TSX IPC socket path, with a named diagnostic and an exact rerun command that sets `TMPDIR=/tmp` and preserves the registered check name or direct entry arguments. Empty registry discovery or a discovery error also fails the gate. A failing check's JSON output retains its issue detail and the exact `kb-devkit check --only <name>` rerun command. |
 | S-261.2 | Open a pull request or push to `master` that triggers the installer journey workflow and inspect its native macOS smoke | The reusable workflow builds one candidate from that change and the native `macos-latest` job downloads it, runs `kb-create install` into a temporary platform root under a fresh `HOME`, then passes `kb --version`, `kb doctor --json`, `kb project add <worktree> --json`, and `kb qa cases list --json`. The Docker container matrix remains Linux-only. |
 | S-261.3 | Inspect a completed nightly user journey run | Its computed scoreboard is published to the single configured GitHub issue, which is updated on later runs; the run summary and artifact retain the same scoreboard. |
 
@@ -33,3 +33,11 @@ The owner moved the Go module suite to local gates and specified a native macOS 
 ## Round 3
 
 The native macOS job delegates its setup to repository scripts shared with the container journey. A failing kb-devkit external check keeps the issue detail and rerun command in its JSON output.
+
+## Round 5
+
+The two TMPDIR variants use short roots at their real system locations. The suite checks that each root can fit a TSX Unix socket path before starting any Go package tests and reports `GO_SUITE_TMPDIR_SOCKET_PATH_TOO_LONG` when it cannot.
+
+## Round 6
+
+When a TMPDIR variant cannot fit the measured TSX socket path, its diagnostic includes a copyable command that reruns the same registered check or direct suite invocation with `TMPDIR=/tmp`.

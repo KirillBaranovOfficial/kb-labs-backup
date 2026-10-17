@@ -1,6 +1,6 @@
 # Clean-machine CI checks
 
-The Go suite command is the same entry point used by the `go-module-suite` kb-devkit check and local development. By default it discovers every module in the devkit `go-binary` registry, runs all non-e2e packages twice with separate fresh `HOME` and `TMPDIR` directories, and clears `KB_PLATFORM_ROOT`, `KB_HOME`, `KB_NET_OFFSET`, and `GOFLAGS` for each run. It reuses the Go module and build caches outside the fresh `HOME` so clean-environment runs do not needlessly redownload dependencies or recompile every module.
+The Go suite command is the same entry point used by the `go-module-suite` kb-devkit check and local development. By default it discovers every module in the devkit `go-binary` registry and runs all non-e2e packages twice, with a fresh `HOME` and `TMPDIR` for each module and variant. Variant one is a direct short child of `/tmp`; variant two is one short child of the platform default temp directory. Before invoking Go, the suite probes the host's Unix socket pathname capacity and checks that each root can fit the TSX IPC socket path. An insufficient root fails with the named `GO_SUITE_TMPDIR_SOCKET_PATH_TOO_LONG` diagnostic. The suite clears `KB_PLATFORM_ROOT`, `KB_HOME`, `KB_NET_OFFSET`, and `GOFLAGS` for each run. It reuses the Go module and build caches outside the fresh `HOME` so clean-environment runs do not needlessly redownload dependencies or recompile every module.
 
 Run the full registered suite from the repository root:
 
