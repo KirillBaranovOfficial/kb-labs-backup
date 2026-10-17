@@ -8,6 +8,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/wizard"
 )
 
@@ -32,7 +33,9 @@ func run() diag.ExitStatus {
 		fmt.Fprintln(os.Stderr, err)
 		return diag.ExitCode(diag.FromError(err))
 	}
-	if _, err = wizard.RequestScenario(source, os.Args[1], "explore", "", wizard.IO{In: os.Stdin, Out: os.Stdout}); err != nil {
+	if _, err = wizard.RequestScenario(source, os.Args[1], "explore", "", wizard.IO{
+		In: os.Stdin, Out: os.Stdout, PendingSecrets: map[string]secrets.PendingSecret{},
+	}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return diag.ExitCode(diag.FromError(err))
 	}
