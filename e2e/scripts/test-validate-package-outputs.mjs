@@ -281,3 +281,12 @@ test('release build preflight reports a missing dist output and exact package bu
     },
   ]);
 });
+
+// case: S-262.1
+test('devkit pack-extra build task emits the package-declared adapter manifest', () => {
+  const fixture = new URL('../fixtures/adapters/llm-deterministic/', import.meta.url);
+  execFileSync(process.execPath, [new URL('./build-pack-extra.mjs', import.meta.url).pathname], { cwd: fixture });
+  const output = JSON.parse(readFileSync(new URL('../fixtures/adapters/llm-deterministic/dist/manifest.json', import.meta.url), 'utf8'));
+  assert.equal(output.id, 'e2e-llm-deterministic');
+  assert.equal(output.implements, 'ILLM');
+});

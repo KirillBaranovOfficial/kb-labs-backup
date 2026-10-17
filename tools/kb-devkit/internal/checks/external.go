@@ -43,12 +43,13 @@ type externalWorkspace struct {
 }
 
 type externalWorkspacePackage struct {
-	Name     string `json:"name"`
-	Dir      string `json:"dir"`
-	RelPath  string `json:"relPath"`
-	Category string `json:"category"`
-	Preset   string `json:"preset"`
-	Language string `json:"language"`
+	Name        string `json:"name"`
+	Dir         string `json:"dir"`
+	RelPath     string `json:"relPath"`
+	Category    string `json:"category"`
+	Preset      string `json:"preset"`
+	Language    string `json:"language"`
+	BuildTarget bool   `json:"buildTarget"`
 }
 
 type externalCheckOutput struct {
@@ -111,7 +112,7 @@ func (r *externalRule) CheckWorkspace(ws *workspace.Workspace) []Issue {
 	for _, pkg := range ws.Packages {
 		packages = append(packages, externalWorkspacePackage{
 			Name: pkg.Name, Dir: pkg.Dir, RelPath: pkg.RelPath,
-			Category: pkg.Category, Preset: pkg.Preset, Language: pkg.Language,
+			Category: pkg.Category, Preset: pkg.Preset, Language: pkg.Language, BuildTarget: pkg.BuildTarget,
 		})
 	}
 	out, err := r.runCommandWithInput(r.run, externalInput{

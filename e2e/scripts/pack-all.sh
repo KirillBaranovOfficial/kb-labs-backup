@@ -36,19 +36,6 @@ PACKED=0
 SKIPPED=0
 FAILED=0
 
-pack_fixture_manifest() (
-  local archive="$1" module="$2"
-  local workspace rebuilt
-  workspace="$(mktemp -d "$OUT_DIR/.manifest-pack.XXXXXX")"
-  rebuilt="$workspace/rebuilt.tgz"
-  trap 'rm -rf "$workspace"' EXIT
-  tar -xzf "$archive" -C "$workspace"
-  node "$REPO_ROOT/infra/devkit/tsup/emit-manifest-json.mjs" \
-    --module "$module" --output "$workspace/package/dist/manifest.json"
-  tar -czf "$rebuilt" -C "$workspace" package
-  mv "$rebuilt" "$archive"
-)
-
 # Iterate every package.json in the repo (excluding node_modules and .kb)
 while IFS= read -r pkg_json; do
   pkg_dir="$(dirname "$pkg_json")"
@@ -95,18 +82,13 @@ done < <(cd "$REPO_ROOT" && find . \
 # publisher and candidate source-fidelity validator.
 while IFS= read -r extra; do
   fixture_dir="$REPO_ROOT/$(jq -r '.directory' <<< "$extra")"
-  manifest_module="$fixture_dir/$(jq -r '.manifest' <<< "$extra")"
   fixture_name="$(jq -r '.name' "$fixture_dir/package.json")"
-  fixture_version="$(jq -r '.version' "$fixture_dir/package.json")"
-  archive_name="${fixture_name#@}"
-  archive_name="${archive_name//\//-}-$fixture_version.tgz"
   if (cd "$fixture_dir" && pnpm pack --pack-destination "$OUT_DIR" --silent); then
     PACKED=$((PACKED+1))
   else
     echo "ERROR: could not pack $fixture_name"
     exit 1
   fi
-  pack_fixture_manifest "$OUT_DIR/$archive_name" "$manifest_module"
 done < <(jq -c '.[]' "$REPO_ROOT/e2e/scripts/pack-extras.json")
 
 echo ""
