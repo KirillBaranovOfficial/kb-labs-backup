@@ -87,7 +87,7 @@
 | `KB_INSTALL_NETWORK_UNREACHABLE` | нет доступа к релиз-индексу/реестру | проверить сеть/прокси, `retry` | L |
 | `KB_INSTALL_RELEASE_INDEX_INVALID` | индекс повреждён/подпись не сходится | повторить; сообщить (виновник — мы) | L |
 | `KB_INSTALL_NODE_MISSING` | нет нужной версии Node/менеджера пакетов | ссылка на установку или установить встроенный | L |
-| `KB_INSTALL_NODE_VERSION` | Node.js не 24.x | установить Node.js 24; для nvm: `nvm install 24 && nvm use 24` | L |
+| `KB_NODE_VERSION_UNSUPPORTED` | Node.js запущен на неподдерживаемой major-версии | выполнить команду смены версии из диагностического сообщения | L |
 | `KB_INSTALL_MEMORY_INSUFFICIENT` | доступной памяти меньше 1.20 GiB | освободить память или увеличить её объём, затем `kb-create install` | L |
 | `KB_INSTALL_PORT_IN_USE` | порт, требуемый установкой, занят | остановить процесс с портом и снова `kb-create install` | L |
 | `KB_INSTALL_INCOMPATIBLE_COMPONENTS` | (есть) компоненты несовместимы | какие и с какими версиями | L |

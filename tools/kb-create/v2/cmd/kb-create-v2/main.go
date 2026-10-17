@@ -135,9 +135,6 @@ func productionCommandDependencies(command *cobra.Command) commandDependencies {
 
 func updateCompatibilityDiag(failure *diag.Diag) *diag.Diag {
 	if failure.Code == contracts.CodeIncompatibleComponents {
-		failure.Meta["component"] = failure.Meta["id"]
-		failure.Meta["version"] = failure.Meta["selectedVersion"]
-		failure.Meta["range"] = failure.Meta["requiredRange"]
 		failure.Code = contracts.CodeUpdateIncompatible
 	}
 	return failure

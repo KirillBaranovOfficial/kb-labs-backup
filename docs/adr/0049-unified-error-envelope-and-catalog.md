@@ -43,8 +43,9 @@ message/hint templates), source at
 generated (`go generate`) and a test catches a stale file. Documentation pages
 are generated from it.
 
-Installer preflight uses `KB_INSTALL_NODE_VERSION` for an unsupported Node.js
-major, `KB_INSTALL_MEMORY_INSUFFICIENT` when available memory is below 1.20 GiB,
+Installer preflight and runtime use `KB_NODE_VERSION_UNSUPPORTED` when Node.js
+runs on a major outside the workspace policy. `KB_INSTALL_MEMORY_INSUFFICIENT`
+is used when available memory is below 1.20 GiB,
 the measured 992.3 MiB pnpm peak plus 236.5 MiB headroom, and `KB_INSTALL_NO_DISK_SPACE`
 when less than 2 GiB is free on the platform root filesystem. The disk reserve
 is more than four times the measured 446.7 MiB installed root. `KB_INSTALL_PORT_IN_USE`

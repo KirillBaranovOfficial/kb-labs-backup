@@ -129,7 +129,12 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The credentials are invalid.",
-      "hint": "Retry, or reset your credentials."
+      "hint": "Retry, or reset your credentials.",
+      "structuredDetailFields": [
+        "httpStatus",
+        "remoteCorrelationId",
+        "requestStage"
+      ]
     },
     {
       "code": "KB_AUTH_INVALID_CURRENT_PASSWORD",
@@ -245,7 +250,8 @@
       "message": "The saved Gateway session was revoked.",
       "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
       "structuredDetailFields": [
-        "reason"
+        "reason",
+        "remoteCorrelationId"
       ]
     },
     {
@@ -993,14 +999,14 @@
       "hint": "Install the required version or use the bundled runtime."
     },
     {
-      "code": "KB_INSTALL_NODE_VERSION",
-      "area": "install",
+      "code": "KB_NODE_VERSION_UNSUPPORTED",
+      "area": "runtime",
       "stage": "preflight",
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "Node.js {version} is unsupported; KB Labs requires Node.js 24.x.",
-      "hint": "Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`)."
+      "message": "Node.js {actualVersion} is unsupported; KB Labs requires major {requiredMajor}.",
+      "hint": "Switch to Node.js {requiredMajor}: run `nvm install {requiredMajor} && nvm use {requiredMajor}`, then rerun your command."
     },
     {
       "code": "KB_INSTALL_NO_DISK_SPACE",
@@ -1266,7 +1272,10 @@
       "retryable": false,
       "processExitClass": "input-refusal",
       "message": "A secret input could not be stored.",
-      "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable."
+      "hint": "Pass --secret-env requirement=ENV_VAR and set the environment variable.",
+      "structuredDetailFields": [
+        "requirement"
+      ]
     },
     {
       "code": "KB_INSTALL_SECRET_STATE_CHANGED",
@@ -1326,7 +1335,7 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Runtime preflight failed: the installed toolchain is not supported.",
-      "hint": "Use Node.js 24.x and pnpm 11.x, or update the runtime and retry."
+      "hint": "Use the supported Node.js major and pnpm 11.x, or update the runtime and retry."
     },
     {
       "code": "KB_INSTALL_UNSUPPORTED_PLATFORM",
@@ -2851,13 +2860,8 @@
       "severity": "error",
       "retryable": false,
       "processExitClass": "operation-failure",
-      "message": "The update is incompatible with installed {kind} {component} at {version}; its declared compatibility range is {range}.",
-      "hint": "Update or remove {kind} {component} first, then rerun `kb-create update`.",
-      "structuredDetailFields": [
-        "id",
-        "requiredRange",
-        "selectedVersion"
-      ]
+      "message": "The update is incompatible with installed {kind} {id} at {selectedVersion}; its declared compatibility range is {requiredRange}.",
+      "hint": "Update or remove {kind} {id} first, then rerun `kb-create update`."
     },
     {
       "code": "KB_UPDATE_NO_SNAPSHOT",

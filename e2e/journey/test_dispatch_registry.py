@@ -1226,7 +1226,7 @@ class DispatchRegistryTests(unittest.TestCase):
         results = []
         root = Path(__file__).resolve().parents[2]
         node = shutil.which("node")
-        self.assertIsNotNone(node, "Node.js 24 is required to run the workspace CLI")
+        self.assertIsNotNone(node, "A Node.js executable is required to run the workspace CLI")
         for mode in ("local", "secured"):
             command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "coverage", "show", "--level", "all",
                        "--mode", mode, "--json"]

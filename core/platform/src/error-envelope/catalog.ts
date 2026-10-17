@@ -16,8 +16,8 @@ import type {
   ErrorEnvelope,
   PlatformDiagnostic,
 } from './types.js';
-import { catalogRequiredTemplateParameters, catalogStructuredDetailFields, catalogTemplateParameterNames } from './error-codes.generated.js';
-import type { CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from './error-codes.generated.js';
+import { catalogRequiredHintTemplateParameters, catalogRequiredMessageTemplateParameters, catalogStructuredDetailFields, catalogTemplateParameterNames } from './error-codes.generated.js';
+import type { CatalogHintTemplateParameters, CatalogMessageTemplateParameters, CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from './error-codes.generated.js';
 import type { CatalogDetailsFor } from './error-codes.generated.js';
 
 /** Catalogue-derived detail fields accepted by a bridge for a specific code. */
@@ -81,16 +81,29 @@ export function renderTemplate(
 
 type DataTemplateParameters<C extends PlatformErrorCode> = CatalogTemplateParameters[C];
 type RuntimeTemplateParameters<C extends PlatformErrorCode> = CatalogRuntimeTemplateParameters[C];
-type TemplateValueOption<C extends PlatformErrorCode> =
-  [RequiredDetailKeys<RuntimeTemplateParameters<C>>] extends [never]
+type MessageTemplateParameters<C extends PlatformErrorCode> = CatalogMessageTemplateParameters[C];
+type HintTemplateParameters<C extends PlatformErrorCode> = CatalogHintTemplateParameters[C];
+type RequiredDataParameters<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
+  (O extends { message: string } ? Record<never, never> : MessageTemplateParameters<C>)
+  & (O extends { hint: string } ? Record<never, never> : HintTemplateParameters<C>);
+type RequiredHintRuntimeParameters<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
+  O extends { hint: string } ? Record<never, never> : RuntimeTemplateParameters<C>;
+type TemplateValueOption<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
+  [RequiredDetailKeys<RequiredHintRuntimeParameters<C, O>>] extends [never]
     ? { templateValues?: RuntimeTemplateParameters<C> }
     : { templateValues: RuntimeTemplateParameters<C> };
-type CreateEnvelopeOptionsFor<C extends PlatformErrorCode> =
-  EnvelopeOptionFields & DetailsOptionFor<C> & TemplateValueOption<C>;
+type EnvelopeDetailsFor<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
+  Omit<DetailsFor<C>, keyof DataTemplateParameters<C>> & RequiredDataParameters<C, O>;
+type DetailsOption<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
+  [keyof RequiredDataParameters<C, O>] extends [never]
+    ? { details?: EnvelopeDetailsFor<C, O> }
+    : { details: EnvelopeDetailsFor<C, O> };
+type CreateEnvelopeOptionsFor<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
+  O & DetailsOption<C, O> & TemplateValueOption<C, O>;
 
 export type CreateEnvelopeOptions<C extends PlatformErrorCode = never> = EnvelopeOptionFields
-  & DetailsOptionFor<C>
-  & TemplateValueOption<C>;
+  & DetailsOption<C, EnvelopeOptionFields>
+  & TemplateValueOption<C, EnvelopeOptionFields>;
 
 interface EnvelopeOptionFields {
   /** Structured details and invocation-owned template values must be secret-free. */
@@ -106,12 +119,12 @@ interface EnvelopeOptionFields {
   severity?: ErrorEnvelope['severity'];
 }
 
-type EnvelopeOptionsArgs<C extends PlatformErrorCode> = [RequiredDetailKeys<DetailsFor<C>>] extends [never]
-  ? [RequiredDetailKeys<RuntimeTemplateParameters<C>>] extends [never] ? [options?: CreateEnvelopeOptionsFor<C>] : [options: CreateEnvelopeOptionsFor<C>]
-  : [options: CreateEnvelopeOptionsFor<C>];
+type EnvelopeOptionsArgs<C extends PlatformErrorCode, O extends EnvelopeOptionFields> = [keyof RequiredDataParameters<C, O>] extends [never]
+  ? [RequiredDetailKeys<RequiredHintRuntimeParameters<C, O>>] extends [never] ? [options?: CreateEnvelopeOptionsFor<C, O>] : [options: CreateEnvelopeOptionsFor<C, O>]
+  : [options: CreateEnvelopeOptionsFor<C, O>];
 
 /** Builds an envelope from a catalog code. Throws for missing template values or an unknown code. */
-export function createErrorEnvelope<C extends PlatformErrorCode>(code: C, ...args: EnvelopeOptionsArgs<C>): ValidatedErrorEnvelope;
+export function createErrorEnvelope<C extends PlatformErrorCode, O extends EnvelopeOptionFields = EnvelopeOptionFields>(code: C, ...args: EnvelopeOptionsArgs<C, O>): ValidatedErrorEnvelope;
 export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFields & { details?: unknown; templateValues?: unknown } = {}): ValidatedErrorEnvelope {
   return buildErrorEnvelope(code, options);
 }
@@ -169,7 +182,11 @@ function buildErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFiel
     ...Object.keys(details).filter((key) => !allowedDetails.has(key)),
     ...Object.keys(templateValuesInput).filter((key) => !parameterNames.includes(key)),
   ];
-  for (const name of catalogRequiredTemplateParameters[code]) {
+  const requiredParameters = [
+    ...(!options.message ? catalogRequiredMessageTemplateParameters[code] : []),
+    ...(!options.hint ? catalogRequiredHintTemplateParameters[code] : []),
+  ];
+  for (const name of requiredParameters) {
     if (templateValues[name] === undefined || templateValues[name].trim() === '') violationFields.push(name);
   }
   if (violationFields.length > 0) {

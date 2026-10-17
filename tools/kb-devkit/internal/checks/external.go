@@ -187,7 +187,7 @@ func (r *externalRule) runCommandWithInput(command string, input externalInput) 
 	}
 
 	if runErr != nil {
-		return externalCheckOutput{}, fmt.Errorf("external command exited unsuccessfully: %w", runErr)
+		return parsed, fmt.Errorf("external command exited unsuccessfully: %w", runErr)
 	}
 
 	return parsed, nil

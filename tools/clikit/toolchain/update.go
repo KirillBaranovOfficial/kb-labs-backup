@@ -13,7 +13,7 @@ import (
 // nvm or Volta as a surprising machine-wide side effect.
 func UpdateNode(ctx context.Context) (string, error) {
 	if nvmDir := findNvmDir(); nvmDir != "" {
-		command := exec.CommandContext(ctx, "bash", "-lc", "source \"$NVM_DIR/nvm.sh\" && nvm install 24 >/dev/null && nvm which 24") // #nosec G204 -- fixed command
+		command := exec.CommandContext(ctx, "bash", "-lc", fmt.Sprintf("source \"$NVM_DIR/nvm.sh\" && nvm install %d >/dev/null && nvm which %d", SupportedNodeMajor, SupportedNodeMajor)) // #nosec G204 -- fixed command
 		command.Env = append(os.Environ(), "NVM_DIR="+nvmDir)
 		out, err := command.Output()
 		if err != nil {
@@ -22,7 +22,7 @@ func UpdateNode(ctx context.Context) (string, error) {
 		return validateNodePath(lastLine(string(out)))
 	}
 	if volta, err := exec.LookPath("volta"); err == nil {
-		if out, runErr := exec.CommandContext(ctx, volta, "install", "node@24").CombinedOutput(); runErr != nil {
+		if out, runErr := exec.CommandContext(ctx, volta, "install", fmt.Sprintf("node@%d", SupportedNodeMajor)).CombinedOutput(); runErr != nil {
 			return "", fmt.Errorf("update Node.js with Volta: %s", strings.TrimSpace(string(out)))
 		}
 		out, runErr := exec.CommandContext(ctx, volta, "which", "node").Output()

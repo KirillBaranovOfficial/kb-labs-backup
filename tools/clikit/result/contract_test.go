@@ -68,9 +68,12 @@ func TestDecodeResultReturnsCataloguedFailureEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeResult(failure): %v", err)
 	}
-	entry, _ := diag.LookupCatalog("KB_AUTH_FORBIDDEN")
-	if failure == nil || failure.Code != "KB_AUTH_FORBIDDEN" || failure.Message != entry.Message || failure.Hint != entry.Hint {
-		t.Fatalf("failure = %#v, want catalogued Gateway diagnostic", failure)
+	expected, err := diag.FromCatalog("KB_AUTH_FORBIDDEN", map[string]string{"permission": "plugins:manage"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failure == nil || failure.Code != expected.Code || failure.Message != expected.Message || failure.Hint != expected.Hint {
+		t.Fatalf("failure = %#v, want contract-checked catalogued Gateway diagnostic", failure)
 	}
 	if failure.Meta["remoteCorrelationId"] != gatewayCorrelationID {
 		t.Fatalf("remote correlation id = %#v, want %q", failure.Meta["remoteCorrelationId"], gatewayCorrelationID)

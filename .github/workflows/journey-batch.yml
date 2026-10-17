@@ -1,0 +1,112 @@
+name: Journey batch
+
+on:
+  push:
+    branches: ['batch/**']
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Optional baseline label recorded in batch metadata; the build compares against the default branch
+        required: false
+        type: string
+  pull_request:
+    paths:
+      - '.github/workflows/journey-batch.yml'
+      - 'core/**'
+      - 'adapters/**'
+      - 'cli/**'
+      - 'plugins/**'
+      - 'sdk/**'
+      - 'shared/**'
+      - 'studio/**'
+      - 'tools/**'
+      - 'e2e/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+
+concurrency:
+  group: journey-batch-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  journey:
+    name: Installed journey batch
+    runs-on: ubuntu-latest
+    # Local Mac whole-batch runs took 49, 70, and 74 minutes; 180 minutes gives
+    # the longest run 106 minutes of margin (2.43x observed time). Local sizing
+    # measured 6.96 GB of images + 1.787 GB build cache + 1.85 GB volumes +
+    # 1.9 GB workspace/build (12.50 GB total); against about 14 GB free on
+    # ubuntu-latest this leaves about 1.50 GB, so runner disk cleanup is not
+    # needed for the measured batch footprint.
+    timeout-minutes: 180
+    env:
+      KB_JOURNEY_CI: '1'
+      GOTOOLCHAIN: local
+      JOURNEY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - id: pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          # The module's toolchain directive is go1.25.13; use the workspace CI Go release.
+          go-version: '1.26.8'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - id: dependencies
+        name: Install workspace dependencies
+        run: |
+          corepack pnpm install --frozen-lockfile
+      - id: batch
+        name: Run shared journey batch
+        env:
+          BATCH_BASELINE: ${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}
+          KB_DEVKIT_BASE_REF: ${{ github.event.pull_request.base.sha || format('origin/{0}', env.JOURNEY_DEFAULT_BRANCH) }}
+        run: e2e/journey/batch.sh .journey/batch/${{ github.run_id }} "$BATCH_BASELINE"
+      - name: Add batch summary
+        if: always()
+        env:
+          FAILED_STEP: ${{ steps.checkout.outcome == 'failure' && 'Checkout' || steps.pnpm.outcome == 'failure' && 'Set up pnpm' || steps.node.outcome == 'failure' && 'Set up Node' || steps.go.outcome == 'failure' && 'Set up Go' || steps.dependencies.outcome == 'failure' && 'Install workspace dependencies' || steps.batch.outcome == 'failure' && 'Run shared journey batch' || 'unknown step' }}
+        run: |
+          summary_file=".journey/batch/${{ github.run_id }}/summary.md"
+          if [ -f "$summary_file" ]; then
+            cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'batch did not start: %s\n' "$FAILED_STEP" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: journey-local
+          path: |
+            .journey/batch/${{ github.run_id }}/summary.md
+            .journey/batch/${{ github.run_id }}/batch-metadata.json
+            .journey/batch/${{ github.run_id }}/build.log
+            .journey/batch/${{ github.run_id }}/local/
+          if-no-files-found: warn
+          retention-days: 90
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: journey-secured
+          path: |
+            .journey/batch/${{ github.run_id }}/summary.md
+            .journey/batch/${{ github.run_id }}/batch-metadata.json
+            .journey/batch/${{ github.run_id }}/build.log
+            .journey/batch/${{ github.run_id }}/secured/
+          if-no-files-found: warn
+          retention-days: 90

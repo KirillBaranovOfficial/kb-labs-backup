@@ -86,7 +86,6 @@ export type CatalogErrorCode =
   | "KB_INSTALL_MEMORY_INSUFFICIENT"
   | "KB_INSTALL_NETWORK_UNREACHABLE"
   | "KB_INSTALL_NODE_MISSING"
-  | "KB_INSTALL_NODE_VERSION"
   | "KB_INSTALL_NO_DISK_SPACE"
   | "KB_INSTALL_NO_WRITE_ACCESS"
   | "KB_INSTALL_OFFLINE_ARTIFACT_MISSING"
@@ -128,6 +127,7 @@ export type CatalogErrorCode =
   | "KB_MARKETPLACE_RESOLUTION_FAILED"
   | "KB_MARKETPLACE_VERSION_IMMUTABLE"
   | "KB_MARKETPLACE_VERSION_NOT_HIGHER"
+  | "KB_NODE_VERSION_UNSUPPORTED"
   | "KB_PLUGIN_ABORTED"
   | "KB_PLUGIN_COMMAND_FAILED"
   | "KB_PLUGIN_COMMAND_SHADOWED"
@@ -344,7 +344,6 @@ export interface CatalogTemplateParameters {
   "KB_INSTALL_MEMORY_INSUFFICIENT": { "available": string; "minimum": string };
   "KB_INSTALL_NETWORK_UNREACHABLE": { "url": string };
   "KB_INSTALL_NODE_MISSING": { "requirement": string };
-  "KB_INSTALL_NODE_VERSION": { "version": string };
   "KB_INSTALL_NO_DISK_SPACE": { "available": string; "needed": string; "path": string };
   "KB_INSTALL_NO_WRITE_ACCESS": { "path": string };
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": { "artifact": string };
@@ -386,6 +385,7 @@ export interface CatalogTemplateParameters {
   "KB_MARKETPLACE_RESOLUTION_FAILED": Record<never, never>;
   "KB_MARKETPLACE_VERSION_IMMUTABLE": { "installedVersion": string; "package": string; "scope": string };
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string; "package": string; "scope": string };
+  "KB_NODE_VERSION_UNSUPPORTED": { "actualVersion": string; "requiredMajor": string };
   "KB_PLUGIN_ABORTED": Record<never, never>;
   "KB_PLUGIN_COMMAND_FAILED": { "command": string; "correlationId": string; "failureReason": string; "plugin": string };
   "KB_PLUGIN_COMMAND_SHADOWED": { "command": string; "plugin": string };
@@ -507,7 +507,7 @@ export interface CatalogTemplateParameters {
   "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;
   "KB_UPDATE_HOST_NOT_HEALTHY": Record<never, never>;
-  "KB_UPDATE_INCOMPATIBLE": { "component": string; "kind": string; "range": string; "version": string };
+  "KB_UPDATE_INCOMPATIBLE": { "id": string; "kind": string; "requiredRange": string; "selectedVersion": string };
   "KB_UPDATE_NO_SNAPSHOT": Record<never, never>;
   "KB_UPDATE_SECRET_REFUSED": { "secret": string };
   "KB_UPDATE_VERIFY_FAILED": { "version": string };
@@ -530,7 +530,7 @@ export interface CatalogDetailsFor {
   "KB_AUTH_CLOCK_SKEW": Record<string, never>;
   "KB_AUTH_FORBIDDEN": { "permission": string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string };
   "KB_AUTH_GATEWAY_UNREACHABLE": Record<string, never>;
-  "KB_AUTH_INVALID_CREDENTIALS": Record<string, never>;
+  "KB_AUTH_INVALID_CREDENTIALS": { "httpStatus"?: string; "remoteCorrelationId"?: string; "requestStage"?: string };
   "KB_AUTH_INVALID_CURRENT_PASSWORD": Record<string, never>;
   "KB_AUTH_INVALID_INVITE": Record<string, never>;
   "KB_AUTH_INVALID_PASSWORD_RESET": Record<string, never>;
@@ -539,7 +539,7 @@ export interface CatalogDetailsFor {
   "KB_AUTH_MCP_CREDENTIAL_REQUIRED": { "gatewayUrl": string };
   "KB_AUTH_MODE_MISMATCH": { "actual": string; "expected": string };
   "KB_AUTH_REQUIRED": { "gatewayUrl": string; "reason"?: string };
-  "KB_AUTH_SESSION_REVOKED": { "gatewayUrl": string; "reason"?: string };
+  "KB_AUTH_SESSION_REVOKED": { "gatewayUrl": string; "reason"?: string; "remoteCorrelationId"?: string };
   "KB_AUTH_TOKEN_EXPIRED": { "gatewayUrl": string; "reason"?: string };
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": { "gatewayUrl": string; "reason"?: string };
   "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string; "reason"?: string };
@@ -602,7 +602,6 @@ export interface CatalogDetailsFor {
   "KB_INSTALL_MEMORY_INSUFFICIENT": { "available": string; "minimum": string };
   "KB_INSTALL_NETWORK_UNREACHABLE": { "url": string };
   "KB_INSTALL_NODE_MISSING": { "requirement": string };
-  "KB_INSTALL_NODE_VERSION": { "version": string };
   "KB_INSTALL_NO_DISK_SPACE": { "available": string; "needed": string; "path": string };
   "KB_INSTALL_NO_WRITE_ACCESS": { "path": string };
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": { "artifact": string };
@@ -627,7 +626,7 @@ export interface CatalogDetailsFor {
   "KB_INSTALL_RESOURCE_CHECK_FAILED": Record<string, never>;
   "KB_INSTALL_ROLLBACK_FAILED": { "snapshot": string };
   "KB_INSTALL_SCENARIO_INVALID": Record<string, never>;
-  "KB_INSTALL_SECRET_INPUT_INVALID": Record<string, never>;
+  "KB_INSTALL_SECRET_INPUT_INVALID": { "requirement"?: string };
   "KB_INSTALL_SECRET_STATE_CHANGED": Record<string, never>;
   "KB_INSTALL_SECRET_STORE_UNSUPPORTED": Record<string, never>;
   "KB_INSTALL_SERVICE_GRAPH_MISMATCH": Record<string, never>;
@@ -644,6 +643,7 @@ export interface CatalogDetailsFor {
   "KB_MARKETPLACE_RESOLUTION_FAILED": Record<string, never>;
   "KB_MARKETPLACE_VERSION_IMMUTABLE": { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string };
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string };
+  "KB_NODE_VERSION_UNSUPPORTED": { "actualVersion": string; "requiredMajor": string };
   "KB_PLUGIN_ABORTED": Record<string, never>;
   "KB_PLUGIN_COMMAND_FAILED": { "command": string; "failureReason": string; "plugin": string };
   "KB_PLUGIN_COMMAND_SHADOWED": { "command": string; "plugin": string };
@@ -765,7 +765,7 @@ export interface CatalogDetailsFor {
   "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
   "KB_UPDATE_DOWNLOAD_FAILED": Record<string, never>;
   "KB_UPDATE_HOST_NOT_HEALTHY": { "version"?: string; "attemptedRoot"?: string; "recoveryRoot"?: string; "recoveryStage"?: string; "runningVersion"?: string; "snapshotId"?: string; "logPath"?: string; "nextCommand"?: string; "failureReason"?: string; "restoredHealthy"?: string; "snapshot"?: string; "hostRestart"?: string };
-  "KB_UPDATE_INCOMPATIBLE": { "component": string; "kind": string; "range": string; "version": string; "id"?: string; "requiredRange"?: string; "selectedVersion"?: string };
+  "KB_UPDATE_INCOMPATIBLE": { "id": string; "kind": string; "requiredRange": string; "selectedVersion": string };
   "KB_UPDATE_NO_SNAPSHOT": Record<string, never>;
   "KB_UPDATE_SECRET_REFUSED": { "secret": string };
   "KB_UPDATE_VERIFY_FAILED": { "version": string };
@@ -860,7 +860,6 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_INSTALL_MEMORY_INSUFFICIENT": ["available","minimum"],
   "KB_INSTALL_NETWORK_UNREACHABLE": ["url"],
   "KB_INSTALL_NODE_MISSING": ["requirement"],
-  "KB_INSTALL_NODE_VERSION": ["version"],
   "KB_INSTALL_NO_DISK_SPACE": ["available","needed","path"],
   "KB_INSTALL_NO_WRITE_ACCESS": ["path"],
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": ["artifact"],
@@ -902,6 +901,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion","package","scope"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
+  "KB_NODE_VERSION_UNSUPPORTED": ["actualVersion","requiredMajor"],
   "KB_PLUGIN_ABORTED": [],
   "KB_PLUGIN_COMMAND_FAILED": ["command","failureReason","plugin"],
   "KB_PLUGIN_COMMAND_SHADOWED": ["command","plugin"],
@@ -1023,7 +1023,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": [],
-  "KB_UPDATE_INCOMPATIBLE": ["component","kind","range","version"],
+  "KB_UPDATE_INCOMPATIBLE": ["id","kind","requiredRange","selectedVersion"],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": ["secret"],
   "KB_UPDATE_VERIFY_FAILED": ["version"],
@@ -1118,7 +1118,6 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_INSTALL_MEMORY_INSUFFICIENT": ["available","minimum"],
   "KB_INSTALL_NETWORK_UNREACHABLE": ["url"],
   "KB_INSTALL_NODE_MISSING": ["requirement"],
-  "KB_INSTALL_NODE_VERSION": ["version"],
   "KB_INSTALL_NO_DISK_SPACE": ["available","needed","path"],
   "KB_INSTALL_NO_WRITE_ACCESS": ["path"],
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": ["artifact"],
@@ -1160,6 +1159,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion"],
+  "KB_NODE_VERSION_UNSUPPORTED": ["actualVersion","requiredMajor"],
   "KB_PLUGIN_ABORTED": [],
   "KB_PLUGIN_COMMAND_FAILED": ["command","failureReason","plugin"],
   "KB_PLUGIN_COMMAND_SHADOWED": ["command","plugin"],
@@ -1281,7 +1281,7 @@ export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogEr
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": [],
-  "KB_UPDATE_INCOMPATIBLE": ["component","kind","range","version"],
+  "KB_UPDATE_INCOMPATIBLE": ["id","kind","requiredRange","selectedVersion"],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": ["secret"],
   "KB_UPDATE_VERIFY_FAILED": ["version"],
@@ -1376,7 +1376,6 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_INSTALL_MEMORY_INSUFFICIENT": [],
   "KB_INSTALL_NETWORK_UNREACHABLE": [],
   "KB_INSTALL_NODE_MISSING": [],
-  "KB_INSTALL_NODE_VERSION": [],
   "KB_INSTALL_NO_DISK_SPACE": [],
   "KB_INSTALL_NO_WRITE_ACCESS": [],
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": [],
@@ -1418,6 +1417,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["package","scope"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
+  "KB_NODE_VERSION_UNSUPPORTED": ["requiredMajor"],
   "KB_PLUGIN_ABORTED": [],
   "KB_PLUGIN_COMMAND_FAILED": [],
   "KB_PLUGIN_COMMAND_SHADOWED": [],
@@ -1539,7 +1539,7 @@ export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogError
   "KB_UPDATE_DOWNGRADE_REFUSED": [],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": [],
-  "KB_UPDATE_INCOMPATIBLE": ["component","kind"],
+  "KB_UPDATE_INCOMPATIBLE": ["id","kind"],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": [],
   "KB_UPDATE_VERIFY_FAILED": [],
@@ -1634,7 +1634,6 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_MEMORY_INSUFFICIENT": ["available","minimum"],
   "KB_INSTALL_NETWORK_UNREACHABLE": ["url"],
   "KB_INSTALL_NODE_MISSING": ["requirement"],
-  "KB_INSTALL_NODE_VERSION": ["version"],
   "KB_INSTALL_NO_DISK_SPACE": ["available","needed","path"],
   "KB_INSTALL_NO_WRITE_ACCESS": ["path"],
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": ["artifact"],
@@ -1676,6 +1675,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion","package","scope"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
+  "KB_NODE_VERSION_UNSUPPORTED": ["actualVersion","requiredMajor"],
   "KB_PLUGIN_ABORTED": [],
   "KB_PLUGIN_COMMAND_FAILED": ["command","correlationId","failureReason","plugin"],
   "KB_PLUGIN_COMMAND_SHADOWED": ["command","plugin"],
@@ -1797,7 +1797,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": [],
-  "KB_UPDATE_INCOMPATIBLE": ["component","kind","range","version"],
+  "KB_UPDATE_INCOMPATIBLE": ["id","kind","requiredRange","selectedVersion"],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": ["secret"],
   "KB_UPDATE_VERIFY_FAILED": ["version"],
@@ -1892,7 +1892,6 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_INSTALL_MEMORY_INSUFFICIENT": ["available","minimum"],
   "KB_INSTALL_NETWORK_UNREACHABLE": ["url"],
   "KB_INSTALL_NODE_MISSING": ["requirement"],
-  "KB_INSTALL_NODE_VERSION": ["version"],
   "KB_INSTALL_NO_DISK_SPACE": ["available","needed","path"],
   "KB_INSTALL_NO_WRITE_ACCESS": ["path"],
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": ["artifact"],
@@ -1934,6 +1933,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion"],
+  "KB_NODE_VERSION_UNSUPPORTED": ["actualVersion","requiredMajor"],
   "KB_PLUGIN_ABORTED": [],
   "KB_PLUGIN_COMMAND_FAILED": ["command","failureReason","plugin"],
   "KB_PLUGIN_COMMAND_SHADOWED": ["command","plugin"],
@@ -2055,7 +2055,7 @@ export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorC
   "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": [],
-  "KB_UPDATE_INCOMPATIBLE": ["component","kind","range","version"],
+  "KB_UPDATE_INCOMPATIBLE": ["id","kind","requiredRange","selectedVersion"],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": ["secret"],
   "KB_UPDATE_VERIFY_FAILED": ["version"],
@@ -2150,7 +2150,6 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_INSTALL_MEMORY_INSUFFICIENT": [],
   "KB_INSTALL_NETWORK_UNREACHABLE": [],
   "KB_INSTALL_NODE_MISSING": [],
-  "KB_INSTALL_NODE_VERSION": [],
   "KB_INSTALL_NO_DISK_SPACE": [],
   "KB_INSTALL_NO_WRITE_ACCESS": [],
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": [],
@@ -2192,6 +2191,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["package","scope"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
+  "KB_NODE_VERSION_UNSUPPORTED": ["requiredMajor"],
   "KB_PLUGIN_ABORTED": [],
   "KB_PLUGIN_COMMAND_FAILED": ["correlationId"],
   "KB_PLUGIN_COMMAND_SHADOWED": [],
@@ -2313,7 +2313,7 @@ export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode
   "KB_UPDATE_DOWNGRADE_REFUSED": [],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": [],
-  "KB_UPDATE_INCOMPATIBLE": ["component","kind"],
+  "KB_UPDATE_INCOMPATIBLE": ["id","kind"],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": [],
   "KB_UPDATE_VERIFY_FAILED": [],
@@ -2336,7 +2336,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["requestStage","httpStatus","remoteCorrelationId"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
-  "KB_AUTH_INVALID_CREDENTIALS": [],
+  "KB_AUTH_INVALID_CREDENTIALS": ["httpStatus","remoteCorrelationId","requestStage"],
   "KB_AUTH_INVALID_CURRENT_PASSWORD": [],
   "KB_AUTH_INVALID_INVITE": [],
   "KB_AUTH_INVALID_PASSWORD_RESET": [],
@@ -2345,7 +2345,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_AUTH_MCP_CREDENTIAL_REQUIRED": [],
   "KB_AUTH_MODE_MISMATCH": [],
   "KB_AUTH_REQUIRED": ["reason"],
-  "KB_AUTH_SESSION_REVOKED": ["reason"],
+  "KB_AUTH_SESSION_REVOKED": ["reason","remoteCorrelationId"],
   "KB_AUTH_TOKEN_EXPIRED": ["reason"],
   "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["reason"],
   "KB_AUTH_USER_INACTIVE": ["reason"],
@@ -2408,7 +2408,6 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_MEMORY_INSUFFICIENT": [],
   "KB_INSTALL_NETWORK_UNREACHABLE": [],
   "KB_INSTALL_NODE_MISSING": [],
-  "KB_INSTALL_NODE_VERSION": [],
   "KB_INSTALL_NO_DISK_SPACE": [],
   "KB_INSTALL_NO_WRITE_ACCESS": [],
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": [],
@@ -2433,7 +2432,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_RESOURCE_CHECK_FAILED": [],
   "KB_INSTALL_ROLLBACK_FAILED": [],
   "KB_INSTALL_SCENARIO_INVALID": [],
-  "KB_INSTALL_SECRET_INPUT_INVALID": [],
+  "KB_INSTALL_SECRET_INPUT_INVALID": ["requirement"],
   "KB_INSTALL_SECRET_STATE_CHANGED": [],
   "KB_INSTALL_SECRET_STORE_UNSUPPORTED": [],
   "KB_INSTALL_SERVICE_GRAPH_MISMATCH": [],
@@ -2450,6 +2449,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
   "KB_MARKETPLACE_VERSION_IMMUTABLE": ["requestedVersion"],
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["requestedVersion"],
+  "KB_NODE_VERSION_UNSUPPORTED": [],
   "KB_PLUGIN_ABORTED": [],
   "KB_PLUGIN_COMMAND_FAILED": [],
   "KB_PLUGIN_COMMAND_SHADOWED": [],
@@ -2571,7 +2571,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_UPDATE_DOWNGRADE_REFUSED": [],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
   "KB_UPDATE_HOST_NOT_HEALTHY": ["version","attemptedRoot","recoveryRoot","recoveryStage","runningVersion","snapshotId","logPath","nextCommand","failureReason","restoredHealthy","snapshot","hostRestart"],
-  "KB_UPDATE_INCOMPATIBLE": ["id","requiredRange","selectedVersion"],
+  "KB_UPDATE_INCOMPATIBLE": [],
   "KB_UPDATE_NO_SNAPSHOT": [],
   "KB_UPDATE_SECRET_REFUSED": [],
   "KB_UPDATE_VERIFY_FAILED": [],
@@ -2666,7 +2666,6 @@ export interface CatalogMessageTemplateParameters {
   "KB_INSTALL_MEMORY_INSUFFICIENT": { "available": string; "minimum": string };
   "KB_INSTALL_NETWORK_UNREACHABLE": { "url": string };
   "KB_INSTALL_NODE_MISSING": { "requirement": string };
-  "KB_INSTALL_NODE_VERSION": { "version": string };
   "KB_INSTALL_NO_DISK_SPACE": { "available": string; "needed": string; "path": string };
   "KB_INSTALL_NO_WRITE_ACCESS": { "path": string };
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": { "artifact": string };
@@ -2708,6 +2707,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_MARKETPLACE_RESOLUTION_FAILED": Record<never, never>;
   "KB_MARKETPLACE_VERSION_IMMUTABLE": { "installedVersion": string };
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string };
+  "KB_NODE_VERSION_UNSUPPORTED": { "actualVersion": string; "requiredMajor": string };
   "KB_PLUGIN_ABORTED": Record<never, never>;
   "KB_PLUGIN_COMMAND_FAILED": { "command": string; "failureReason": string; "plugin": string };
   "KB_PLUGIN_COMMAND_SHADOWED": { "command": string; "plugin": string };
@@ -2829,7 +2829,7 @@ export interface CatalogMessageTemplateParameters {
   "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;
   "KB_UPDATE_HOST_NOT_HEALTHY": Record<never, never>;
-  "KB_UPDATE_INCOMPATIBLE": { "component": string; "kind": string; "range": string; "version": string };
+  "KB_UPDATE_INCOMPATIBLE": { "id": string; "kind": string; "requiredRange": string; "selectedVersion": string };
   "KB_UPDATE_NO_SNAPSHOT": Record<never, never>;
   "KB_UPDATE_SECRET_REFUSED": { "secret": string };
   "KB_UPDATE_VERIFY_FAILED": { "version": string };
@@ -2924,7 +2924,6 @@ export interface CatalogHintTemplateParameters {
   "KB_INSTALL_MEMORY_INSUFFICIENT": Record<never, never>;
   "KB_INSTALL_NETWORK_UNREACHABLE": Record<never, never>;
   "KB_INSTALL_NODE_MISSING": Record<never, never>;
-  "KB_INSTALL_NODE_VERSION": Record<never, never>;
   "KB_INSTALL_NO_DISK_SPACE": Record<never, never>;
   "KB_INSTALL_NO_WRITE_ACCESS": Record<never, never>;
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": Record<never, never>;
@@ -2966,6 +2965,7 @@ export interface CatalogHintTemplateParameters {
   "KB_MARKETPLACE_RESOLUTION_FAILED": Record<never, never>;
   "KB_MARKETPLACE_VERSION_IMMUTABLE": { "package": string; "scope": string };
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string; "package": string; "scope": string };
+  "KB_NODE_VERSION_UNSUPPORTED": { "requiredMajor": string };
   "KB_PLUGIN_ABORTED": Record<never, never>;
   "KB_PLUGIN_COMMAND_FAILED": Record<never, never>;
   "KB_PLUGIN_COMMAND_SHADOWED": Record<never, never>;
@@ -3087,7 +3087,7 @@ export interface CatalogHintTemplateParameters {
   "KB_UPDATE_DOWNGRADE_REFUSED": Record<never, never>;
   "KB_UPDATE_DOWNLOAD_FAILED": Record<never, never>;
   "KB_UPDATE_HOST_NOT_HEALTHY": Record<never, never>;
-  "KB_UPDATE_INCOMPATIBLE": { "component": string; "kind": string };
+  "KB_UPDATE_INCOMPATIBLE": { "id": string; "kind": string };
   "KB_UPDATE_NO_SNAPSHOT": Record<never, never>;
   "KB_UPDATE_SECRET_REFUSED": Record<never, never>;
   "KB_UPDATE_VERIFY_FAILED": Record<never, never>;
@@ -3182,7 +3182,6 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_INSTALL_MEMORY_INSUFFICIENT": Record<never, never>;
   "KB_INSTALL_NETWORK_UNREACHABLE": Record<never, never>;
   "KB_INSTALL_NODE_MISSING": Record<never, never>;
-  "KB_INSTALL_NODE_VERSION": Record<never, never>;
   "KB_INSTALL_NO_DISK_SPACE": Record<never, never>;
   "KB_INSTALL_NO_WRITE_ACCESS": Record<never, never>;
   "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": Record<never, never>;
@@ -3224,6 +3223,7 @@ export interface CatalogRuntimeTemplateParameters {
   "KB_MARKETPLACE_RESOLUTION_FAILED": Record<never, never>;
   "KB_MARKETPLACE_VERSION_IMMUTABLE": Record<never, never>;
   "KB_MARKETPLACE_VERSION_NOT_HIGHER": Record<never, never>;
+  "KB_NODE_VERSION_UNSUPPORTED": Record<never, never>;
   "KB_PLUGIN_ABORTED": Record<never, never>;
   "KB_PLUGIN_COMMAND_FAILED": { "correlationId"?: string };
   "KB_PLUGIN_COMMAND_SHADOWED": Record<never, never>;

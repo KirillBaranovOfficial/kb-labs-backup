@@ -7,8 +7,10 @@ slug: getting-started
 
 ## Install and run your first command
 
-Requirements: Node.js 24.x, at least 1.20 GiB available memory, and 2 GiB free
-disk space. The installer manages pnpm.
+Requirements: the Node.js major declared by the root `package.json`
+`engines.node`, at least 1.20 GiB available memory, and 2 GiB free disk space.
+The installer manages pnpm and prints the exact switch command if the current
+Node.js major is unsupported.
 
 ```bash
 curl -fsSL https://kblabs.ru/install.sh | sh

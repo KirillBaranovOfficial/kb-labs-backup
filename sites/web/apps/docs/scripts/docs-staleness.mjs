@@ -15,7 +15,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { sourceFileForCommand } from './docs-source-sync.mjs';
+import { sourceFileForCommand, sourceFileForNodePolicy } from './docs-source-sync.mjs';
 
 const cwd = process.cwd();
 const sitemapPath = join(cwd, 'sitemap.config.json');
@@ -75,13 +75,18 @@ function collectSourceReferences(pages) {
       const localeSeparator = localeRelative.indexOf('/');
       const docRelative = localeRelative.slice(localeSeparator + 1);
       const slug = docRelative.replace(/\.mdx$/, '').replace(/\/index$/, '');
-      const page = pageBySlug.get(slug);
-      if (!page) continue;
+      const page = pageBySlug.get(slug) ?? pageBySlug.get(`${slug}/index`) ?? {
+        slug,
+        stalenessRisk: 'medium',
+      };
 
       const directive = /<CommandExamples\s+command="([^"]+)"(?:\s+match="([^"]+)")?\s*\/>/g;
       for (const match of content.matchAll(directive)) {
         const sourceFile = sourceFileForCommand(match[1]);
         if (sourceFile) refs.push({ page, sourceFile, command: match[1] });
+      }
+      if (content.includes('<NodePolicy />')) {
+        refs.push({ page, sourceFile: sourceFileForNodePolicy(), command: 'NodePolicy' });
       }
     }
   }
