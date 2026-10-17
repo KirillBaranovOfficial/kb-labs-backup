@@ -23,6 +23,9 @@ class RemoteJourneyBatchTests(unittest.TestCase):
         (self.root / "reports").mkdir()
         self.tree = self.root / "checkout"
         (self.tree / "e2e/journey").mkdir(parents=True)
+        (self.tree / "tools/kb-devkit").mkdir(parents=True)
+        (self.tree / ".journey/reports").mkdir(parents=True)
+        shutil.copy2(Path(__file__).resolve().parent / "batch.sh", self.tree / "e2e/journey/batch.sh")
         (self.root / "prompts").mkdir()
         shutil.copy2(SOURCE, self.root / "prompts/journey-batch.sh")
         self.calls = self.root / "calls.log"
@@ -53,22 +56,52 @@ fi
 if [ "$1" = push ] && [ "${GIT_FAIL:-}" = push ]; then exit 1; fi
 exit 0
 ''')
+        self._script(self.bin / "go", '''#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    cat > "$1" <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+    chmod +x "$1"
+    exit 0
+  fi
+  shift
+done
+exit 2
+''')
+        self._script(self.bin / "python3", '''#!/bin/sh
+exit 0
+''')
+        self._script(self.tree / "e2e/journey/run.sh", '''#!/bin/sh
+if [ "$*" = "--down" ]; then exit 0; fi
+case "$KB_JOURNEY_ONLY" in
+  service-local:explore) mode=local ;;
+  service-secured:explore) mode=secured ;;
+  *) exit 2 ;;
+esac
+printf '%s report\\n' "$mode" > "$REPORTS/$mode.json"
+if [ "$mode" = "${FAIL_MODE:-}" ]; then exit 1; fi
+exit 0
+''')
+        self._script(self.tree / "e2e/journey/prepare-candidate.sh", '''#!/bin/sh
+exit 0
+''')
         self._script(self.bin / "gh", '''#!/bin/sh
 printf 'gh %s\\n' "$*" >> "$CALLS"
 case "$1 $2" in
   'run watch') [ "${GH_FAIL:-}" = watch ] && exit 1; exit 0 ;;
   'run download')
-    name=; destination=
+            destination=
     while [ "$#" -gt 0 ]; do
       case "$1" in
-        --name) shift; name="$1" ;;
         --dir) shift; destination="$1" ;;
       esac
       shift
     done
-    mkdir -p "$destination"
-    printf '%s report\\n' "$name" > "$destination/step.json"
-    printf 'exit=0\\n' > "$destination/batch.log"
+            mkdir -p "$destination"
+            cp -R "$BATCH_ARTIFACT_SOURCE/." "$destination/"
     exit 0
     ;;
 esac
@@ -112,8 +145,30 @@ exit 0
             "KBLABS_WORKTREES_ROOT": str(self.root),
             "BATCH_TREE": "checkout",
             "KB_BATCH_SUPERVISED": "1",
+            "BATCH_ARTIFACT_SOURCE": str(self.root / "batch-output"),
+            "REPORTS": str(self.tree / ".journey/reports"),
+            "FAIL_MODE": "local",
         }
         Path(self.env["HOME"]).mkdir()
+        Path(self.env["CALLS"]).touch()
+        entry_env = dict(self.env, HOME=str(self.root / "entry-home"))
+        Path(entry_env["HOME"]).mkdir()
+        generated = subprocess.run(
+            ["dash", str(self.tree / "e2e/journey/batch.sh"), str(self.env["BATCH_ARTIFACT_SOURCE"]), "j28"],
+            cwd=self.tree,
+            env=entry_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if generated.returncode == 0:
+            raise AssertionError("batch artifact fixture must come from a failed mode run")
+        generated_summary = Path(self.env["BATCH_ARTIFACT_SOURCE"]) / "summary.md"
+        if "- Stage log: `local/batch.log`" not in generated_summary.read_text():
+            raise AssertionError(
+                f"batch entry did not generate the expected failed-mode stage log pointer: "
+                f"{generated_summary.read_text()}\n{generated.stderr}\n{generated.stdout}"
+            )
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -150,8 +205,11 @@ exit 0
         for mode in ("local", "secured"):
             self.assertIn(f"gh run download 98765 --repo KirillBaranovOfficial/kb-labs-backup --name journey-{mode}", calls)
             destination = self.root / "reports" / f"batch-test-{mode}"
-            self.assertTrue((destination / "step.json").is_file())
+            self.assertTrue((destination / f"{mode}.json").is_file())
             self.assertTrue((destination / "batch.log").is_file())
+            for stage_log in ("reset.log", "build.log", "unit.log", "candidate.log", "summary.md"):
+                self.assertTrue((destination / stage_log).is_file(), stage_log)
+            self.assertIn("- Stage log: `local/batch.log`", (destination / "summary.md").read_text())
             self.assertTrue((destination / "invocations/.single-run").is_file())
         self.assertFalse(any("docker" in row or "colima" in row for row in calls.splitlines()))
 
@@ -183,8 +241,9 @@ exit 0
         for mode in ("local", "secured"):
             self.assertTrue(any(f"gh run download 98765 --repo KirillBaranovOfficial/kb-labs-backup --name journey-{mode}" in row for row in calls))
             destination = self.root / "reports" / f"batch-timeout-{mode}"
-            self.assertTrue((destination / "step.json").is_file())
+            self.assertTrue((destination / f"{mode}.json").is_file())
             self.assertTrue((destination / "batch.log").is_file())
+            self.assertTrue((destination / "unit.log").is_file())
         self.assertFalse(any("docker" in row or "colima" in row for row in calls))
 
     # case: S-262.3
