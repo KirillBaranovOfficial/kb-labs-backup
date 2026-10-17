@@ -87,9 +87,13 @@ commit=$(git rev-parse HEAD)
 printf '{"commit":"%s","baseline":"%s","buildBase":"%s"}\n' "$commit" "$BASELINE" "$BUILD_BASE" > "$OUT/run.json"
 printf '# Journey batch\n\n- Commit: `%s`\n- Baseline: `%s`\n- Build base: `%s`\n' \
   "$commit" "$BASELINE" "$BUILD_BASE" > "$OUT/summary.md"
+record_failure_log() {
+  printf '\n- Failed stage: `%s`\n- Stage log: `%s`\n' "$1" "$2" >> "$OUT/summary.md"
+}
 validate_build_base_ref() {
   build_base_ref=$1
   if ! git rev-parse --verify --quiet "$build_base_ref^{commit}" >/dev/null 2>&1; then
+    record_failure_log build build.log
     echo "affected-build base ref '$build_base_ref' is missing from this checkout; next: git fetch --all --prune" >&2
     exit 1
   fi
@@ -110,6 +114,7 @@ reset_rc=0
 e2e/journey/run.sh --down > "$OUT/reset.log" 2>&1 || reset_rc=$?
 finish_stage
 if [ "$reset_rc" -ne 0 ]; then
+  record_failure_log reset reset.log
   echo "journey stack reset failed; see $OUT/reset.log; next: e2e/journey/run.sh --down" >&2
   exit 1
 fi
@@ -118,11 +123,13 @@ build_rc=0
 (cd tools/kb-devkit && go build -o "$work/kb-devkit" .) > "$OUT/build.log" 2>&1 || build_rc=$?
 if [ "$build_rc" -ne 0 ]; then
   finish_stage
+  record_failure_log build build.log
   echo "could not build kb-devkit from this checkout; see $OUT/build.log; next: (cd tools/kb-devkit && go build .)" >&2
   exit 1
 fi
 if ! env KB_DEVKIT_BASE_REF="$BUILD_BASE" "$work/kb-devkit" run build --affected >> "$OUT/build.log" 2>&1; then
   finish_stage
+  record_failure_log build build.log
   echo "devkit affected build failed; see $OUT/build.log; next: (cd tools/kb-devkit && KB_DEVKIT_BASE_REF='$BUILD_BASE' go run . run build --affected)" >&2
   exit 1
 fi
@@ -136,6 +143,7 @@ if ! rm -rf "$unit_home"; then echo "could not remove temporary HOME: $unit_home
 unit_home=""
 finish_stage
 if [ "$unit_rc" -ne 0 ]; then
+  record_failure_log unit unit.log
   echo "journey unit suite failed; see $OUT/unit.log; next: python3 -m unittest discover -s e2e/journey -p 'test_*.py'" >&2
   exit 1
 fi
@@ -144,6 +152,7 @@ candidate_rc=0
 e2e/journey/prepare-candidate.sh > "$OUT/candidate.log" 2>&1 || candidate_rc=$?
 finish_stage
 if [ "$candidate_rc" -ne 0 ]; then
+  record_failure_log candidate candidate.log
   echo "journey candidate preparation failed; see $OUT/candidate.log; next: e2e/journey/prepare-candidate.sh" >&2
   exit 1
 fi
@@ -170,7 +179,10 @@ for mode in local secured; do
   rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
   rm -rf .journey/reports/invocations
   finish_stage
-  if [ "$rc" -ne 0 ]; then batch_rc=1; fi
+  if [ "$rc" -ne 0 ]; then
+    batch_rc=1
+    record_failure_log "$mode" "$mode/batch.log"
+  fi
 done
 cat >> "$OUT/summary.md" <<SUMMARY
 - Modes: local and secured
