@@ -312,6 +312,7 @@ exit 2
         self.assertEqual(spec["jobs"]["journey"]["timeout-minutes"], 180)
         steps = spec["jobs"]["journey"]["steps"]
         job_env = spec["jobs"]["journey"]["env"]
+        self.assertNotIn("KB_JOURNEY_CI", job_env)
         self.assertEqual(job_env["JOURNEY_DEFAULT_BRANCH"], "${{ github.event.repository.default_branch }}")
         entries = [step for step in steps if "e2e/journey/batch.sh" in step.get("run", "")]
         self.assertEqual(len(entries), 1)

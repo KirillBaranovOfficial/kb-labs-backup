@@ -36,7 +36,7 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
                                    overrides={"COMPOSE_ARGS_OUT": str(compose_args)})
         return env, compose_args
 
-    def _config(self, *, ci: bool) -> dict:
+    def _config(self, *, hosted: bool) -> dict:
         with tempfile.TemporaryDirectory(prefix="journey-compose-render-") as temp:
             bin_dir = Path(temp) / "bin"
             bin_dir.mkdir()
@@ -44,7 +44,9 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             self.assertTrue(compose_tools, "journey Compose tests require Docker Compose v2 or docker-compose on PATH")
             env = isolated_environment(Path(temp) / "home", bin_dir,
                                        required_tools=("bash", "git", "dirname", *compose_tools))
-            env["KB_JOURNEY_CI"] = "1" if ci else "0"
+            if hosted:
+                env["CI"] = "true"
+                env["GITHUB_ACTIONS"] = "true"
             result = subprocess.run(
                 ["bash", str(RUNNER), "--render-compose-config"],
                 cwd=ROOT, env=env, capture_output=True, text=True, check=False,
@@ -56,7 +58,8 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
         )
         return json.loads(result.stdout)
 
-    def test_rendered_bind_set_matches_runner_compose_inputs_for_local_and_ci(self):
+    # case: S-262.1
+    def test_local_and_hosted_journeys_render_the_same_compose_bind_set(self):
         expected = {
             ("platform", "/workspace/e2e-host"): ROOT / "e2e",
             ("runner", "/summary"): ROOT / ".journey" / "reports",
@@ -67,35 +70,38 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             ("idp-stub", "/certs"): ROOT / "e2e" / "oidc-idp" / "certs",
             ("verdaccio", "/verdaccio/conf/config.yaml"): ROOT / "e2e" / "verdaccio" / "config.yaml",
         }
-        for ci in (False, True):
-            rendered = self._config(ci=ci)
+        for hosted in (False, True):
+            rendered = self._config(hosted=hosted)
             binds = {
                 (service_name, mount["target"]): Path(mount["source"]).resolve()
                 for service_name, service in rendered["services"].items()
                 for mount in service.get("volumes", [])
                 if mount.get("type") == "bind"
             }
-            configured = dict(expected)
-            if ci:
-                configured[("verdaccio", "/verdaccio/storage")] = ROOT / "e2e" / ".verdaccio-storage"
-            self.assertEqual(binds, {key: source.resolve() for key, source in configured.items()})
+            self.assertEqual(binds, {key: source.resolve() for key, source in expected.items()})
 
-    def test_ci_teardown_uses_the_runner_owned_compose_file_order(self):
-        with tempfile.TemporaryDirectory(prefix="journey-compose-down-") as temp:
-            env, compose_args = self._fake_compose_environment(temp)
-            env["KB_JOURNEY_CI"] = "1"
-            result = subprocess.run(
-                ["bash", str(RUNNER), "--down"], cwd=ROOT, env=env,
-                capture_output=True, text=True, check=False,
-            )
+    # case: S-262.1
+    def test_local_and_hosted_journey_use_the_same_compose_file_list(self):
+        invocations = []
+        for hosted in (False, True):
+            with tempfile.TemporaryDirectory(prefix="journey-compose-down-") as temp:
+                env, compose_args = self._fake_compose_environment(temp)
+                if hosted:
+                    env["CI"] = "true"
+                    env["GITHUB_ACTIONS"] = "true"
+                result = subprocess.run(
+                    ["bash", str(RUNNER), "--down"], cwd=ROOT, env=env,
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                invocations.append(compose_args.read_text().splitlines())
 
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(compose_args.read_text().splitlines(), [
-                "-f", "e2e/docker-compose.yml",
-                "-f", "e2e/docker-compose.ci.yml",
-                "-f", "e2e/journey/docker-compose.yml",
-                "down", "--volumes", "--remove-orphans",
-            ])
+        self.assertEqual(invocations[0], invocations[1])
+        self.assertEqual(invocations[0], [
+            "-f", "e2e/docker-compose.yml",
+            "-f", "e2e/journey/docker-compose.yml",
+            "down", "--volumes", "--remove-orphans",
+        ])
 
     def test_missing_compose_binary_fails_with_an_actionable_message(self):
         with tempfile.TemporaryDirectory(prefix="journey-compose-missing-") as temp:

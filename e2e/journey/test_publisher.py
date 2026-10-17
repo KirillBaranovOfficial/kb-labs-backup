@@ -40,6 +40,7 @@ class PublisherConflictTest(unittest.TestCase):
             "#!/bin/sh\n"
             "case \"$1\" in\n"
             "  config) exit 0 ;;\n"
+            "  whoami) [ \"${PUBLISH_AUTH_FAIL:-0}\" = 0 ] && { echo e2e; exit 0; }; exit 1 ;;\n"
             "  publish) printf 'sha512-%s\\n' \"$(python3 -c 'import hashlib,sys; print(hashlib.sha512(open(sys.argv[1],\"rb\").read()).hexdigest())' \"$2\")\" >> \"$PUBLISH_LOG\"; "
             "metadata=$(tar -xOzf \"$2\" package/package.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"@\"+d[\"version\"])'); "
             "tag=latest; while [ \"$#\" -gt 0 ]; do if [ \"$1\" = --tag ]; then tag=$2; shift 2; else shift; fi; done; "
@@ -75,7 +76,7 @@ class PublisherConflictTest(unittest.TestCase):
     def integrity(self, path):
         return "sha512-" + base64.b64encode(hashlib.sha512(path.read_bytes()).digest()).decode()
 
-    def publish(self, registry_integrity="", registry_shasum="", conflict=True, packages_dir=None, reject_old_latest=False):
+    def publish(self, registry_integrity="", registry_shasum="", conflict=True, packages_dir=None, reject_old_latest=False, auth_failure=False):
         env = os.environ.copy()
         env.update(
             {
@@ -87,6 +88,8 @@ class PublisherConflictTest(unittest.TestCase):
                 "PUBLISH_TAG_LOG": str(self.tag_log),
                 "PUBLISH_CONFLICT": "1" if conflict else "0",
                 "PUBLISH_REJECT_OLD_LATEST": "1" if reject_old_latest else "0",
+                "PUBLISH_AUTH_FAIL": "1" if auth_failure else "0",
+                "PUBLISHER_DIAGNOSTIC_NEXT": "docker compose -f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml logs verdaccio",
                 "PUBLISH_PARALLELISM": "1",
                 "REGISTRY_INTEGRITY": registry_integrity,
                 "REGISTRY_SHASUM": registry_shasum,
@@ -158,6 +161,15 @@ class PublisherConflictTest(unittest.TestCase):
         self.assertIn(self.local_integrity, result.stdout)
         self.assertIn("KB_RELEASE_VERSION_CONFLICT", result.stdout)
         self.assertIn("bash e2e/journey/prepare-candidate.sh", result.stdout)
+
+    # case: S-262.2
+    def test_auth_preflight_stops_before_package_publish_with_registry_diagnostic(self):
+        result = self.publish(conflict=False, auth_failure=True)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("Verdaccio publisher authentication failed for http://registry.invalid; check registry credentials and writable storage.", result.stdout)
+        self.assertIn("Next: docker compose -f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml logs verdaccio", result.stdout)
+        self.assertFalse(self.publish_log.exists(), "publisher attempted a package PUT before auth preflight")
 
 
 class VerdaccioStorageWarningTest(unittest.TestCase):
