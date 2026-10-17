@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 import subprocess
@@ -32,7 +33,7 @@ esac
 printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
 """)
         compose.chmod(0o755)
-        env = isolated_environment(Path(temp) / "home", bin_dir, required_tools=("bash", "git", "dirname"),
+        env = isolated_environment(Path(temp) / "home", bin_dir, required_tools=("bash", "git", "dirname", "id"),
                                    overrides={"COMPOSE_ARGS_OUT": str(compose_args)})
         return env, compose_args
 
@@ -43,7 +44,7 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
             compose_tools = tuple(tool for tool in ("docker", "docker-compose") if shutil.which(tool))
             self.assertTrue(compose_tools, "journey Compose tests require Docker Compose v2 or docker-compose on PATH")
             env = isolated_environment(Path(temp) / "home", bin_dir,
-                                       required_tools=("bash", "git", "dirname", *compose_tools))
+                                       required_tools=("bash", "git", "dirname", "id", *compose_tools))
             if hosted:
                 env["CI"] = "true"
                 env["GITHUB_ACTIONS"] = "true"
@@ -79,6 +80,7 @@ printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
                 if mount.get("type") == "bind"
             }
             self.assertEqual(binds, {key: source.resolve() for key, source in expected.items()})
+            self.assertEqual(rendered["services"]["runner"]["user"], f"{os.getuid()}:{os.getgid()}")
 
     # case: S-262.1
     def test_local_and_hosted_journey_use_the_same_compose_file_list(self):

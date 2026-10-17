@@ -205,7 +205,21 @@ exit 2
         local_runs = [row for row in self.calls.read_text().splitlines()
                       if row == "journey service-local:explore --no-build"]
         self.assertEqual(len(local_runs), 1)
+        secured_runs = [row for row in self.calls.read_text().splitlines()
+                        if row == "journey service-secured:explore --no-build"]
+        self.assertEqual(len(secured_runs), 1)
         self.assertFalse((self.root / "out/local/infra-failed.log").exists())
+        self.assertTrue((self.root / "out/local/local.json").is_file())
+        self.assertTrue((self.root / "out/secured/secured.json").is_file())
+        self.assertFalse((self.root / "out/local/secured.json").exists())
+        self.assertFalse((self.root / "out/secured/local.json").exists())
+        self.assertTrue((self.root / "out/secured/batch.log").is_file())
+        for mode in ("local", "secured"):
+            for stage_log in ("reset.log", "build.log", "unit.log", "candidate.log"):
+                self.assertTrue((self.root / f"out/{mode}/{stage_log}").is_file())
+            import json
+            mode_metadata = json.loads((self.root / f"out/{mode}/batch-metadata.json").read_text())
+            self.assertEqual(mode_metadata["mode"], mode)
         summary = (self.root / "out/summary.md").read_text()
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: FAIL"])
 
@@ -343,7 +357,7 @@ exit 2
         self.assertEqual(sum("journey-secured" in step.get("with", {}).get("name", "") for step in steps), 1)
         artifact_steps = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
         self.assertEqual([step["with"]["path"] for step in artifact_steps], [
-            "${{ env.BATCH_OUTPUT }}/", "${{ env.BATCH_OUTPUT }}/",
+            "${{ env.BATCH_OUTPUT }}/local/", "${{ env.BATCH_OUTPUT }}/secured/",
         ])
         self.assertEqual([step["with"]["if-no-files-found"] for step in artifact_steps], ["warn", "warn"])
         self.assertEqual(node_step["with"]["node-version-file"], "package.json")
