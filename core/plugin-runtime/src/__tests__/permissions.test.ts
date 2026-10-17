@@ -32,7 +32,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -59,7 +59,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -89,7 +89,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -115,7 +115,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -143,7 +143,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -169,7 +169,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -195,7 +195,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -223,7 +223,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -249,7 +249,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -284,7 +284,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -311,7 +311,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -337,7 +337,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -367,7 +367,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -397,7 +397,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -431,7 +431,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -461,7 +461,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -491,7 +491,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({
@@ -523,7 +523,7 @@ describe('Permission Enforcement', () => {
         pluginId: '@kb-labs/test',
         pluginVersion: '1.0.0',
         permissions,
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const { context } = createPluginContextV3({

@@ -9,6 +9,7 @@ describe('config set project path diagnosis', () => {
     const exitCode = await configSet.run(
       {
         requestId: 'config-path-case',
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
         ui: { json, error: vi.fn() },
         platform: { logger: { info: vi.fn(), error: vi.fn() } },
       } as unknown as PluginContextV3,

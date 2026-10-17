@@ -116,7 +116,7 @@ export function createMockContext(opts: MockContextOptions = {}): PluginContextV
       setAttribute: () => {},
       recordError: () => {},
     },
-    hostContext: { host: 'cli', argv: [] } as unknown as PluginContextV3['hostContext'],
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [] } as unknown as PluginContextV3['hostContext'],
     ui,
     platform,
     runtime,

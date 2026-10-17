@@ -99,6 +99,7 @@ describe('platform authentication gate', () => {
     }, async () => 0);
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
+      details: { gatewayUrl: 'unconfigured' },
       hint: 'Run "kb auth login --help" to configure the Gateway URL and credentials.',
     } });
     expect(JSON.stringify(result)).not.toContain('<url>');

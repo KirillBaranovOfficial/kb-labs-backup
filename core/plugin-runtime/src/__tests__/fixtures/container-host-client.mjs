@@ -29,7 +29,7 @@ const descriptor = {
   requestId: runId,
   handlerId: 'test:container-host-death',
   permissions: {},
-  hostContext: { host: 'cli', argv: [], flags: {} },
+  hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
 };
 const running = new Promise((resolve, reject) => {
   channel.on('log', (frame) => {

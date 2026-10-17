@@ -42,7 +42,7 @@ describe('container stdio dispatch integration', () => {
     const descriptor: PluginContextDescriptor = {
       hostType: 'cli', pluginId: '@kb-labs/test-container-stdio', pluginVersion: '1.0.0',
       requestId: name, handlerId: 'test:container-stdio', permissions: { platform: { cache: true } },
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
     const logs: string[] = [];
     const unsubscribeLog = channel.on('log', (frame) => logs.push(frame.message));

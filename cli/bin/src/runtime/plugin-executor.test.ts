@@ -280,10 +280,10 @@ describe('plugin executor adapter errors', () => {
         name: 'typed product error',
         code: 'KB_PLUGIN_PERMISSION_DENIED',
         buildEnvelope: (correlationId: string) => toErrorEnvelope(
-          new PluginError('registry typed product failure', 'KB_PLUGIN_PERMISSION_DENIED'),
+          new PluginError('registry typed product failure', 'KB_PLUGIN_PERMISSION_DENIED', { plugin: 'test-plugin', permission: 'cli.test' }),
           { correlationId },
         ),
-        error: () => new PluginError('registry typed product failure', 'KB_PLUGIN_PERMISSION_DENIED'),
+        error: () => new PluginError('registry typed product failure', 'KB_PLUGIN_PERMISSION_DENIED', { plugin: 'test-plugin', permission: 'cli.test' }),
       },
       {
         name: 'platform adapter error',

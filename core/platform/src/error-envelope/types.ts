@@ -14,6 +14,7 @@ declare const productErrorCodeBrand: unique symbol;
 export type ProductErrorCode = string & { readonly [productErrorCodeBrand]: true };
 export type ErrorCode = PlatformErrorCode | ProductErrorCode;
 
+
 export const ERROR_AREAS = [
   'install',
   'host',
@@ -87,6 +88,7 @@ export interface ErrorEnvelope {
   /** Structured findings produced by gate commands. */
   diagnostics?: PlatformDiagnostic[];
 }
+
 
 /** Thrown to propagate a catalogued envelope through a typed runtime boundary. */
 export class ErrorEnvelopeError extends Error {

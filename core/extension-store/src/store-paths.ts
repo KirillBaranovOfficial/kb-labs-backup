@@ -65,12 +65,12 @@ export function entryPackagePath(entryDir: string, name: string): string {
 
 function assertSafeSegment(name: string, field: string): void {
   if (!name || name.startsWith('.') || name.split('/').some((part) => !part || !SAFE_SEGMENT.test(part))) {
-    throw new ExtensionStoreError('KB_RUNTIME_INPUT_INVALID', { field, value: name });
+    throw new ExtensionStoreError('KB_RUNTIME_INPUT_INVALID', { field });
   }
 }
 
 function assertSafeVersion(version: string): void {
   if (!version || !SAFE_SEGMENT.test(version) || version.includes('..')) {
-    throw new ExtensionStoreError('KB_RUNTIME_INPUT_INVALID', { field: 'version', value: version });
+    throw new ExtensionStoreError('KB_RUNTIME_INPUT_INVALID', { field: 'version' });
   }
 }

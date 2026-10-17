@@ -258,7 +258,9 @@ export class McpDaemonServer {
         try {
           if (params.name === DIAGNOSTICS_TOOL.name) {
             if (!permits) {
-              result = mcpToolError('KB_AUTH_REQUIRED', { tool: params.name });
+              result = mcpToolError('KB_AUTH_REQUIRED', {
+                gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL ?? '<url>',
+              });
             } else {
               const validationError = validateToolArguments(
                 DIAGNOSTICS_TOOL.inputSchema,

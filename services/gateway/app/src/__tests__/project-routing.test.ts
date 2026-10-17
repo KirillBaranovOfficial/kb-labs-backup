@@ -4,18 +4,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
-import { errorCatalog, renderTemplate } from "@kb-labs/core-platform";
+import { createValidatedErrorEnvelope, type DetailsFor, type PlatformErrorCode } from "@kb-labs/core-platform";
 import { registerProjectRoutes } from "../project-routing.js";
 
 const PROJECT_SERVICES = [{ serviceId: "rest", rewritePrefix: "/api/v1", healthCheck: "/health" }];
 
-function catalogueText(code: string, details: Record<string, string>): { message: string; hint: string } {
-  const entry = errorCatalog.codes.find((candidate) => candidate.code === code);
-  if (!entry) throw new Error(`Expected ${code} in the error catalogue`);
-  return {
-    message: renderTemplate(entry.message, details),
-    hint: renderTemplate(entry.hint, details),
-  };
+function catalogueText<C extends PlatformErrorCode>(code: C, details: DetailsFor<C>): { message: string; hint: string } {
+  const envelope = createValidatedErrorEnvelope(code, { details });
+  return { message: envelope.message, hint: envelope.hint };
 }
 
 describe("registerProjectRoutes", () => {

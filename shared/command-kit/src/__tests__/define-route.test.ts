@@ -276,6 +276,7 @@ describe('isRESTHost', () => {
   it('should return false for non-REST host context', () => {
     const cliContext = {
       host: 'cli' as const,
+      binaryName: 'kb',
       argv: [],
       flags: {},
     };

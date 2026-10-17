@@ -20,14 +20,14 @@ const identity = { executionId: 'exec-1', requestId: 'req-1', pluginId: 'test-pl
 
 describe('governed ShellAPI', () => {
   it('denies shell when no command is declared', async () => {
-    const shell = createShellAPI({ permissions: {}, cwd: process.cwd(), processIdentity: identity });
+    const shell = createShellAPI({ pluginId: identity.pluginId, permissions: {}, cwd: process.cwd(), processIdentity: identity });
     await expect(shell.exec('echo', ['hello'])).rejects.toBeInstanceOf(PermissionError);
   });
 
   it('passes identity, quotas and signal to the process executor', async () => {
     const run = executor({ processId: 'p1', code: 0, stdout: 'ok', stderr: '', ok: true, terminationReason: 'completed', attempts: 1, usage: { wallTimeMs: 1, cpuMs: 0, peakMemoryMb: 1, processCount: 1, stdoutBytes: 2, stderrBytes: 0 } });
     const signal = new AbortController().signal;
-    const shell = createShellAPI({
+    const shell = createShellAPI({ pluginId: identity.pluginId,
       permissions: { shell: { allow: ['echo'] }, quotas: { timeoutMs: 1000, memoryMb: 64, cpuMs: 500 } },
       cwd: '/tmp', processExecutor: run, processIdentity: identity, signal,
     });
@@ -40,7 +40,7 @@ describe('governed ShellAPI', () => {
 
   it('forwards retry policy to the governed executor', async () => {
     const run = executor({ processId: 'p1', code: 0, stdout: '', stderr: '', ok: true, terminationReason: 'completed', attempts: 1, usage: { wallTimeMs: 1, cpuMs: 0, peakMemoryMb: 1, processCount: 1, stdoutBytes: 0, stderrBytes: 0 } });
-    const shell = createShellAPI({ permissions: { shell: { allow: ['echo'] } }, cwd: process.cwd(), processExecutor: run, processIdentity: identity });
+    const shell = createShellAPI({ pluginId: identity.pluginId, permissions: { shell: { allow: ['echo'] } }, cwd: process.cwd(), processExecutor: run, processIdentity: identity });
     await expect(shell.exec('echo', [], { retry: { maxAttempts: 2 } })).resolves.toMatchObject({ ok: true });
     expect(run.execute).toHaveBeenCalledWith(expect.objectContaining({ retry: { maxAttempts: 2 } }));
   });
@@ -119,32 +119,32 @@ describe('node process backend', () => {
   });
 
   it('executes argv without invoking a shell', async () => {
-    const shell = createShellAPI({ permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
+    const shell = createShellAPI({ pluginId: identity.pluginId, permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
     const result = await shell.exec(process.execPath, ['-e', 'process.stdout.write("hello")']);
     expect(result).toMatchObject({ ok: true, stdout: 'hello', stderr: '' });
     expect(result.usage?.processCount).toBeGreaterThanOrEqual(1);
   });
 
   it('returns a structured timeout and terminates the process group', async () => {
-    const shell = createShellAPI({ permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
+    const shell = createShellAPI({ pluginId: identity.pluginId, permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
     await expect(shell.exec(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { timeout: 100 })).rejects.toMatchObject({ code: 'PROCESS_TIMEOUT' });
   });
 
   it('enforces bounded output', async () => {
-    const shell = createShellAPI({ permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
+    const shell = createShellAPI({ pluginId: identity.pluginId, permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
     await expect(shell.exec(process.execPath, ['-e', 'process.stdout.write("x".repeat(100000))'], { maxOutputBytes: 1024 })).rejects.toMatchObject({ code: 'PROCESS_OUTPUT_LIMIT' });
   });
 
   it('cancels a running process', async () => {
     const controller = new AbortController();
-    const shell = createShellAPI({ permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
+    const shell = createShellAPI({ pluginId: identity.pluginId, permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
     const promise = shell.exec(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { signal: controller.signal });
     setTimeout(() => controller.abort(), 50);
     await expect(promise).rejects.toMatchObject({ code: 'PROCESS_CANCELLED' });
   });
 
   it('rejects non-idempotent execution retry before spawning', async () => {
-    const shell = createShellAPI({ permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
+    const shell = createShellAPI({ pluginId: identity.pluginId, permissions: { shell: { allow: ['node'] } }, cwd: process.cwd(), processExecutor: createDefaultProcessExecutor(), processIdentity: identity });
     await expect(shell.exec(process.execPath, ['-e', ''], { retry: { maxAttempts: 2 } })).rejects.toBeInstanceOf(GovernedProcessError);
   });
 });

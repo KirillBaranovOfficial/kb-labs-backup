@@ -320,7 +320,7 @@ describe('POST /auth/refresh', () => {
   });
 
   // case: S-203.20
-  it('returns 401 when refresh token is invalid with a safe reason', async () => {
+  it('returns 401 with the catalogued expired-token code', async () => {
     authService.refreshTokens.mockResolvedValue({ ok: false, reason: 'expired' });
 
     const res = await app.inject({
@@ -330,7 +330,7 @@ describe('POST /auth/refresh', () => {
     });
 
     expect(res.statusCode).toBe(401);
-    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_TOKEN_EXPIRED', details: { reason: 'expired' } } });
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_TOKEN_EXPIRED', details: { gatewayUrl: 'http://localhost:80', reason: 'expired' } } });
   });
 
   it('returns 400 when refreshToken field is missing', async () => {

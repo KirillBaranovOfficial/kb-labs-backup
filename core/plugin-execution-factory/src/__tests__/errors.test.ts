@@ -114,7 +114,7 @@ describe('normalizeError handler boundary', () => {
         pluginVersion: '1.0.0',
         requestId: correlationId,
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       } as ExecutionRequest['descriptor'],
     };
 

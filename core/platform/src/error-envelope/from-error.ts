@@ -8,12 +8,16 @@
 
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, getAdapterConfigurationCommand, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError, type TypedPlatformError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
-import { createErrorDetailsContractViolation, createErrorEnvelope, getCatalogEntry, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
+import { createErrorDetailsContractViolation, createErrorEnvelope, createValidatedErrorEnvelope, getCatalogEntry, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
 import { ErrorEnvelopeError, type ErrorEnvelope, type ProductErrorCode } from './types.js';
+import { markValidatedErrorEnvelope, type ValidatedErrorEnvelope } from './validated-envelope.js';
 import { isErrorEnvelope, validateErrorEnvelope } from './validate.js';
 
 export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions<never>, 'correlationId' | 'actions' | 'docs' | 'diagnostics'> & { binary?: string };
-export type DecodeEnvelopeOptions = ToEnvelopeOptions & { protocolDetails?: Readonly<Record<string, string>> };
+export type DecodeEnvelopeOptions = ToEnvelopeOptions & {
+  protocolDetails?: Readonly<Record<string, string>>;
+  presentation?: 'catalog' | 'handler';
+};
 
 /** Read a validated platform envelope carried by a typed error wrapper. */
 export function errorEnvelopeFrom(error: unknown): ErrorEnvelope | undefined {
@@ -24,7 +28,7 @@ export function errorEnvelopeFrom(error: unknown): ErrorEnvelope | undefined {
 }
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
-export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ValidatedErrorEnvelope {
   const typedEnvelope = errorEnvelopeFrom(error);
   if (typedEnvelope) return canonicalizeErrorEnvelope(typedEnvelope, options);
   const candidate = getErrorRecord(error);
@@ -235,7 +239,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
     const templateValues = options.binary && entry?.runtimeTemplateParameters?.binary === 'required'
       ? { binary: options.binary }
       : undefined;
-    return createErrorEnvelope(code, {
+    return createValidatedErrorEnvelope(code, {
       ...options,
       ...(templateValues ? { templateValues } : {}),
       ...(cause ? { cause } : {}),
@@ -258,7 +262,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
 }
 
 /** Revalidates any envelope-shaped value through the single namespace contract. */
-export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEnvelopeOptions = {}): ValidatedErrorEnvelope {
   const issues = validateErrorEnvelope(envelope);
   if (issues.length > 0) {
     const issue = issues[0]!;
@@ -281,9 +285,14 @@ export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEn
       ...(envelope.diagnostics ? { diagnostics: envelope.diagnostics } : {}),
     };
     if (isErrorCode(envelope.code)) {
-      return assertCanonicalEnvelope(createErrorEnvelope(envelope.code, {
+      const entry = getCatalogEntry(envelope.code);
+      const templateValues = options.binary && entry?.runtimeTemplateParameters?.binary === 'required'
+        ? { binary: options.binary }
+        : undefined;
+      return assertCanonicalEnvelope(createValidatedErrorEnvelope(envelope.code, {
         ...options,
         ...fields,
+        ...(templateValues ? { templateValues } : {}),
       }));
     }
     return assertCanonicalEnvelope(createProductErrorEnvelope({
@@ -306,19 +315,35 @@ export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEn
 }
 
 /** Reconstructs a received catalogued envelope from its code and generated structured-detail contract. */
-export function decodeErrorEnvelope(envelope: ErrorEnvelope, options: DecodeEnvelopeOptions = {}): ErrorEnvelope {
-  const { protocolDetails = {}, ...envelopeOptions } = options;
+export function decodeErrorEnvelope(envelope: unknown, options: DecodeEnvelopeOptions = {}): ValidatedErrorEnvelope {
+  const { protocolDetails = {}, presentation = 'catalog', ...envelopeOptions } = options;
+  const validationIssues = validateErrorEnvelope(envelope);
+  if (validationIssues.length > 0 || !isErrorEnvelope(envelope)) {
+    const remoteCode = typeof envelope === 'object' && envelope !== null && 'code' in envelope && typeof envelope.code === 'string'
+      ? envelope.code
+      : 'unknown';
+    return createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
+      ...envelopeOptions,
+      details: {
+        ...protocolDetails,
+        remoteCode,
+        fields: validationIssues.map((issue) => issue.field).join(','),
+      },
+    });
+  }
   if (!isErrorCode(envelope.code)) return canonicalizeErrorEnvelope(envelope, envelopeOptions);
 
   const details = envelope.details ?? {};
 
   try {
-    const reconstructed = createErrorEnvelope(envelope.code, {
+    const reconstructed = createValidatedErrorEnvelope(envelope.code, {
       ...envelopeOptions,
       ...(envelope.correlationId ? { correlationId: envelope.correlationId } : {}),
+      ...(presentation === 'handler' ? { message: envelope.message, hint: envelope.hint } : {}),
       ...(Object.keys(details).length > 0 ? { details } : {}),
+      ...(envelope.diagnostics ? { diagnostics: envelope.diagnostics } : {}),
     });
-    if (reconstructed.code === 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION') {
+    if (reconstructed.code === 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION' && envelope.code !== reconstructed.code) {
       return createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
         ...envelopeOptions,
         details: {
@@ -337,13 +362,13 @@ export function decodeErrorEnvelope(envelope: ErrorEnvelope, options: DecodeEnve
   }
 }
 
-function assertCanonicalEnvelope(envelope: ErrorEnvelope): ErrorEnvelope {
+function assertCanonicalEnvelope(envelope: ErrorEnvelope): ValidatedErrorEnvelope {
   const problems = validateErrorEnvelope(envelope);
   if (problems.length > 0) {
     const issue = problems[0]!;
     throw productContractViolation(`Failure envelope field "${issue.field}" ${issue.reason}.`, issue.field);
   }
-  return envelope;
+  return markValidatedErrorEnvelope(envelope);
 }
 
 type ErrorRecord = Partial<TypedPlatformError> & Record<string, unknown>;
@@ -388,7 +413,7 @@ export interface ProductErrorInput extends ToEnvelopeOptions {
 }
 
 /** Builds and validates a product error for both thrown and returned failures. */
-export function createProductErrorEnvelope(input: ProductErrorInput): ErrorEnvelope {
+export function createProductErrorEnvelope(input: ProductErrorInput): ValidatedErrorEnvelope & { code: ProductErrorCode } {
   if (typeof input.code !== 'string' || !/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(input.code) || input.code.startsWith('KB_')) {
     throw productContractViolation(`Product error code "${input.code}" must match <PLUGIN>_<CONDITION> and must not use the KB_ prefix.`, 'code');
   }
@@ -409,7 +434,7 @@ export function createProductErrorEnvelope(input: ProductErrorInput): ErrorEnvel
       throw createErrorDetailsContractViolation(key, 'must be a flat map of string identifiers');
     }
   }
-  const envelope: ErrorEnvelope = {
+  const envelope: ErrorEnvelope & { code: ProductErrorCode } = {
     code: input.code as ProductErrorCode,
     area: 'product',
     stage: 'run',
@@ -423,7 +448,7 @@ export function createProductErrorEnvelope(input: ProductErrorInput): ErrorEnvel
   if (input.actions?.length) envelope.actions = input.actions;
   if (input.docs) envelope.docs = input.docs;
   if (input.diagnostics?.length) envelope.diagnostics = input.diagnostics;
-  return envelope;
+  return markValidatedErrorEnvelope(envelope);
 }
 
 function productContractViolation(message: string, field: string): Error & { code: string; hint: string; field: string } {

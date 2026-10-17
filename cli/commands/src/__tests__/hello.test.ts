@@ -46,7 +46,7 @@ function makeContext(writeSpy: Mock<typeof noopUI.write>): PluginContextV3 {
     platform: makeMockPlatform() as any,
     runtime: { fs: {} as any, fetch: vi.fn(), env: vi.fn() },
     api: {} as any,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
 }

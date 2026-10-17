@@ -19,18 +19,28 @@ function apiHint(err: ClickUpApiError): string {
 export function handleError(err: unknown): CommandFailure {
   if (err instanceof ClickUpApiError) {
     const hint = apiHint(err);
-    const code = err.status === 401 ? 'KB_AUTH_REQUIRED' : err.status === 403 ? 'KB_AUTH_FORBIDDEN' : 'KB_RUNTIME_COMMAND_FAILED';
-    return { ok: false, error: { code, message: err.message, hint, details: { clickUpStatus: String(err.status), clickUpCode: err.code } } };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: err.message, hint, details: { clickUpStatus: String(err.status), clickUpCode: err.code } } };
   }
 
   const message = err instanceof Error ? err.message : String(err);
   const isEnvMissing = /CLICKUP_API_KEY|CLICKUP_TEAM_ID/.test(message);
+  if (isEnvMissing) {
+    return {
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        message,
+        details: { field: 'CLICKUP_API_KEY or CLICKUP_TEAM_ID' },
+        hint: 'Set CLICKUP_API_KEY and CLICKUP_TEAM_ID as environment variables, then retry.',
+      },
+    };
+  }
   return {
     ok: false,
     error: {
-      code: isEnvMissing ? 'KB_RUNTIME_INPUT_INVALID' : 'KB_RUNTIME_COMMAND_FAILED',
+      code: 'KB_RUNTIME_COMMAND_FAILED',
       message,
-      hint: isEnvMissing ? 'Set CLICKUP_API_KEY and CLICKUP_TEAM_ID as environment variables, then retry.' : 'Run `kb clickup --help` to review command inputs and retry.',
+      hint: 'Run `kb clickup --help` to review command inputs and retry.',
     },
   };
 }

@@ -151,6 +151,7 @@ describe('isWebhookHost', () => {
   it('should return false for non-webhook host context', () => {
     const cliContext = {
       host: 'cli' as const,
+      binaryName: 'kb',
       argv: [],
       flags: {},
     };

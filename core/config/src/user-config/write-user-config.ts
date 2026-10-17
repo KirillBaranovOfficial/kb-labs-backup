@@ -23,6 +23,7 @@ import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
 import type { ZodTypeAny } from 'zod';
+import type { DetailsFor, DetailsOptionFor, PlatformErrorCode } from '@kb-labs/core-platform';
 
 import { withFileLock, FileLockTimeoutError, type FileLockOptions } from './file-lock.js';
 import {
@@ -46,30 +47,35 @@ export type ConfigWriteErrorCode =
   | 'KB_PLUGIN_SETTINGS_INVALID'
   | 'KB_PLUGIN_SETTINGS_SCHEMA_INVALID';
 
-/** A config write was refused. `details` is structured and never contains values. */
-export class ConfigWriteError extends Error {
-  readonly code: ConfigWriteErrorCode;
-  readonly details: Record<string, string>;
+/** A config write was refused. `details` are catalogue fields; `metadata` stays internal. */
+export class ConfigWriteError<C extends ConfigWriteErrorCode = ConfigWriteErrorCode> extends Error {
+  readonly code: C;
+  readonly details: DetailsFor<C & PlatformErrorCode>;
+  readonly metadata: Readonly<Record<string, string>>;
 
-  constructor(code: ConfigWriteErrorCode, message: string, details: Record<string, string> = {}) {
+  constructor(code: C, message: string, details: DetailsFor<C & PlatformErrorCode>, metadata: Readonly<Record<string, string>> = {}) {
     super(message);
     this.name = 'ConfigWriteError';
     this.code = code;
     this.details = details;
+    this.metadata = metadata;
   }
 }
 
-export interface ConfigIssue {
+interface ConfigIssueFields {
   /** Dotted path of the offending value. */
   path: string;
   message: string;
-  /** Catalogued semantic code; omitted for ordinary schema/shape violations. */
-  code?: ConfigWriteErrorCode;
-  /** Code-specific template values in addition to `path`. */
-  details?: Record<string, string>;
   /** Specific next step for semantic validators such as adapter binding. */
   hint?: string;
 }
+
+type CataloguedConfigIssue = {
+  [C in ConfigWriteErrorCode]: { code: C } & DetailsOptionFor<C & PlatformErrorCode>;
+}[ConfigWriteErrorCode];
+
+/** Semantic failures correlate their code with catalogue-declared fields; plain validation issues have no details. */
+export type ConfigIssue = ConfigIssueFields & (CataloguedConfigIssue | { code?: undefined; details?: never });
 
 export interface SetUserConfigOptions {
   /** Absolute path of the user config file. Created when missing. */
@@ -150,8 +156,7 @@ function parseDocument(text: string, filePath: string): Record<string, unknown> 
     if (error instanceof JsoncSyntaxError) {
       throw new ConfigWriteError('KB_CONFIG_INVALID', `${path.basename(filePath)} is not valid JSONC: ${error.message}`, {
         path: path.basename(filePath),
-        line: String(error.line),
-      });
+      }, { line: String(error.line) });
     }
     throw error;
   }
@@ -223,9 +228,10 @@ async function computeEdit(options: SetUserConfigOptions, text: string, filePath
     if (resolution.status === 'unknown') {
       throw new ConfigWriteError('KB_CONFIG_UNKNOWN_KEY', `Unknown configuration key ${keyName}`, {
         path: keyName,
+        suggestion: resolution.suggestion ?? '',
+      }, {
         key: resolution.key,
         parent: resolution.parentPath,
-        suggestion: resolution.suggestion ?? '',
         knownKeys: resolution.knownKeys.join(','),
       });
     }
@@ -237,7 +243,8 @@ async function computeEdit(options: SetUserConfigOptions, text: string, filePath
       throw new ConfigWriteError(
         'KB_CONFIG_SECRET_PLAINTEXT',
         `Refusing to store a plain secret at ${dotted(plain.path)}`,
-        { path: dotted(plain.path), reason: plain.reason },
+        { path: dotted(plain.path), example: `kb config set ${dotted(plain.path)} '\${ENV_VAR}'` },
+        { reason: plain.reason },
       );
     }
   }
@@ -248,7 +255,8 @@ async function computeEdit(options: SetUserConfigOptions, text: string, filePath
       throw new ConfigWriteError(
         'KB_CONFIG_SECRET_MISSING',
         `${dotted(missing.path)} references ${missing.variable}, which is not set`,
-        { path: dotted(missing.path), variable: missing.variable },
+        { variable: missing.variable },
+        { path: dotted(missing.path) },
       );
     }
   }
@@ -281,10 +289,9 @@ async function computeEdit(options: SetUserConfigOptions, text: string, filePath
   const first = introduced[0];
   if (first) {
     throw new ConfigWriteError(first.code ?? 'KB_CONFIG_INVALID', `${first.path || keyName}: ${first.message}`, {
-      ...(first.details ?? {}),
       path: first.path || keyName,
-      ...(first.hint ? { hint: first.hint } : {}),
-    });
+      ...(first.code === 'KB_CONFIG_INVALID' ? {} : first.details ?? {}),
+    }, { ...(first.details ?? {}), ...(first.hint ? { hint: first.hint } : {}) });
   }
 
   return nextText;
@@ -301,9 +308,10 @@ async function computeUnset(options: UnsetUserConfigOptions, text: string, fileP
     if (resolution.status === 'unknown') {
       throw new ConfigWriteError('KB_CONFIG_UNKNOWN_KEY', `Unknown configuration key ${keyName}`, {
         path: keyName,
+        suggestion: resolution.suggestion ?? '',
+      }, {
         key: resolution.key,
         parent: resolution.parentPath,
-        suggestion: resolution.suggestion ?? '',
         knownKeys: resolution.knownKeys.join(','),
       });
     }

@@ -11,7 +11,7 @@ describe('stdio execution payload', () => {
         pluginVersion: '1.0.0',
         requestId: 'request-1',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       },
       handlerPath: '/workspace/handler.mjs',
       input: { action: 'run' },

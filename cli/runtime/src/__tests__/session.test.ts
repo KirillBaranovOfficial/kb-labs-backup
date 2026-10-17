@@ -54,7 +54,7 @@ describe('SessionManager', () => {
         code: 'KB_CONFIG_INVALID',
         message: 'Saved authentication file .kb/session.json is invalid.',
         hint: 'Run "kb auth login" to replace the saved authentication data, then retry the command.',
-        details: { path: '.kb/session.json', reason: 'invalid' },
+        details: { path: '.kb/session.json' },
       },
     });
   });

@@ -49,6 +49,7 @@ describe('defineSystemCommand', () => {
       requestId: 'test-request-id',
       pluginId: '@kb-labs/system',
       cwd: '/test',
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       ui: mockUI,
       platform: {
         logger: mockLogger as unknown as any,
@@ -180,7 +181,7 @@ describe('defineSystemCommand', () => {
       ['catalogued', Object.assign(new Error('Catalogued failure.'), {
         code: 'KB_RUNTIME_COMMAND_FAILED',
         hint: 'Fix the failure and retry.',
-        details: { resource: 'widget-1' },
+        details: { command: 'kb system-error-normalizer' },
       })],
       ['plain Error', new Error('Unexpected failure.')],
       ['string', 'Unexpected string failure'],
@@ -205,7 +206,7 @@ describe('defineSystemCommand', () => {
       const exitCode = await command.run(mockCtx, [], { json: true });
       const systemOutput = mockUI.json.mock.calls[0]?.[0] as { error: unknown };
       expect(exitCode).toBe(1);
-      expect(systemOutput.error).toEqual(toErrorEnvelope(thrown, { correlationId: 'test-request-id' }));
+      expect(systemOutput.error).toEqual(toErrorEnvelope(thrown, { correlationId: 'test-request-id', binary: 'kb' }));
     });
 
     it('serializes returned system command data through the shared CLI result serializer', async () => {
@@ -340,7 +341,7 @@ describe('defineSystemCommand', () => {
           throw Object.assign(new Error('Invalid configuration value.'), {
             code: 'KB_CONFIG_INVALID',
             hint: 'Run `kb config validate`.',
-            details: { key: 'gateway.port' },
+            details: { path: 'llm.model', nextCommand: 'kb config validate' },
             correlationId: 'corr-system-catalogued',
           });
         },
@@ -353,7 +354,7 @@ describe('defineSystemCommand', () => {
           code: 'KB_CONFIG_INVALID',
           message: 'Invalid configuration value.',
           hint: 'Run `kb config validate`.',
-          details: { key: 'gateway.port' },
+          details: { path: 'llm.model', nextCommand: 'kb config validate' },
           correlationId: 'corr-system-catalogued',
         }),
       }));

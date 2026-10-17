@@ -426,7 +426,7 @@ export function createTestContext<TConfig = unknown>(
     (() => {
       switch (host) {
         case 'cli':
-          return { host: 'cli', argv: ['test'], flags: {} };
+          return { host: 'cli', binaryName: 'test-cli', argv: ['test'], flags: {} };
         case 'rest':
           return {
             host: 'rest',

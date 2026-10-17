@@ -90,7 +90,7 @@ describe('WorkerPoolBackend process-tree health', () => {
     try {
       await backend.start();
       const request = makeRequest();
-      request.descriptor = { ...request.descriptor, hostContext: { host: 'cli', argv: [], flags: {} } } as typeof request.descriptor;
+      request.descriptor = { ...request.descriptor, hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} } } as typeof request.descriptor;
       request.timeoutMs = 100;
       await backend.execute(request);
       let health = await backend.health();

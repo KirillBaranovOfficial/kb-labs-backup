@@ -87,8 +87,7 @@ export async function writeProjectSetting(
             const settingPath = options.path.join('.');
             throw new ConfigWriteError('KB_PLUGIN_SETTINGS_INVALID', `${settingPath}: ${validation.cause}`, {
               path: settingPath,
-              cause: validation.cause,
-            });
+            }, { cause: validation.cause });
           }
           return [];
         }

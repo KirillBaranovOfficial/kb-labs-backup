@@ -59,9 +59,11 @@ describe('confirmDestructive', () => {
       action: { ...ACTION, reversible: false, recovery: undefined },
     });
     expect(res).not.toBeNull();
-    const details = res!.error.details ?? {};
-    expect(details.irreversible).toBe('true');
-    expect('recovery' in details).toBe(false);
+    const error = res!.error;
+    expect(error.code).toBe('KB_RUNTIME_CONFIRMATION_REQUIRED');
+    if (error.code !== 'KB_RUNTIME_CONFIRMATION_REQUIRED') throw new Error('Unexpected confirmation error code');
+    expect(Object.entries(error.details ?? {})).toContainEqual(['irreversible', 'true']);
+    expect(error.details && 'recovery' in error.details).toBe(false);
   });
 
   it('returns a failure for the shared renderer without a UI context', () => {

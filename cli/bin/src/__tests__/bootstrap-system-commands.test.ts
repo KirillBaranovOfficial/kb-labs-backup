@@ -128,7 +128,7 @@ describe('Bootstrap System Commands', () => {
               env: vi.fn(),
             },
             api: {} as any,
-            hostContext: { host: 'cli' as const, argv: [], flags: {} },
+            hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
             trace: noopTraceContext,
           };
 
@@ -170,7 +170,7 @@ describe('Bootstrap System Commands', () => {
               env: vi.fn(),
             },
             api: {} as any,
-            hostContext: { host: 'cli' as const, argv: [], flags: {} },
+            hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
             trace: noopTraceContext,
           };
 
@@ -217,7 +217,7 @@ describe('Bootstrap System Commands', () => {
               env: vi.fn(),
             },
             api: {} as any,
-            hostContext: { host: 'cli' as const, argv: [], flags: {} },
+            hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
             trace: noopTraceContext,
           };
 
@@ -273,7 +273,7 @@ describe('Bootstrap System Commands', () => {
               env: vi.fn(),
             },
             api: {} as any,
-            hostContext: { host: 'cli' as const, argv: [], flags: {} },
+            hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
             trace: noopTraceContext,
           };
 
@@ -329,7 +329,7 @@ describe('Bootstrap System Commands', () => {
               env: vi.fn(),
             },
             api: {} as any,
-            hostContext: { host: 'cli' as const, argv: [], flags: {} },
+            hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
             trace: noopTraceContext,
           };
 
@@ -379,7 +379,7 @@ describe('Bootstrap System Commands', () => {
               env: vi.fn(),
             },
             api: {} as any,
-            hostContext: { host: 'cli' as const, argv: [], flags: {} },
+            hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
             trace: noopTraceContext,
           };
 
@@ -446,7 +446,7 @@ describe('Bootstrap System Commands', () => {
               env: vi.fn(),
             },
             api: {} as any,
-            hostContext: { host: 'cli' as const, argv: [], flags: {} },
+            hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
             trace: noopTraceContext,
             // Removed: tracker is no longer part of PluginContextV3
           };
@@ -533,7 +533,7 @@ describe('Bootstrap System Commands', () => {
               env: vi.fn(),
             },
             api: {} as any,
-            hostContext: { host: 'cli' as const, argv: [], flags: {} },
+            hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
             trace: noopTraceContext,
           };
 

@@ -43,7 +43,7 @@ function makeCtx(captured: { errors: string[]; output: string[]; json: unknown[]
     } as any,
     runtime: { fs: {} as any, fetch: vi.fn(), env: vi.fn() },
     api: {} as any,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
 }

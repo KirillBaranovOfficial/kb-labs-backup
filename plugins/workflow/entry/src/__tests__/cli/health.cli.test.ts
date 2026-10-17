@@ -12,6 +12,27 @@ import healthCommand from '../../commands/health.js';
 
 const MockedClient = vi.mocked(WorkflowDaemonClient);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function failureError(result: unknown): Record<string, unknown> {
+  if (!isRecord(result) || !isRecord(result.error)) {
+    throw new Error('Expected a workflow command failure envelope.');
+  }
+  return result.error;
+}
+
+function normalizeFailure(error: Record<string, unknown>): Record<string, unknown> {
+  const { correlationId, hint, ...fields } = error;
+  return {
+    ...fields,
+    hint: typeof correlationId === 'string' && typeof hint === 'string'
+      ? hint.replace(correlationId, '<correlationId>')
+      : hint,
+  };
+}
+
 beforeEach(() => {
   MockedClient.mockReset();
 });
@@ -72,6 +93,10 @@ describe('workflow:health', () => {
     const jsonResult = await healthCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(humanResult).toHaveProperty('ok', false);
-    expect(jsonResult).toEqual(humanResult);
+    const humanError = failureError(humanResult);
+    const jsonError = failureError(jsonResult);
+    expect(normalizeFailure(jsonError)).toEqual(normalizeFailure(humanError));
+    expect(jsonError.correlationId).toBeTruthy();
+    expect(jsonError.hint).toContain(jsonError.correlationId);
   });
 });

@@ -40,7 +40,8 @@ describe('fs-shim glob pattern matching', () => {
     const expected = 'plugin temp fs ok';
     const outdir = path.join(testDir, '.kb', 'output');
     const outputFile = path.join(outdir, 'runtime-temp-probe.txt');
-    const runtime = createRuntimeAPI({ permissions: {}, cwd: testDir, outdir });
+    const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin', permissions: {}, cwd: testDir, outdir });
 
     await runtime.fs.writeFile(outputFile, expected);
 
@@ -62,6 +63,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -81,6 +83,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -100,6 +103,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -122,6 +126,7 @@ describe('fs-shim glob pattern matching', () => {
         };
 
         const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
           permissions,
           cwd: testDir,
         });
@@ -143,6 +148,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -161,6 +167,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -179,6 +186,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -197,6 +205,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -210,6 +219,7 @@ describe('fs-shim glob pattern matching', () => {
       const permissions: PermissionSpec = {};
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
         outdir: path.join(testDir, '.kb', 'output'),
@@ -233,6 +243,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -250,6 +261,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -265,6 +277,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -284,6 +297,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -305,6 +319,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -327,6 +342,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -353,6 +369,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -372,6 +389,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -392,6 +410,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -410,6 +429,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -428,6 +448,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -451,6 +472,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });
@@ -473,6 +495,7 @@ describe('fs-shim glob pattern matching', () => {
       };
 
       const runtime = createRuntimeAPI({
+        pluginId: 'test-plugin',
         permissions,
         cwd: testDir,
       });

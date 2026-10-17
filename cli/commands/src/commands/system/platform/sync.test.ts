@@ -38,7 +38,7 @@ describe('platform sync structured gate diagnostics', () => {
       platform: { logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), child: vi.fn() } },
       runtime: { fs: {}, fetch: vi.fn(), env: vi.fn() },
       api: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       trace: noopTraceContext,
     } as unknown as PluginContextV3;
 

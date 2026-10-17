@@ -30,7 +30,7 @@ describe('Host Wrappers', () => {
     requestId: 'req-123',
     handlerId: 'test:command',
     permissions: {},
-    hostContext: { host: 'cli', argv: [], flags: {} },
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     tenantId: 'tenant-456',
   };
 
@@ -197,6 +197,7 @@ describe('Host Wrappers', () => {
             code: 'KB_PLUGIN_SETTINGS_INVALID',
             message: 'Plugin configuration is invalid.',
             hint: 'Fix the plugin configuration and retry.',
+            details: { path: '.kb/kb.config.json' },
             diagnostics,
           },
         },

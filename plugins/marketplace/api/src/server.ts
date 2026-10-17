@@ -11,7 +11,7 @@ import {
   type ObservabilityCollectorLike,
 } from '@kb-labs/shared-http';
 import type { IContextLogger } from '@kb-labs/core-platform';
-import { createErrorEnvelope, getCatalogEntry, isErrorCode, toErrorEnvelope, type ErrorCode } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createValidatedErrorEnvelope, getCatalogEntry, isErrorCode, toErrorEnvelope, type ErrorCode } from '@kb-labs/core-platform';
 import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/core-contracts';
 import { registerRoutes } from './routes/index.js';
 import { MarketplaceInstallRollbackError, MarketplaceVersionError, type MarketplaceService } from '@kb-labs/marketplace-core';
@@ -196,6 +196,6 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
   const statusCode = getCatalogEntry(code)?.httpStatus ?? 500;
   return {
     statusCode,
-    envelope: createErrorEnvelope(code, { correlationId, details, message, hint }),
+    envelope: createValidatedErrorEnvelope(code, { correlationId, details, message, hint }),
   };
 }

@@ -150,13 +150,14 @@ export function createPluginAPI(options: CreatePluginAPIOptions): PluginAPI {
     lifecycle: createLifecycleAPI(cleanupStack),
     state: createStateAPI({ pluginId, tenantId, cache }),
     artifacts: createArtifactsAPI({ outdir }),
-    shell: createShellAPI({ permissions, cwd, processExecutor, processIdentity, signal }),
+    shell: createShellAPI({ permissions, pluginId, cwd, processExecutor, processIdentity, signal }),
     events: eventEmitter
       ? createEventsAPI({ pluginId, emitter: eventEmitter })
       : createNoopEventsAPI(),
     invoke: pluginInvoker
       ? createInvokeAPI({
           permissions,
+          pluginId,
           invoker: pluginInvoker,
           auditTargetExecution: async ({ method, target, targetPluginId }) => {
             await emitTargetExecutionAudit(
@@ -176,7 +177,7 @@ export function createPluginAPI(options: CreatePluginAPIOptions): PluginAPI {
             );
           },
         })
-      : createNoopInvokeAPI(),
+      : createNoopInvokeAPI(pluginId),
     workflows: workflowEngine
       ? createWorkflowsAPI({
           tenantId,

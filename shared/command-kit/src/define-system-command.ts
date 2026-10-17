@@ -13,7 +13,7 @@ import {
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import { formatError } from './errors/index';
-import { createErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createValidatedErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
 import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
@@ -100,7 +100,7 @@ function renderSystemFlagError(
       ok: false,
       error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
         cause: error.message,
-        details: { command: commandName, flag: error.flag },
+        details: { field: `--${error.flag}` },
       }),
     });
   } else if (jsonMode) {
@@ -392,7 +392,10 @@ export function defineSystemCommand<
           throw createContractViolation();
         }
         if (isCommandFailure(result)) {
-          const envelope = toErrorEnvelope(result.error, { correlationId: ctx.requestId });
+          const envelope = toErrorEnvelope(result.error, {
+            correlationId: ctx.requestId,
+            ...(ctx.hostContext.host === 'cli' ? { binary: ctx.hostContext.binaryName } : {}),
+          });
           if (jsonMode) {
             ctx.ui?.json({ ok: false, error: envelope });
           } else {
@@ -401,7 +404,10 @@ export function defineSystemCommand<
           return mapErrorEnvelopeToExitCode(envelope.code);
         }
       } catch (error) {
-        const envelope = toErrorEnvelope(error, { correlationId: ctx.requestId });
+        const envelope = toErrorEnvelope(error, {
+          correlationId: ctx.requestId,
+          ...(ctx.hostContext.host === 'cli' ? { binary: ctx.hostContext.binaryName } : {}),
+        });
         if (envelope.code === 'KB_RUNTIME_UNEXPECTED') {
           if (ctx.platform?.logger) {
             logUnexpectedCliError(ctx.platform.logger, error, envelope.correlationId);
@@ -459,7 +465,7 @@ function isCommandFailure(value: unknown): value is { ok: false; error: { code: 
 export function throwSystemCommandError(
   message: string,
   hint: string,
-  details?: Record<string, string>,
+  details?: DetailsFor<'KB_RUNTIME_COMMAND_FAILED'>,
   diagnostics?: ErrorEnvelope['diagnostics'],
 ): never {
   throw Object.assign(new Error(message), {
@@ -470,16 +476,27 @@ export function throwSystemCommandError(
   });
 }
 
+type RequiredKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K }[keyof T];
+type CataloguedDetailsArgument<C extends PlatformErrorCode> = [RequiredKeys<DetailsFor<C>>] extends [never]
+  ? [details?: DetailsFor<C>]
+  : [details: DetailsFor<C>];
+
+export function throwSystemCataloguedFailure<C extends PlatformErrorCode>(
+  code: C,
+  message: string,
+  hint: string,
+  ...details: CataloguedDetailsArgument<C>
+): never;
 export function throwSystemCataloguedFailure(
   code: PlatformErrorCode,
   message: string,
   hint: string,
-  details?: Record<string, string>,
+  details?: unknown,
 ): never {
-  throwSystemCataloguedError(createErrorEnvelope(code, {
+  throwSystemCataloguedError(createValidatedErrorEnvelope(code, {
     message,
     hint,
-    ...(details ? { details } : {}),
+    ...(details === undefined ? {} : { details }),
   }));
 }
 

@@ -13,6 +13,7 @@ describe('container filesystem grant enforcement', () => {
       await writeFile(path.join(cwd, 'src', 'nested', 'allowed.ts'), 'export const allowed = true;');
       await writeFile(path.join(cwd, 'src', 'notes.txt'), 'not covered by the grant');
       const filesystem = createFSShim({
+      pluginId: 'test-plugin',
         permissions: { fs: { read: ['src/**/*.ts'] } },
         cwd,
         strictPermissions: true,

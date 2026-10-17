@@ -12,14 +12,14 @@ import type {
   StandardMeta,
   PluginContextDescriptor,
 } from '@kb-labs/plugin-contracts';
-import { toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { toErrorEnvelope, type ValidatedErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 
 /**
  * A command failure is the only structured handler result. Success values are
  * always plain command data, even when that data contains an `ok` field.
  */
-function commandFailureError(value: unknown): ErrorEnvelope | undefined {
+function commandFailureError(value: unknown, binaryName?: string): ValidatedErrorEnvelope | undefined {
   if (!isUxResultCandidate(value) || value.ok !== false || !('error' in value)) {
     return undefined;
   }
@@ -30,7 +30,7 @@ function commandFailureError(value: unknown): ErrorEnvelope | undefined {
       !('hint' in error) || typeof error.hint !== 'string') {
     return undefined;
   }
-  return toErrorEnvelope(error);
+  return toErrorEnvelope(error, binaryName ? { binary: binaryName } : {});
 }
 
 function isFailureClaim(value: unknown): boolean {
@@ -93,7 +93,8 @@ export function wrapCliResult<T>(
     return contractViolation(standardMeta);
   }
 
-  const failureError = commandFailureError(data);
+  const binaryName = descriptor.hostContext.host === 'cli' ? descriptor.hostContext.binaryName : undefined;
+  const failureError = commandFailureError(data, binaryName);
   if (isFailureClaim(data) && !failureError) {
     return contractViolation(standardMeta);
   }

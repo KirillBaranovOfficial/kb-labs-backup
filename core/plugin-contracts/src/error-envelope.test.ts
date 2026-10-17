@@ -4,18 +4,20 @@ import {
   toErrorEnvelope,
   validateErrorEnvelope,
 } from '@kb-labs/core-platform';
+import type { PlatformErrorCode } from '@kb-labs/core-platform/error-envelope';
 import {
   AbortError,
   ConfigError,
   PermissionError,
   PlatformError,
   PluginError,
+  ProductPluginError,
   RateLimitError,
   TimeoutError,
   ValidationError,
 } from './errors.js';
 describe('core toErrorEnvelope for plugin errors', () => {
-  const cases: Array<[string, PluginError, string]> = [
+  const cases: Array<[string, PluginError<PlatformErrorCode>, string]> = [
     ['validation', new ValidationError('bad', { field: 'cwd' }), 'KB_RUNTIME_INPUT_INVALID'],
     ['config', new ConfigError('bad config', { path: 'llm.model' }), 'KB_CONFIG_INVALID'],
     ['timeout', new TimeoutError('slow'), 'KB_RUNTIME_TIMEOUT'],
@@ -47,9 +49,12 @@ describe('core toErrorEnvelope for plugin errors', () => {
   });
 
   it('rejects structured details rather than serializing them into strings', () => {
-    const envelope = toErrorEnvelope(new PluginError('bad', 'KB_RUNTIME_COMMAND_FAILED', {
-      report: '{"findings":[]}',
-    }), { correlationId: 'c2' });
+    const envelope = toErrorEnvelope(Object.assign(new Error('bad'), {
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      message: 'bad',
+      hint: 'Resolve the failure, then retry.',
+      details: { report: '{"findings":[]}' },
+    }), { correlationId: 'c2', binary: 'test-cli' });
     expect(envelope).toMatchObject({
       code: 'KB_PLUGIN_CONTRACT_VIOLATION',
       correlationId: 'c2',
@@ -68,7 +73,7 @@ describe('core toErrorEnvelope for plugin errors', () => {
       hint: 'Stage the intended changes, then retry.',
       retryable: false,
     });
-    const error = new PluginError(
+    const error = new ProductPluginError(
       'Nothing is staged.',
       productError.code,
       undefined,
@@ -80,7 +85,7 @@ describe('core toErrorEnvelope for plugin errors', () => {
       hint: 'Stage the intended changes, then retry.',
       area: 'product',
     });
-    expect(toErrorEnvelope(new PluginError('Nothing is staged.', productError.code))).toMatchObject({
+    expect(toErrorEnvelope(new ProductPluginError('Nothing is staged.', productError.code))).toMatchObject({
       code: 'KB_PLUGIN_CONTRACT_VIOLATION',
     });
   });

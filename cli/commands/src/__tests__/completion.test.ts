@@ -19,7 +19,7 @@ function context(): PluginContextV3 {
     host: 'cli', requestId: 'completion-test', pluginId: '@kb-labs/system', pluginVersion: '1.0.0', cwd: process.cwd(),
     ui: { ...noopUI, json: vi.fn(), error: vi.fn() },
     platform: {}, runtime: { fs: {}, fetch: vi.fn(), env: vi.fn() }, api: {},
-    hostContext: { host: 'cli', argv: [], flags: {} }, trace: noopTraceContext,
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} }, trace: noopTraceContext,
   } as unknown as PluginContextV3;
 }
 

@@ -38,14 +38,10 @@ describe('Error Handling', () => {
 
     it('should store error details', () => {
       const error = new PluginError('Error with details', 'KB_RUNTIME_COMMAND_FAILED', {
-        field: 'username',
-        value: 'invalid',
+        command: 'plugins list',
       });
 
-      expect(error.details).toEqual({
-        field: 'username',
-        value: 'invalid',
-      });
+      expect(error.details).toEqual({ command: 'plugins list' });
     });
 
     it('should have stack trace', () => {
@@ -58,14 +54,14 @@ describe('Error Handling', () => {
 
   describe('Specialized error types', () => {
     it('should create PermissionError with correct code', () => {
-      const error = new PermissionError('Access denied', { path: '/etc/passwd' });
+      const error = new PermissionError('Access denied', { plugin: 'steward', permission: 'fs.read' });
 
       expect(error).toBeInstanceOf(PermissionError);
       expect(error).toBeInstanceOf(PluginError);
       expect(error.name).toBe('PermissionError');
       expect(error.code).toBe('KB_PLUGIN_PERMISSION_DENIED');
       expect(error.message).toBe('Access denied');
-      expect(error.details?.path).toBe('/etc/passwd');
+      expect(error.details?.plugin).toBe('steward');
     });
 
     it('should create TimeoutError with correct code', () => {
@@ -87,18 +83,17 @@ describe('Error Handling', () => {
 
     it('should create ConfigError with details', () => {
       const error = new ConfigError('Invalid configuration', {
-        field: 'port',
-        value: '-1',
+        path: 'server.port',
       });
 
       expect(error).toBeInstanceOf(ConfigError);
       expect(error.code).toBe('KB_CONFIG_INVALID');
-      expect(error.details?.field).toBe('port');
+      expect(error.details?.path).toBe('server.port');
     });
 
     it('should create ValidationError', () => {
       const error = new ValidationError('Validation failed', {
-        errors: 'Field required, Invalid format',
+        field: 'email',
       });
 
       expect(error).toBeInstanceOf(ValidationError);
@@ -107,8 +102,7 @@ describe('Error Handling', () => {
 
     it('should create NotFoundError', () => {
       const error = new NotFoundError('Resource not found', {
-        resourceType: 'plugin',
-        id: '@kb-labs/missing',
+        plugin: '@kb-labs/missing',
       });
 
       expect(error).toBeInstanceOf(NotFoundError);
@@ -126,23 +120,20 @@ describe('Error Handling', () => {
 
     // case: S-203.6
     it('should create PlatformError details that satisfy the catalog template', () => {
-      const error = new PlatformError('llm', 'LLM service unavailable', {
-        statusCode: '503',
-      });
+      const error = new PlatformError('llm', 'LLM service unavailable');
 
       expect(error).toBeInstanceOf(PlatformError);
       expect(error.code).toBe('KB_HOST_ADAPTER_UNAVAILABLE');
       expect(error.service).toBe('llm');
       expect(error.details?.slot).toBe('llm');
       expect(error.details?.reason).toBe('LLM service unavailable');
-      expect(error.details?.statusCode).toBe('503');
     });
   });
 
   describe('Error type guard', () => {
     it('identifies PluginError instances', () => {
       expect(isPluginError(new PluginError('Test', 'KB_RUNTIME_COMMAND_FAILED'))).toBe(true);
-      expect(isPluginError(new PermissionError('Access denied'))).toBe(true);
+      expect(isPluginError(new PermissionError('Access denied', { plugin: 'steward', permission: 'fs.read' }))).toBe(true);
       expect(isPluginError(new Error('Regular error'))).toBe(false);
       expect(isPluginError('string')).toBe(false);
       expect(isPluginError(null)).toBe(false);

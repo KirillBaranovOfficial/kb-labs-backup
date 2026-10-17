@@ -182,7 +182,7 @@ describe('setUserConfigValue: concurrency', () => {
       }),
       'KB_CONFIG_CONFLICT',
     );
-    expect(error.details.path).toContain('kb.config.jsonc');
+    expect(error.details).toHaveProperty('path', expect.stringContaining('kb.config.jsonc'));
     // The conflicting write did not happen.
     expect(await fsp.readFile(file, 'utf8')).toContain('@kb-labs/adapters-openai');
   });
@@ -229,7 +229,7 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'adapters', 'llm'], value: 42, schema: TEST_SCHEMA }),
       'KB_CONFIG_INVALID',
     );
-    expect(error.details.path).toBe('platform.adapters.llm');
+    expect(error.details).toHaveProperty('path', 'platform.adapters.llm');
     expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
   });
 
@@ -238,7 +238,7 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'execution', 'mode'], value: 'turbo', schema: TEST_SCHEMA }),
       'KB_CONFIG_INVALID',
     );
-    expect(error.details.path).toBe('platform.execution.mode');
+    expect(error.details).toHaveProperty('path', 'platform.execution.mode');
   });
 
   it('rejects an unknown key with a "did you mean" suggestion', async () => {
@@ -246,8 +246,8 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'adaptors', 'llm'], value: 'x', schema: TEST_SCHEMA }),
       'KB_CONFIG_UNKNOWN_KEY',
     );
-    expect(error.details.suggestion).toBe('adapters');
-    expect(error.details.path).toBe('platform.adaptors.llm');
+    expect(error.details).toHaveProperty('suggestion', 'adapters');
+    expect(error.details).toHaveProperty('path', 'platform.adaptors.llm');
   });
 
   it('rejects a key outside a strict object', async () => {
@@ -255,7 +255,7 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'execution', 'moed'], value: 'auto', schema: TEST_SCHEMA }),
       'KB_CONFIG_UNKNOWN_KEY',
     );
-    expect(error.details.suggestion).toBe('mode');
+    expect(error.details).toHaveProperty('suggestion', 'mode');
   });
 
   it('accepts custom keys in open sections (product sections, custom adapter slots)', async () => {
@@ -372,7 +372,7 @@ describe('setUserConfigValue: schema validation', () => {
       }),
       'KB_CONFIG_INVALID',
     );
-    expect(error.details.path).toBe('platform.adapterOptions.llm.baseURL');
+    expect(error.details).toHaveProperty('path', 'platform.adapterOptions.llm.baseURL');
     expect(error.message).toContain('Expected string');
     expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
   });
@@ -395,10 +395,10 @@ describe('setUserConfigValue: schema validation', () => {
       }),
       'KB_ADAPTER_NOT_INSTALLED',
     );
-    expect(error.details.path).toBe('platform.adapters.llm');
-    expect(error.details.package).toBe('@kb-labs/adapters-vibeproxy');
-    expect(error.details.slot).toBe('llm');
-    expect(error.details.hint).toBe('kb marketplace install @kb-labs/adapters-vibeproxy --scope platform');
+    expect(error.details).toHaveProperty('path', 'platform.adapters.llm');
+    expect(error.details).toHaveProperty('package', '@kb-labs/adapters-vibeproxy');
+    expect(error.details).toHaveProperty('slot', 'llm');
+    expect(error.metadata.hint).toBe('kb marketplace install @kb-labs/adapters-vibeproxy --scope platform');
     expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
   });
 
@@ -424,7 +424,7 @@ describe('setUserConfigValue: schema validation', () => {
       'KB_ADAPTER_NOT_INSTALLED',
     );
 
-    expect(error.details.package).toBe(missing);
+    expect(error.details).toHaveProperty('package', missing);
     expect(await fsp.readFile(file, 'utf8')).toBe(initial);
   });
 
@@ -450,9 +450,9 @@ describe('setUserConfigValue: schema validation', () => {
       }),
       'KB_ADAPTER_SLOT_MISMATCH',
     );
-    expect(error.details.slot).toBe('llm');
-    expect(error.details.package).toBe('@kb-labs/adapters-storage-fixture');
-    expect(error.details.hint).toBe(
+    expect(error.details).toHaveProperty('slot', 'llm');
+    expect(error.details).toHaveProperty('package', '@kb-labs/adapters-storage-fixture');
+    expect(error.metadata.hint).toBe(
       'Install a provider that declares llm with `kb marketplace install <pkg> --scope platform`, then retry.',
     );
     expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
@@ -475,8 +475,8 @@ describe('setUserConfigValue: schema validation', () => {
       }),
       'KB_ADAPTER_NOT_INSTALLED',
     );
-    expect(error.details.path).toBe('platform.adapterOptions.llm');
-    expect(error.details.package).toBe('@kb-labs/adapters-openai');
+    expect(error.details).toHaveProperty('path', 'platform.adapterOptions.llm');
+    expect(error.details).toHaveProperty('package', '@kb-labs/adapters-openai');
     expect(await fsp.readFile(file, 'utf8')).toBe(DOC);
   });
 
@@ -492,7 +492,7 @@ describe('setUserConfigValue: schema validation', () => {
       setUserConfigValue({ filePath: file, path: ['platform', 'adapters', 'llm'], value: 'x' }),
       'KB_CONFIG_INVALID',
     );
-    expect(error.details.path).toBe('platform');
+    expect(error.details).toHaveProperty('path', 'platform');
   });
 });
 
@@ -618,7 +618,7 @@ describe('setUserConfigValue: secrets', () => {
       }),
       'KB_CONFIG_SECRET_MISSING',
     );
-    expect(error.details.variable).toBe('OPENAI_API_KEY');
+    expect(error.details).toHaveProperty('variable', 'OPENAI_API_KEY');
   });
 
   it('accepts an unset reference with allowMissingEnv', async () => {

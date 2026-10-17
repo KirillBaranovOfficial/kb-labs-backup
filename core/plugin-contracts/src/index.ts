@@ -92,6 +92,7 @@ export { noopTraceContext } from "./trace.js";
 // Errors
 export {
   PluginError,
+  ProductPluginError,
   PermissionError,
   TimeoutError,
   AbortError,

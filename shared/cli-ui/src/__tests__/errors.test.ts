@@ -24,6 +24,18 @@ describe('handleError', () => {
     })).toContain('  - QA_CASE_INVALID (error) cases/S-1.md:4: Missing case claim.\n  Hint:  Fix the listed findings, then retry.');
   });
 
+  it('renders flat diagnostic details in human output', () => {
+    const rendered = renderErrorEnvelope({
+      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+      message: 'The Gateway returned an invalid UX result.',
+      hint: 'Run kb-create doctor.',
+      details: { httpStatus: '500', requestStage: 'Webhook revoke' },
+    });
+
+    expect(rendered).toContain('httpStatus: 500');
+    expect(rendered).toContain('requestStage: Webhook revoke');
+  });
+
   // case: S-041.6, S-100.1
   it('renders the catalogued cause in human error output', () => {
     expect(renderErrorEnvelope({
@@ -43,6 +55,7 @@ describe('handleError', () => {
       code: 'KB_AUTH_REQUIRED', area: 'auth', stage: 'run', severity: 'error', retryable: false,
       message: 'Authentication is required.', hint: 'Run "kb auth login".',
       cause: 'No saved authentication session was found.',
+      details: { gatewayUrl: 'https://gateway.example.test' },
     };
     const error = Object.assign(new Error(envelope.message), { envelope });
 

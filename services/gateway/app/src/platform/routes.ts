@@ -96,6 +96,7 @@ function streamErrorEnvelope(
     const status = providerError.status ?? providerError.statusCode;
     if (status === 401 || status === 403 || error.name === 'AuthenticationError') {
       return createErrorEnvelope('KB_CONFIG_LLM_KEY_INVALID', {
+        details: { provider: 'configured LLM provider' },
         message: 'The LLM provider rejected the configured API key.',
         hint: "Check `platform.adapterOptions.llm.apiKey`, then run `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'` and restart the host.",
         correlationId,
@@ -103,6 +104,7 @@ function streamErrorEnvelope(
     }
     if (status === 429 || error.name === 'RateLimitError') {
       return createErrorEnvelope('KB_CONFIG_LLM_QUOTA', {
+        details: { provider: 'configured LLM provider' },
         message: 'The LLM provider quota or budget is exhausted.',
         hint: 'Check provider quota for the configured model with `kb config get platform.adapterOptions.llm.model --scope platform --json`, then choose a model with available quota.',
         correlationId,

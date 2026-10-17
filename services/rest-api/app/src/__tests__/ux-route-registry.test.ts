@@ -200,7 +200,7 @@ describe('REST production route declarations', () => {
         const failure = request.headers['x-ux-fixture-failure'];
         if (failure === 'typed') {
           throw createErrorEnvelope('KB_PROJECT_DECLARATION_INVALID', {
-            details: { projectId: 'project-1' }, message: 'Project declaration failed.', hint: 'Repair the project declaration.',
+            details: { field: 'project', expected: 'a valid .kb declaration' }, message: 'Project declaration failed.', hint: 'Repair the project declaration.',
           });
         }
         if (failure === 'plain') {
@@ -273,7 +273,7 @@ describe('REST production route declarations', () => {
       expect(typed.statusCode, `${method} ${route.url} typed failure status`).toBe(422);
       expect(typed.json()).toMatchObject({ ok: false, error: {
         code: 'KB_PROJECT_DECLARATION_INVALID', message: 'Project declaration failed.',
-        hint: 'Repair the project declaration.', details: { projectId: 'project-1' },
+        hint: 'Repair the project declaration.', details: { field: 'project', expected: 'a valid .kb declaration' },
         correlationId: expect.any(String),
       } });
 

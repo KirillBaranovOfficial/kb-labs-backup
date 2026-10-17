@@ -20,7 +20,7 @@ describe('kb auth register', () => {
       host: 'cli', requestId: 'test', pluginId: '@kb-labs/system', pluginVersion: '1.0.0', cwd: process.cwd(),
       ui: { ...noopUI, write: vi.fn(), error: vi.fn(), json: vi.fn() },
       platform: {}, runtime: { fs: {}, fetch: vi.fn(), env: vi.fn() }, api: {},
-      hostContext: { host: 'cli', argv: [], flags: {} }, trace: noopTraceContext,
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} }, trace: noopTraceContext,
     } as unknown as PluginContextV3;
 
     const result = await authRegister.run(ctx, [], {
@@ -41,7 +41,7 @@ describe('kb auth register', () => {
       host: 'cli', requestId: 'test', pluginId: '@kb-labs/system', pluginVersion: '1.0.0', cwd: process.cwd(),
       ui: { ...noopUI, write: vi.fn(), error: vi.fn(), json: vi.fn() }, platform: {},
       runtime: { fs: {}, fetch: vi.fn(), env: vi.fn() }, api: {},
-      hostContext: { host: 'cli', argv: [], flags: {} }, trace: noopTraceContext,
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} }, trace: noopTraceContext,
     } as unknown as PluginContextV3;
     expect(await authRegister.run(ctx, [], { name: 'agent', 'namespace-id': 'default' })).toBe(1);
     expect(gatewayApiFetch).not.toHaveBeenCalled();
@@ -55,17 +55,17 @@ describe('kb auth register', () => {
       host: 'cli', requestId: 'test', pluginId: '@kb-labs/system', pluginVersion: '1.0.0', cwd: process.cwd(),
       ui: { ...noopUI, write: vi.fn(), error: (message: string) => errors.push(message), json: vi.fn() }, platform: {},
       runtime: { fs: {}, fetch: vi.fn(), env: vi.fn() }, api: {},
-      hostContext: { host: 'cli', argv: [], flags: {} }, trace: noopTraceContext,
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} }, trace: noopTraceContext,
     } as unknown as PluginContextV3;
     expect(await authRegister.run(ctx, [], { 'gateway-url': 'https://gateway-b.test', name: 'agent', 'namespace-id': 'default' })).toBe(1);
     expect(errors.join(' ')).toContain('MACHINE_REGISTER');
   });
 
   it('reports a non-auth Gateway error without printing a raw response body', async () => {
-    const protocolFailure = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+    const protocolFailure = createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
       message: 'Gateway protocol failure during Gateway registration: expected a canonical UX result from https://gateway-b.test (HTTP 500).',
       hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
-      details: { operation: 'Gateway registration', gatewayUrl: 'https://gateway-b.test', status: '500' },
+      details: { requestStage: 'Gateway registration', gatewayUrl: 'https://gateway-b.test', httpStatus: '500' },
       correlationId: 'fixture-correlation',
     });
     gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(protocolFailure));
@@ -74,7 +74,7 @@ describe('kb auth register', () => {
       host: 'cli', requestId: 'test', pluginId: '@kb-labs/system', pluginVersion: '1.0.0', cwd: process.cwd(),
       ui: { ...noopUI, write: vi.fn(), error: (message: string) => errors.push(message), json: vi.fn() }, platform: {},
       runtime: { fs: {}, fetch: vi.fn(), env: vi.fn() }, api: {},
-      hostContext: { host: 'cli', argv: [], flags: {} }, trace: noopTraceContext,
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} }, trace: noopTraceContext,
     } as unknown as PluginContextV3;
     expect(await authRegister.run(ctx, [], { 'gateway-url': 'https://gateway-b.test', name: 'agent', 'namespace-id': 'default' })).toBe(1);
     expect(errors.join(' ')).not.toContain('internal detail');
@@ -88,7 +88,7 @@ describe('kb auth register', () => {
       host: 'cli', requestId: 'test', pluginId: '@kb-labs/system', pluginVersion: '1.0.0', cwd: process.cwd(),
       ui: { ...noopUI, write: vi.fn(), error: (message: string) => errors.push(message), json: vi.fn() }, platform: {},
       runtime: { fs: {}, fetch: vi.fn(), env: vi.fn() }, api: {},
-      hostContext: { host: 'cli', argv: [], flags: {} }, trace: noopTraceContext,
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} }, trace: noopTraceContext,
     } as unknown as PluginContextV3;
     expect(await authRegister.run(ctx, [], { 'gateway-url': 'https://gateway-b.test', name: 'agent', 'namespace-id': 'default' })).toBe(1);
     expect(errors.join(' ')).toContain('Authentication is required');
