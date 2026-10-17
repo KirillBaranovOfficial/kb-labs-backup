@@ -11,7 +11,6 @@ from typing import Protocol
 from urllib.parse import quote
 import http.client
 import socket
-from invocations import run_harness_command
 
 
 class DockerBackend(Protocol):
@@ -38,10 +37,28 @@ def decode_engine_log_stream(data: bytes, container_id: str) -> dict[str, str]:
             "stderr": stderr.decode("utf-8", errors="replace")}
 
 
+def write_failure_log(report_dir: str | Path, name: str, logs: dict[str, str], *, combined: bool = False) -> Path:
+    report = Path(report_dir)
+    service = name.lstrip("/").replace("/", "_") or "unknown"
+    path = report / "containers" / f"{service}.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as stream:
+        stream.write("container logs:\n" if combined else "stdout:\n")
+        stream.write(logs["stdout"])
+        if logs["stdout"] and not logs["stdout"].endswith("\n"):
+            stream.write("\n")
+        if not combined:
+            stream.write("stderr:\n")
+            stream.write(logs["stderr"])
+    return path
+
+
 class DockerCLI:
     """Read Docker Engine state through the CLI and Engine logs endpoint."""
 
     def _run(self, *args: str) -> str:
+        from invocations import run_harness_command
+
         result = run_harness_command(["docker", *args])
         if result.returncode:
             detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
@@ -166,11 +183,16 @@ def collect_container_outcomes(backend: DockerBackend, container_ids: list[str],
         matching_events = [event for event in events
                            if event.get("Actor", {}).get("ID") == identity
                            or event.get("id") == identity]
-        item = {"id": identity, "name": str(inspected.get("Name") or identity),
+        name = str(inspected.get("Name") or identity)
+        item = {"id": identity, "name": name,
                 "state": {key: state.get(key) for key in ("ExitCode", "OOMKilled", "Error", "FinishedAt")},
                 "stdout": logs["stdout"], "stderr": logs["stderr"],
                 "events": matching_events, "metrics": metrics}
         item["verdict"] = _verdict(item, matching_events)
+        if state.get("ExitCode") not in (None, 0):
+            log_path = write_failure_log(report, name, logs)
+            item["logPath"] = str(log_path.relative_to(report))
+            item["verdict"] += f"; Next: cat {log_path}"
         containers.append(item)
     record = {"capturedAt": datetime.now(timezone.utc).isoformat(), "events": events,
               "containers": containers}
@@ -207,7 +229,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--since", default="now")
     parser.add_argument("--container", action="append", default=[])
     parser.add_argument("--monitor")
+    parser.add_argument("--write-log-name")
     args = parser.parse_args(argv)
+    if args.write_log_name:
+        try:
+            log_path = write_failure_log(args.report_dir, args.write_log_name,
+                                         {"stdout": sys.stdin.read(), "stderr": ""}, combined=True)
+        except OSError as error:
+            print(f"Could not save journey container logs: {error}", file=sys.stderr)
+            return 1
+        print(log_path)
+        return 0
     try:
         backend = DockerCLI()
         if args.monitor:
