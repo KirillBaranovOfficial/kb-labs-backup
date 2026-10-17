@@ -31,6 +31,7 @@ class DockerModel:
 
 
 class ContainerOutcomeTests(unittest.TestCase):
+    # case: S-262.2
     def test_engine_log_stream_keeps_stdout_and_stderr_distinct_and_rejects_truncation(self):
         def frame(channel, payload):
             return bytes([channel, 0, 0, 0]) + len(payload).to_bytes(4, "big") + payload
@@ -60,6 +61,7 @@ class ContainerOutcomeTests(unittest.TestCase):
                                                    directory, since="2026-10-14T09:00:00Z")
             record = json.loads((Path(directory) / "container-outcomes.json").read_text())
             verdicts = (Path(directory) / "container-verdicts.txt").read_text()
+            worker_log = (Path(directory) / "containers/worker.log").read_text()
         self.assertEqual(len(record["containers"]), 3)
         self.assertEqual(record["events"], model.events("2026-10-14T09:00:00Z"))
         self.assertEqual(record["containers"][0]["state"], {
@@ -73,6 +75,9 @@ class ContainerOutcomeTests(unittest.TestCase):
         self.assertIn("runner killed by OOM", verdicts)
         self.assertIn("platform killed by signal 9", verdicts)
         self.assertIn("worker exited 1 after reason bad config", verdicts)
+        self.assertEqual(worker_log, "stdout:\nstderr:\nbad config\n")
+        self.assertIn("Next: cat ", outcomes[2]["verdict"])
+        self.assertEqual(outcomes[2]["logPath"], "containers/worker.log")
         self.assertEqual(len(outcomes), 3)
 
 
