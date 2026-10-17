@@ -11,10 +11,13 @@ createErrorEnvelope('KB_CONFIG_INVALID', { details: { path: 'someSection.key', r
 // @ts-expect-error The catalog requires the path template parameter.
 createErrorEnvelope('KB_CONFIG_INVALID', { details: { nextCommand: 'kb config set plugins.someSection.key 1' } });
 
-// @ts-expect-error Required runtime template values stay required when a hint is overridden.
+// Overriding the hint removes its template parameters from the required set.
 createErrorEnvelope('KB_RUNTIME_UNKNOWN_COMMAND', { hint: 'Use the command registry.' });
 
-// @ts-expect-error Explicit text overrides do not remove required catalogue details.
+// @ts-expect-error The hint template still needs binary when it is not overridden.
+createErrorEnvelope('KB_RUNTIME_UNKNOWN_COMMAND');
+
+// Overriding both catalog templates removes their otherwise required values.
 createErrorEnvelope('KB_PLUGIN_NOT_FOUND', { message: 'Plugin missing.', hint: 'Install it.' });
 
 // @ts-expect-error An error without catalogue detail fields cannot acquire ad hoc fields.
