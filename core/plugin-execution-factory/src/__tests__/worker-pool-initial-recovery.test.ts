@@ -25,7 +25,7 @@ function makeRequest(index: number): ExecutionRequest {
       requestId: `initial-retry-${index}`,
       handlerId: 'test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     },
   };
 }

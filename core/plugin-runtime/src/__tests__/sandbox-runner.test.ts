@@ -56,7 +56,7 @@ describe('Sandbox Runner', () => {
         requestId: 'req-123',
         handlerId: 'test:command',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({
@@ -104,7 +104,7 @@ describe('Sandbox Runner', () => {
         requestId: 'req-cmd',
         handlerId: 'test:command',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const runResult = await runInProcess({
@@ -142,7 +142,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-void',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({
@@ -210,7 +210,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-invalid',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       await expect(
@@ -253,7 +253,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-error',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       await expect(
@@ -294,7 +294,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-cleanup',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({
@@ -339,7 +339,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-cleanup-error',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       await expect(
@@ -378,7 +378,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-signal',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const abortController = new AbortController();
@@ -412,7 +412,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-named',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({
@@ -453,7 +453,7 @@ describe('Sandbox Runner', () => {
         pluginVersion: '1.0.0',
         requestId: 'req-context',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
 
       const result = await runInProcess({

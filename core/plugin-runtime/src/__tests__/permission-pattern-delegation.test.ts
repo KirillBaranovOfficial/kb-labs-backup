@@ -20,6 +20,7 @@ describe('plugin runtime permission pattern delegation', () => {
       return undefined as T;
     };
     const invoke = createInvokeAPI({
+    pluginId: 'source-plugin',
       permissions: { invoke: { allow: ['@kb-labs/*'] } },
       invoker,
     });

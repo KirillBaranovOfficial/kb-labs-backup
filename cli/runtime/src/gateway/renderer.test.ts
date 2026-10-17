@@ -12,7 +12,6 @@ describe('TerminalEventRenderer execution failures', () => {
       details: {
         plugin: '@kb-labs/test-plugin',
         command: 'test run',
-        correlationId: 'corr-123',
         failureReason: 'failed unexpectedly',
       },
     });

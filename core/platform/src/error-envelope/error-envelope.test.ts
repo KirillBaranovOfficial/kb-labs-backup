@@ -11,6 +11,7 @@ import {
   ERROR_STAGES,
   ErrorEnvelopeError,
   createErrorEnvelope,
+  createValidatedErrorEnvelope,
   decodeErrorEnvelope,
   errorCatalog,
   getCatalogEntry,
@@ -33,7 +34,7 @@ describe('mapErrorEnvelopeToExitCode', () => {
 
 describe('catalog producer contract', () => {
   it('requires generated parameters even when a caller overrides the catalog hint', () => {
-    expect(createErrorEnvelope('KB_RUNTIME_UNKNOWN_COMMAND', { hint: 'Use the command registry.' })).toMatchObject({
+    expect(createValidatedErrorEnvelope('KB_RUNTIME_UNKNOWN_COMMAND', { hint: 'Use the command registry.' })).toMatchObject({
       code: 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION',
       details: { originalCode: 'KB_RUNTIME_UNKNOWN_COMMAND', fields: 'binary' },
     });
@@ -42,11 +43,11 @@ describe('catalog producer contract', () => {
 
 describe('received catalog envelope reconstruction', () => {
   // case: S-203.2
-  it('renders catalog text from generated required details and reports missing values as protocol failures', () => {
+  it('preserves validated catalogued envelope fields and reports missing values as protocol failures', () => {
     const received = {
       ...createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'plugins:manage' } }),
-      message: 'remote message',
-      hint: 'remote hint',
+      message: 'Permission denied: plugins:manage',
+      hint: 'Ask your administrator for the permission needed to perform this operation.',
     };
     const reconstructed = decodeErrorEnvelope(received);
     expect(reconstructed).toMatchObject({
@@ -85,7 +86,29 @@ describe('received catalog envelope reconstruction', () => {
       code: 'KB_AUTH_SESSION_REVOKED',
       details: { gatewayUrl: 'https://gateway.test', reason: 'revoked' },
     });
-    expect(JSON.stringify(withSafeDetail)).not.toContain('remote ');
+    expect(withSafeDetail).not.toMatchObject({ message: 'remote message', hint: 'remote hint' });
+  });
+
+  it('preserves validated diagnostic findings while rebuilding the received envelope', () => {
+    const received = {
+      ...createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+        message: 'QA case coverage input is invalid',
+        hint: 'Fix the listed case coverage inputs, then rerun `kb qa coverage show`.',
+        diagnostics: [{
+          code: 'KB_QA_CASE_COVERAGE_INPUT_INVALID',
+          message: 'claims[2].status must be PASS or FAIL',
+          severity: 'error' as const,
+          path: 'corrupted-run.json',
+        }],
+      }),
+    };
+
+    const reconstructed = decodeErrorEnvelope(received, { presentation: 'handler' });
+
+    expect(reconstructed.code).toBe('KB_RUNTIME_INPUT_INVALID');
+    expect(reconstructed.message).toBe('QA case coverage input is invalid');
+    expect(reconstructed.hint).toBe('Fix the listed case coverage inputs, then rerun `kb qa coverage show`.');
+    expect(reconstructed.diagnostics).toEqual(received.diagnostics);
   });
 });
 
@@ -315,7 +338,7 @@ describe('createErrorEnvelope', () => {
   });
 
   it('returns a catalogued producer-contract diagnostic for undeclared details', () => {
-    const envelope = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+    const envelope = createValidatedErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
       details: { undeclaredEvidence: 'unexpected' },
     });
     expect(envelope.code).toBe('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION');
@@ -364,7 +387,7 @@ describe('structured error diagnostics', () => {
 
   it.each(['{"findings":[]}', '[{"message":"bad"}]'])('rejects serialized structured detail values: %s', (value) => {
     try {
-      createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { templateValues: { binary: 'test-cli' }, details: { report: value } });
+      createValidatedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { templateValues: { binary: 'test-cli' }, details: { report: value } });
       throw new Error('expected serialized JSON detail to be rejected');
     } catch (error) {
       expect(error).toMatchObject({ code: 'KB_PLUGIN_CONTRACT_VIOLATION', hint: expect.stringContaining('error.diagnostics') });
@@ -380,9 +403,9 @@ describe('structured error diagnostics', () => {
   });
 
   it('rejects non-string details in the builder with a catalogued contract violation', () => {
-    expect(() => createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+    expect(() => createValidatedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
       templateValues: { binary: 'test-cli' },
-      details: { report: ['finding'] as unknown as string },
+      details: { report: ['finding'] },
     })).toThrow(expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }));
   });
 });

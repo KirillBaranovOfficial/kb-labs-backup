@@ -55,7 +55,7 @@ function makeCtx(cwd: string): { ctx: PluginContextV3; out: Captured } {
     } as never,
     runtime: { fs: {} as never, fetch: vi.fn(), env: vi.fn() },
     api: {} as never,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
   return { ctx, out };

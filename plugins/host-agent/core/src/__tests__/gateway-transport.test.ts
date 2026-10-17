@@ -41,6 +41,7 @@ describe('GatewayTransport', () => {
       requestId: 'r2',
       error: createErrorEnvelope('KB_ADAPTER_OPERATION_FAILED', {
         correlationId: 'r2',
+        details: { operation: 'get', slot: 'cache' },
         message: 'Adapter call failed.',
         hint: 'Check the adapter configuration and try again.',
       }),

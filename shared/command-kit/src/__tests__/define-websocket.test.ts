@@ -307,6 +307,7 @@ describe('isWSHost', () => {
   it('should return false for non-ws host context', () => {
     const cliContext = {
       host: 'cli' as const,
+      binaryName: 'kb',
       argv: [],
       flags: {},
     };

@@ -54,7 +54,7 @@ describe('createExecutionBackend returned failure stack diagnostics', () => {
         requestId: 'returned-stack-correlation',
         handlerId: 'fixture:failure',
         permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       } as ExecutionRequest['descriptor'],
       context: { commandPath: 'fixture failure' },
     };

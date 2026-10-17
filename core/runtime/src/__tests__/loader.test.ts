@@ -661,7 +661,7 @@ describe('Platform Loader', () => {
         input: {},
         descriptor: {
           hostType: 'cli',
-          hostContext: { host: 'cli', argv: [], flags: {} },
+          hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
           pluginId: '@kb-labs/test-plugin',
           pluginVersion: '1.0.0',
           requestId: 'provider-diagnostic-request',

@@ -124,6 +124,7 @@ describe('handleExecutionError', () => {
     const commandJson = vi.fn();
     const commandContext = {
       requestId: 'required-input-test',
+      hostContext: { host: 'cli', binaryName: 'kb' },
       ui: { json: commandJson, error: vi.fn() },
       platform: { logger: { error: vi.fn() } },
     } as unknown as PluginContextV3;

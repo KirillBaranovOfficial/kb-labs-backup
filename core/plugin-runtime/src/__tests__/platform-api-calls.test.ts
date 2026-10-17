@@ -27,7 +27,7 @@ describe('Platform API calls from handler', () => {
     pluginVersion: '1.0.0',
     requestId: 'req-platform-api',
     permissions: {},
-    hostContext: { host: 'cli', argv: [], flags: {} },
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
   };
 
   beforeAll(() => {

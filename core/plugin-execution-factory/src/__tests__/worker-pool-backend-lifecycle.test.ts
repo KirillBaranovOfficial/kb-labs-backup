@@ -45,7 +45,7 @@ function makeRequest(): ExecutionRequest {
       requestId: 'worker-pool-start-retry',
       handlerId: 'test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     },
   };
 }

@@ -10,16 +10,16 @@ describe('config error envelope', () => {
       'Project scope accepts plugin settings under plugins.<configSection>.<key>',
       {
         path: 'commit.llm.enabled',
-        reason: 'project-scope-path',
-        command: 'kb config set plugins.commit.llm.enabled true',
+        nextCommand: 'kb config set plugins.commit.llm.enabled true',
       },
+      { reason: 'project-scope-path' },
     ));
 
     expect(envelope).toMatchObject({
       code: 'KB_CONFIG_INVALID',
       message: 'Configuration path commit.llm.enabled is not valid at project scope; project plugin settings must use plugins.<configSection>.<key>.',
       hint: 'Run "kb config set plugins.commit.llm.enabled true" to write the project setting.',
-      details: { path: 'commit.llm.enabled' },
+      details: { path: 'commit.llm.enabled', nextCommand: 'kb config set plugins.commit.llm.enabled true' },
     });
   });
 });

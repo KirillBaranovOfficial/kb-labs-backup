@@ -46,7 +46,7 @@ function context(cwd = projectRoot) {
     platform: { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() } } as never,
     runtime: { fs: {} as never, fetch: vi.fn(), env: vi.fn() },
     api: {} as never,
-    hostContext: { host: 'cli', argv: [], flags: {} },
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
   return { ctx, outputs, errors, hints };
@@ -464,6 +464,9 @@ describe('kb adapter bind', () => {
     expect(code).toBe(1);
     expect(errors).toEqual([
       'Adapter package @kb-labs/not-installed is not installed on this platform. [KB_ADAPTER_NOT_INSTALLED]\n' +
+      '  package: @kb-labs/not-installed\n' +
+      '  slot: storage\n' +
+      '  path: platform.adapters.storage\n' +
       '  Hint:  kb marketplace install @kb-labs/not-installed --scope platform\n' +
       '  Correlation ID: adapter-bind-test',
     ]);

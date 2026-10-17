@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mockLogger } from '@kb-labs/shared-testing'
-import { ErrorEnvelopeError } from '@kb-labs/core-platform'
+import { ErrorEnvelopeError, type DetailsFor } from '@kb-labs/core-platform'
 import { EnvSecretProvider } from '../secrets.js'
 import { WorkflowLoader } from '../workflow-loader.js'
 
@@ -57,9 +57,13 @@ describe('workflow secret validation', () => {
       throw new Error('expected missing secret validation to fail')
     } catch (error) {
       expect(error).toBeInstanceOf(ErrorEnvelopeError)
+      const expectedDetails: DetailsFor<'KB_CONFIG_SECRET_MISSING'> = {
+        secretName: 'W01_MISSING',
+        variable: 'CUSTOM_W01_MISSING',
+      }
       expect((error as ErrorEnvelopeError).envelope).toMatchObject({
         code: 'KB_CONFIG_SECRET_MISSING',
-        details: { secretName: 'W01_MISSING', variable: 'CUSTOM_W01_MISSING' },
+        details: expectedDetails,
         hint: 'Set CUSTOM_W01_MISSING, then run "kb workflow lint".',
       })
     }

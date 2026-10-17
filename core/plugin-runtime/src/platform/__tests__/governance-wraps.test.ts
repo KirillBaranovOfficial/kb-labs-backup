@@ -23,12 +23,12 @@ function makeCtx(platform: Record<string, unknown> = {}): MiddlewareContext {
 
 describe('createDeniedService', () => {
   it('throws PermissionError on any property access', () => {
-    const denied = createDeniedService<{ foo: () => void }>('llm');
+    const denied = createDeniedService<{ foo: () => void }>('llm', 'test-plugin');
     expect(() => denied.foo).toThrow(PermissionError);
   });
 
   it('error message contains service name', () => {
-    const denied = createDeniedService<{ x: number }>('myService');
+    const denied = createDeniedService<{ x: number }>('myService', 'test-plugin');
     expect(() => denied.x).toThrow(/myService/);
   });
 });

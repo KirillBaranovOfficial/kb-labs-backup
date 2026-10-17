@@ -83,7 +83,7 @@ describe('AuthSessionOwner', () => {
     stores.sessionError = null;
     stores.machineError = new SavedAuthFileError('.kb/credentials.json', 'unreadable');
     await expect(new AuthSessionOwner().load('machine')).rejects.toMatchObject({
-      envelope: { code: 'KB_CONFIG_INVALID', details: { path: '.kb/credentials.json', reason: 'unreadable' } },
+      envelope: { code: 'KB_CONFIG_INVALID', details: { path: '.kb/credentials.json' } },
     });
     stores.machineError = null;
     stores.session = { gatewayUrl: 'https://gateway.test', accessToken: 'old', refreshToken: 'refresh', expiresAt: 0 };
@@ -111,7 +111,7 @@ describe('AuthSessionOwner', () => {
       .rejects.toMatchObject({
         envelope: {
           code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
-          details: { status: '401', operation: 'Authentication', gatewayUrl: 'https://gateway.test' },
+          details: { httpStatus: '401', requestStage: 'Authentication', gatewayUrl: 'https://gateway.test' },
         },
       });
   });

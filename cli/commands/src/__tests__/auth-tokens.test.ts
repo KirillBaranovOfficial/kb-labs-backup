@@ -20,7 +20,7 @@ function makeContext(output: string[], errors: string[], json: unknown[]): Plugi
     host: 'cli', requestId: 'test', pluginId: '@kb-labs/system', pluginVersion: '1.0.0', cwd: process.cwd(),
     ui: { ...noopUI, write: (value: string) => output.push(value), error: (value: string) => errors.push(value), json: (value: unknown) => json.push(value) },
     platform: {}, runtime: { fs: {}, fetch: vi.fn(), env: vi.fn() }, api: {},
-    hostContext: { host: 'cli', argv: [], flags: {} }, trace: noopTraceContext,
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} }, trace: noopTraceContext,
   } as unknown as PluginContextV3;
 }
 

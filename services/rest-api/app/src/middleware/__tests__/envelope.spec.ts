@@ -266,7 +266,7 @@ describe('registerEnvelopeMiddleware', () => {
 
     // case: S-203.2
     it('normalizes route-local secured failures and preserves the HTTP status', async () => {
-      app.get('/unauthorized', async (_request: FastifyRequest, reply: FastifyReply) => reply.code(401).send({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Authenticate with Gateway.' } }));
+      app.get('/unauthorized', async (_request: FastifyRequest, reply: FastifyReply) => reply.code(401).send({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Authenticate with Gateway.', details: { gatewayUrl: 'https://gateway.example.test' } } }));
       await app.ready();
 
       const response = await app.inject({ method: 'GET', url: '/unauthorized' });

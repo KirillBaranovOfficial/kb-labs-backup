@@ -85,7 +85,7 @@ function commandContext(captured: CliOutput, cwd: string): PluginContextV3 {
     platform: {} as unknown as PluginContextV3['platform'],
     runtime: {} as unknown as PluginContextV3['runtime'],
     api: {} as PluginContextV3['api'],
-    hostContext: { host: 'cli', argv: [], flags: {} },
+    hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
 }

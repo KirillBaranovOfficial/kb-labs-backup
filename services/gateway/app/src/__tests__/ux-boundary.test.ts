@@ -134,12 +134,13 @@ describe('Gateway UX boundary', () => {
     } } }, async (request, reply) => {
       const mode = (request.query as { mode?: string }).mode;
       if (mode === 'typed') return reply.code(422).send(createUxFailureResult(createErrorEnvelope('KB_PROJECT_DECLARATION_INVALID', {
-        details: { projectId: 'project-1' }, message: 'Project declaration failed.', hint: 'Repair the project declaration.',
+        details: { expected: 'a declared field', field: 'projectId' }, message: 'Project declaration failed.', hint: 'Repair the project declaration.',
       })));
       if (mode === 'plain') {
-        const error = new Error('fixture plain failure') as Error & { statusCode: number; code: string };
+        const error = new Error('fixture plain failure') as Error & { statusCode: number; code: string; details: { path: string } };
         error.statusCode = 409;
         error.code = 'KB_PROJECT_ALREADY_REGISTERED';
+        error.details = { path: '/registered/project' };
         throw error;
       }
       if (mode === 'unexpected') throw new Error('private stack detail');
@@ -172,7 +173,7 @@ describe('Gateway UX boundary', () => {
         code: 'KB_PROJECT_DECLARATION_INVALID',
         message: 'Project declaration failed.',
         hint: 'Repair the project declaration.',
-        details: { projectId: 'project-1' },
+        details: { expected: 'a declared field', field: 'projectId' },
         correlationId: expect.any(String),
       });
 
