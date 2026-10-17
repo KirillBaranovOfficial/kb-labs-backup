@@ -30,6 +30,7 @@ import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
 import { resolveCliHandlerPath } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
+import { cliBinaryName } from './cli-binary.js';
 import { createCLIUIFacade } from "./ui-facade";
 
 export interface PluginExecutionOptions {
@@ -135,6 +136,7 @@ export async function executePlugin(
     // resolved correctly by the execution backend.
     try {
       const exitCode = await executeCommandV3({
+          binaryName: cliBinaryName,
           pluginId,
           pluginVersion,
           commandPath,
@@ -307,6 +309,7 @@ export function createSystemCommandContext(
     api: {} as unknown as PluginAPI,
     hostContext: {
       host: "cli" as const,
+      binaryName: cliBinaryName,
       argv: process.argv.slice(2),
       flags: {},
       // CLI_VERSION is injected from package.json in bin.ts at startup.

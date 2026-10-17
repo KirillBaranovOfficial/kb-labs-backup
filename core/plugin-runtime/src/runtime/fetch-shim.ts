@@ -19,13 +19,14 @@ function globToRegex(pattern: string): RegExp {
 
 export interface CreateFetchShimOptions {
   permissions: PermissionSpec;
+  pluginId: string;
 }
 
 /**
  * Create a sandboxed fetch with URL whitelist
  */
 export function createFetchShim(options: CreateFetchShimOptions): FetchShim {
-  const { permissions } = options;
+  const { permissions, pluginId } = options;
 
   // Convert allowed patterns to regexes
   const allowedPatterns = (permissions.network?.fetch ?? []).map(pattern => ({
@@ -49,10 +50,7 @@ export function createFetchShim(options: CreateFetchShimOptions): FetchShim {
     const isAllowed = allowedPatterns.some(({ regex }) => regex.test(url));
 
     if (!isAllowed) {
-      throw new PermissionError(`Network access denied`, {
-        url,
-        allowedPatterns: (permissions.network?.fetch ?? []).join(', '),
-      });
+      throw new PermissionError('Network access denied', { plugin: pluginId, permission: 'network.fetch' });
     }
 
     // Call native fetch

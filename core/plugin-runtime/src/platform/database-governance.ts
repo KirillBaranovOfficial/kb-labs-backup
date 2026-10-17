@@ -47,18 +47,20 @@ import type { PermissionSpec } from '@kb-labs/plugin-contracts';
 const NAMESPACE_SEPARATOR = '__';
 const KV_NAMESPACE_SEPARATOR = ':';
 
+function permissionDenied(pluginId: string, permission: string, message: string): PermissionError {
+  return new PermissionError(message, { plugin: pluginId, permission });
+}
+
 /**
  * Reject namespace-reserved characters. Throws on construction rather than
  * on first use so misconfigured plugins fail at adapter assembly time.
  */
-const validateName = (kind: 'collection' | 'export', name: string): void => {
+const validateName = (pluginId: string, kind: 'collection' | 'export', name: string): void => {
   if (!name || typeof name !== 'string') {
-    throw new PermissionError(`${kind} name must be a non-empty string, got ${JSON.stringify(name)}`);
+    throw permissionDenied(pluginId, 'platform.database.document', `${kind} name must be a non-empty string, got ${JSON.stringify(name)}`);
   }
   if (name.includes(NAMESPACE_SEPARATOR)) {
-    throw new PermissionError(
-      `${kind} '${name}' contains reserved separator '${NAMESPACE_SEPARATOR}'`,
-    );
+    throw permissionDenied(pluginId, 'platform.database.document', `${kind} '${name}' contains reserved separator '${NAMESPACE_SEPARATOR}'`);
   }
 };
 
@@ -100,26 +102,22 @@ function compileDocumentAcl(
   const acl = new Map<string, Acl>();
   const storagePluginId = sanitizeForIdentifier(pluginId);
   for (const own of perm?.owns ?? []) {
-    validateName('collection', own);
+    validateName(pluginId, 'collection', own);
     if (acl.has(own)) {
-      throw new PermissionError(`Collection '${own}' declared twice in owns for plugin '${pluginId}'`);
+      throw permissionDenied(pluginId, 'platform.database.document', `Collection '${own}' declared twice in owns for plugin '${pluginId}'`);
     }
     acl.set(own, { ownedBy: 'self', storageName: `${storagePluginId}${NAMESPACE_SEPARATOR}${own}` });
   }
   for (const grant of perm?.access ?? []) {
-    validateName('collection', grant.collection);
-    validateName('collection', grant.owner);
+    validateName(pluginId, 'collection', grant.collection);
+    validateName(pluginId, 'collection', grant.owner);
     if (acl.has(grant.collection)) {
       // The plugin already owns this name — own > access. A grant on an owned
       // name is a misconfiguration and we'd rather make the operator fix it.
-      throw new PermissionError(
-        `Collection '${grant.collection}' appears in both owns and access for plugin '${pluginId}'`,
-      );
+      throw permissionDenied(pluginId, 'platform.database.document', `Collection '${grant.collection}' appears in both owns and access for plugin '${pluginId}'`);
     }
     if (!Array.isArray(grant.ops) || grant.ops.length === 0) {
-      throw new PermissionError(
-        `access grant for '${grant.collection}' must declare at least one op (read/write)`,
-      );
+      throw permissionDenied(pluginId, 'platform.database.document', `access grant for '${grant.collection}' must declare at least one op (read/write)`);
     }
     acl.set(grant.collection, {
       ownedBy: 'other',
@@ -145,28 +143,20 @@ function resolveCollection(
 ): string {
   const entry = acl.get(visibleName);
   if (!entry) {
-    throw new PermissionError(
-      `Plugin '${pluginId}' has no permission for collection '${visibleName}' (not in owns/access)`,
-    );
+    throw permissionDenied(pluginId, `platform.database.document.${op}`, `Plugin '${pluginId}' has no permission for collection '${visibleName}' (not in owns/access)`);
   }
   if (entry.ownedBy === 'self') {
     if (op === 'ddl' && !allowDDL) {
-      throw new PermissionError(
-        `Plugin '${pluginId}' lacks ddl.ownCollections — cannot ensureCollection('${visibleName}')`,
-      );
+      throw permissionDenied(pluginId, 'platform.database.document.ddl', `Plugin '${pluginId}' lacks ddl.ownCollections — cannot ensureCollection('${visibleName}')`);
     }
     return entry.storageName;
   }
   // Cross-plugin access
   if (op === 'ddl') {
-    throw new PermissionError(
-      `Plugin '${pluginId}' cannot run DDL on '${visibleName}': collection is owned by another plugin`,
-    );
+    throw permissionDenied(pluginId, 'platform.database.document.ddl', `Plugin '${pluginId}' cannot run DDL on '${visibleName}': collection is owned by another plugin`);
   }
   if (!entry.ops.has(op)) {
-    throw new PermissionError(
-      `Plugin '${pluginId}' lacks '${op}' on '${visibleName}' (granted: ${[...entry.ops].join(',')})`,
-    );
+    throw permissionDenied(pluginId, `platform.database.document.${op}`, `Plugin '${pluginId}' lacks '${op}' on '${visibleName}' (granted: ${[...entry.ops].join(',')})`);
   }
   return entry.storageName;
 }
@@ -186,7 +176,7 @@ export function wrapDocumentDatabase(
 ): IDocumentDatabase {
   const docPerm = permissions.platform?.database?.document;
   if (!docPerm) {
-    return createDocumentDenyStub();
+    return createDocumentDenyStub(pluginId);
   }
   const { acl, allowDDL } = compileDocumentAcl(pluginId, docPerm);
 
@@ -324,12 +314,12 @@ export function wrapKVStore(
 ): IKVStore {
   const kvPerm = permissions.platform?.database?.kvStore;
   if (!kvPerm) {
-    return createKVDenyStub();
+    return createKVDenyStub(pluginId);
   }
   const ns = `${pluginId}${KV_NAMESPACE_SEPARATOR}`;
   const validateKey = (k: string): void => {
     if (!k || typeof k !== 'string') {
-      throw new PermissionError(`KV key must be a non-empty string`);
+      throw permissionDenied(pluginId, 'platform.database.kvStore', 'KV key must be a non-empty string');
     }
   };
   const prefix = (k: string): string => { validateKey(k); return ns + k; };
@@ -376,11 +366,11 @@ export function wrapKVStore(
  * `.catch` / `expect(...).rejects` and surfaces as an uncaught exception
  * — predictable async rejection keeps error handling uniform.
  */
-function createDocumentDenyStub(): IDocumentDatabase {
+function createDocumentDenyStub(pluginId: string): IDocumentDatabase {
   const reason = "Document database access denied: plugin did not declare `permissions.platform.database.document`";
-  const denyAsync = async (): Promise<never> => { throw new PermissionError(reason); };
+  const denyAsync = async (): Promise<never> => { throw permissionDenied(pluginId, 'platform.database.document', reason); };
   // eslint-disable-next-line require-yield
-  const denyIter = async function* (): AsyncIterable<never> { throw new PermissionError(reason); };
+  const denyIter = async function* (): AsyncIterable<never> { throw permissionDenied(pluginId, 'platform.database.document', reason); };
   return {
     find: denyAsync as never,
     findStream: denyIter as never,
@@ -402,11 +392,11 @@ function createDocumentDenyStub(): IDocumentDatabase {
   };
 }
 
-function createKVDenyStub(): IKVStore {
+function createKVDenyStub(pluginId: string): IKVStore {
   const reason = "KV store access denied: plugin did not declare `permissions.platform.database.kvStore`";
-  const denyAsync = async (): Promise<never> => { throw new PermissionError(reason); };
+  const denyAsync = async (): Promise<never> => { throw permissionDenied(pluginId, 'platform.database.kvStore', reason); };
   // eslint-disable-next-line require-yield
-  const denyIter = async function* (): AsyncIterable<never> { throw new PermissionError(reason); };
+  const denyIter = async function* (): AsyncIterable<never> { throw permissionDenied(pluginId, 'platform.database.kvStore', reason); };
   return {
     get: denyAsync as never,
     getMany: denyAsync as never,

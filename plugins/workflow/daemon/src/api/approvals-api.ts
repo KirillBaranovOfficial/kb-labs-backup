@@ -110,7 +110,7 @@ export function registerApprovalsAPI(options: ApprovalsAPIOptions): void {
 
       const step = job.steps.find(s => s.id === stepId);
       if (!step) {
-        return fail(reply, 'KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND', 'Step not found');
+        return fail(reply, 'KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND', 'Step not found', undefined, { stepId });
       }
 
       if ((step.status as string) !== 'waiting_approval') {

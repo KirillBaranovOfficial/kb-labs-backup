@@ -25,7 +25,7 @@ export function pluginCommandUnavailable(commandPath: string): ErrorEnvelopeErro
   return new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
     message: `Plugin command "${commandPath}" has no executable handler in its manifest.`,
     hint: 'Run `kb marketplace plugins doctor --scope platform` to inspect the installed manifest, then update or rebuild the plugin with its command handler.',
-    details: { commandPath },
+    details: { command: commandPath },
   }));
 }
 

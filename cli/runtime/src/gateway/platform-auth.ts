@@ -71,6 +71,7 @@ function classifyFailure(error: unknown, gatewayUrl?: string, platformRoot?: str
 
 function commandFailed(): ErrorEnvelope {
   return createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+    templateValues: { binary: 'kb' },
     message: 'The Gateway could not verify the saved session.',
     hint: 'Run "kb-create doctor" to check the host, then retry the command.',
   });

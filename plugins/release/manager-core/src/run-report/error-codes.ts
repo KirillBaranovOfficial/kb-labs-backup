@@ -1,13 +1,14 @@
 import {
-  createErrorEnvelope,
+  createValidatedErrorEnvelope,
   getCatalogEntry,
+  type DetailsOptionFor,
   type ErrorAction,
   type ErrorCatalogEntry,
-  type ErrorCode,
   type ErrorEnvelope,
+  type PlatformErrorCode,
 } from '@kb-labs/core-platform/error-envelope';
 
-export type ReleaseErrorCode = Extract<ErrorCode, `KB_RELEASE_${string}`>;
+export type ReleaseErrorCode = Extract<PlatformErrorCode, `KB_RELEASE_${string}`>;
 
 export function describeReleaseError(code: ReleaseErrorCode): ErrorCatalogEntry {
   const entry = getCatalogEntry(code);
@@ -17,21 +18,20 @@ export function describeReleaseError(code: ReleaseErrorCode): ErrorCatalogEntry 
   return entry;
 }
 
-export interface CreateReleaseErrorInput {
-  code: ReleaseErrorCode;
+export type CreateReleaseErrorInput<C extends ReleaseErrorCode = ReleaseErrorCode> = {
+  code: C;
   message?: string;
   cause?: string;
   hint?: string;
   actions?: ErrorAction[];
   severity?: 'error' | 'warning';
   correlationId?: string;
-  details?: Record<string, string>;
-}
+} & DetailsOptionFor<C>;
 
 /** Build a release failure from the shared platform catalog. */
-export function createReleaseError(input: CreateReleaseErrorInput): ErrorEnvelope {
-  const entry = describeReleaseError(input.code);
-  return createErrorEnvelope(input.code, {
+export function createReleaseError<C extends ReleaseErrorCode>(input: CreateReleaseErrorInput<C>): ErrorEnvelope {
+  describeReleaseError(input.code);
+  return createValidatedErrorEnvelope(input.code, {
     ...(input.message !== undefined ? { message: input.message } : {}),
     ...(input.cause !== undefined ? { cause: input.cause } : {}),
     ...(input.hint !== undefined ? { hint: input.hint } : {}),

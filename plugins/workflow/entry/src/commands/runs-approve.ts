@@ -55,13 +55,13 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
           const { pending } = await client.listPendingApprovals(runId);
 
           if (pending.length === 0) {
-            return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'No pending approvals are available for this run.', `Inspect the run with: kb workflow runs view ${runId}`);
+            return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'No pending approvals are available for this run.', `Inspect the run with: kb workflow runs view ${runId}`, {});
           }
 
           const first = pending[0];
           if (!first) {
             // Guard — cannot happen after the length===0 check above, but satisfies TS.
-            return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'No pending approval step was returned for this run.', `Inspect the run with: kb workflow runs view ${runId}`);
+            return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'No pending approval step was returned for this run.', `Inspect the run with: kb workflow runs view ${runId}`, {});
           }
 
           if (pending.length > 1) {
@@ -71,7 +71,12 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
                 `${i + 1}. [job:${p.jobId}] step "${p.stepName}" (${p.stepId})` +
                 (p.waitingSince ? ` — waiting since ${new Date(p.waitingSince).toLocaleString()}` : ''),
             );
-            return workflowCommandError('KB_RUNTIME_INPUT_INVALID', 'Multiple approval steps are waiting.', 'Specify both `--job-id` and `--step-id` to choose one approval.', items.join('\n'));
+            return workflowCommandError('KB_RUNTIME_INPUT_INVALID', 'Multiple approval steps are waiting.', 'Specify both `--job-id` and `--step-id` to choose one approval.', {
+              details: {
+                field: 'job-id and step-id',
+                waitingSteps: items.join('\n'),
+              },
+            });
           }
 
           // Single pending — resolve it.

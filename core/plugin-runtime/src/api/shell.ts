@@ -11,6 +11,7 @@ const BLOCKED_COMMANDS = [
 ];
 
 export interface CreateShellAPIOptions {
+  pluginId: string;
   permissions: PermissionSpec;
   cwd: string;
   processExecutor?: IProcessExecutor;
@@ -24,19 +25,20 @@ function processError(error: unknown): Error {
 }
 
 export function createShellAPI(options: CreateShellAPIOptions): ShellAPI {
-  const { permissions, cwd } = options;
+  const { permissions, cwd, pluginId } = options;
   const allowedCommands = permissions.shell?.allow ?? [];
+  const identity = options.processIdentity ?? {
+    executionId: 'unknown-execution', requestId: 'unknown-request', pluginId,
+  };
+  const permissionDetails = { plugin: pluginId, permission: 'shell.exec' };
   if (allowedCommands.length === 0) {
-    return { async exec(): Promise<never> { throw new PermissionError('Shell execution not allowed'); } };
+    return { async exec(): Promise<never> { throw new PermissionError('Shell execution not allowed', permissionDetails); } };
   }
 
   const executor = options.processExecutor;
   if (!executor) {
     throw new Error('Governed process executor is unavailable in this execution host');
   }
-  const identity = options.processIdentity ?? {
-    executionId: 'unknown-execution', requestId: 'unknown-request', pluginId: 'unknown-plugin',
-  };
   const quotas = permissions.quotas ?? {};
 
   return {
@@ -44,11 +46,11 @@ export function createShellAPI(options: CreateShellAPIOptions): ShellAPI {
       const fullCommand = `${command} ${args.join(' ')}`;
       for (const blocked of BLOCKED_COMMANDS) {
         if (fullCommand.includes(blocked)) {
-          throw new PermissionError('Dangerous command blocked', { command: fullCommand, blocked });
+          throw new PermissionError('Dangerous command blocked', permissionDetails);
         }
       }
       if (!allowedCommands.some((pattern) => matchesPermissionPattern(command, pattern) || matchesPermissionPattern(basename(command), pattern))) {
-        throw new PermissionError('Command not in whitelist', { command, allowedCommands: allowedCommands.join(', ') });
+        throw new PermissionError('Command not in whitelist', permissionDetails);
       }
 
       const requestedTimeout = execOptions?.timeout ?? quotas.timeoutMs ?? 30_000;

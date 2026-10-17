@@ -87,6 +87,7 @@ function globToRegex(pattern: string): RegExp {
 }
 
 export interface CreateFSShimOptions {
+  pluginId: string;
   permissions: PermissionSpec;
   cwd: string;
   outdir?: string;
@@ -118,7 +119,8 @@ function matchesGlobPattern(filePath: string, pattern: string, cwd: string): boo
  * Create a sandboxed filesystem shim
  */
 export function createFSShim(options: CreateFSShimOptions): FSShim {
-  const { permissions, cwd, outdir, strictPermissions = false } = options;
+  const { permissions, cwd, outdir, pluginId, strictPermissions = false } = options;
+  const permissionDetails = (permission: string) => ({ plugin: pluginId, permission });
 
   // Store patterns for glob matching (not resolved to absolute paths yet)
   const readablePatterns: string[] = [
@@ -152,18 +154,12 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
     // Check hardcoded security patterns (platform-level, not configurable)
     for (const pattern of HARDCODED_DENIED_PATTERNS) {
       if (pattern.test(normalizedPath) || pattern.test(realPath)) {
-        throw new PermissionError(`Access denied: path matches security pattern`, {
-          path: normalizedPath,
-          pattern: pattern.toString(),
-        });
+        throw new PermissionError('Access denied: path matches security pattern', permissionDetails('fs.access'));
       }
     }
 
     if (!isInsideMacUserTemp && (VAR_PATH_PATTERN.test(normalizedPath) || VAR_PATH_PATTERN.test(realPath))) {
-      throw new PermissionError(`Access denied: path matches security pattern`, {
-        path: normalizedPath,
-        pattern: VAR_PATH_PATTERN.toString(),
-      });
+      throw new PermissionError('Access denied: path matches security pattern', permissionDetails('fs.access'));
     }
 
     return realPath;
@@ -179,7 +175,7 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
     );
 
     if (!isAllowed) {
-      throw new PermissionError(`Read access denied`, { path: filePath });
+      throw new PermissionError('Read access denied', permissionDetails('fs.read'));
     }
 
     return normalized;
@@ -195,7 +191,7 @@ export function createFSShim(options: CreateFSShimOptions): FSShim {
     );
 
     if (!isAllowed) {
-      throw new PermissionError(`Write access denied`, { path: filePath });
+      throw new PermissionError('Write access denied', permissionDetails('fs.write'));
     }
 
     return normalized;

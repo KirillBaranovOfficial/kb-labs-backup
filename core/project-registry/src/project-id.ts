@@ -33,6 +33,7 @@ export function deriveProjectId(canonicalPath: string): ProjectId {
     throw new ProjectRegistryError(
       'KB_RUNTIME_INPUT_INVALID',
       `Project id can only be derived from an absolute path, got "${canonicalPath}".`,
+      { field: 'path' },
     );
   }
   const digest = createHash('sha256').update(normalizeForHash(canonicalPath), 'utf8').digest('hex');

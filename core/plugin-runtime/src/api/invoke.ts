@@ -20,6 +20,7 @@ export type PluginInvokerFn = <T = unknown>(
 ) => Promise<T>;
 
 export interface CreateInvokeAPIOptions {
+  pluginId: string;
   permissions: PermissionSpec;
   invoker: PluginInvokerFn;
   auditTargetExecution?: (params: {
@@ -29,20 +30,20 @@ export interface CreateInvokeAPIOptions {
   }) => Promise<void> | void;
 }
 
-function checkTargetPermission(permissions: PermissionSpec, invokeOptions?: InvokeOptions): void {
+function checkTargetPermission(permissions: PermissionSpec, pluginId: string, invokeOptions?: InvokeOptions): void {
   const target = invokeOptions?.target;
   if (!target) {
     return;
   }
 
   if (!target.namespace) {
-    throw new PermissionError('Target namespace is required when invoke target is specified');
+    throw new PermissionError('Target namespace is required when invoke target is specified', { plugin: pluginId, permission: 'platform.execution.targetUse' });
   }
 
   const executionPerms = permissions.platform?.execution;
   if (executionPerms === false || executionPerms === undefined) {
     throw new PermissionError(
-      "Target execution denied: missing platform.execution.targetUse permission"
+      "Target execution denied: missing platform.execution.targetUse permission", { plugin: pluginId, permission: 'platform.execution.targetUse' }
     );
   }
 
@@ -52,7 +53,7 @@ function checkTargetPermission(permissions: PermissionSpec, invokeOptions?: Invo
 
   if (!executionPerms.targetUse) {
     throw new PermissionError(
-      "Target execution denied: missing platform.execution.targetUse permission"
+      "Target execution denied: missing platform.execution.targetUse permission", { plugin: pluginId, permission: 'platform.execution.targetUse' }
     );
   }
 
@@ -62,7 +63,7 @@ function checkTargetPermission(permissions: PermissionSpec, invokeOptions?: Invo
     );
     if (!allowed) {
       throw new PermissionError(
-        `Target namespace '${target.namespace}' denied: not in allowed execution namespaces scope`
+        `Target namespace '${target.namespace}' denied: not in allowed execution namespaces scope`, { plugin: pluginId, permission: 'platform.execution.targetUse' }
       );
     }
   }
@@ -72,14 +73,14 @@ function checkTargetPermission(permissions: PermissionSpec, invokeOptions?: Invo
  * Create InvokeAPI for calling other plugins
  */
 export function createInvokeAPI(options: CreateInvokeAPIOptions): InvokeAPI {
-  const { permissions, invoker, auditTargetExecution } = options;
+  const { permissions, pluginId, invoker, auditTargetExecution } = options;
 
   // Check if invoke is allowed (empty array = disabled)
   const allowedPlugins = permissions.invoke?.allow ?? [];
   if (allowedPlugins.length === 0) {
     return {
       async call(): Promise<never> {
-        throw new PermissionError('Plugin invocation not allowed');
+        throw new PermissionError('Plugin invocation not allowed', { plugin: pluginId, permission: 'invoke' });
       },
     };
   }
@@ -90,14 +91,11 @@ export function createInvokeAPI(options: CreateInvokeAPIOptions): InvokeAPI {
       input?: unknown,
       invokeOptions?: InvokeOptions
     ): Promise<T> {
-      checkTargetPermission(permissions, invokeOptions);
+      checkTargetPermission(permissions, pluginId, invokeOptions);
 
       // Check plugin whitelist
       if (!allowedPlugins.some((pattern) => matchesPermissionPattern(pluginId, pattern))) {
-        throw new PermissionError(`Plugin not in whitelist`, {
-          pluginId,
-          allowedPlugins: allowedPlugins.join(', '),
-        });
+        throw new PermissionError('Plugin not in whitelist', { plugin: pluginId, permission: 'invoke' });
       }
 
       const target = invokeOptions?.target;
@@ -121,10 +119,10 @@ export function createInvokeAPI(options: CreateInvokeAPIOptions): InvokeAPI {
 /**
  * Create a no-op invoke API (for when invoke is disabled)
  */
-export function createNoopInvokeAPI(): InvokeAPI {
+export function createNoopInvokeAPI(pluginId: string): InvokeAPI {
   return {
     async call(): Promise<never> {
-      throw new PermissionError('Plugin invocation not allowed');
+      throw new PermissionError('Plugin invocation not allowed', { plugin: pluginId, permission: 'invoke' });
     },
   };
 }

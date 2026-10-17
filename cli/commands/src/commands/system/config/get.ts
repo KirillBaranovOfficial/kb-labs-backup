@@ -113,9 +113,10 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       if (resolution.status === 'unknown' && segments[0] !== 'plugins') {
         throw new ConfigWriteError('KB_CONFIG_UNKNOWN_KEY', `Unknown configuration key ${key}`, {
           path: key,
+          suggestion: resolution.suggestion ?? '',
+        }, {
           key: resolution.key,
           parent: resolution.parentPath,
-          suggestion: resolution.suggestion ?? '',
           knownKeys: resolution.knownKeys.join(','),
         });
       }

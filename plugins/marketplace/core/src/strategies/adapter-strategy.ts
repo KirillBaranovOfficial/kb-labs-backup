@@ -5,7 +5,7 @@
 
 import type { EntityKind } from '@kb-labs/core-discovery';
 import { adapterManifestProvidesSlot, loadAdapterManifest as loadManifest } from '@kb-labs/core-platform';
-import type { ILogger, PlatformErrorCode } from '@kb-labs/core-platform';
+import type { DetailsFor, ILogger } from '@kb-labs/core-platform';
 import type {
   EntityKindStrategy,
   MarketplaceServiceAPI,
@@ -14,14 +14,15 @@ import type {
 import * as path from 'node:path';
 
 export class AdapterManifestLoadError extends Error {
-  readonly code: PlatformErrorCode = 'KB_ADAPTER_MANIFEST_LOAD';
+  readonly code: 'KB_ADAPTER_MANIFEST_LOAD' = 'KB_ADAPTER_MANIFEST_LOAD';
   readonly hint = 'Correct the adapter manifest, rebuild the adapter package, then run `kb marketplace plugins doctor --scope platform` to verify it.';
-  readonly details: Record<string, string>;
+  readonly details: DetailsFor<'KB_ADAPTER_MANIFEST_LOAD'> = {};
+  readonly metadata: { packageRoot: string; reason: string };
 
   constructor(packageRoot: string, reason: string) {
     super('The adapter manifest could not be loaded.');
     this.name = 'AdapterManifestLoadError';
-    this.details = { packageRoot, reason };
+    this.metadata = { packageRoot, reason };
   }
 }
 

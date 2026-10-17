@@ -157,7 +157,6 @@ export function normalizePluginHandlerFailure(
           details: {
             plugin: context.pluginId,
             command: context.command,
-            correlationId: context.correlationId,
             failureReason: reason,
           },
         });

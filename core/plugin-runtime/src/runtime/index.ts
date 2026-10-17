@@ -12,6 +12,7 @@ export { createFetchShim } from './fetch-shim.js';
 export { createEnvShim } from './env-shim.js';
 
 export interface CreateRuntimeAPIOptions {
+  pluginId: string;
   permissions: PermissionSpec;
   cwd: string;
   outdir?: string;
@@ -23,11 +24,11 @@ export interface CreateRuntimeAPIOptions {
  * Create the complete RuntimeAPI with all shims
  */
 export function createRuntimeAPI(options: CreateRuntimeAPIOptions): RuntimeAPI {
-  const { permissions, cwd, outdir, environment, strictFilesystemPermissions } = options;
+  const { permissions, cwd, outdir, environment, strictFilesystemPermissions, pluginId } = options;
 
   return {
-    fs: createFSShim({ permissions, cwd, outdir, strictPermissions: strictFilesystemPermissions }),
-    fetch: createFetchShim({ permissions }),
+    fs: createFSShim({ permissions, cwd, outdir, pluginId, strictPermissions: strictFilesystemPermissions }),
+    fetch: createFetchShim({ permissions, pluginId }),
     env: createEnvShim({ permissions, environment }),
   };
 }

@@ -5,11 +5,11 @@
  */
 
 /** Stable structural error contract consumed by the command boundary. */
-export interface TypedPlatformError {
-  readonly code: PlatformErrorCode;
+export interface TypedPlatformError<C extends PlatformErrorCode = PlatformErrorCode> {
+  readonly code: C;
   readonly message: string;
   readonly hint?: string;
-  readonly details?: Record<string, unknown>;
+  readonly details?: DetailsFor<C>;
   readonly diagnostics?: Array<{ code: string; severity: 'error' | 'warning' | 'info'; message: string; path?: string; line?: number; hint?: string }>;
   readonly correlationId?: string;
   readonly statusCode?: number;
@@ -37,11 +37,9 @@ export interface TypedPlatformError {
  * The gateway HTTP error mapper converts this into a structured response
  * `{code: 'ADAPTER_UNAVAILABLE', slot, reason}` for REST consumers.
  */
-export class AdapterUnavailableError extends Error implements TypedPlatformError {
+export class AdapterUnavailableError extends Error {
   /** Adapter slot, e.g. 'llm', 'embeddings', 'notifier'. */
   public readonly slot: string;
-  public readonly code: PlatformErrorCode;
-  public readonly details: Record<string, unknown>;
   public readonly hint: string;
   /** Why the adapter is unavailable. */
   public readonly reason: 'not-configured' | 'load-failed';
@@ -66,11 +64,7 @@ export class AdapterUnavailableError extends Error implements TypedPlatformError
     this.name = 'AdapterUnavailableError';
     this.slot = slot;
     this.reason = reason;
-    this.code = reason === 'load-failed' ? 'KB_HOST_ADAPTER_UNAVAILABLE' : 'KB_ADAPTER_NOT_CONFIGURED';
     const command = getAdapterConfigurationCommand(slot);
-    this.details = reason === 'load-failed'
-      ? { slot, reason }
-      : { service: slot, adapter: `platform.adapters.${slot}`, command };
     this.hint = options?.hint ?? (reason === 'load-failed'
       ? `Run "kb logs query" to inspect why the ${slot} adapter could not load, correct the underlying issue, then retry.`
       : `Run "${command}" to configure the ${slot} adapter, then retry the command.`);
@@ -100,12 +94,12 @@ export class AdapterProjectScopeError extends Error {
 }
 
 /** A bound adapter cannot run because a required credential is absent. */
-export class AdapterCredentialsMissingError extends Error implements TypedPlatformError {
-  public readonly code: PlatformErrorCode = 'KB_ADAPTER_CREDENTIALS_MISSING';
+export class AdapterCredentialsMissingError extends Error implements TypedPlatformError<'KB_ADAPTER_CREDENTIALS_MISSING'> {
+  public readonly code: 'KB_ADAPTER_CREDENTIALS_MISSING' = 'KB_ADAPTER_CREDENTIALS_MISSING';
   public readonly slot: string;
   public readonly credential: string;
   public readonly configurationPath: string;
-  public readonly details: Record<string, unknown>;
+  public readonly details: DetailsFor<'KB_ADAPTER_CREDENTIALS_MISSING'>;
   public readonly hint: string;
 
   constructor(slot: string, credential: string, configurationPath: string) {
@@ -123,7 +117,7 @@ export class AdapterCredentialsMissingError extends Error implements TypedPlatfo
 
 /** An adapter operation failed after its own retry policy was exhausted. */
 export class AdapterOperationError extends Error {
-  public readonly code: PlatformErrorCode = 'KB_ADAPTER_OPERATION_FAILED';
+  public readonly code: 'KB_ADAPTER_OPERATION_FAILED' = 'KB_ADAPTER_OPERATION_FAILED';
 
   constructor(
     public readonly slot: string,
@@ -197,3 +191,4 @@ export class ServicePortConfigError extends Error {
   }
 }
 import type { PlatformErrorCode } from './error-envelope/types.js';
+import type { DetailsFor } from './error-envelope/catalog.js';

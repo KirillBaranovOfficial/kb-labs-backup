@@ -481,8 +481,6 @@ export async function loadPlatformConfig(
         `Runtime project ${options.projectId} was started for "${requestedPath}" but the registry maps it to "${registered.project.path}".`,
         {
           projectId: options.projectId,
-          projectPath: requestedPath,
-          registeredPath: registered.project.path,
         },
       );
     }

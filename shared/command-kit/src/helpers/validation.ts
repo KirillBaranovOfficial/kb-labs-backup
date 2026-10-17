@@ -6,13 +6,14 @@
  */
 
 import { z } from 'zod';
+import type { DetailsFor } from '@kb-labs/core-platform';
 
 /**
  * Validation error with formatted message.
  */
 export class ValidationError extends Error {
-  readonly code = 'KB_RUNTIME_INPUT_INVALID';
-  readonly details: Record<string, string>;
+  readonly code: 'KB_RUNTIME_INPUT_INVALID' = 'KB_RUNTIME_INPUT_INVALID';
+  readonly details: DetailsFor<'KB_RUNTIME_INPUT_INVALID'>;
 
   constructor(
     message: string,
@@ -20,7 +21,8 @@ export class ValidationError extends Error {
   ) {
     super(message);
     this.name = 'ValidationError';
-    this.details = Object.fromEntries((issues ?? []).map((issue) => [issue.path || 'value', issue.message]));
+    const fields = [...new Set((issues ?? []).map((issue) => issue.path || 'value'))];
+    this.details = fields.length > 0 ? { field: fields.join(', ') } : {};
   }
 }
 

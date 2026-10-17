@@ -53,12 +53,14 @@ function createFallbackError(code: CatalogErrorCode, limitBytes?: number): Error
     return createErrorEnvelope(code, {
       message: 'Authentication is required.',
       hint: 'Run `kb auth login --help` to configure Gateway authentication, then retry.',
+      details: { gatewayUrl: 'the configured Gateway URL' },
     });
   }
   if (code === 'KB_AUTH_FORBIDDEN') {
     return createErrorEnvelope(code, {
       message: 'Permission denied.',
       hint: 'Ask your administrator for permission to perform the requested operation.',
+      details: { permission: 'the requested operation' },
     });
   }
   if (code !== 'KB_RUNTIME_PAYLOAD_TOO_LARGE') return createErrorEnvelope(code);

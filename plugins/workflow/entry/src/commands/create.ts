@@ -39,7 +39,7 @@ export default defineCommand<unknown, CLIInput<CreateFlags>, unknown>({
         return result;
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
-          return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow create`.');
+          return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow create`.', {});
         }
         return handleError(error);
       }

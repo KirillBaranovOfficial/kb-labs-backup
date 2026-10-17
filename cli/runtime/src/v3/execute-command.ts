@@ -11,7 +11,7 @@ import type {
   PlatformServices,
 } from "@kb-labs/plugin-contracts";
 import { wrapCliResult } from "@kb-labs/plugin-runtime";
-import type { ErrorEnvelope } from "@kb-labs/core-platform";
+import { decodeErrorEnvelope, type ErrorEnvelope, type ValidatedErrorEnvelope } from "@kb-labs/core-platform/error-envelope";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import type { ExecutionRequest } from "@kb-labs/plugin-execution-factory";
 import * as path from "node:path";
@@ -19,6 +19,8 @@ import { randomUUID } from "node:crypto";
 import { renderErrorEnvelope } from "@kb-labs/shared-cli-ui";
 
 export interface ExecuteCommandV3Options {
+  /** Registered executable name from the CLI manifest. */
+  binaryName: string;
   /** Explicit plugin environment values for this invocation. */
   env?: Record<string, string | undefined>;
   /**
@@ -154,6 +156,7 @@ export async function executeCommandV3(
   const {
     pluginId,
     pluginVersion,
+    binaryName,
     handlerPath,
     argv,
     commandPath,
@@ -185,7 +188,7 @@ export async function executeCommandV3(
     pluginVersion,
     tenantId,
     permissions,
-    hostContext: { host: "cli", argv, flags },
+    hostContext: { host: "cli", binaryName, argv, flags },
     requestId,
     configSection,
   };
@@ -233,7 +236,7 @@ export async function executeCommandV3(
 
     // Handle execution result
     if (!result.ok) {
-      presentExecutionError(ui, result.error.envelope, Boolean(flags.json), options.onError);
+      presentExecutionError(ui, decodeErrorEnvelope(result.error.envelope, { binary: options.binaryName, presentation: 'handler' }), Boolean(flags.json), options.onError);
       return 1;
     }
 
@@ -266,7 +269,7 @@ export async function executeCommandV3(
 
 function presentExecutionError(
   ui: UIFacade,
-  error: ErrorEnvelope,
+  error: ValidatedErrorEnvelope,
   jsonMode: boolean,
   onError?: (error: ErrorEnvelope) => void,
 ): void {

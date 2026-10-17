@@ -758,6 +758,11 @@ custom_checks:
     on: [check]
     scope: workspace
 
+  - name: catalogued-error-detail-types
+    run: node scripts/checks/check-catalogued-error-detail-types.mjs
+    on: [check]
+    scope: workspace
+
   - name: adapter-manifest
     run: node scripts/checks/check-adapter-manifest.mjs
     on: [check]

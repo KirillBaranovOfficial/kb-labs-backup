@@ -397,7 +397,7 @@ export interface CatalogTemplateParameters {
   "KB_PLUGIN_NAMESPACE_RESERVED": { "namespace": string };
   "KB_PLUGIN_NAMESPACE_TAKEN": { "namespace": string; "owner": string };
   "KB_PLUGIN_NOT_FOUND": { "plugin": string };
-  "KB_PLUGIN_NOT_INSTALLED": { "package": string };
+  "KB_PLUGIN_NOT_INSTALLED": Record<never, never>;
   "KB_PLUGIN_PERMISSION_DENIED": { "permission": string; "plugin": string };
   "KB_PLUGIN_PLATFORM_DUPLICATE": { "package": string; "plugin": string };
   "KB_PLUGIN_SDK_INCOMPATIBLE": { "installed": string; "plugin": string; "required": string };
@@ -516,6 +516,264 @@ export interface CatalogTemplateParameters {
   "WORKER_START_FAILED": { "failureCode": string };
   "WORKER_TREE_UNVERIFIED": Record<never, never>;
   "WORKER_UNAVAILABLE": { "failureCode": string };
+}
+
+export interface CatalogDetailsFor {
+  "ACQUIRE_TIMEOUT": { "acquireTimeoutMs": string };
+  "KB_ADAPTER_CREDENTIALS_MISSING": { "command": string; "credential": string; "path": string; "service": string };
+  "KB_ADAPTER_MANIFEST_LOAD": Record<string, never>;
+  "KB_ADAPTER_NOT_CONFIGURED": { "command": string; "service": string; "adapter"?: string };
+  "KB_ADAPTER_NOT_INSTALLED": { "package": string; "path"?: string; "slot"?: string };
+  "KB_ADAPTER_OPERATION_FAILED": { "operation": string; "slot": string };
+  "KB_ADAPTER_PROJECT_SCOPE": { "path": string };
+  "KB_ADAPTER_SLOT_MISMATCH": { "package": string; "slot": string; "path"?: string };
+  "KB_AUTH_CLOCK_SKEW": Record<string, never>;
+  "KB_AUTH_FORBIDDEN": { "permission": string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string };
+  "KB_AUTH_GATEWAY_UNREACHABLE": Record<string, never>;
+  "KB_AUTH_INVALID_CREDENTIALS": Record<string, never>;
+  "KB_AUTH_INVALID_CURRENT_PASSWORD": Record<string, never>;
+  "KB_AUTH_INVALID_INVITE": Record<string, never>;
+  "KB_AUTH_INVALID_PASSWORD_RESET": Record<string, never>;
+  "KB_AUTH_LAST_ADMIN": Record<string, never>;
+  "KB_AUTH_LOCKED_OUT": Record<string, never>;
+  "KB_AUTH_MCP_CREDENTIAL_REQUIRED": { "gatewayUrl": string };
+  "KB_AUTH_MODE_MISMATCH": { "actual": string; "expected": string };
+  "KB_AUTH_REQUIRED": { "gatewayUrl": string; "reason"?: string };
+  "KB_AUTH_SESSION_REVOKED": { "gatewayUrl": string; "reason"?: string };
+  "KB_AUTH_TOKEN_EXPIRED": { "gatewayUrl": string; "reason"?: string };
+  "KB_AUTH_TOKEN_REISSUE_REQUIRED": { "gatewayUrl": string; "reason"?: string };
+  "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string; "reason"?: string };
+  "KB_CONFIG_APPLY_FAILED": Record<string, never>;
+  "KB_CONFIG_CONFLICT": { "path": string };
+  "KB_CONFIG_INVALID": { "path": string; "contractPath"?: string; "exitCode"?: string; "hostStartupCode"?: string; "launcherLog"?: string; "log"?: string; "nextCommand"?: string; "remedyOperation"?: string; "remedyPlatformRoot"?: string; "stderrTail"?: string };
+  "KB_CONFIG_LLM_KEY_INVALID": { "provider": string };
+  "KB_CONFIG_LLM_PROVIDER_TIMEOUT": Record<string, never>;
+  "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": Record<string, never>;
+  "KB_CONFIG_LLM_QUOTA": { "provider": string };
+  "KB_CONFIG_LOAD_FAILED": Record<string, never>;
+  "KB_CONFIG_OVERLAY_NOT_FOUND": Record<string, never>;
+  "KB_CONFIG_SECRET_MISSING": { "variable": string; "secretName"?: string };
+  "KB_CONFIG_SECRET_PLAINTEXT": { "example": string; "path": string };
+  "KB_CONFIG_UNKNOWN_KEY": { "path": string; "suggestion": string };
+  "KB_DEPLOY_CONFIG_DELIVERY": Record<string, never>;
+  "KB_DEPLOY_HOST_UNDEFINED": Record<string, never>;
+  "KB_DEPLOY_LOCK_WRITE_FAILED": Record<string, never>;
+  "KB_DEPLOY_WAVE_FAILED": Record<string, never>;
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": { "check": string };
+  "KB_DEVKIT_STANDARDS_VIOLATIONS": Record<string, never>;
+  "KB_DEVKIT_TASK_FAILED": { "logPath": string; "package": string; "task": string };
+  "KB_DEVKIT_TASK_GRAPH_INVALID": { "dependency": string; "dependencyTask": string; "task": string; "package"?: string };
+  "KB_DEVKIT_TASK_LOG_UNAVAILABLE": { "logDirectory": string; "package": string; "task": string; "logError"?: string; "logPath"?: string };
+  "KB_ENV_PROFILE_MISMATCH": Record<string, never>;
+  "KB_HOST_ADAPTER_UNAVAILABLE": { "reason": string; "slot": string };
+  "KB_HOST_ALREADY_RUNNING": { "nextCommand": string; "pid"?: string; "platformRoot"?: string };
+  "KB_HOST_CONTROL_UNAUTHORIZED": Record<string, never>;
+  "KB_HOST_CONTROL_UNAVAILABLE": Record<string, never>;
+  "KB_HOST_EXPOSURE_REFUSED": { "bindHost"?: string };
+  "KB_HOST_IDENTITY_MISMATCH": { "actualInstallationId": string; "expectedInstallationId": string; "expectedPlatformRoot": string };
+  "KB_HOST_OPERATION_LOCK_UNSUPPORTED": Record<string, never>;
+  "KB_HOST_PROCESS_IDENTITY_STALE": { "gatewayUrl"?: string; "pid"?: string; "platformRoot"?: string; "record"?: string };
+  "KB_HOST_SERVICE_ADDRESS_INVALID": { "service": string };
+  "KB_HOST_SERVICE_ADDRESS_MISSING": { "service": string; "project"?: string };
+  "KB_HOST_SPEC_INVALID": { "reason": string };
+  "KB_HOST_START_FAILED": { "log"?: string; "launcherLog"?: string; "launcherLogError"?: string; "stderrTail"?: string; "hostStartupCode"?: string; "waited"?: string; "readinessURL"?: string; "readinessStatus"?: string; "readinessError"?: string; "exitCode"?: string; "signal"?: string; "exitStatus"?: string; "expectedPid"?: string; "pid"?: string; "command"?: string; "failureKind"?: string; "supervisorLog"?: string; "supervisorStderrTail"?: string; "supervisorExit"?: string; "controlRecord"?: string; "nextCommand"?: string };
+  "KB_HOST_STATE_DIR_UNWRITABLE": { "path": string };
+  "KB_HOST_STOP_FAILED": { "pid": string };
+  "KB_HOST_STUDIO_ASSETS_MISSING": { "dir": string };
+  "KB_HOST_UNHEALTHY": { "module": string };
+  "KB_HOST_UNREACHABLE": { "address": string };
+  "KB_HOST_VERSION_SKEW": { "client": string; "host": string };
+  "KB_INSTALL_APPLY_FAILED": { "diagnosticPath"?: string; "logPath"?: string };
+  "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH": { "artifact": string };
+  "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED": Record<string, never>;
+  "KB_INSTALL_CONFIG_REQUIRED": { "field": string };
+  "KB_INSTALL_CONFIRMATION_REQUIRED": Record<string, never>;
+  "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE": Record<string, never>;
+  "KB_INSTALL_DOCTOR_INPUT_INVALID": Record<string, never>;
+  "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE": { "path": string; "reason": string; "removeCommand": string; "repairCommand": string };
+  "KB_INSTALL_INCOMPATIBLE_COMPONENTS": { "id"?: string; "kind"?: string; "requiredRange"?: string; "selectedVersion"?: string; "target"?: string };
+  "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED": { "schema": string; "actual"?: string; "expected"?: string; "gate"?: string; "path"?: string; "supported"?: string };
+  "KB_INSTALL_INPUT_REQUIRED": { "field"?: string; "registry"?: string };
+  "KB_INSTALL_INTERRUPTED": Record<string, never>;
+  "KB_INSTALL_LAUNCHER_TOO_OLD": { "launcher": string; "minLauncherVersion": string; "platform": string };
+  "KB_INSTALL_LAYOUT_UNSUPPORTED": { "nextCommand"?: string; "platformRoot"?: string };
+  "KB_INSTALL_LOG_UNAVAILABLE": Record<string, never>;
+  "KB_INSTALL_MANIFEST_PROJECTION_INVALID": Record<string, never>;
+  "KB_INSTALL_MEMORY_INSUFFICIENT": { "available": string; "minimum": string };
+  "KB_INSTALL_NETWORK_UNREACHABLE": { "url": string };
+  "KB_INSTALL_NODE_MISSING": { "requirement": string };
+  "KB_INSTALL_NODE_VERSION": { "version": string };
+  "KB_INSTALL_NO_DISK_SPACE": { "available": string; "needed": string; "path": string };
+  "KB_INSTALL_NO_WRITE_ACCESS": { "path": string };
+  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": { "artifact": string };
+  "KB_INSTALL_OPERATION_CANCELLED": Record<string, never>;
+  "KB_INSTALL_OPERATION_FAILED": Record<string, never>;
+  "KB_INSTALL_OPERATION_IN_PROGRESS": { "pid": string };
+  "KB_INSTALL_PACKAGE_MANAGER_KILLED": Record<string, never>;
+  "KB_INSTALL_PLAN_ARTIFACT_IDENTITY_INVALID": { "artifact": string };
+  "KB_INSTALL_PORT_IN_USE": { "operation": string; "port": string; "address"?: string; "command"?: string; "pid"?: string; "platformRoot"?: string; "purpose"?: string };
+  "KB_INSTALL_PROJECT_REGISTRATION_FAILED": { "causeCode"?: string; "httpStatus"?: string; "platformRoot"?: string; "projectRoot"?: string; "remoteCorrelationId"?: string; "requestStage"?: string };
+  "KB_INSTALL_PROJECT_SELECTION_CHANGED": Record<string, never>;
+  "KB_INSTALL_PROVENANCE_MISMATCH": { "actual": string; "digestVersion": string; "expected": string; "field": string; "package": string; "packagePath": string; "actualPresent"?: string };
+  "KB_INSTALL_PROVIDER_AMBIGUOUS": { "capability": string };
+  "KB_INSTALL_PROVIDER_UNRESOLVED": { "capability": string };
+  "KB_INSTALL_RECEIPT_UNAVAILABLE": Record<string, never>;
+  "KB_INSTALL_RECOVERY_FAILED": Record<string, never>;
+  "KB_INSTALL_RECOVERY_HOST_RUNNING": Record<string, never>;
+  "KB_INSTALL_RECOVERY_UNAVAILABLE": Record<string, never>;
+  "KB_INSTALL_RELEASE_ID_MISSING": Record<string, never>;
+  "KB_INSTALL_RELEASE_INDEX_INVALID": { "actual"?: string; "expected"?: string; "gate"?: string; "path"?: string };
+  "KB_INSTALL_RELEASE_INDEX_UNREADABLE": { "path": string; "actual"?: string; "expected"?: string; "gate"?: string };
+  "KB_INSTALL_RESOURCE_CHECK_FAILED": Record<string, never>;
+  "KB_INSTALL_ROLLBACK_FAILED": { "snapshot": string };
+  "KB_INSTALL_SCENARIO_INVALID": Record<string, never>;
+  "KB_INSTALL_SECRET_INPUT_INVALID": Record<string, never>;
+  "KB_INSTALL_SECRET_STATE_CHANGED": Record<string, never>;
+  "KB_INSTALL_SECRET_STORE_UNSUPPORTED": Record<string, never>;
+  "KB_INSTALL_SERVICE_GRAPH_MISMATCH": Record<string, never>;
+  "KB_INSTALL_SHIM_DANGLING": Record<string, never>;
+  "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": Record<string, never>;
+  "KB_INSTALL_UNSUPPORTED_PLATFORM": { "arch": string; "os": string };
+  "KB_INSTALL_WIZARD_INPUT_INVALID": Record<string, never>;
+  "KB_MARKETPLACE_INSTALL_FAILED": { "package": string; "scope": string };
+  "KB_MARKETPLACE_INTEGRITY_MISMATCH": { "package"?: string; "scope"?: string };
+  "KB_MARKETPLACE_PACKAGE_INVALID": Record<string, never>;
+  "KB_MARKETPLACE_PACKAGE_TOO_FRESH": { "package": string; "scope": string };
+  "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": Record<string, never>;
+  "KB_MARKETPLACE_REGISTRY_INTEGRITY": Record<string, never>;
+  "KB_MARKETPLACE_RESOLUTION_FAILED": Record<string, never>;
+  "KB_MARKETPLACE_VERSION_IMMUTABLE": { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string };
+  "KB_MARKETPLACE_VERSION_NOT_HIGHER": { "installedVersion": string; "package": string; "scope": string; "requestedVersion"?: string };
+  "KB_PLUGIN_ABORTED": Record<string, never>;
+  "KB_PLUGIN_COMMAND_FAILED": { "command": string; "failureReason": string; "plugin": string };
+  "KB_PLUGIN_COMMAND_SHADOWED": { "command": string; "plugin": string };
+  "KB_PLUGIN_CONTRACT_VIOLATION": { "command"?: string; "field"?: string; "plugin"?: string };
+  "KB_PLUGIN_CRASHED": { "plugin": string };
+  "KB_PLUGIN_INSTALL_FAILED": { "plugin": string };
+  "KB_PLUGIN_INTEGRITY_MISMATCH": { "actual": string; "expected": string; "plugin": string };
+  "KB_PLUGIN_LOAD_FAILED": { "plugin": string };
+  "KB_PLUGIN_NAMESPACE_RESERVED": { "namespace": string };
+  "KB_PLUGIN_NAMESPACE_TAKEN": { "namespace": string; "owner": string };
+  "KB_PLUGIN_NOT_FOUND": { "plugin": string };
+  "KB_PLUGIN_NOT_INSTALLED": { "package"?: string };
+  "KB_PLUGIN_PERMISSION_DENIED": { "permission": string; "plugin": string };
+  "KB_PLUGIN_PLATFORM_DUPLICATE": { "package": string; "plugin": string; "ownCopy"?: string; "requester"?: string };
+  "KB_PLUGIN_SDK_INCOMPATIBLE": { "installed": string; "plugin": string; "required": string };
+  "KB_PLUGIN_SETTINGS_INVALID": { "path": string };
+  "KB_PLUGIN_SETTINGS_SCHEMA_INVALID": { "plugin": string };
+  "KB_PLUGIN_TIMEOUT": { "plugin": string };
+  "KB_PROJECT_ALREADY_REGISTERED": { "path": string };
+  "KB_PROJECT_DECLARATION_INVALID": { "expected": string; "field": string };
+  "KB_PROJECT_NAME_TAKEN": { "name": string };
+  "KB_PROJECT_NOT_A_DIRECTORY": { "path": string };
+  "KB_PROJECT_NO_ACCESS": { "path": string };
+  "KB_PROJECT_PATH_NOT_FOUND": { "path": string };
+  "KB_PROJECT_REGISTRY_CORRUPT": { "file": string; "reason": string };
+  "KB_PROJECT_REGISTRY_LOCKED": { "timeoutMs": string };
+  "KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED": { "file": string; "found": string; "supported": string };
+  "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH": { "projectId": string };
+  "KB_PROJECT_RUNTIME_LIMIT": { "limit": string };
+  "KB_PROJECT_RUNTIME_PROCESS_START_FAILED": { "projectId": string };
+  "KB_PROJECT_RUNTIME_RELOAD_FAILED": { "projectId": string };
+  "KB_PROJECT_RUNTIME_START_FAILED": { "projectId": string; "serviceId": string };
+  "KB_PROJECT_SERVICE_NOT_FOUND": { "projectId": string; "serviceId": string; "path"?: string };
+  "KB_PROJECT_UNKNOWN": { "path": string };
+  "KB_RELEASE_BASELINE_DRIFT": { "check"?: string; "classification"?: string; "distTag"?: string; "gitVersion"?: string; "npmVersion"?: string };
+  "KB_RELEASE_BRANCH_NOT_MASTER": { "check"?: string; "classification"?: string; "branch"?: string; "expected"?: string };
+  "KB_RELEASE_BUILD_FAILED": Record<string, never>;
+  "KB_RELEASE_CHECK_FAILED": { "check"?: string; "package"?: string; "classification"?: string; "rule"?: string };
+  "KB_RELEASE_CHECK_TIMEOUT": { "check"?: string; "package"?: string; "classification"?: string; "rule"?: string };
+  "KB_RELEASE_DOCKER_UNAVAILABLE": { "check"?: string; "classification"?: string; "package"?: string; "rule"?: string };
+  "KB_RELEASE_GIT_PUSH_REJECTED": Record<string, never>;
+  "KB_RELEASE_INDEX_SEAL_FAILED": { "gate"?: string; "rule"?: string };
+  "KB_RELEASE_PLAN_INVALID": { "check"?: string; "package"?: string; "classification"?: string; "rule"?: string };
+  "KB_RELEASE_PROMOTE_FAILED": Record<string, never>;
+  "KB_RELEASE_REGISTRY_BINDING_FAILED": Record<string, never>;
+  "KB_RELEASE_REGISTRY_UNREACHABLE": { "check"?: string; "classification"?: string; "target"?: string; "registry"?: string; "package"?: string; "rule"?: string };
+  "KB_RELEASE_SMOKE_FAILED": Record<string, never>;
+  "KB_RELEASE_STAGING_FAILED": Record<string, never>;
+  "KB_RELEASE_TOKEN_MISSING": { "check"?: string; "classification"?: string };
+  "KB_RELEASE_TREE_DIRTY": { "check"?: string; "classification"?: string; "changes"?: string; "toolGenerated"?: string };
+  "KB_RELEASE_VERSION_CONFLICT": { "package": string; "version": string };
+  "KB_RUNTIME_APPROVAL_INPUT_INVALID": Record<string, never>;
+  "KB_RUNTIME_APPROVAL_LIST_FAILED": Record<string, never>;
+  "KB_RUNTIME_APPROVAL_NOT_PENDING": Record<string, never>;
+  "KB_RUNTIME_APPROVAL_RESOLVE_FAILED": Record<string, never>;
+  "KB_RUNTIME_COMMAND_FAILED": { "clickUpCode"?: string; "clickUpStatus"?: string; "command"?: string; "inboxCode"?: string };
+  "KB_RUNTIME_CONFIRMATION_REQUIRED": { "action"?: string; "resource"?: string; "effect"?: string; "reversible"?: string; "irreversible"?: string; "severity"?: string; "confirmWith"?: string; "confirmationRequired"?: string; "destructive"?: string; "blastRadiusCount"?: string; "blastRadiusUnit"?: string; "blastRadiusScope"?: string; "recovery"?: string };
+  "KB_RUNTIME_CONTAINER_NETWORK_UNSUPPORTED": Record<string, never>;
+  "KB_RUNTIME_CONTAINER_TEARDOWN_FAILED": { "container": string };
+  "KB_RUNTIME_CONTAINER_UNAVAILABLE": { "cause": string; "fix": string };
+  "KB_RUNTIME_CRON_LIST_FAILED": Record<string, never>;
+  "KB_RUNTIME_CRON_MUTATION_FAILED": Record<string, never>;
+  "KB_RUNTIME_CRON_NOT_FOUND": Record<string, never>;
+  "KB_RUNTIME_CRON_PLUGIN_READ_ONLY": Record<string, never>;
+  "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": Record<string, never>;
+  "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string };
+  "KB_RUNTIME_DISK_FULL": { "path": string };
+  "KB_RUNTIME_FRAME_TOO_LARGE": { "actualBytes"?: string; "maximumBytes"?: string };
+  "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": { "gatewayUrl"?: string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string; "remoteCode"?: string; "fields"?: string };
+  "KB_RUNTIME_INPUT_INVALID": { "candidates"?: string; "field"?: string; "inboxCode"?: string; "waitingSteps"?: string };
+  "KB_RUNTIME_JOB_CANCEL_FAILED": Record<string, never>;
+  "KB_RUNTIME_JOB_GET_FAILED": Record<string, never>;
+  "KB_RUNTIME_JOB_INPUT_INVALID": Record<string, never>;
+  "KB_RUNTIME_JOB_LIST_FAILED": Record<string, never>;
+  "KB_RUNTIME_JOB_LOGS_FAILED": Record<string, never>;
+  "KB_RUNTIME_JOB_NOT_FOUND": Record<string, never>;
+  "KB_RUNTIME_JOB_STEPS_FAILED": Record<string, never>;
+  "KB_RUNTIME_JOB_SUBMIT_FAILED": Record<string, never>;
+  "KB_RUNTIME_LOGS_UNAVAILABLE": Record<string, never>;
+  "KB_RUNTIME_MCP_INVALID_ARGUMENTS": { "argument": string; "expected": string };
+  "KB_RUNTIME_MCP_TOOL_FORBIDDEN": { "tool": string };
+  "KB_RUNTIME_MCP_UNKNOWN_TOOL": { "tool": string };
+  "KB_RUNTIME_PAYLOAD_TOO_LARGE": { "limit": string; "limitBytes"?: string };
+  "KB_RUNTIME_RATE_LIMITED": { "retryAfter": string };
+  "KB_RUNTIME_RESOURCE_NOT_FOUND": { "plugin"?: string; "route"?: string; "upstreamStatus"?: string };
+  "KB_RUNTIME_RUN_DIRTY": Record<string, never>;
+  "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": { "path": string; "creationError"?: string; "removalError"?: string };
+  "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": { "maxBytes": string; "pathBytes": string; "root": string; "socketNameBytes": string };
+  "KB_RUNTIME_TIMEOUT": { "serviceId"?: string; "timeoutMs"?: string };
+  "KB_RUNTIME_UNEXPECTED": { "dep"?: string; "remoteCorrelationId"?: string; "target"?: string };
+  "KB_RUNTIME_UNKNOWN_COMMAND": { "command"?: string; "pluginDiagnostics"?: string; "suggestions"?: string };
+  "KB_RUNTIME_WAIT_NOT_FINISHED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_API_FAILURE": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_CONFLICT": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_GET_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_INPUT_INVALID": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_LIST_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_NOT_FOUND": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_PROJECT_ID_REQUIRED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_REFRESH_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RERUN_NOT_APPLICABLE": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUNS_LIST_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUN_GET_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUN_LIST_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND": { "runId": string };
+  "KB_RUNTIME_WORKFLOW_RUN_RERUN_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_CONFLICT": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_RUN_START_FAILED": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_SNAPSHOT_NOT_FOUND": Record<string, never>;
+  "KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND": { "stepId": string };
+  "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": { "connectionId": string };
+  "KB_SERVICE_HEALTH_TIMEOUT": Record<string, never>;
+  "KB_SERVICE_UNAVAILABLE": { "service"?: string; "status"?: string; "timeout"?: string };
+  "KB_UPDATE_APPLY_FAILED": { "version": string; "diagnosticPath"?: string; "logPath"?: string };
+  "KB_UPDATE_DOWNGRADE_REFUSED": { "installed": string; "target": string };
+  "KB_UPDATE_DOWNLOAD_FAILED": Record<string, never>;
+  "KB_UPDATE_HOST_NOT_HEALTHY": { "version"?: string; "attemptedRoot"?: string; "recoveryRoot"?: string; "recoveryStage"?: string; "runningVersion"?: string; "snapshotId"?: string; "logPath"?: string; "nextCommand"?: string; "failureReason"?: string; "restoredHealthy"?: string; "snapshot"?: string; "hostRestart"?: string };
+  "KB_UPDATE_INCOMPATIBLE": { "component": string; "kind": string; "range": string; "version": string; "id"?: string; "requiredRange"?: string; "selectedVersion"?: string };
+  "KB_UPDATE_NO_SNAPSHOT": Record<string, never>;
+  "KB_UPDATE_SECRET_REFUSED": { "secret": string };
+  "KB_UPDATE_VERIFY_FAILED": { "version": string };
+  "QUEUE_FULL": { "maxQueueSize": string; "queueSize": string };
+  "WORKER_CRASHED": { "exitCode"?: string; "signal"?: string; "workerId"?: string };
+  "WORKER_START_FAILED": { "failureCode": string; "failedAt"?: string; "failureAttempt"?: string; "failureMessage"?: string; "retryInMs"?: string };
+  "WORKER_TREE_UNVERIFIED": Record<string, never>;
+  "WORKER_UNAVAILABLE": { "failureCode": string; "failedAt"?: string; "failureAttempt"?: string; "failureMessage"?: string; "retryInMs"?: string };
 }
 
 export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
@@ -655,7 +913,7 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
   "KB_PLUGIN_NAMESPACE_TAKEN": ["namespace","owner"],
   "KB_PLUGIN_NOT_FOUND": ["plugin"],
-  "KB_PLUGIN_NOT_INSTALLED": ["package"],
+  "KB_PLUGIN_NOT_INSTALLED": [],
   "KB_PLUGIN_PERMISSION_DENIED": ["permission","plugin"],
   "KB_PLUGIN_PLATFORM_DUPLICATE": ["package","plugin"],
   "KB_PLUGIN_SDK_INCOMPATIBLE": ["installed","plugin","required"],
@@ -770,6 +1028,522 @@ export const catalogRequiredTemplateParameters: Readonly<Record<CatalogErrorCode
   "KB_UPDATE_SECRET_REFUSED": ["secret"],
   "KB_UPDATE_VERIFY_FAILED": ["version"],
   "QUEUE_FULL": ["maxQueueSize","queueSize"],
+  "WORKER_CRASHED": [],
+  "WORKER_START_FAILED": ["failureCode"],
+  "WORKER_TREE_UNVERIFIED": [],
+  "WORKER_UNAVAILABLE": ["failureCode"],
+};
+
+export const catalogRequiredMessageTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
+  "ACQUIRE_TIMEOUT": ["acquireTimeoutMs"],
+  "KB_ADAPTER_CREDENTIALS_MISSING": ["credential","service"],
+  "KB_ADAPTER_MANIFEST_LOAD": [],
+  "KB_ADAPTER_NOT_CONFIGURED": ["service"],
+  "KB_ADAPTER_NOT_INSTALLED": ["package"],
+  "KB_ADAPTER_OPERATION_FAILED": ["operation","slot"],
+  "KB_ADAPTER_PROJECT_SCOPE": ["path"],
+  "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
+  "KB_AUTH_CLOCK_SKEW": [],
+  "KB_AUTH_FORBIDDEN": ["permission"],
+  "KB_AUTH_GATEWAY_UNREACHABLE": [],
+  "KB_AUTH_INVALID_CREDENTIALS": [],
+  "KB_AUTH_INVALID_CURRENT_PASSWORD": [],
+  "KB_AUTH_INVALID_INVITE": [],
+  "KB_AUTH_INVALID_PASSWORD_RESET": [],
+  "KB_AUTH_LAST_ADMIN": [],
+  "KB_AUTH_LOCKED_OUT": [],
+  "KB_AUTH_MCP_CREDENTIAL_REQUIRED": [],
+  "KB_AUTH_MODE_MISMATCH": ["actual","expected"],
+  "KB_AUTH_REQUIRED": [],
+  "KB_AUTH_SESSION_REVOKED": [],
+  "KB_AUTH_TOKEN_EXPIRED": [],
+  "KB_AUTH_TOKEN_REISSUE_REQUIRED": [],
+  "KB_AUTH_USER_INACTIVE": [],
+  "KB_CONFIG_APPLY_FAILED": [],
+  "KB_CONFIG_CONFLICT": ["path"],
+  "KB_CONFIG_INVALID": ["path"],
+  "KB_CONFIG_LLM_KEY_INVALID": ["provider"],
+  "KB_CONFIG_LLM_PROVIDER_TIMEOUT": [],
+  "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": [],
+  "KB_CONFIG_LLM_QUOTA": ["provider"],
+  "KB_CONFIG_LOAD_FAILED": [],
+  "KB_CONFIG_OVERLAY_NOT_FOUND": [],
+  "KB_CONFIG_SECRET_MISSING": ["variable"],
+  "KB_CONFIG_SECRET_PLAINTEXT": ["path"],
+  "KB_CONFIG_UNKNOWN_KEY": ["path"],
+  "KB_DEPLOY_CONFIG_DELIVERY": [],
+  "KB_DEPLOY_HOST_UNDEFINED": [],
+  "KB_DEPLOY_LOCK_WRITE_FAILED": [],
+  "KB_DEPLOY_WAVE_FAILED": [],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
+  "KB_DEVKIT_TASK_FAILED": [],
+  "KB_DEVKIT_TASK_GRAPH_INVALID": [],
+  "KB_DEVKIT_TASK_LOG_UNAVAILABLE": [],
+  "KB_ENV_PROFILE_MISMATCH": [],
+  "KB_HOST_ADAPTER_UNAVAILABLE": ["reason","slot"],
+  "KB_HOST_ALREADY_RUNNING": [],
+  "KB_HOST_CONTROL_UNAUTHORIZED": [],
+  "KB_HOST_CONTROL_UNAVAILABLE": [],
+  "KB_HOST_EXPOSURE_REFUSED": [],
+  "KB_HOST_IDENTITY_MISMATCH": ["actualInstallationId","expectedInstallationId","expectedPlatformRoot"],
+  "KB_HOST_OPERATION_LOCK_UNSUPPORTED": [],
+  "KB_HOST_PROCESS_IDENTITY_STALE": [],
+  "KB_HOST_SERVICE_ADDRESS_INVALID": ["service"],
+  "KB_HOST_SERVICE_ADDRESS_MISSING": ["service"],
+  "KB_HOST_SPEC_INVALID": ["reason"],
+  "KB_HOST_START_FAILED": [],
+  "KB_HOST_STATE_DIR_UNWRITABLE": ["path"],
+  "KB_HOST_STOP_FAILED": ["pid"],
+  "KB_HOST_STUDIO_ASSETS_MISSING": ["dir"],
+  "KB_HOST_UNHEALTHY": ["module"],
+  "KB_HOST_UNREACHABLE": ["address"],
+  "KB_HOST_VERSION_SKEW": ["client","host"],
+  "KB_INSTALL_APPLY_FAILED": [],
+  "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH": ["artifact"],
+  "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED": [],
+  "KB_INSTALL_CONFIG_REQUIRED": ["field"],
+  "KB_INSTALL_CONFIRMATION_REQUIRED": [],
+  "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE": [],
+  "KB_INSTALL_DOCTOR_INPUT_INVALID": [],
+  "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE": ["path","reason"],
+  "KB_INSTALL_INCOMPATIBLE_COMPONENTS": [],
+  "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED": ["schema"],
+  "KB_INSTALL_INPUT_REQUIRED": [],
+  "KB_INSTALL_INTERRUPTED": [],
+  "KB_INSTALL_LAUNCHER_TOO_OLD": ["launcher","minLauncherVersion","platform"],
+  "KB_INSTALL_LAYOUT_UNSUPPORTED": [],
+  "KB_INSTALL_LOG_UNAVAILABLE": [],
+  "KB_INSTALL_MANIFEST_PROJECTION_INVALID": [],
+  "KB_INSTALL_MEMORY_INSUFFICIENT": ["available","minimum"],
+  "KB_INSTALL_NETWORK_UNREACHABLE": ["url"],
+  "KB_INSTALL_NODE_MISSING": ["requirement"],
+  "KB_INSTALL_NODE_VERSION": ["version"],
+  "KB_INSTALL_NO_DISK_SPACE": ["available","needed","path"],
+  "KB_INSTALL_NO_WRITE_ACCESS": ["path"],
+  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": ["artifact"],
+  "KB_INSTALL_OPERATION_CANCELLED": [],
+  "KB_INSTALL_OPERATION_FAILED": [],
+  "KB_INSTALL_OPERATION_IN_PROGRESS": ["pid"],
+  "KB_INSTALL_PACKAGE_MANAGER_KILLED": [],
+  "KB_INSTALL_PLAN_ARTIFACT_IDENTITY_INVALID": ["artifact"],
+  "KB_INSTALL_PORT_IN_USE": ["port"],
+  "KB_INSTALL_PROJECT_REGISTRATION_FAILED": [],
+  "KB_INSTALL_PROJECT_SELECTION_CHANGED": [],
+  "KB_INSTALL_PROVENANCE_MISMATCH": ["actual","digestVersion","expected","field","package","packagePath"],
+  "KB_INSTALL_PROVIDER_AMBIGUOUS": ["capability"],
+  "KB_INSTALL_PROVIDER_UNRESOLVED": ["capability"],
+  "KB_INSTALL_RECEIPT_UNAVAILABLE": [],
+  "KB_INSTALL_RECOVERY_FAILED": [],
+  "KB_INSTALL_RECOVERY_HOST_RUNNING": [],
+  "KB_INSTALL_RECOVERY_UNAVAILABLE": [],
+  "KB_INSTALL_RELEASE_ID_MISSING": [],
+  "KB_INSTALL_RELEASE_INDEX_INVALID": [],
+  "KB_INSTALL_RELEASE_INDEX_UNREADABLE": ["path"],
+  "KB_INSTALL_RESOURCE_CHECK_FAILED": [],
+  "KB_INSTALL_ROLLBACK_FAILED": ["snapshot"],
+  "KB_INSTALL_SCENARIO_INVALID": [],
+  "KB_INSTALL_SECRET_INPUT_INVALID": [],
+  "KB_INSTALL_SECRET_STATE_CHANGED": [],
+  "KB_INSTALL_SECRET_STORE_UNSUPPORTED": [],
+  "KB_INSTALL_SERVICE_GRAPH_MISMATCH": [],
+  "KB_INSTALL_SHIM_DANGLING": [],
+  "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
+  "KB_INSTALL_UNSUPPORTED_PLATFORM": ["arch","os"],
+  "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_INSTALL_FAILED": [],
+  "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
+  "KB_MARKETPLACE_PACKAGE_INVALID": [],
+  "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
+  "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
+  "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
+  "KB_MARKETPLACE_RESOLUTION_FAILED": [],
+  "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion"],
+  "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion"],
+  "KB_PLUGIN_ABORTED": [],
+  "KB_PLUGIN_COMMAND_FAILED": ["command","failureReason","plugin"],
+  "KB_PLUGIN_COMMAND_SHADOWED": ["command","plugin"],
+  "KB_PLUGIN_CONTRACT_VIOLATION": [],
+  "KB_PLUGIN_CRASHED": ["plugin"],
+  "KB_PLUGIN_INSTALL_FAILED": ["plugin"],
+  "KB_PLUGIN_INTEGRITY_MISMATCH": ["actual","expected","plugin"],
+  "KB_PLUGIN_LOAD_FAILED": ["plugin"],
+  "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
+  "KB_PLUGIN_NAMESPACE_TAKEN": ["namespace","owner"],
+  "KB_PLUGIN_NOT_FOUND": ["plugin"],
+  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_PERMISSION_DENIED": ["permission","plugin"],
+  "KB_PLUGIN_PLATFORM_DUPLICATE": ["package","plugin"],
+  "KB_PLUGIN_SDK_INCOMPATIBLE": ["installed","plugin","required"],
+  "KB_PLUGIN_SETTINGS_INVALID": ["path"],
+  "KB_PLUGIN_SETTINGS_SCHEMA_INVALID": ["plugin"],
+  "KB_PLUGIN_TIMEOUT": ["plugin"],
+  "KB_PROJECT_ALREADY_REGISTERED": ["path"],
+  "KB_PROJECT_DECLARATION_INVALID": ["expected","field"],
+  "KB_PROJECT_NAME_TAKEN": ["name"],
+  "KB_PROJECT_NOT_A_DIRECTORY": ["path"],
+  "KB_PROJECT_NO_ACCESS": ["path"],
+  "KB_PROJECT_PATH_NOT_FOUND": ["path"],
+  "KB_PROJECT_REGISTRY_CORRUPT": ["file","reason"],
+  "KB_PROJECT_REGISTRY_LOCKED": ["timeoutMs"],
+  "KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED": ["file","found","supported"],
+  "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH": ["projectId"],
+  "KB_PROJECT_RUNTIME_LIMIT": ["limit"],
+  "KB_PROJECT_RUNTIME_PROCESS_START_FAILED": ["projectId"],
+  "KB_PROJECT_RUNTIME_RELOAD_FAILED": ["projectId"],
+  "KB_PROJECT_RUNTIME_START_FAILED": ["projectId","serviceId"],
+  "KB_PROJECT_SERVICE_NOT_FOUND": ["projectId","serviceId"],
+  "KB_PROJECT_UNKNOWN": ["path"],
+  "KB_RELEASE_BASELINE_DRIFT": [],
+  "KB_RELEASE_BRANCH_NOT_MASTER": [],
+  "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CHECK_FAILED": [],
+  "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DOCKER_UNAVAILABLE": [],
+  "KB_RELEASE_GIT_PUSH_REJECTED": [],
+  "KB_RELEASE_INDEX_SEAL_FAILED": [],
+  "KB_RELEASE_PLAN_INVALID": [],
+  "KB_RELEASE_PROMOTE_FAILED": [],
+  "KB_RELEASE_REGISTRY_BINDING_FAILED": [],
+  "KB_RELEASE_REGISTRY_UNREACHABLE": [],
+  "KB_RELEASE_SMOKE_FAILED": [],
+  "KB_RELEASE_STAGING_FAILED": [],
+  "KB_RELEASE_TOKEN_MISSING": [],
+  "KB_RELEASE_TREE_DIRTY": [],
+  "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
+  "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
+  "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
+  "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
+  "KB_RUNTIME_APPROVAL_RESOLVE_FAILED": [],
+  "KB_RUNTIME_COMMAND_FAILED": [],
+  "KB_RUNTIME_CONFIRMATION_REQUIRED": [],
+  "KB_RUNTIME_CONTAINER_NETWORK_UNSUPPORTED": [],
+  "KB_RUNTIME_CONTAINER_TEARDOWN_FAILED": [],
+  "KB_RUNTIME_CONTAINER_UNAVAILABLE": [],
+  "KB_RUNTIME_CRON_LIST_FAILED": [],
+  "KB_RUNTIME_CRON_MUTATION_FAILED": [],
+  "KB_RUNTIME_CRON_NOT_FOUND": [],
+  "KB_RUNTIME_CRON_PLUGIN_READ_ONLY": [],
+  "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
+  "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
+  "KB_RUNTIME_DISK_FULL": ["path"],
+  "KB_RUNTIME_FRAME_TOO_LARGE": [],
+  "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
+  "KB_RUNTIME_INPUT_INVALID": [],
+  "KB_RUNTIME_JOB_CANCEL_FAILED": [],
+  "KB_RUNTIME_JOB_GET_FAILED": [],
+  "KB_RUNTIME_JOB_INPUT_INVALID": [],
+  "KB_RUNTIME_JOB_LIST_FAILED": [],
+  "KB_RUNTIME_JOB_LOGS_FAILED": [],
+  "KB_RUNTIME_JOB_NOT_FOUND": [],
+  "KB_RUNTIME_JOB_STEPS_FAILED": [],
+  "KB_RUNTIME_JOB_SUBMIT_FAILED": [],
+  "KB_RUNTIME_LOGS_UNAVAILABLE": [],
+  "KB_RUNTIME_MCP_INVALID_ARGUMENTS": ["argument","expected"],
+  "KB_RUNTIME_MCP_TOOL_FORBIDDEN": ["tool"],
+  "KB_RUNTIME_MCP_UNKNOWN_TOOL": ["tool"],
+  "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
+  "KB_RUNTIME_RATE_LIMITED": ["retryAfter"],
+  "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
+  "KB_RUNTIME_RUN_DIRTY": [],
+  "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": [],
+  "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": [],
+  "KB_RUNTIME_TIMEOUT": [],
+  "KB_RUNTIME_UNEXPECTED": [],
+  "KB_RUNTIME_UNKNOWN_COMMAND": [],
+  "KB_RUNTIME_WAIT_NOT_FINISHED": [],
+  "KB_RUNTIME_WORKFLOW_API_FAILURE": [],
+  "KB_RUNTIME_WORKFLOW_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_GET_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_INPUT_INVALID": [],
+  "KB_RUNTIME_WORKFLOW_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_PROJECT_ID_REQUIRED": [],
+  "KB_RUNTIME_WORKFLOW_REFRESH_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RERUN_NOT_APPLICABLE": [],
+  "KB_RUNTIME_WORKFLOW_RUNS_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_GET_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND": ["runId"],
+  "KB_RUNTIME_WORKFLOW_RUN_RERUN_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_START_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_SNAPSHOT_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND": ["stepId"],
+  "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
+  "KB_SERVICE_HEALTH_TIMEOUT": [],
+  "KB_SERVICE_UNAVAILABLE": [],
+  "KB_UPDATE_APPLY_FAILED": ["version"],
+  "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
+  "KB_UPDATE_DOWNLOAD_FAILED": [],
+  "KB_UPDATE_HOST_NOT_HEALTHY": [],
+  "KB_UPDATE_INCOMPATIBLE": ["component","kind","range","version"],
+  "KB_UPDATE_NO_SNAPSHOT": [],
+  "KB_UPDATE_SECRET_REFUSED": ["secret"],
+  "KB_UPDATE_VERIFY_FAILED": ["version"],
+  "QUEUE_FULL": ["maxQueueSize","queueSize"],
+  "WORKER_CRASHED": [],
+  "WORKER_START_FAILED": [],
+  "WORKER_TREE_UNVERIFIED": [],
+  "WORKER_UNAVAILABLE": [],
+};
+
+export const catalogRequiredHintTemplateParameters: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
+  "ACQUIRE_TIMEOUT": [],
+  "KB_ADAPTER_CREDENTIALS_MISSING": ["command","credential","path"],
+  "KB_ADAPTER_MANIFEST_LOAD": [],
+  "KB_ADAPTER_NOT_CONFIGURED": ["command"],
+  "KB_ADAPTER_NOT_INSTALLED": ["package"],
+  "KB_ADAPTER_OPERATION_FAILED": [],
+  "KB_ADAPTER_PROJECT_SCOPE": [],
+  "KB_ADAPTER_SLOT_MISMATCH": ["slot"],
+  "KB_AUTH_CLOCK_SKEW": [],
+  "KB_AUTH_FORBIDDEN": [],
+  "KB_AUTH_GATEWAY_UNREACHABLE": [],
+  "KB_AUTH_INVALID_CREDENTIALS": [],
+  "KB_AUTH_INVALID_CURRENT_PASSWORD": [],
+  "KB_AUTH_INVALID_INVITE": [],
+  "KB_AUTH_INVALID_PASSWORD_RESET": [],
+  "KB_AUTH_LAST_ADMIN": [],
+  "KB_AUTH_LOCKED_OUT": [],
+  "KB_AUTH_MCP_CREDENTIAL_REQUIRED": ["gatewayUrl"],
+  "KB_AUTH_MODE_MISMATCH": [],
+  "KB_AUTH_REQUIRED": ["gatewayUrl"],
+  "KB_AUTH_SESSION_REVOKED": ["gatewayUrl"],
+  "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
+  "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
+  "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CONFIG_APPLY_FAILED": [],
+  "KB_CONFIG_CONFLICT": [],
+  "KB_CONFIG_INVALID": ["path"],
+  "KB_CONFIG_LLM_KEY_INVALID": [],
+  "KB_CONFIG_LLM_PROVIDER_TIMEOUT": [],
+  "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": [],
+  "KB_CONFIG_LLM_QUOTA": [],
+  "KB_CONFIG_LOAD_FAILED": [],
+  "KB_CONFIG_OVERLAY_NOT_FOUND": [],
+  "KB_CONFIG_SECRET_MISSING": [],
+  "KB_CONFIG_SECRET_PLAINTEXT": ["example"],
+  "KB_CONFIG_UNKNOWN_KEY": ["suggestion"],
+  "KB_DEPLOY_CONFIG_DELIVERY": [],
+  "KB_DEPLOY_HOST_UNDEFINED": [],
+  "KB_DEPLOY_LOCK_WRITE_FAILED": [],
+  "KB_DEPLOY_WAVE_FAILED": [],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
+  "KB_DEVKIT_TASK_FAILED": ["logPath","package","task"],
+  "KB_DEVKIT_TASK_GRAPH_INVALID": ["dependency","dependencyTask","task"],
+  "KB_DEVKIT_TASK_LOG_UNAVAILABLE": ["logDirectory","package","task"],
+  "KB_ENV_PROFILE_MISMATCH": [],
+  "KB_HOST_ADAPTER_UNAVAILABLE": ["slot"],
+  "KB_HOST_ALREADY_RUNNING": ["nextCommand"],
+  "KB_HOST_CONTROL_UNAUTHORIZED": [],
+  "KB_HOST_CONTROL_UNAVAILABLE": [],
+  "KB_HOST_EXPOSURE_REFUSED": [],
+  "KB_HOST_IDENTITY_MISMATCH": ["expectedPlatformRoot"],
+  "KB_HOST_OPERATION_LOCK_UNSUPPORTED": [],
+  "KB_HOST_PROCESS_IDENTITY_STALE": [],
+  "KB_HOST_SERVICE_ADDRESS_INVALID": [],
+  "KB_HOST_SERVICE_ADDRESS_MISSING": [],
+  "KB_HOST_SPEC_INVALID": [],
+  "KB_HOST_START_FAILED": [],
+  "KB_HOST_STATE_DIR_UNWRITABLE": [],
+  "KB_HOST_STOP_FAILED": [],
+  "KB_HOST_STUDIO_ASSETS_MISSING": [],
+  "KB_HOST_UNHEALTHY": [],
+  "KB_HOST_UNREACHABLE": [],
+  "KB_HOST_VERSION_SKEW": [],
+  "KB_INSTALL_APPLY_FAILED": [],
+  "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH": [],
+  "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED": [],
+  "KB_INSTALL_CONFIG_REQUIRED": [],
+  "KB_INSTALL_CONFIRMATION_REQUIRED": [],
+  "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE": [],
+  "KB_INSTALL_DOCTOR_INPUT_INVALID": [],
+  "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE": ["removeCommand","repairCommand"],
+  "KB_INSTALL_INCOMPATIBLE_COMPONENTS": [],
+  "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED": [],
+  "KB_INSTALL_INPUT_REQUIRED": [],
+  "KB_INSTALL_INTERRUPTED": [],
+  "KB_INSTALL_LAUNCHER_TOO_OLD": [],
+  "KB_INSTALL_LAYOUT_UNSUPPORTED": [],
+  "KB_INSTALL_LOG_UNAVAILABLE": [],
+  "KB_INSTALL_MANIFEST_PROJECTION_INVALID": [],
+  "KB_INSTALL_MEMORY_INSUFFICIENT": [],
+  "KB_INSTALL_NETWORK_UNREACHABLE": [],
+  "KB_INSTALL_NODE_MISSING": [],
+  "KB_INSTALL_NODE_VERSION": [],
+  "KB_INSTALL_NO_DISK_SPACE": [],
+  "KB_INSTALL_NO_WRITE_ACCESS": [],
+  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": [],
+  "KB_INSTALL_OPERATION_CANCELLED": [],
+  "KB_INSTALL_OPERATION_FAILED": [],
+  "KB_INSTALL_OPERATION_IN_PROGRESS": [],
+  "KB_INSTALL_PACKAGE_MANAGER_KILLED": [],
+  "KB_INSTALL_PLAN_ARTIFACT_IDENTITY_INVALID": [],
+  "KB_INSTALL_PORT_IN_USE": ["operation","port"],
+  "KB_INSTALL_PROJECT_REGISTRATION_FAILED": [],
+  "KB_INSTALL_PROJECT_SELECTION_CHANGED": [],
+  "KB_INSTALL_PROVENANCE_MISMATCH": ["actual","digestVersion","expected","field","packagePath"],
+  "KB_INSTALL_PROVIDER_AMBIGUOUS": [],
+  "KB_INSTALL_PROVIDER_UNRESOLVED": [],
+  "KB_INSTALL_RECEIPT_UNAVAILABLE": [],
+  "KB_INSTALL_RECOVERY_FAILED": [],
+  "KB_INSTALL_RECOVERY_HOST_RUNNING": [],
+  "KB_INSTALL_RECOVERY_UNAVAILABLE": [],
+  "KB_INSTALL_RELEASE_ID_MISSING": [],
+  "KB_INSTALL_RELEASE_INDEX_INVALID": [],
+  "KB_INSTALL_RELEASE_INDEX_UNREADABLE": [],
+  "KB_INSTALL_RESOURCE_CHECK_FAILED": [],
+  "KB_INSTALL_ROLLBACK_FAILED": [],
+  "KB_INSTALL_SCENARIO_INVALID": [],
+  "KB_INSTALL_SECRET_INPUT_INVALID": [],
+  "KB_INSTALL_SECRET_STATE_CHANGED": [],
+  "KB_INSTALL_SECRET_STORE_UNSUPPORTED": [],
+  "KB_INSTALL_SERVICE_GRAPH_MISMATCH": [],
+  "KB_INSTALL_SHIM_DANGLING": [],
+  "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
+  "KB_INSTALL_UNSUPPORTED_PLATFORM": [],
+  "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope"],
+  "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
+  "KB_MARKETPLACE_PACKAGE_INVALID": [],
+  "KB_MARKETPLACE_PACKAGE_TOO_FRESH": ["package","scope"],
+  "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
+  "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
+  "KB_MARKETPLACE_RESOLUTION_FAILED": [],
+  "KB_MARKETPLACE_VERSION_IMMUTABLE": ["package","scope"],
+  "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
+  "KB_PLUGIN_ABORTED": [],
+  "KB_PLUGIN_COMMAND_FAILED": [],
+  "KB_PLUGIN_COMMAND_SHADOWED": [],
+  "KB_PLUGIN_CONTRACT_VIOLATION": [],
+  "KB_PLUGIN_CRASHED": [],
+  "KB_PLUGIN_INSTALL_FAILED": [],
+  "KB_PLUGIN_INTEGRITY_MISMATCH": [],
+  "KB_PLUGIN_LOAD_FAILED": [],
+  "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
+  "KB_PLUGIN_NAMESPACE_TAKEN": [],
+  "KB_PLUGIN_NOT_FOUND": ["plugin"],
+  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_PERMISSION_DENIED": [],
+  "KB_PLUGIN_PLATFORM_DUPLICATE": [],
+  "KB_PLUGIN_SDK_INCOMPATIBLE": [],
+  "KB_PLUGIN_SETTINGS_INVALID": ["path"],
+  "KB_PLUGIN_SETTINGS_SCHEMA_INVALID": [],
+  "KB_PLUGIN_TIMEOUT": [],
+  "KB_PROJECT_ALREADY_REGISTERED": [],
+  "KB_PROJECT_DECLARATION_INVALID": ["field"],
+  "KB_PROJECT_NAME_TAKEN": [],
+  "KB_PROJECT_NOT_A_DIRECTORY": [],
+  "KB_PROJECT_NO_ACCESS": [],
+  "KB_PROJECT_PATH_NOT_FOUND": [],
+  "KB_PROJECT_REGISTRY_CORRUPT": ["file"],
+  "KB_PROJECT_REGISTRY_LOCKED": [],
+  "KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED": [],
+  "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH": [],
+  "KB_PROJECT_RUNTIME_LIMIT": [],
+  "KB_PROJECT_RUNTIME_PROCESS_START_FAILED": [],
+  "KB_PROJECT_RUNTIME_RELOAD_FAILED": [],
+  "KB_PROJECT_RUNTIME_START_FAILED": ["serviceId"],
+  "KB_PROJECT_SERVICE_NOT_FOUND": ["projectId"],
+  "KB_PROJECT_UNKNOWN": ["path"],
+  "KB_RELEASE_BASELINE_DRIFT": [],
+  "KB_RELEASE_BRANCH_NOT_MASTER": [],
+  "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CHECK_FAILED": [],
+  "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DOCKER_UNAVAILABLE": [],
+  "KB_RELEASE_GIT_PUSH_REJECTED": [],
+  "KB_RELEASE_INDEX_SEAL_FAILED": [],
+  "KB_RELEASE_PLAN_INVALID": [],
+  "KB_RELEASE_PROMOTE_FAILED": [],
+  "KB_RELEASE_REGISTRY_BINDING_FAILED": [],
+  "KB_RELEASE_REGISTRY_UNREACHABLE": [],
+  "KB_RELEASE_SMOKE_FAILED": [],
+  "KB_RELEASE_STAGING_FAILED": [],
+  "KB_RELEASE_TOKEN_MISSING": [],
+  "KB_RELEASE_TREE_DIRTY": [],
+  "KB_RELEASE_VERSION_CONFLICT": [],
+  "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
+  "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
+  "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
+  "KB_RUNTIME_APPROVAL_RESOLVE_FAILED": [],
+  "KB_RUNTIME_COMMAND_FAILED": ["binary"],
+  "KB_RUNTIME_CONFIRMATION_REQUIRED": [],
+  "KB_RUNTIME_CONTAINER_NETWORK_UNSUPPORTED": [],
+  "KB_RUNTIME_CONTAINER_TEARDOWN_FAILED": ["container"],
+  "KB_RUNTIME_CONTAINER_UNAVAILABLE": ["cause","fix"],
+  "KB_RUNTIME_CRON_LIST_FAILED": [],
+  "KB_RUNTIME_CRON_MUTATION_FAILED": [],
+  "KB_RUNTIME_CRON_NOT_FOUND": [],
+  "KB_RUNTIME_CRON_PLUGIN_READ_ONLY": [],
+  "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
+  "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
+  "KB_RUNTIME_DISK_FULL": [],
+  "KB_RUNTIME_FRAME_TOO_LARGE": [],
+  "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
+  "KB_RUNTIME_INPUT_INVALID": [],
+  "KB_RUNTIME_JOB_CANCEL_FAILED": [],
+  "KB_RUNTIME_JOB_GET_FAILED": [],
+  "KB_RUNTIME_JOB_INPUT_INVALID": [],
+  "KB_RUNTIME_JOB_LIST_FAILED": [],
+  "KB_RUNTIME_JOB_LOGS_FAILED": [],
+  "KB_RUNTIME_JOB_NOT_FOUND": [],
+  "KB_RUNTIME_JOB_STEPS_FAILED": [],
+  "KB_RUNTIME_JOB_SUBMIT_FAILED": [],
+  "KB_RUNTIME_LOGS_UNAVAILABLE": [],
+  "KB_RUNTIME_MCP_INVALID_ARGUMENTS": ["argument"],
+  "KB_RUNTIME_MCP_TOOL_FORBIDDEN": [],
+  "KB_RUNTIME_MCP_UNKNOWN_TOOL": [],
+  "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
+  "KB_RUNTIME_RATE_LIMITED": [],
+  "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
+  "KB_RUNTIME_RUN_DIRTY": [],
+  "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
+  "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": ["maxBytes","pathBytes","root","socketNameBytes"],
+  "KB_RUNTIME_TIMEOUT": [],
+  "KB_RUNTIME_UNEXPECTED": [],
+  "KB_RUNTIME_UNKNOWN_COMMAND": ["binary"],
+  "KB_RUNTIME_WAIT_NOT_FINISHED": [],
+  "KB_RUNTIME_WORKFLOW_API_FAILURE": [],
+  "KB_RUNTIME_WORKFLOW_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_GET_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_INPUT_INVALID": [],
+  "KB_RUNTIME_WORKFLOW_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_PROJECT_ID_REQUIRED": [],
+  "KB_RUNTIME_WORKFLOW_REFRESH_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RERUN_NOT_APPLICABLE": [],
+  "KB_RUNTIME_WORKFLOW_RUNS_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_GET_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RERUN_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_START_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_SNAPSHOT_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND": [],
+  "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
+  "KB_SERVICE_HEALTH_TIMEOUT": [],
+  "KB_SERVICE_UNAVAILABLE": [],
+  "KB_UPDATE_APPLY_FAILED": [],
+  "KB_UPDATE_DOWNGRADE_REFUSED": [],
+  "KB_UPDATE_DOWNLOAD_FAILED": [],
+  "KB_UPDATE_HOST_NOT_HEALTHY": [],
+  "KB_UPDATE_INCOMPATIBLE": ["component","kind"],
+  "KB_UPDATE_NO_SNAPSHOT": [],
+  "KB_UPDATE_SECRET_REFUSED": [],
+  "KB_UPDATE_VERIFY_FAILED": [],
+  "QUEUE_FULL": [],
   "WORKER_CRASHED": [],
   "WORKER_START_FAILED": ["failureCode"],
   "WORKER_TREE_UNVERIFIED": [],
@@ -913,7 +1687,7 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
   "KB_PLUGIN_NAMESPACE_TAKEN": ["namespace","owner"],
   "KB_PLUGIN_NOT_FOUND": ["plugin"],
-  "KB_PLUGIN_NOT_INSTALLED": ["package"],
+  "KB_PLUGIN_NOT_INSTALLED": [],
   "KB_PLUGIN_PERMISSION_DENIED": ["permission","plugin"],
   "KB_PLUGIN_PLATFORM_DUPLICATE": ["package","plugin"],
   "KB_PLUGIN_SDK_INCOMPATIBLE": ["installed","plugin","required"],
@@ -1034,15 +1808,531 @@ export const catalogTemplateParameterNames: Readonly<Record<CatalogErrorCode, re
   "WORKER_UNAVAILABLE": ["failureCode"],
 };
 
+export const catalogMessageTemplateParameterNames: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
+  "ACQUIRE_TIMEOUT": ["acquireTimeoutMs"],
+  "KB_ADAPTER_CREDENTIALS_MISSING": ["credential","service"],
+  "KB_ADAPTER_MANIFEST_LOAD": [],
+  "KB_ADAPTER_NOT_CONFIGURED": ["service"],
+  "KB_ADAPTER_NOT_INSTALLED": ["package"],
+  "KB_ADAPTER_OPERATION_FAILED": ["operation","slot"],
+  "KB_ADAPTER_PROJECT_SCOPE": ["path"],
+  "KB_ADAPTER_SLOT_MISMATCH": ["package","slot"],
+  "KB_AUTH_CLOCK_SKEW": [],
+  "KB_AUTH_FORBIDDEN": ["permission"],
+  "KB_AUTH_GATEWAY_UNREACHABLE": [],
+  "KB_AUTH_INVALID_CREDENTIALS": [],
+  "KB_AUTH_INVALID_CURRENT_PASSWORD": [],
+  "KB_AUTH_INVALID_INVITE": [],
+  "KB_AUTH_INVALID_PASSWORD_RESET": [],
+  "KB_AUTH_LAST_ADMIN": [],
+  "KB_AUTH_LOCKED_OUT": [],
+  "KB_AUTH_MCP_CREDENTIAL_REQUIRED": [],
+  "KB_AUTH_MODE_MISMATCH": ["actual","expected"],
+  "KB_AUTH_REQUIRED": [],
+  "KB_AUTH_SESSION_REVOKED": [],
+  "KB_AUTH_TOKEN_EXPIRED": [],
+  "KB_AUTH_TOKEN_REISSUE_REQUIRED": [],
+  "KB_AUTH_USER_INACTIVE": [],
+  "KB_CONFIG_APPLY_FAILED": [],
+  "KB_CONFIG_CONFLICT": ["path"],
+  "KB_CONFIG_INVALID": ["path"],
+  "KB_CONFIG_LLM_KEY_INVALID": ["provider"],
+  "KB_CONFIG_LLM_PROVIDER_TIMEOUT": [],
+  "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": [],
+  "KB_CONFIG_LLM_QUOTA": ["provider"],
+  "KB_CONFIG_LOAD_FAILED": [],
+  "KB_CONFIG_OVERLAY_NOT_FOUND": [],
+  "KB_CONFIG_SECRET_MISSING": ["variable"],
+  "KB_CONFIG_SECRET_PLAINTEXT": ["path"],
+  "KB_CONFIG_UNKNOWN_KEY": ["path"],
+  "KB_DEPLOY_CONFIG_DELIVERY": [],
+  "KB_DEPLOY_HOST_UNDEFINED": [],
+  "KB_DEPLOY_LOCK_WRITE_FAILED": [],
+  "KB_DEPLOY_WAVE_FAILED": [],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
+  "KB_DEVKIT_TASK_FAILED": [],
+  "KB_DEVKIT_TASK_GRAPH_INVALID": [],
+  "KB_DEVKIT_TASK_LOG_UNAVAILABLE": [],
+  "KB_ENV_PROFILE_MISMATCH": [],
+  "KB_HOST_ADAPTER_UNAVAILABLE": ["reason","slot"],
+  "KB_HOST_ALREADY_RUNNING": [],
+  "KB_HOST_CONTROL_UNAUTHORIZED": [],
+  "KB_HOST_CONTROL_UNAVAILABLE": [],
+  "KB_HOST_EXPOSURE_REFUSED": [],
+  "KB_HOST_IDENTITY_MISMATCH": ["actualInstallationId","expectedInstallationId","expectedPlatformRoot"],
+  "KB_HOST_OPERATION_LOCK_UNSUPPORTED": [],
+  "KB_HOST_PROCESS_IDENTITY_STALE": [],
+  "KB_HOST_SERVICE_ADDRESS_INVALID": ["service"],
+  "KB_HOST_SERVICE_ADDRESS_MISSING": ["service"],
+  "KB_HOST_SPEC_INVALID": ["reason"],
+  "KB_HOST_START_FAILED": [],
+  "KB_HOST_STATE_DIR_UNWRITABLE": ["path"],
+  "KB_HOST_STOP_FAILED": ["pid"],
+  "KB_HOST_STUDIO_ASSETS_MISSING": ["dir"],
+  "KB_HOST_UNHEALTHY": ["module"],
+  "KB_HOST_UNREACHABLE": ["address"],
+  "KB_HOST_VERSION_SKEW": ["client","host"],
+  "KB_INSTALL_APPLY_FAILED": [],
+  "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH": ["artifact"],
+  "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED": [],
+  "KB_INSTALL_CONFIG_REQUIRED": ["field"],
+  "KB_INSTALL_CONFIRMATION_REQUIRED": [],
+  "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE": [],
+  "KB_INSTALL_DOCTOR_INPUT_INVALID": [],
+  "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE": ["path","reason"],
+  "KB_INSTALL_INCOMPATIBLE_COMPONENTS": [],
+  "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED": ["schema"],
+  "KB_INSTALL_INPUT_REQUIRED": [],
+  "KB_INSTALL_INTERRUPTED": [],
+  "KB_INSTALL_LAUNCHER_TOO_OLD": ["launcher","minLauncherVersion","platform"],
+  "KB_INSTALL_LAYOUT_UNSUPPORTED": [],
+  "KB_INSTALL_LOG_UNAVAILABLE": [],
+  "KB_INSTALL_MANIFEST_PROJECTION_INVALID": [],
+  "KB_INSTALL_MEMORY_INSUFFICIENT": ["available","minimum"],
+  "KB_INSTALL_NETWORK_UNREACHABLE": ["url"],
+  "KB_INSTALL_NODE_MISSING": ["requirement"],
+  "KB_INSTALL_NODE_VERSION": ["version"],
+  "KB_INSTALL_NO_DISK_SPACE": ["available","needed","path"],
+  "KB_INSTALL_NO_WRITE_ACCESS": ["path"],
+  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": ["artifact"],
+  "KB_INSTALL_OPERATION_CANCELLED": [],
+  "KB_INSTALL_OPERATION_FAILED": [],
+  "KB_INSTALL_OPERATION_IN_PROGRESS": ["pid"],
+  "KB_INSTALL_PACKAGE_MANAGER_KILLED": [],
+  "KB_INSTALL_PLAN_ARTIFACT_IDENTITY_INVALID": ["artifact"],
+  "KB_INSTALL_PORT_IN_USE": ["port"],
+  "KB_INSTALL_PROJECT_REGISTRATION_FAILED": [],
+  "KB_INSTALL_PROJECT_SELECTION_CHANGED": [],
+  "KB_INSTALL_PROVENANCE_MISMATCH": ["actual","digestVersion","expected","field","package","packagePath"],
+  "KB_INSTALL_PROVIDER_AMBIGUOUS": ["capability"],
+  "KB_INSTALL_PROVIDER_UNRESOLVED": ["capability"],
+  "KB_INSTALL_RECEIPT_UNAVAILABLE": [],
+  "KB_INSTALL_RECOVERY_FAILED": [],
+  "KB_INSTALL_RECOVERY_HOST_RUNNING": [],
+  "KB_INSTALL_RECOVERY_UNAVAILABLE": [],
+  "KB_INSTALL_RELEASE_ID_MISSING": [],
+  "KB_INSTALL_RELEASE_INDEX_INVALID": [],
+  "KB_INSTALL_RELEASE_INDEX_UNREADABLE": ["path"],
+  "KB_INSTALL_RESOURCE_CHECK_FAILED": [],
+  "KB_INSTALL_ROLLBACK_FAILED": ["snapshot"],
+  "KB_INSTALL_SCENARIO_INVALID": [],
+  "KB_INSTALL_SECRET_INPUT_INVALID": [],
+  "KB_INSTALL_SECRET_STATE_CHANGED": [],
+  "KB_INSTALL_SECRET_STORE_UNSUPPORTED": [],
+  "KB_INSTALL_SERVICE_GRAPH_MISMATCH": [],
+  "KB_INSTALL_SHIM_DANGLING": [],
+  "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
+  "KB_INSTALL_UNSUPPORTED_PLATFORM": ["arch","os"],
+  "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_INSTALL_FAILED": [],
+  "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
+  "KB_MARKETPLACE_PACKAGE_INVALID": [],
+  "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
+  "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
+  "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
+  "KB_MARKETPLACE_RESOLUTION_FAILED": [],
+  "KB_MARKETPLACE_VERSION_IMMUTABLE": ["installedVersion"],
+  "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion"],
+  "KB_PLUGIN_ABORTED": [],
+  "KB_PLUGIN_COMMAND_FAILED": ["command","failureReason","plugin"],
+  "KB_PLUGIN_COMMAND_SHADOWED": ["command","plugin"],
+  "KB_PLUGIN_CONTRACT_VIOLATION": [],
+  "KB_PLUGIN_CRASHED": ["plugin"],
+  "KB_PLUGIN_INSTALL_FAILED": ["plugin"],
+  "KB_PLUGIN_INTEGRITY_MISMATCH": ["actual","expected","plugin"],
+  "KB_PLUGIN_LOAD_FAILED": ["plugin"],
+  "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
+  "KB_PLUGIN_NAMESPACE_TAKEN": ["namespace","owner"],
+  "KB_PLUGIN_NOT_FOUND": ["plugin"],
+  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_PERMISSION_DENIED": ["permission","plugin"],
+  "KB_PLUGIN_PLATFORM_DUPLICATE": ["package","plugin"],
+  "KB_PLUGIN_SDK_INCOMPATIBLE": ["installed","plugin","required"],
+  "KB_PLUGIN_SETTINGS_INVALID": ["path"],
+  "KB_PLUGIN_SETTINGS_SCHEMA_INVALID": ["plugin"],
+  "KB_PLUGIN_TIMEOUT": ["plugin"],
+  "KB_PROJECT_ALREADY_REGISTERED": ["path"],
+  "KB_PROJECT_DECLARATION_INVALID": ["expected","field"],
+  "KB_PROJECT_NAME_TAKEN": ["name"],
+  "KB_PROJECT_NOT_A_DIRECTORY": ["path"],
+  "KB_PROJECT_NO_ACCESS": ["path"],
+  "KB_PROJECT_PATH_NOT_FOUND": ["path"],
+  "KB_PROJECT_REGISTRY_CORRUPT": ["file","reason"],
+  "KB_PROJECT_REGISTRY_LOCKED": ["timeoutMs"],
+  "KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED": ["file","found","supported"],
+  "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH": ["projectId"],
+  "KB_PROJECT_RUNTIME_LIMIT": ["limit"],
+  "KB_PROJECT_RUNTIME_PROCESS_START_FAILED": ["projectId"],
+  "KB_PROJECT_RUNTIME_RELOAD_FAILED": ["projectId"],
+  "KB_PROJECT_RUNTIME_START_FAILED": ["projectId","serviceId"],
+  "KB_PROJECT_SERVICE_NOT_FOUND": ["projectId","serviceId"],
+  "KB_PROJECT_UNKNOWN": ["path"],
+  "KB_RELEASE_BASELINE_DRIFT": [],
+  "KB_RELEASE_BRANCH_NOT_MASTER": [],
+  "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CHECK_FAILED": [],
+  "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DOCKER_UNAVAILABLE": [],
+  "KB_RELEASE_GIT_PUSH_REJECTED": [],
+  "KB_RELEASE_INDEX_SEAL_FAILED": [],
+  "KB_RELEASE_PLAN_INVALID": [],
+  "KB_RELEASE_PROMOTE_FAILED": [],
+  "KB_RELEASE_REGISTRY_BINDING_FAILED": [],
+  "KB_RELEASE_REGISTRY_UNREACHABLE": [],
+  "KB_RELEASE_SMOKE_FAILED": [],
+  "KB_RELEASE_STAGING_FAILED": [],
+  "KB_RELEASE_TOKEN_MISSING": [],
+  "KB_RELEASE_TREE_DIRTY": [],
+  "KB_RELEASE_VERSION_CONFLICT": ["package","version"],
+  "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
+  "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
+  "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
+  "KB_RUNTIME_APPROVAL_RESOLVE_FAILED": [],
+  "KB_RUNTIME_COMMAND_FAILED": [],
+  "KB_RUNTIME_CONFIRMATION_REQUIRED": [],
+  "KB_RUNTIME_CONTAINER_NETWORK_UNSUPPORTED": [],
+  "KB_RUNTIME_CONTAINER_TEARDOWN_FAILED": [],
+  "KB_RUNTIME_CONTAINER_UNAVAILABLE": [],
+  "KB_RUNTIME_CRON_LIST_FAILED": [],
+  "KB_RUNTIME_CRON_MUTATION_FAILED": [],
+  "KB_RUNTIME_CRON_NOT_FOUND": [],
+  "KB_RUNTIME_CRON_PLUGIN_READ_ONLY": [],
+  "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
+  "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["fields","originalCode"],
+  "KB_RUNTIME_DISK_FULL": ["path"],
+  "KB_RUNTIME_FRAME_TOO_LARGE": [],
+  "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
+  "KB_RUNTIME_INPUT_INVALID": [],
+  "KB_RUNTIME_JOB_CANCEL_FAILED": [],
+  "KB_RUNTIME_JOB_GET_FAILED": [],
+  "KB_RUNTIME_JOB_INPUT_INVALID": [],
+  "KB_RUNTIME_JOB_LIST_FAILED": [],
+  "KB_RUNTIME_JOB_LOGS_FAILED": [],
+  "KB_RUNTIME_JOB_NOT_FOUND": [],
+  "KB_RUNTIME_JOB_STEPS_FAILED": [],
+  "KB_RUNTIME_JOB_SUBMIT_FAILED": [],
+  "KB_RUNTIME_LOGS_UNAVAILABLE": [],
+  "KB_RUNTIME_MCP_INVALID_ARGUMENTS": ["argument","expected"],
+  "KB_RUNTIME_MCP_TOOL_FORBIDDEN": ["tool"],
+  "KB_RUNTIME_MCP_UNKNOWN_TOOL": ["tool"],
+  "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
+  "KB_RUNTIME_RATE_LIMITED": ["retryAfter"],
+  "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
+  "KB_RUNTIME_RUN_DIRTY": [],
+  "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": [],
+  "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": [],
+  "KB_RUNTIME_TIMEOUT": [],
+  "KB_RUNTIME_UNEXPECTED": [],
+  "KB_RUNTIME_UNKNOWN_COMMAND": [],
+  "KB_RUNTIME_WAIT_NOT_FINISHED": [],
+  "KB_RUNTIME_WORKFLOW_API_FAILURE": [],
+  "KB_RUNTIME_WORKFLOW_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_GET_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_INPUT_INVALID": [],
+  "KB_RUNTIME_WORKFLOW_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_PROJECT_ID_REQUIRED": [],
+  "KB_RUNTIME_WORKFLOW_REFRESH_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RERUN_NOT_APPLICABLE": [],
+  "KB_RUNTIME_WORKFLOW_RUNS_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_GET_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND": ["runId"],
+  "KB_RUNTIME_WORKFLOW_RUN_RERUN_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_START_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_SNAPSHOT_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND": ["stepId"],
+  "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": ["connectionId"],
+  "KB_SERVICE_HEALTH_TIMEOUT": [],
+  "KB_SERVICE_UNAVAILABLE": [],
+  "KB_UPDATE_APPLY_FAILED": ["version"],
+  "KB_UPDATE_DOWNGRADE_REFUSED": ["installed","target"],
+  "KB_UPDATE_DOWNLOAD_FAILED": [],
+  "KB_UPDATE_HOST_NOT_HEALTHY": [],
+  "KB_UPDATE_INCOMPATIBLE": ["component","kind","range","version"],
+  "KB_UPDATE_NO_SNAPSHOT": [],
+  "KB_UPDATE_SECRET_REFUSED": ["secret"],
+  "KB_UPDATE_VERIFY_FAILED": ["version"],
+  "QUEUE_FULL": ["maxQueueSize","queueSize"],
+  "WORKER_CRASHED": [],
+  "WORKER_START_FAILED": [],
+  "WORKER_TREE_UNVERIFIED": [],
+  "WORKER_UNAVAILABLE": [],
+};
+
+export const catalogHintTemplateParameterNames: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
+  "ACQUIRE_TIMEOUT": [],
+  "KB_ADAPTER_CREDENTIALS_MISSING": ["command","credential","path"],
+  "KB_ADAPTER_MANIFEST_LOAD": [],
+  "KB_ADAPTER_NOT_CONFIGURED": ["command"],
+  "KB_ADAPTER_NOT_INSTALLED": ["package"],
+  "KB_ADAPTER_OPERATION_FAILED": [],
+  "KB_ADAPTER_PROJECT_SCOPE": [],
+  "KB_ADAPTER_SLOT_MISMATCH": ["slot"],
+  "KB_AUTH_CLOCK_SKEW": [],
+  "KB_AUTH_FORBIDDEN": [],
+  "KB_AUTH_GATEWAY_UNREACHABLE": [],
+  "KB_AUTH_INVALID_CREDENTIALS": [],
+  "KB_AUTH_INVALID_CURRENT_PASSWORD": [],
+  "KB_AUTH_INVALID_INVITE": [],
+  "KB_AUTH_INVALID_PASSWORD_RESET": [],
+  "KB_AUTH_LAST_ADMIN": [],
+  "KB_AUTH_LOCKED_OUT": [],
+  "KB_AUTH_MCP_CREDENTIAL_REQUIRED": ["gatewayUrl"],
+  "KB_AUTH_MODE_MISMATCH": [],
+  "KB_AUTH_REQUIRED": ["gatewayUrl"],
+  "KB_AUTH_SESSION_REVOKED": ["gatewayUrl"],
+  "KB_AUTH_TOKEN_EXPIRED": ["gatewayUrl"],
+  "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["gatewayUrl"],
+  "KB_AUTH_USER_INACTIVE": ["gatewayUrl"],
+  "KB_CONFIG_APPLY_FAILED": [],
+  "KB_CONFIG_CONFLICT": [],
+  "KB_CONFIG_INVALID": ["path"],
+  "KB_CONFIG_LLM_KEY_INVALID": [],
+  "KB_CONFIG_LLM_PROVIDER_TIMEOUT": [],
+  "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": [],
+  "KB_CONFIG_LLM_QUOTA": [],
+  "KB_CONFIG_LOAD_FAILED": [],
+  "KB_CONFIG_OVERLAY_NOT_FOUND": [],
+  "KB_CONFIG_SECRET_MISSING": [],
+  "KB_CONFIG_SECRET_PLAINTEXT": ["example"],
+  "KB_CONFIG_UNKNOWN_KEY": ["suggestion"],
+  "KB_DEPLOY_CONFIG_DELIVERY": [],
+  "KB_DEPLOY_HOST_UNDEFINED": [],
+  "KB_DEPLOY_LOCK_WRITE_FAILED": [],
+  "KB_DEPLOY_WAVE_FAILED": [],
+  "KB_DEVKIT_CHECK_EXECUTION_FAILED": ["check"],
+  "KB_DEVKIT_STANDARDS_VIOLATIONS": [],
+  "KB_DEVKIT_TASK_FAILED": ["logPath","package","task"],
+  "KB_DEVKIT_TASK_GRAPH_INVALID": ["dependency","dependencyTask","task"],
+  "KB_DEVKIT_TASK_LOG_UNAVAILABLE": ["logDirectory","package","task"],
+  "KB_ENV_PROFILE_MISMATCH": [],
+  "KB_HOST_ADAPTER_UNAVAILABLE": ["slot"],
+  "KB_HOST_ALREADY_RUNNING": ["nextCommand"],
+  "KB_HOST_CONTROL_UNAUTHORIZED": [],
+  "KB_HOST_CONTROL_UNAVAILABLE": [],
+  "KB_HOST_EXPOSURE_REFUSED": [],
+  "KB_HOST_IDENTITY_MISMATCH": ["expectedPlatformRoot"],
+  "KB_HOST_OPERATION_LOCK_UNSUPPORTED": [],
+  "KB_HOST_PROCESS_IDENTITY_STALE": [],
+  "KB_HOST_SERVICE_ADDRESS_INVALID": [],
+  "KB_HOST_SERVICE_ADDRESS_MISSING": [],
+  "KB_HOST_SPEC_INVALID": [],
+  "KB_HOST_START_FAILED": [],
+  "KB_HOST_STATE_DIR_UNWRITABLE": [],
+  "KB_HOST_STOP_FAILED": [],
+  "KB_HOST_STUDIO_ASSETS_MISSING": [],
+  "KB_HOST_UNHEALTHY": [],
+  "KB_HOST_UNREACHABLE": [],
+  "KB_HOST_VERSION_SKEW": [],
+  "KB_INSTALL_APPLY_FAILED": [],
+  "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH": [],
+  "KB_INSTALL_BOOTSTRAP_CREDENTIAL_LOCKED": [],
+  "KB_INSTALL_CONFIG_REQUIRED": [],
+  "KB_INSTALL_CONFIRMATION_REQUIRED": [],
+  "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE": [],
+  "KB_INSTALL_DOCTOR_INPUT_INVALID": [],
+  "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE": ["removeCommand","repairCommand"],
+  "KB_INSTALL_INCOMPATIBLE_COMPONENTS": [],
+  "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED": [],
+  "KB_INSTALL_INPUT_REQUIRED": [],
+  "KB_INSTALL_INTERRUPTED": [],
+  "KB_INSTALL_LAUNCHER_TOO_OLD": [],
+  "KB_INSTALL_LAYOUT_UNSUPPORTED": [],
+  "KB_INSTALL_LOG_UNAVAILABLE": [],
+  "KB_INSTALL_MANIFEST_PROJECTION_INVALID": [],
+  "KB_INSTALL_MEMORY_INSUFFICIENT": [],
+  "KB_INSTALL_NETWORK_UNREACHABLE": [],
+  "KB_INSTALL_NODE_MISSING": [],
+  "KB_INSTALL_NODE_VERSION": [],
+  "KB_INSTALL_NO_DISK_SPACE": [],
+  "KB_INSTALL_NO_WRITE_ACCESS": [],
+  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": [],
+  "KB_INSTALL_OPERATION_CANCELLED": [],
+  "KB_INSTALL_OPERATION_FAILED": [],
+  "KB_INSTALL_OPERATION_IN_PROGRESS": [],
+  "KB_INSTALL_PACKAGE_MANAGER_KILLED": [],
+  "KB_INSTALL_PLAN_ARTIFACT_IDENTITY_INVALID": [],
+  "KB_INSTALL_PORT_IN_USE": ["operation","port"],
+  "KB_INSTALL_PROJECT_REGISTRATION_FAILED": [],
+  "KB_INSTALL_PROJECT_SELECTION_CHANGED": [],
+  "KB_INSTALL_PROVENANCE_MISMATCH": ["actual","digestVersion","expected","field","packagePath"],
+  "KB_INSTALL_PROVIDER_AMBIGUOUS": [],
+  "KB_INSTALL_PROVIDER_UNRESOLVED": [],
+  "KB_INSTALL_RECEIPT_UNAVAILABLE": [],
+  "KB_INSTALL_RECOVERY_FAILED": [],
+  "KB_INSTALL_RECOVERY_HOST_RUNNING": [],
+  "KB_INSTALL_RECOVERY_UNAVAILABLE": [],
+  "KB_INSTALL_RELEASE_ID_MISSING": [],
+  "KB_INSTALL_RELEASE_INDEX_INVALID": [],
+  "KB_INSTALL_RELEASE_INDEX_UNREADABLE": [],
+  "KB_INSTALL_RESOURCE_CHECK_FAILED": [],
+  "KB_INSTALL_ROLLBACK_FAILED": [],
+  "KB_INSTALL_SCENARIO_INVALID": [],
+  "KB_INSTALL_SECRET_INPUT_INVALID": [],
+  "KB_INSTALL_SECRET_STATE_CHANGED": [],
+  "KB_INSTALL_SECRET_STORE_UNSUPPORTED": [],
+  "KB_INSTALL_SERVICE_GRAPH_MISMATCH": [],
+  "KB_INSTALL_SHIM_DANGLING": [],
+  "KB_INSTALL_TOOLCHAIN_UNSUPPORTED": [],
+  "KB_INSTALL_UNSUPPORTED_PLATFORM": [],
+  "KB_INSTALL_WIZARD_INPUT_INVALID": [],
+  "KB_MARKETPLACE_INSTALL_FAILED": ["package","scope"],
+  "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
+  "KB_MARKETPLACE_PACKAGE_INVALID": [],
+  "KB_MARKETPLACE_PACKAGE_TOO_FRESH": ["package","scope"],
+  "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
+  "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
+  "KB_MARKETPLACE_RESOLUTION_FAILED": [],
+  "KB_MARKETPLACE_VERSION_IMMUTABLE": ["package","scope"],
+  "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["installedVersion","package","scope"],
+  "KB_PLUGIN_ABORTED": [],
+  "KB_PLUGIN_COMMAND_FAILED": ["correlationId"],
+  "KB_PLUGIN_COMMAND_SHADOWED": [],
+  "KB_PLUGIN_CONTRACT_VIOLATION": [],
+  "KB_PLUGIN_CRASHED": [],
+  "KB_PLUGIN_INSTALL_FAILED": [],
+  "KB_PLUGIN_INTEGRITY_MISMATCH": [],
+  "KB_PLUGIN_LOAD_FAILED": [],
+  "KB_PLUGIN_NAMESPACE_RESERVED": ["namespace"],
+  "KB_PLUGIN_NAMESPACE_TAKEN": [],
+  "KB_PLUGIN_NOT_FOUND": ["plugin"],
+  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_PERMISSION_DENIED": [],
+  "KB_PLUGIN_PLATFORM_DUPLICATE": [],
+  "KB_PLUGIN_SDK_INCOMPATIBLE": [],
+  "KB_PLUGIN_SETTINGS_INVALID": ["path"],
+  "KB_PLUGIN_SETTINGS_SCHEMA_INVALID": [],
+  "KB_PLUGIN_TIMEOUT": [],
+  "KB_PROJECT_ALREADY_REGISTERED": [],
+  "KB_PROJECT_DECLARATION_INVALID": ["field"],
+  "KB_PROJECT_NAME_TAKEN": [],
+  "KB_PROJECT_NOT_A_DIRECTORY": [],
+  "KB_PROJECT_NO_ACCESS": [],
+  "KB_PROJECT_PATH_NOT_FOUND": [],
+  "KB_PROJECT_REGISTRY_CORRUPT": ["file"],
+  "KB_PROJECT_REGISTRY_LOCKED": [],
+  "KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED": [],
+  "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH": [],
+  "KB_PROJECT_RUNTIME_LIMIT": [],
+  "KB_PROJECT_RUNTIME_PROCESS_START_FAILED": [],
+  "KB_PROJECT_RUNTIME_RELOAD_FAILED": [],
+  "KB_PROJECT_RUNTIME_START_FAILED": ["serviceId"],
+  "KB_PROJECT_SERVICE_NOT_FOUND": ["projectId"],
+  "KB_PROJECT_UNKNOWN": ["path"],
+  "KB_RELEASE_BASELINE_DRIFT": [],
+  "KB_RELEASE_BRANCH_NOT_MASTER": [],
+  "KB_RELEASE_BUILD_FAILED": [],
+  "KB_RELEASE_CHECK_FAILED": [],
+  "KB_RELEASE_CHECK_TIMEOUT": [],
+  "KB_RELEASE_DOCKER_UNAVAILABLE": [],
+  "KB_RELEASE_GIT_PUSH_REJECTED": [],
+  "KB_RELEASE_INDEX_SEAL_FAILED": [],
+  "KB_RELEASE_PLAN_INVALID": [],
+  "KB_RELEASE_PROMOTE_FAILED": [],
+  "KB_RELEASE_REGISTRY_BINDING_FAILED": [],
+  "KB_RELEASE_REGISTRY_UNREACHABLE": [],
+  "KB_RELEASE_SMOKE_FAILED": [],
+  "KB_RELEASE_STAGING_FAILED": [],
+  "KB_RELEASE_TOKEN_MISSING": [],
+  "KB_RELEASE_TREE_DIRTY": [],
+  "KB_RELEASE_VERSION_CONFLICT": [],
+  "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
+  "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
+  "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
+  "KB_RUNTIME_APPROVAL_RESOLVE_FAILED": [],
+  "KB_RUNTIME_COMMAND_FAILED": ["binary"],
+  "KB_RUNTIME_CONFIRMATION_REQUIRED": [],
+  "KB_RUNTIME_CONTAINER_NETWORK_UNSUPPORTED": [],
+  "KB_RUNTIME_CONTAINER_TEARDOWN_FAILED": ["container"],
+  "KB_RUNTIME_CONTAINER_UNAVAILABLE": ["cause","fix"],
+  "KB_RUNTIME_CRON_LIST_FAILED": [],
+  "KB_RUNTIME_CRON_MUTATION_FAILED": [],
+  "KB_RUNTIME_CRON_NOT_FOUND": [],
+  "KB_RUNTIME_CRON_PLUGIN_READ_ONLY": [],
+  "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
+  "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
+  "KB_RUNTIME_DISK_FULL": [],
+  "KB_RUNTIME_FRAME_TOO_LARGE": [],
+  "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": [],
+  "KB_RUNTIME_INPUT_INVALID": [],
+  "KB_RUNTIME_JOB_CANCEL_FAILED": [],
+  "KB_RUNTIME_JOB_GET_FAILED": [],
+  "KB_RUNTIME_JOB_INPUT_INVALID": [],
+  "KB_RUNTIME_JOB_LIST_FAILED": [],
+  "KB_RUNTIME_JOB_LOGS_FAILED": [],
+  "KB_RUNTIME_JOB_NOT_FOUND": [],
+  "KB_RUNTIME_JOB_STEPS_FAILED": [],
+  "KB_RUNTIME_JOB_SUBMIT_FAILED": [],
+  "KB_RUNTIME_LOGS_UNAVAILABLE": [],
+  "KB_RUNTIME_MCP_INVALID_ARGUMENTS": ["argument"],
+  "KB_RUNTIME_MCP_TOOL_FORBIDDEN": [],
+  "KB_RUNTIME_MCP_UNKNOWN_TOOL": [],
+  "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limit"],
+  "KB_RUNTIME_RATE_LIMITED": [],
+  "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
+  "KB_RUNTIME_RUN_DIRTY": [],
+  "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["path"],
+  "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": ["maxBytes","pathBytes","root","socketNameBytes"],
+  "KB_RUNTIME_TIMEOUT": ["correlationId"],
+  "KB_RUNTIME_UNEXPECTED": ["correlationId"],
+  "KB_RUNTIME_UNKNOWN_COMMAND": ["binary"],
+  "KB_RUNTIME_WAIT_NOT_FINISHED": [],
+  "KB_RUNTIME_WORKFLOW_API_FAILURE": [],
+  "KB_RUNTIME_WORKFLOW_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_GET_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_INPUT_INVALID": [],
+  "KB_RUNTIME_WORKFLOW_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_PROJECT_ID_REQUIRED": [],
+  "KB_RUNTIME_WORKFLOW_REFRESH_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RERUN_NOT_APPLICABLE": [],
+  "KB_RUNTIME_WORKFLOW_RUNS_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_GET_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_LIST_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RERUN_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_CONFLICT": [],
+  "KB_RUNTIME_WORKFLOW_RUN_RESTART_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_RUN_START_FAILED": [],
+  "KB_RUNTIME_WORKFLOW_SNAPSHOT_NOT_FOUND": [],
+  "KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND": [],
+  "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
+  "KB_SERVICE_HEALTH_TIMEOUT": [],
+  "KB_SERVICE_UNAVAILABLE": [],
+  "KB_UPDATE_APPLY_FAILED": [],
+  "KB_UPDATE_DOWNGRADE_REFUSED": [],
+  "KB_UPDATE_DOWNLOAD_FAILED": [],
+  "KB_UPDATE_HOST_NOT_HEALTHY": [],
+  "KB_UPDATE_INCOMPATIBLE": ["component","kind"],
+  "KB_UPDATE_NO_SNAPSHOT": [],
+  "KB_UPDATE_SECRET_REFUSED": [],
+  "KB_UPDATE_VERIFY_FAILED": [],
+  "QUEUE_FULL": [],
+  "WORKER_CRASHED": [],
+  "WORKER_START_FAILED": ["failureCode"],
+  "WORKER_TREE_UNVERIFIED": [],
+  "WORKER_UNAVAILABLE": ["failureCode"],
+};
+
 export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, readonly string[]>> = {
   "ACQUIRE_TIMEOUT": [],
   "KB_ADAPTER_CREDENTIALS_MISSING": [],
   "KB_ADAPTER_MANIFEST_LOAD": [],
   "KB_ADAPTER_NOT_CONFIGURED": ["adapter"],
-  "KB_ADAPTER_NOT_INSTALLED": [],
+  "KB_ADAPTER_NOT_INSTALLED": ["path","slot"],
   "KB_ADAPTER_OPERATION_FAILED": [],
   "KB_ADAPTER_PROJECT_SCOPE": [],
-  "KB_ADAPTER_SLOT_MISMATCH": [],
+  "KB_ADAPTER_SLOT_MISMATCH": ["path"],
   "KB_AUTH_CLOCK_SKEW": [],
   "KB_AUTH_FORBIDDEN": ["requestStage","httpStatus","remoteCorrelationId"],
   "KB_AUTH_GATEWAY_UNREACHABLE": [],
@@ -1057,18 +2347,18 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_AUTH_REQUIRED": ["reason"],
   "KB_AUTH_SESSION_REVOKED": ["reason"],
   "KB_AUTH_TOKEN_EXPIRED": ["reason"],
-  "KB_AUTH_TOKEN_REISSUE_REQUIRED": [],
+  "KB_AUTH_TOKEN_REISSUE_REQUIRED": ["reason"],
   "KB_AUTH_USER_INACTIVE": ["reason"],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": [],
-  "KB_CONFIG_INVALID": ["exitCode","hostStartupCode","launcherLog","log","nextCommand","stderrTail"],
+  "KB_CONFIG_INVALID": ["contractPath","exitCode","hostStartupCode","launcherLog","log","nextCommand","remedyOperation","remedyPlatformRoot","stderrTail"],
   "KB_CONFIG_LLM_KEY_INVALID": [],
   "KB_CONFIG_LLM_PROVIDER_TIMEOUT": [],
   "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": [],
   "KB_CONFIG_LLM_QUOTA": [],
   "KB_CONFIG_LOAD_FAILED": [],
   "KB_CONFIG_OVERLAY_NOT_FOUND": [],
-  "KB_CONFIG_SECRET_MISSING": [],
+  "KB_CONFIG_SECRET_MISSING": ["secretName"],
   "KB_CONFIG_SECRET_PLAINTEXT": [],
   "KB_CONFIG_UNKNOWN_KEY": [],
   "KB_DEPLOY_CONFIG_DELIVERY": [],
@@ -1085,12 +2375,12 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_HOST_ALREADY_RUNNING": ["pid","platformRoot"],
   "KB_HOST_CONTROL_UNAUTHORIZED": [],
   "KB_HOST_CONTROL_UNAVAILABLE": [],
-  "KB_HOST_EXPOSURE_REFUSED": [],
+  "KB_HOST_EXPOSURE_REFUSED": ["bindHost"],
   "KB_HOST_IDENTITY_MISMATCH": [],
   "KB_HOST_OPERATION_LOCK_UNSUPPORTED": [],
   "KB_HOST_PROCESS_IDENTITY_STALE": ["gatewayUrl","pid","platformRoot","record"],
   "KB_HOST_SERVICE_ADDRESS_INVALID": [],
-  "KB_HOST_SERVICE_ADDRESS_MISSING": [],
+  "KB_HOST_SERVICE_ADDRESS_MISSING": ["project"],
   "KB_HOST_SPEC_INVALID": [],
   "KB_HOST_START_FAILED": ["log","launcherLog","launcherLogError","stderrTail","hostStartupCode","waited","readinessURL","readinessStatus","readinessError","exitCode","signal","exitStatus","expectedPid","pid","command","failureKind","supervisorLog","supervisorStderrTail","supervisorExit","controlRecord","nextCommand"],
   "KB_HOST_STATE_DIR_UNWRITABLE": [],
@@ -1152,18 +2442,18 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_UNSUPPORTED_PLATFORM": [],
   "KB_INSTALL_WIZARD_INPUT_INVALID": [],
   "KB_MARKETPLACE_INSTALL_FAILED": [],
-  "KB_MARKETPLACE_INTEGRITY_MISMATCH": [],
+  "KB_MARKETPLACE_INTEGRITY_MISMATCH": ["package","scope"],
   "KB_MARKETPLACE_PACKAGE_INVALID": [],
   "KB_MARKETPLACE_PACKAGE_TOO_FRESH": [],
   "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING": [],
   "KB_MARKETPLACE_REGISTRY_INTEGRITY": [],
   "KB_MARKETPLACE_RESOLUTION_FAILED": [],
-  "KB_MARKETPLACE_VERSION_IMMUTABLE": [],
-  "KB_MARKETPLACE_VERSION_NOT_HIGHER": [],
+  "KB_MARKETPLACE_VERSION_IMMUTABLE": ["requestedVersion"],
+  "KB_MARKETPLACE_VERSION_NOT_HIGHER": ["requestedVersion"],
   "KB_PLUGIN_ABORTED": [],
   "KB_PLUGIN_COMMAND_FAILED": [],
   "KB_PLUGIN_COMMAND_SHADOWED": [],
-  "KB_PLUGIN_CONTRACT_VIOLATION": ["field"],
+  "KB_PLUGIN_CONTRACT_VIOLATION": ["command","field","plugin"],
   "KB_PLUGIN_CRASHED": [],
   "KB_PLUGIN_INSTALL_FAILED": [],
   "KB_PLUGIN_INTEGRITY_MISMATCH": [],
@@ -1171,9 +2461,9 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_PLUGIN_NAMESPACE_RESERVED": [],
   "KB_PLUGIN_NAMESPACE_TAKEN": [],
   "KB_PLUGIN_NOT_FOUND": [],
-  "KB_PLUGIN_NOT_INSTALLED": [],
+  "KB_PLUGIN_NOT_INSTALLED": ["package"],
   "KB_PLUGIN_PERMISSION_DENIED": [],
-  "KB_PLUGIN_PLATFORM_DUPLICATE": [],
+  "KB_PLUGIN_PLATFORM_DUPLICATE": ["ownCopy","requester"],
   "KB_PLUGIN_SDK_INCOMPATIBLE": [],
   "KB_PLUGIN_SETTINGS_INVALID": [],
   "KB_PLUGIN_SETTINGS_SCHEMA_INVALID": [],
@@ -1192,31 +2482,31 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_PROJECT_RUNTIME_PROCESS_START_FAILED": [],
   "KB_PROJECT_RUNTIME_RELOAD_FAILED": [],
   "KB_PROJECT_RUNTIME_START_FAILED": [],
-  "KB_PROJECT_SERVICE_NOT_FOUND": [],
+  "KB_PROJECT_SERVICE_NOT_FOUND": ["path"],
   "KB_PROJECT_UNKNOWN": [],
-  "KB_RELEASE_BASELINE_DRIFT": [],
-  "KB_RELEASE_BRANCH_NOT_MASTER": [],
+  "KB_RELEASE_BASELINE_DRIFT": ["check","classification","distTag","gitVersion","npmVersion"],
+  "KB_RELEASE_BRANCH_NOT_MASTER": ["check","classification","branch","expected"],
   "KB_RELEASE_BUILD_FAILED": [],
-  "KB_RELEASE_CHECK_FAILED": [],
-  "KB_RELEASE_CHECK_TIMEOUT": [],
-  "KB_RELEASE_DOCKER_UNAVAILABLE": [],
+  "KB_RELEASE_CHECK_FAILED": ["check","package","classification","rule"],
+  "KB_RELEASE_CHECK_TIMEOUT": ["check","package","classification","rule"],
+  "KB_RELEASE_DOCKER_UNAVAILABLE": ["check","classification","package","rule"],
   "KB_RELEASE_GIT_PUSH_REJECTED": [],
   "KB_RELEASE_INDEX_SEAL_FAILED": ["gate","rule"],
-  "KB_RELEASE_PLAN_INVALID": [],
+  "KB_RELEASE_PLAN_INVALID": ["check","package","classification","rule"],
   "KB_RELEASE_PROMOTE_FAILED": [],
   "KB_RELEASE_REGISTRY_BINDING_FAILED": [],
-  "KB_RELEASE_REGISTRY_UNREACHABLE": [],
+  "KB_RELEASE_REGISTRY_UNREACHABLE": ["check","classification","target","registry","package","rule"],
   "KB_RELEASE_SMOKE_FAILED": [],
   "KB_RELEASE_STAGING_FAILED": [],
-  "KB_RELEASE_TOKEN_MISSING": [],
-  "KB_RELEASE_TREE_DIRTY": [],
+  "KB_RELEASE_TOKEN_MISSING": ["check","classification"],
+  "KB_RELEASE_TREE_DIRTY": ["check","classification","changes","toolGenerated"],
   "KB_RELEASE_VERSION_CONFLICT": [],
   "KB_RUNTIME_APPROVAL_INPUT_INVALID": [],
   "KB_RUNTIME_APPROVAL_LIST_FAILED": [],
   "KB_RUNTIME_APPROVAL_NOT_PENDING": [],
   "KB_RUNTIME_APPROVAL_RESOLVE_FAILED": [],
-  "KB_RUNTIME_COMMAND_FAILED": ["command"],
-  "KB_RUNTIME_CONFIRMATION_REQUIRED": [],
+  "KB_RUNTIME_COMMAND_FAILED": ["clickUpCode","clickUpStatus","command","inboxCode"],
+  "KB_RUNTIME_CONFIRMATION_REQUIRED": ["action","resource","effect","reversible","irreversible","severity","confirmWith","confirmationRequired","destructive","blastRadiusCount","blastRadiusUnit","blastRadiusScope","recovery"],
   "KB_RUNTIME_CONTAINER_NETWORK_UNSUPPORTED": [],
   "KB_RUNTIME_CONTAINER_TEARDOWN_FAILED": [],
   "KB_RUNTIME_CONTAINER_UNAVAILABLE": [],
@@ -1227,9 +2517,9 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
   "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
   "KB_RUNTIME_DISK_FULL": [],
-  "KB_RUNTIME_FRAME_TOO_LARGE": [],
-  "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": ["requestStage","httpStatus","remoteCorrelationId","remoteCode","fields"],
-  "KB_RUNTIME_INPUT_INVALID": ["field"],
+  "KB_RUNTIME_FRAME_TOO_LARGE": ["actualBytes","maximumBytes"],
+  "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": ["gatewayUrl","requestStage","httpStatus","remoteCorrelationId","remoteCode","fields"],
+  "KB_RUNTIME_INPUT_INVALID": ["candidates","field","inboxCode","waitingSteps"],
   "KB_RUNTIME_JOB_CANCEL_FAILED": [],
   "KB_RUNTIME_JOB_GET_FAILED": [],
   "KB_RUNTIME_JOB_INPUT_INVALID": [],
@@ -1244,13 +2534,13 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_MCP_UNKNOWN_TOOL": [],
   "KB_RUNTIME_PAYLOAD_TOO_LARGE": ["limitBytes"],
   "KB_RUNTIME_RATE_LIMITED": [],
-  "KB_RUNTIME_RESOURCE_NOT_FOUND": [],
+  "KB_RUNTIME_RESOURCE_NOT_FOUND": ["plugin","route","upstreamStatus"],
   "KB_RUNTIME_RUN_DIRTY": [],
   "KB_RUNTIME_RUN_SCRATCH_CREATE_REFUSED": ["creationError","removalError"],
   "KB_RUNTIME_RUN_SCRATCH_PATH_TOO_LONG": [],
-  "KB_RUNTIME_TIMEOUT": [],
-  "KB_RUNTIME_UNEXPECTED": ["dep","remoteCorrelationId"],
-  "KB_RUNTIME_UNKNOWN_COMMAND": [],
+  "KB_RUNTIME_TIMEOUT": ["serviceId","timeoutMs"],
+  "KB_RUNTIME_UNEXPECTED": ["dep","remoteCorrelationId","target"],
+  "KB_RUNTIME_UNKNOWN_COMMAND": ["command","pluginDiagnostics","suggestions"],
   "KB_RUNTIME_WAIT_NOT_FINISHED": [],
   "KB_RUNTIME_WORKFLOW_API_FAILURE": [],
   "KB_RUNTIME_WORKFLOW_CONFLICT": [],
@@ -1276,7 +2566,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND": [],
   "KB_RUNTIME_WS_CONNECTION_UNAVAILABLE": [],
   "KB_SERVICE_HEALTH_TIMEOUT": [],
-  "KB_SERVICE_UNAVAILABLE": [],
+  "KB_SERVICE_UNAVAILABLE": ["service","status","timeout"],
   "KB_UPDATE_APPLY_FAILED": ["diagnosticPath","logPath"],
   "KB_UPDATE_DOWNGRADE_REFUSED": [],
   "KB_UPDATE_DOWNLOAD_FAILED": [],
@@ -1286,10 +2576,10 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_UPDATE_SECRET_REFUSED": [],
   "KB_UPDATE_VERIFY_FAILED": [],
   "QUEUE_FULL": [],
-  "WORKER_CRASHED": [],
-  "WORKER_START_FAILED": [],
+  "WORKER_CRASHED": ["exitCode","signal","workerId"],
+  "WORKER_START_FAILED": ["failedAt","failureAttempt","failureMessage","retryInMs"],
   "WORKER_TREE_UNVERIFIED": [],
-  "WORKER_UNAVAILABLE": [],
+  "WORKER_UNAVAILABLE": ["failedAt","failureAttempt","failureMessage","retryInMs"],
 };
 
 export interface CatalogMessageTemplateParameters {
@@ -1687,7 +2977,7 @@ export interface CatalogHintTemplateParameters {
   "KB_PLUGIN_NAMESPACE_RESERVED": { "namespace": string };
   "KB_PLUGIN_NAMESPACE_TAKEN": Record<never, never>;
   "KB_PLUGIN_NOT_FOUND": { "plugin": string };
-  "KB_PLUGIN_NOT_INSTALLED": { "package": string };
+  "KB_PLUGIN_NOT_INSTALLED": Record<never, never>;
   "KB_PLUGIN_PERMISSION_DENIED": Record<never, never>;
   "KB_PLUGIN_PLATFORM_DUPLICATE": Record<never, never>;
   "KB_PLUGIN_SDK_INCOMPATIBLE": Record<never, never>;

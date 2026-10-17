@@ -91,6 +91,7 @@ export async function callTool(
 
   const exitCode = await callOutput.run(output, () =>
     executeCommandV3({
+      binaryName: 'kb',
       pluginId: tool.pluginId,
       pluginVersion: tool.version,
       commandPath: tool.name,
