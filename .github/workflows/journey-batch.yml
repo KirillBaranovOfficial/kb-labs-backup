@@ -92,13 +92,13 @@ jobs:
         if: always()
         with:
           name: journey-local
-          path: ${{ env.BATCH_OUTPUT }}/
+          path: ${{ env.BATCH_OUTPUT }}/local/
           if-no-files-found: warn
           retention-days: 90
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: journey-secured
-          path: ${{ env.BATCH_OUTPUT }}/
+          path: ${{ env.BATCH_OUTPUT }}/secured/
           if-no-files-found: warn
           retention-days: 90

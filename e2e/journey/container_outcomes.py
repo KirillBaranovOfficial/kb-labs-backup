@@ -147,8 +147,11 @@ def _verdict(container: dict, matching_events: list[dict]) -> str:
         return f"{name} killed by {signal}"
     code = state.get("ExitCode")
     if code not in (None, 0):
-        reason = state.get("Error") or container["stderr"].strip().splitlines()[-1:]
-        reason_text = reason if isinstance(reason, str) else (reason[0] if reason else "no stderr reason")
+        stderr_lines = container["stderr"].strip().splitlines()
+        stdout_lines = container["stdout"].strip().splitlines()
+        reason_text = state.get("Error") or (stderr_lines[-1] if stderr_lines
+                                               else stdout_lines[-1] if stdout_lines
+                                               else "no container error output")
         return f"{name} exited {code} after reason {reason_text}"
     return f"{name} exited {code if code is not None else 'unknown'}"
 

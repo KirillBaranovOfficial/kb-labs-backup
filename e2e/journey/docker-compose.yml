@@ -27,6 +27,7 @@ services:
     networks: [journey]
 
   runner:
+    user: "${KB_JOURNEY_RUNNER_UID:-0}:${KB_JOURNEY_RUNNER_GID:-0}"
     build:
       context: ..
       dockerfile: e2e/journey/Dockerfile.runner
