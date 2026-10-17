@@ -81,24 +81,32 @@ jobs:
         if: always()
         env:
           FAILED_STEP: ${{ steps.checkout.outcome == 'failure' && 'Checkout' || steps.pnpm.outcome == 'failure' && 'Set up pnpm' || steps.node.outcome == 'failure' && 'Set up Node' || steps.go.outcome == 'failure' && 'Set up Go' || steps.dependencies.outcome == 'failure' && 'Install workspace dependencies' || steps.batch.outcome == 'failure' && 'Run shared journey batch' || 'unknown step' }}
+          BATCH_SHARED_OUTPUT: ${{ steps.batch.outputs.artifact_shared }}
         run: |
-          summary_file="$BATCH_OUTPUT/summary.md"
-          if [ -f "$summary_file" ]; then
+          summary_file="$BATCH_SHARED_OUTPUT/summary.md"
+          if [ -n "$BATCH_SHARED_OUTPUT" ] && [ -f "$summary_file" ]; then
             cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
           else
             printf 'batch did not start: %s\n' "$FAILED_STEP" >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
+        if: always() && steps.batch.outputs.artifact_shared != ''
         with:
-          name: journey-local
-          path: ${{ env.BATCH_OUTPUT }}/local/
+          name: journey-shared
+          path: ${{ steps.batch.outputs.artifact_shared }}
           if-no-files-found: warn
           retention-days: 90
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
+        if: always() && steps.batch.outputs.artifact_shared != ''
+        with:
+          name: journey-local
+          path: ${{ steps.batch.outputs.artifact_local }}
+          if-no-files-found: warn
+          retention-days: 90
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.batch.outputs.artifact_shared != ''
         with:
           name: journey-secured
-          path: ${{ env.BATCH_OUTPUT }}/secured/
+          path: ${{ steps.batch.outputs.artifact_secured }}
           if-no-files-found: warn
           retention-days: 90
