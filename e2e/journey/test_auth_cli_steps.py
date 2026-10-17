@@ -14,6 +14,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from test_environment import isolated_environment, stage_cli_root
+
 sys.path.insert(0, str(Path(__file__).parent))
 import steps.auth as auth_steps
 from steps.accounts import run_cli_logout_steps
@@ -61,6 +63,7 @@ class CliAuthJourneyTests(unittest.TestCase):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
                 self.end_headers()
                 self.wfile.write(body)
 
@@ -69,6 +72,7 @@ class CliAuthJourneyTests(unittest.TestCase):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
                 self.end_headers()
                 self.wfile.write(body)
 
@@ -82,16 +86,18 @@ class CliAuthJourneyTests(unittest.TestCase):
         password = "TtyPassword123!"
         session_created = False
         with tempfile.TemporaryDirectory(prefix="auth-pty-home-") as home:
-            env = os.environ.copy()
-            env["HOME"] = home
-            env.pop("KB_PLATFORM_ROOT", None)
-            env.pop("KB_HOME", None)
-            env.pop("KB_NET_OFFSET", None)
+            fixture_bin = Path(home) / "bin"
+            fixture_bin.mkdir()
+            env = isolated_environment(Path(home), fixture_bin, required_tools=("node",))
+            node_binary = Path(env["PATH"].split(os.pathsep)[1]) / "node"
+            node_version = subprocess.run([str(node_binary), "-p", "process.version"], env=env,
+                                           capture_output=True, text=True, check=True).stdout.strip()
+            cli_root = stage_cli_root(root, Path(home) / "platform")
             master, slave = pty.openpty()
             process = subprocess.Popen(
-                ["node", str(root / "cli/bin/dist/bin.js"), "auth", "login", "--gateway-url",
+                [str(node_binary), str(cli_root / "cli/bin/dist/bin.js"), "auth", "login", "--gateway-url",
                  f"http://127.0.0.1:{gateway.server_port}", "--email", "member@example.test"],
-                cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+                cwd=cli_root, env=env, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
             )
             os.close(slave)
             transcript = bytearray()
@@ -113,7 +119,8 @@ class CliAuthJourneyTests(unittest.TestCase):
                 if process.poll() is None:
                     process.kill()
                     process.wait()
-                    self.fail("TTY login did not finish against the local Gateway fixture")
+                    self.fail("TTY login did not finish against the local Gateway fixture; "
+                              f"transcript: {transcript.decode(errors='replace')!r}")
                 while select.select([master], [], [], 0)[0]:
                     try:
                         chunk = os.read(master, 8192)
@@ -129,7 +136,7 @@ class CliAuthJourneyTests(unittest.TestCase):
                 thread.join(timeout=2)
             session_created = (Path(home) / ".kb" / "session.json").is_file()
         output = transcript.decode(errors="replace")
-        self.assertTrue(sent, f"TTY login did not show its password prompt: {output!r}")
+        self.assertTrue(sent, f"TTY login under {node_binary} ({node_version}) did not show its password prompt: {output!r}")
         self.assertEqual(process.returncode, 0, output)
         self.assertNotIn(password, output)
         self.assertTrue(session_created)

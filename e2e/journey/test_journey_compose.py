@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+
+from test_environment import isolated_environment
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,21 +22,33 @@ class JourneyComposeMountTests(unittest.TestCase):
         git.write_text("#!/bin/sh\nprintf 'test-revision\\n'\n")
         git.chmod(0o755)
         compose_args = Path(temp) / "compose-args.txt"
-        compose = bin_dir / "docker-compose"
-        compose.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$COMPOSE_ARGS_OUT\"\n")
+        compose = bin_dir / "docker"
+        compose.write_text("""#!/bin/sh
+if [ "$1 $2" = 'compose version' ]; then exit 0; fi
+shift
+case "$*" in
+  *' config --format json') printf '{}\\n'; exit 0 ;;
+esac
+printf '%s\\n' "$@" > "$COMPOSE_ARGS_OUT"
+""")
         compose.chmod(0o755)
-        env = dict(os.environ)
-        env["PATH"] = str(bin_dir) + os.pathsep + "/usr/bin:/bin"
-        env["COMPOSE_ARGS_OUT"] = str(compose_args)
+        env = isolated_environment(Path(temp) / "home", bin_dir, required_tools=("bash", "git", "dirname"),
+                                   overrides={"COMPOSE_ARGS_OUT": str(compose_args)})
         return env, compose_args
 
     def _config(self, *, ci: bool) -> dict:
-        env = dict(os.environ)
-        env["KB_JOURNEY_CI"] = "1" if ci else "0"
-        result = subprocess.run(
-            ["bash", str(RUNNER), "--render-compose-config"],
-            cwd=ROOT, env=env, capture_output=True, text=True, check=False,
-        )
+        with tempfile.TemporaryDirectory(prefix="journey-compose-render-") as temp:
+            bin_dir = Path(temp) / "bin"
+            bin_dir.mkdir()
+            compose_tools = tuple(tool for tool in ("docker", "docker-compose") if shutil.which(tool))
+            self.assertTrue(compose_tools, "journey Compose tests require Docker Compose v2 or docker-compose on PATH")
+            env = isolated_environment(Path(temp) / "home", bin_dir,
+                                       required_tools=("bash", "git", "dirname", *compose_tools))
+            env["KB_JOURNEY_CI"] = "1" if ci else "0"
+            result = subprocess.run(
+                ["bash", str(RUNNER), "--render-compose-config"],
+                cwd=ROOT, env=env, capture_output=True, text=True, check=False,
+            )
         self.assertEqual(
             result.returncode, 0,
             "journey Compose rendering failed; install Docker Compose v2 (`docker compose`) or "
@@ -86,9 +100,8 @@ class JourneyComposeMountTests(unittest.TestCase):
     def test_missing_compose_binary_fails_with_an_actionable_message(self):
         with tempfile.TemporaryDirectory(prefix="journey-compose-missing-") as temp:
             env, _ = self._fake_compose_environment(temp)
-            env["PATH"] = str(Path(temp) / "bin") + os.pathsep + "/usr/bin:/bin"
-            # The fake compose binary exists to support the teardown test only.
-            (Path(temp) / "bin" / "docker-compose").unlink()
+            # Remove the fake Docker CLI so the real host Compose plugin cannot satisfy this test.
+            (Path(temp) / "bin" / "docker").unlink()
             result = subprocess.run(
                 ["bash", str(RUNNER), "--render-compose-config"], cwd=ROOT, env=env,
                 capture_output=True, text=True, check=False,

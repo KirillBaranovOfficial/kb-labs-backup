@@ -10,16 +10,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from test_environment import isolated_environment
+
 
 ROOT = Path(__file__).resolve().parents[2]
 JOURNEY = ROOT / "e2e/journey"
 
 
-class HostBash32Tests(unittest.TestCase):
+class HostBashTests(unittest.TestCase):
     def test_empty_monitor_and_container_lists_reach_cleanup_under_host_bash(self):
-        version = subprocess.run(["/bin/bash", "--version"], text=True, capture_output=True, check=True)
-        self.assertIn("version 3.2.", version.stdout)
-
         with tempfile.TemporaryDirectory(prefix="journey-bash32-") as temporary:
             sandbox = Path(temporary)
             repo = sandbox / "repo"
@@ -36,15 +35,14 @@ class HostBash32Tests(unittest.TestCase):
             self._write_stub(bin_dir / "python3", "#!/bin/sh\nexit 0\n")
             self._write_stub(bin_dir / "git", "#!/bin/sh\nprintf 'test-revision\\n'\n")
 
-            environment = os.environ.copy()
-            environment.update({
-                "PATH": f"{bin_dir}{os.pathsep}{environment['PATH']}",
-                "HOME": str(sandbox),
+            environment = isolated_environment(
+                sandbox, bin_dir,
+                required_tools=("bash", "git", "python3", "dirname", "mkdir", "rm", "find", "date"),
+                overrides={
                 "FAKE_DOCKER_CALLS": str(calls_path),
                 "KB_JOURNEY_ONLY": "service-local:explore",
-            })
-            for key in ("KB_PLATFORM_ROOT", "KB_HOME", "KB_NET_OFFSET", "GOFLAGS"):
-                environment.pop(key, None)
+                },
+            )
 
             result = subprocess.run(
                 ["/bin/bash", str(journey / "run.sh"), "--no-build"],

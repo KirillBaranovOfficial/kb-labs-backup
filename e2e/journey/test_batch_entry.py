@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from test_environment import isolated_environment
 
 REPO = Path(__file__).resolve().parents[2]
 ENTRY_SHELL = shutil.which("dash") or "sh"
@@ -87,17 +88,17 @@ fi
 exit 2
 ''')
         self.env = {
-            **os.environ,
-            "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
+            **isolated_environment(
+                Path(self.root / "home"), self.bin,
+                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv"),
+            ),
             "CALLS": str(self.calls),
             "REPORTS": str(self.root / ".journey/reports"),
             "ATTEMPT_MARKER": str(self.root / "first-attempt"),
             "BLOCK_FIFO": str(self.root / "reset.fifo"),
-            "HOME": str(self.root / "home"),
             "KB_DEVKIT_BASE_REF": "origin/master",
         }
         Path(self.env["REPORTS"]).mkdir(parents=True)
-        Path(self.env["HOME"]).mkdir()
 
     def tearDown(self):
         self.temporary.cleanup()
