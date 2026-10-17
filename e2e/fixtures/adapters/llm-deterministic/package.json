@@ -7,9 +7,10 @@
   "exports": {
     ".": "./index.js"
   },
-  "files": ["index.js", "manifest.js"],
+  "files": ["index.js", "manifest.js", "dist/manifest.json"],
   "kb": {
-    "manifest": "./manifest.js"
+    "manifest": "./manifest.js",
+    "requiredOutputs": ["./dist/manifest.json"]
   },
   "scripts": {
     "test": "node --test"
