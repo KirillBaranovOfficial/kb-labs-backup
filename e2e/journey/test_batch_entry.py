@@ -18,9 +18,11 @@ class JourneyBatchEntryTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         (self.root / "e2e/journey").mkdir(parents=True)
+        (self.root / "e2e/scripts").mkdir(parents=True)
         (self.root / "prompts").mkdir()
         (self.root / "tools/kb-devkit").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
+        shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         self.calls = self.root / "calls.log"
         self._script(self.root / "e2e/journey/run.sh", '''#!/bin/sh
 printf 'journey %s %s\\n' "$KB_JOURNEY_ONLY" "$*" >> "$CALLS"
@@ -49,6 +51,19 @@ exit 0
         self._script(self.root / "e2e/journey/prepare-candidate.sh", '''#!/bin/sh
 printf 'candidate\\n' >> "$CALLS"
 exit 0
+''')
+        self._script(self.bin / "node", '''#!/bin/sh
+case "$*" in
+  *--build-outputs*)
+    printf 'build-output-check\\n' >> "$CALLS"
+    if [ "${FAIL_OUTPUT_CHECK:-}" = 1 ]; then
+      printf 'preflight fixture failed\\n'
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
+exit 2
 ''')
         self._script(self.bin / "python3", '''#!/bin/sh
 printf 'unit\\n' >> "$CALLS"
@@ -80,6 +95,10 @@ exit 2
 ''')
         self._script(self.bin / "git", '''#!/bin/sh
 [ "$1 $2" = "rev-parse HEAD" ] && { echo deadbeef; exit 0; }
+if [ "$1" = "-C" ] && [ "$3 $4 $5" = "rev-parse --short HEAD" ]; then
+  echo deadbee
+  exit 0
+fi
 if [ "$1 $2 $3" = "rev-parse --verify --quiet" ]; then
   [ "${MISSING_BASE_REF:-}" = "$4" ] && exit 1
   echo deadbeef
@@ -90,7 +109,7 @@ exit 2
         self.env = {
             **isolated_environment(
                 Path(self.root / "home"), self.bin,
-                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv"),
+                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash"),
             ),
             "CALLS": str(self.calls),
             "REPORTS": str(self.root / ".journey/reports"),
@@ -136,6 +155,7 @@ exit 2
         self.assertEqual(calls, [
             "journey  --down",
             "build",
+            "build-output-check",
             "unit",
             "candidate",
             "journey service-local:explore --no-build",
@@ -143,7 +163,7 @@ exit 2
         ])
         self.assertTrue((self.root / "out/local/local.json").is_file())
         self.assertTrue((self.root / "out/secured/secured.json").is_file())
-        for stage_log in ("reset.log", "build.log", "unit.log", "candidate.log"):
+        for stage_log in ("reset.log", "build.log", "release-build-output-check.log", "unit.log", "candidate.log"):
             self.assertTrue((self.root / "out" / stage_log).is_file(), stage_log)
         for mode in ("local", "secured"):
             self.assertTrue((self.root / f"out/{mode}/batch.log").is_file())
@@ -354,6 +374,32 @@ exit 2
         self.assertFalse(any("e2e/journey/run.sh" in command for command in commands))
         self.assertFalse(any("prepare-candidate.sh" in command for command in commands))
         self.assertEqual(len(entries), sum("e2e/journey/batch.sh" in command for command in commands))
+
+
+    # case: S-262.1
+    def test_missing_release_output_fails_build_stage_before_candidate(self):
+        env = {**self.env, "FAIL_OUTPUT_CHECK": "1"}
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        build_log = (self.root / "out/build.log").read_text()
+        self.assertIn("preflight fixture failed", build_log)
+        self.assertNotIn("candidate", self.calls.read_text())
+        self.assertIn("- Failed stage: `build`", (self.root / "out/summary.md").read_text())
+
+    # case: S-262.1
+    def test_candidate_output_preflight_fails_before_package_packing(self):
+        shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
+        env = {**self.env, "FAIL_OUTPUT_CHECK": "1"}
+        result = subprocess.run(
+            ["bash", str(self.root / "e2e/journey/prepare-candidate.sh")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("preflight fixture failed", result.stdout)
+        self.assertFalse((self.root / "e2e/packages").exists())
 
 
 if __name__ == "__main__":
