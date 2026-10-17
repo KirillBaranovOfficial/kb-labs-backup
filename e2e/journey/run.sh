@@ -56,11 +56,7 @@ elif command -v docker-compose >/dev/null 2>&1; then
   COMPOSE=(docker-compose)
   COMPOSE_AVAILABLE=1
 fi
-if [[ "${KB_JOURNEY_CI:-0}" == "1" ]]; then
-  COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/docker-compose.ci.yml -f e2e/journey/docker-compose.yml)
-else
-  COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
-fi
+COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
 if (( COMPOSE_AVAILABLE )); then
   COMPOSE+=("${COMPOSE_FILES[@]}")
 fi

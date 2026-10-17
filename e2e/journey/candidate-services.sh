@@ -18,7 +18,8 @@ journey_start_container_services() {
   if "${compose[@]}" exec -T verdaccio sh -s -- /verdaccio/storage < e2e/journey/storage_has_packages.sh >/dev/null 2>&1; then
     echo "WARNING: reusing non-empty Verdaccio storage; existing package versions must match the local tarballs."
   fi
-  JOURNEY_PUBLISHER_ID=$("${compose[@]}" run -d --name "journey-publisher-$$" publisher)
+  JOURNEY_PUBLISHER_ID=$("${compose[@]}" run -d --name "journey-publisher-$$" \
+    -e "PUBLISHER_DIAGNOSTIC_NEXT=${compose[*]} logs verdaccio" publisher)
 }
 
 journey_wait_container_publisher() {

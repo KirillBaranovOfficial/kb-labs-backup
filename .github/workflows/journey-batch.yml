@@ -44,7 +44,6 @@ jobs:
     # needed for the measured batch footprint.
     timeout-minutes: 180
     env:
-      KB_JOURNEY_CI: '1'
       GOTOOLCHAIN: local
       JOURNEY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       BATCH_OUTPUT: .journey/batch/${{ github.run_id }}

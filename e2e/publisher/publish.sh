@@ -63,6 +63,12 @@ else
   echo "    Using basic-auth (no token available)"
 fi
 
+if ! npm whoami --registry "$REGISTRY" >/dev/null 2>&1; then
+  echo "ERROR: Verdaccio publisher authentication failed for $REGISTRY; check registry credentials and writable storage."
+  echo "Next: ${PUBLISHER_DIAGNOSTIC_NEXT:-docker compose logs verdaccio}"
+  exit 1
+fi
+
 PARALLELISM="${PUBLISH_PARALLELISM:-4}"
 echo "==> Publishing packages (npm publish from tarballs, parallel x${PARALLELISM})..."
 
