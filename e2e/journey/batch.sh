@@ -7,6 +7,7 @@ BASELINE=${2:-${BATCH_BASELINE:-j28}}
 BUILD_BASE=${KB_DEVKIT_BASE_REF:-local/main...HEAD}
 case "$OUT" in /*) ;; *) OUT="$ROOT/$OUT" ;; esac
 mkdir -p "$OUT"
+: > "$OUT/build.log"
 cd "$ROOT"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/kb-journey-batch.XXXXXX")
@@ -84,13 +85,24 @@ trap 'interrupted=1; exit 143' TERM
 
 commit=$(git rev-parse HEAD)
 printf '{"commit":"%s","baseline":"%s","buildBase":"%s"}\n' "$commit" "$BASELINE" "$BUILD_BASE" > "$OUT/run.json"
-cat > "$OUT/summary.md" <<SUMMARY
-# Journey batch
-
-- Commit: `$commit`
-- Baseline: `$BASELINE`
-- Build base: `$BUILD_BASE`
-SUMMARY
+printf '# Journey batch\n\n- Commit: `%s`\n- Baseline: `%s`\n- Build base: `%s`\n' \
+  "$commit" "$BASELINE" "$BUILD_BASE" > "$OUT/summary.md"
+validate_build_base_ref() {
+  build_base_ref=$1
+  if ! git rev-parse --verify --quiet "$build_base_ref^{commit}" >/dev/null 2>&1; then
+    echo "affected-build base ref '$build_base_ref' is missing from this checkout; next: git fetch --all --prune" >&2
+    exit 1
+  fi
+}
+case "$BUILD_BASE" in
+  *...*)
+    build_base_left=${BUILD_BASE%%...*}
+    build_base_right=${BUILD_BASE#*...}
+    validate_build_base_ref "$build_base_left"
+    validate_build_base_ref "$build_base_right"
+    ;;
+  *) validate_build_base_ref "$BUILD_BASE" ;;
+esac
 rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
 rm -rf .journey/reports/invocations
 start_stage reset
