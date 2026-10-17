@@ -1,4 +1,4 @@
-import { createErrorEnvelope } from "@kb-labs/core-platform";
+import { createErrorEnvelope, type DetailsFor } from "@kb-labs/core-platform";
 import { createUxFailureResult } from "@kb-labs/core-platform/ux-result";
 import { platform } from "@kb-labs/core-runtime";
 import { resolvePluginBasePath } from "@kb-labs/plugin-contracts";
@@ -23,7 +23,7 @@ export function registerPluginRouteNotFoundHandler(
   app.setNotFoundHandler(async (request, reply) => {
     const pathname = request.url.split("?", 1)[0] ?? request.url;
     const route = `${request.method} ${pathname}`;
-    const resourceNotFound = (message: string, details: Record<string, string> = { route }) => {
+    const resourceNotFound = (message: string, details: DetailsFor<'KB_RUNTIME_RESOURCE_NOT_FOUND'> = { route }) => {
       const error = createErrorEnvelope("KB_RUNTIME_RESOURCE_NOT_FOUND", {
         details,
         message,

@@ -6,6 +6,7 @@
  */
 
 import catalogData from './errors.catalog.json';
+import { markValidatedErrorEnvelope, type ValidatedErrorEnvelope } from './validated-envelope.js';
 import type {
   ErrorAction,
   ErrorCatalog,
@@ -17,6 +18,22 @@ import type {
 } from './types.js';
 import { catalogRequiredHintTemplateParameters, catalogRequiredMessageTemplateParameters, catalogStructuredDetailFields, catalogTemplateParameterNames } from './error-codes.generated.js';
 import type { CatalogHintTemplateParameters, CatalogMessageTemplateParameters, CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from './error-codes.generated.js';
+import type { CatalogDetailsFor } from './error-codes.generated.js';
+
+/** Catalogue-derived detail fields accepted by a bridge for a specific code. */
+export type DetailsFor<C extends PlatformErrorCode> = C extends PlatformErrorCode ? CatalogDetailsFor[C] : never;
+
+type RequiredDetailKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K }[keyof T];
+
+/** Positional detail argument for typed bridges; required catalogue fields cannot be omitted. */
+export type DetailsArgumentFor<C extends PlatformErrorCode> = [RequiredDetailKeys<DetailsFor<C>>] extends [never]
+  ? [details?: DetailsFor<C>]
+  : [details: DetailsFor<C>];
+
+/** Object detail property for typed bridges; required catalogue fields cannot be omitted. */
+export type DetailsOptionFor<C extends PlatformErrorCode> = [RequiredDetailKeys<DetailsFor<C>>] extends [never]
+  ? { details?: DetailsFor<C> }
+  : { details: DetailsFor<C> };
 
 // The JSON is validated structurally by the catalog lint test; the cast keeps
 // the literal union types (area, severity) that JSON inference widens to string.
@@ -64,7 +81,6 @@ export function renderTemplate(
 
 type DataTemplateParameters<C extends PlatformErrorCode> = CatalogTemplateParameters[C];
 type RuntimeTemplateParameters<C extends PlatformErrorCode> = CatalogRuntimeTemplateParameters[C];
-type RequiredKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K }[keyof T];
 type MessageTemplateParameters<C extends PlatformErrorCode> = CatalogMessageTemplateParameters[C];
 type HintTemplateParameters<C extends PlatformErrorCode> = CatalogHintTemplateParameters[C];
 type RequiredDataParameters<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
@@ -73,13 +89,15 @@ type RequiredDataParameters<C extends PlatformErrorCode, O extends EnvelopeOptio
 type RequiredHintRuntimeParameters<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
   O extends { hint: string } ? Record<never, never> : RuntimeTemplateParameters<C>;
 type TemplateValueOption<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
-  [RequiredKeys<RequiredHintRuntimeParameters<C, O>>] extends [never]
+  [RequiredDetailKeys<RequiredHintRuntimeParameters<C, O>>] extends [never]
     ? { templateValues?: RuntimeTemplateParameters<C> }
     : { templateValues: RuntimeTemplateParameters<C> };
+type EnvelopeDetailsFor<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
+  Omit<DetailsFor<C>, keyof DataTemplateParameters<C>> & RequiredDataParameters<C, O>;
 type DetailsOption<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
   [keyof RequiredDataParameters<C, O>] extends [never]
-    ? { details?: Record<string, string> }
-    : { details: Record<string, string> & RequiredDataParameters<C, O> };
+    ? { details?: EnvelopeDetailsFor<C, O> }
+    : { details: EnvelopeDetailsFor<C, O> };
 type CreateEnvelopeOptionsFor<C extends PlatformErrorCode, O extends EnvelopeOptionFields> =
   O & DetailsOption<C, O> & TemplateValueOption<C, O>;
 
@@ -102,20 +120,49 @@ interface EnvelopeOptionFields {
 }
 
 type EnvelopeOptionsArgs<C extends PlatformErrorCode, O extends EnvelopeOptionFields> = [keyof RequiredDataParameters<C, O>] extends [never]
-  ? [RequiredKeys<RequiredHintRuntimeParameters<C, O>>] extends [never] ? [options?: CreateEnvelopeOptionsFor<C, O>] : [options: CreateEnvelopeOptionsFor<C, O>]
+  ? [RequiredDetailKeys<RequiredHintRuntimeParameters<C, O>>] extends [never] ? [options?: CreateEnvelopeOptionsFor<C, O>] : [options: CreateEnvelopeOptionsFor<C, O>]
   : [options: CreateEnvelopeOptionsFor<C, O>];
 
 /** Builds an envelope from a catalog code. Throws for missing template values or an unknown code. */
-export function createErrorEnvelope<C extends PlatformErrorCode, O extends EnvelopeOptionFields = EnvelopeOptionFields>(code: C, ...args: EnvelopeOptionsArgs<C, O>): ErrorEnvelope;
-export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFields & { details?: Record<string, string>; templateValues?: Readonly<Record<string, string>> } = {}): ErrorEnvelope {
+export function createErrorEnvelope<C extends PlatformErrorCode, O extends EnvelopeOptionFields = EnvelopeOptionFields>(code: C, ...args: EnvelopeOptionsArgs<C, O>): ValidatedErrorEnvelope;
+export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFields & { details?: unknown; templateValues?: unknown } = {}): ValidatedErrorEnvelope {
+  return buildErrorEnvelope(code, options);
+}
+
+/** Dynamic error bridge. Unknown codes and detail maps are validated before an envelope is built. */
+export function createValidatedErrorEnvelope(
+  code: unknown,
+  options: EnvelopeOptionFields & { details?: unknown; templateValues?: unknown } = {},
+): ValidatedErrorEnvelope {
+  if (typeof code !== 'string' || !isErrorCode(code)) {
+    return createErrorEnvelope('KB_RUNTIME_UNEXPECTED');
+  }
+  return buildErrorEnvelope(code, options);
+}
+
+function toStringMap(value: unknown): Record<string, string> | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const result: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== 'string') return null;
+    result[key] = item;
+  }
+  return result;
+}
+
+function buildErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFields & { details?: unknown; templateValues?: unknown }): ValidatedErrorEnvelope {
   const entry = byCode.get(code);
   if (!entry) {
     throw new Error(`Unknown error code "${code}": add it to errors.catalog.json`);
   }
-  const details = options.details ?? {};
-  if (typeof details !== 'object' || details === null || Array.isArray(details)) {
+  const parsedDetails = toStringMap(options.details);
+  const parsedTemplateValues = toStringMap(options.templateValues);
+  if (parsedDetails === null || parsedTemplateValues === null) {
     throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
   }
+  const details = parsedDetails ?? {};
+  const templateValuesInput = parsedTemplateValues ?? {};
   for (const [key, value] of Object.entries(details)) {
     if (typeof value !== 'string') {
       throw createErrorDetailsContractViolation(key, 'must be a string identifier');
@@ -128,12 +175,12 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOp
   const allowedDetails = new Set([...parameterNames, ...catalogStructuredDetailFields[code]]);
   const templateValues: Record<string, string> = {
     ...details,
-    ...options.templateValues,
+    ...templateValuesInput,
     ...(options.correlationId ? { correlationId: options.correlationId } : {}),
   };
   const violationFields = [
     ...Object.keys(details).filter((key) => !allowedDetails.has(key)),
-    ...Object.keys(options.templateValues ?? {}).filter((key) => !parameterNames.includes(key)),
+    ...Object.keys(templateValuesInput).filter((key) => !parameterNames.includes(key)),
   ];
   const requiredParameters = [
     ...(!options.message ? catalogRequiredMessageTemplateParameters[code] : []),
@@ -176,10 +223,10 @@ export function createErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOp
   if (options.diagnostics?.length) {
     envelope.diagnostics = options.diagnostics;
   }
-  return envelope;
+  return markValidatedErrorEnvelope(envelope);
 }
 
-function createDiagnosticContractViolation(originalCode: string, fields: readonly string[]): ErrorEnvelope {
+function createDiagnosticContractViolation(originalCode: string, fields: readonly string[]): ValidatedErrorEnvelope {
   return createErrorEnvelope('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION', {
     details: { originalCode, fields: fields.join(', ') },
   });

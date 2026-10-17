@@ -120,7 +120,7 @@ function makeRequest(handler: FailureFixture, correlationId: string): ExecutionR
       requestId: correlationId,
       handlerId: 'fixture:failure',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     } as ExecutionRequest['descriptor'],
     context: { commandPath: 'fixture failure' },
   };

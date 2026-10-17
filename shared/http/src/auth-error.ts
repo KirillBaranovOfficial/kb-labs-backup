@@ -14,12 +14,15 @@ export function sendAuthError(
 ) {
   const errorCode = code ?? (status === 403 ? 'KB_AUTH_FORBIDDEN' : 'KB_AUTH_REQUIRED');
   const error = errorCode === 'KB_AUTH_FORBIDDEN'
-    ? createErrorEnvelope('KB_AUTH_FORBIDDEN', permission
-      ? { details: { permission }, ...(cause ? { cause } : {}) }
-      : { message: 'You do not have permission to perform this operation.', ...(cause ? { cause } : {}) })
-    : createErrorEnvelope(errorCode, {
-      ...(errorCode === 'KB_AUTH_REQUIRED' ? { details: { gatewayUrl: '<url>' } } : {}),
+    ? createErrorEnvelope('KB_AUTH_FORBIDDEN', {
+      details: { permission: permission ?? 'the requested operation' },
       ...(cause ? { cause } : {}),
-    });
+    })
+    : errorCode === 'KB_AUTH_REQUIRED'
+      ? createErrorEnvelope('KB_AUTH_REQUIRED', {
+        details: { gatewayUrl: '<url>' },
+        ...(cause ? { cause } : {}),
+      })
+      : createErrorEnvelope(errorCode, { ...(cause ? { cause } : {}) });
   return reply.code(status).send({ ok: false, error, ...responseFields });
 }

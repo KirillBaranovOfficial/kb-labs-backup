@@ -86,7 +86,7 @@ function makeCtx(captured: Captured): PluginContextV3 {
     } as any,
     runtime: { fs: {} as any, fetch: vi.fn(), env: vi.fn() },
     api: {} as any,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
 }
@@ -403,7 +403,6 @@ describe('kb webhook revoke', () => {
 
   it('WR-03: reports a typed Gateway 404 without rendering a raw response body', async () => {
     gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', {
-      details: { status: '404', operation: 'Gateway request', gatewayUrl: CREDS.gatewayUrl },
     })));
 
     const captured: Captured = { errors: [], output: [], json: [] };
@@ -453,7 +452,7 @@ describe('kb webhook revoke', () => {
 
   it('WR-07: server error 500 → exitCode 1', async () => {
     gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
-      details: { status: '500', operation: 'Webhook revoke', gatewayUrl: CREDS.gatewayUrl },
+      details: { httpStatus: '500', requestStage: 'Webhook revoke', gatewayUrl: CREDS.gatewayUrl },
       correlationId: 'corr-webhook-revoke',
     })));
 

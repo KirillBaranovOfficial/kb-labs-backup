@@ -37,7 +37,17 @@ class WorkspaceCliStepsTest(unittest.TestCase):
         self.assertEqual(result.status, "PASS", result.first_failure)
         self.assertEqual(claims, {
             "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13", "S-142.5", "S-203.1", "S-203.19",
+            "S-203.27",
         })
+
+    def test_workspace_cli_reports_project_scope_config_recovery_command(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        journey = Journey("local", "workspace-cli-project-config-scope")
+        run_workspace_cli_steps(journey, repo_root)
+
+        result = journey.result()
+        self.assertEqual(result.status, "PASS", result.first_failure)
+        self.assertIn("S-203.27", {claim["claimId"] for claim in result.case_run["claims"]})
 
 
 if __name__ == "__main__":

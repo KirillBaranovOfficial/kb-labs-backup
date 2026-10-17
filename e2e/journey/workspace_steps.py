@@ -150,6 +150,37 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
             cases=["S-203.19"],
         )
 
+        def reject_invalid_project_config_path() -> str | None:
+            result = run("config", "set", "someSection.key", "1", "--scope", "project", "--json")
+            try:
+                envelope = read_ux_cli_result(result)
+            except ValueError as error:
+                return f"project config write did not return one JSON envelope: {error}"
+            if envelope.get("ok") is not False:
+                return "invalid project config path unexpectedly succeeded"
+            try:
+                error = decode_ux_error_result(envelope)
+            except (KeyError, ValueError) as error:
+                return f"project config write returned an invalid error envelope: {error}"
+            details = error.get("details", {})
+            command = details.get("nextCommand")
+            if (error.get("code") != "KB_CONFIG_INVALID"
+                    or details.get("path") != "someSection.key"
+                    or command != "kb config set plugins.someSection.key 1"
+                    or command not in error.get("hint", "")
+                    or "reason" in details):
+                return "project config write omitted its catalogued recovery command or emitted internal metadata"
+            if result.returncode == 0:
+                return "invalid project config write exited successfully"
+            return None
+
+        journey.step(
+            "show a catalogued recovery command for an invalid project config path",
+            "workspace-cli",
+            reject_invalid_project_config_path,
+            cases=["S-203.27"],
+        )
+
         def list_workspace_adapters() -> str | None:
             result = run("adapter", "list", "--json")
             if result.returncode != 0:

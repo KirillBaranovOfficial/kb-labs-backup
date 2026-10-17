@@ -1,4 +1,4 @@
-import { createErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { createValidatedErrorEnvelope, type DetailsFor, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
 
 export type ExtensionStoreErrorCode =
   | 'KB_PLUGIN_INTEGRITY_MISMATCH'
@@ -10,13 +10,13 @@ export type ExtensionStoreErrorCode =
  * secret-free values that fill the catalog message/hint templates. Command
  * layers convert it to an error envelope with `createErrorEnvelope`.
  */
-export class ExtensionStoreError extends Error {
-  readonly code: ExtensionStoreErrorCode;
+export class ExtensionStoreError<C extends ExtensionStoreErrorCode> extends Error {
+  readonly code: C;
   readonly envelope: ErrorEnvelope;
-  readonly details: Readonly<Record<string, string>>;
+  readonly details: DetailsFor<C & PlatformErrorCode>;
 
-  constructor(code: ExtensionStoreErrorCode, details: Record<string, string>, cause?: string) {
-    const envelope = createErrorEnvelope(code, { details, cause });
+  constructor(code: C, details: DetailsFor<C & PlatformErrorCode>, cause?: string) {
+    const envelope = createValidatedErrorEnvelope(code, { details, cause });
     super(`${envelope.code}: ${envelope.message} ${envelope.hint}`);
     this.name = 'ExtensionStoreError';
     this.code = code;
@@ -30,7 +30,7 @@ export class ExtensionStoreError extends Error {
  * (a project's pin, or the value observed right after install). Carries
  * `KB_PLUGIN_INTEGRITY_MISMATCH`.
  */
-export class IntegrityMismatchError extends ExtensionStoreError {
+export class IntegrityMismatchError extends ExtensionStoreError<'KB_PLUGIN_INTEGRITY_MISMATCH'> {
   constructor(details: { plugin: string; expected: string; actual: string }) {
     super(
       'KB_PLUGIN_INTEGRITY_MISMATCH',
@@ -45,13 +45,13 @@ export class IntegrityMismatchError extends ExtensionStoreError {
  * The package manager failed to install a version into the store (network,
  * registry, or a bad spec). Carries `KB_PLUGIN_INSTALL_FAILED`.
  */
-export class StoreInstallError extends ExtensionStoreError {
+export class StoreInstallError extends ExtensionStoreError<'KB_PLUGIN_INSTALL_FAILED'> {
   constructor(details: { plugin: string }, cause: string) {
     super('KB_PLUGIN_INSTALL_FAILED', details, cause);
     this.name = 'StoreInstallError';
   }
 }
 
-export function isExtensionStoreError(value: unknown): value is ExtensionStoreError {
+export function isExtensionStoreError(value: unknown): value is ExtensionStoreError<ExtensionStoreErrorCode> {
   return value instanceof ExtensionStoreError;
 }

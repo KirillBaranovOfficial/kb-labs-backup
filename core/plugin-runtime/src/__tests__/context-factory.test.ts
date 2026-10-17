@@ -113,7 +113,7 @@ describe('createPluginContextV3', () => {
           analytics: true,
         },
       },
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -149,7 +149,7 @@ describe('createPluginContextV3', () => {
       pluginId: '@kb-labs/test',
       pluginVersion: '1.0.0',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -186,7 +186,7 @@ describe('createPluginContextV3', () => {
       pluginId: '@kb-labs/test',
       pluginVersion: '1.0.0',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
     const { context } = createPluginContextV3({
       descriptor,
@@ -211,7 +211,7 @@ describe('createPluginContextV3', () => {
       pluginId: '@kb-labs/test',
       pluginVersion: '1.0.0',
       permissions: { fs: { read: ['/test'] } },
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -253,7 +253,7 @@ describe('createPluginContextV3', () => {
       pluginId: '@kb-labs/test',
       pluginVersion: '1.0.0',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -284,7 +284,7 @@ describe('createPluginContextV3', () => {
       pluginId: '@kb-labs/test',
       pluginVersion: '1.0.0',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { cleanupStack } = createPluginContextV3({
@@ -305,7 +305,7 @@ describe('createPluginContextV3', () => {
       pluginId: '@kb-labs/test',
       pluginVersion: '1.0.0',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const abortController = new AbortController();
@@ -328,7 +328,7 @@ describe('createPluginContextV3', () => {
       pluginVersion: '1.0.0',
       tenantId: 'acme-corp',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -351,7 +351,7 @@ describe('createPluginContextV3', () => {
       pluginId: '@kb-labs/test',
       pluginVersion: '1.0.0',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context: context1 } = createPluginContextV3({
@@ -379,7 +379,7 @@ describe('createPluginContextV3', () => {
       pluginId: '@kb-labs/test',
       pluginVersion: '1.0.0',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({
@@ -429,7 +429,7 @@ describe('createPluginContextV3', () => {
       pluginId: '@kb-labs/test',
       pluginVersion: '1.0.0',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const { context } = createPluginContextV3({

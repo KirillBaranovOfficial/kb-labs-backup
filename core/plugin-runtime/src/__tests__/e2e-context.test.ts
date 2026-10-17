@@ -62,7 +62,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-test-123',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -119,7 +119,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-fs-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -157,7 +157,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-shell-test',
       permissions: { shell: { allow: ['node'] }, quotas: { timeoutMs: 5000, maxOutputBytes: 1024 } },
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess({
@@ -197,7 +197,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-trace-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -237,7 +237,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-exit-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -289,7 +289,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-platform-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({
@@ -356,7 +356,7 @@ describe('E2E Context Tests', () => {
       pluginVersion: '1.0.0',
       requestId: 'e2e-ui-api-test',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
 
     const runResult = await runInProcess<CommandResult<unknown>>({

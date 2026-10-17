@@ -176,7 +176,7 @@ describe('createTestContext', () => {
   describe('host contexts', () => {
     it('should generate CLI host context by default', () => {
       const { ctx, cleanup } = createTestContext({ host: 'cli' });
-      expect(ctx.hostContext).toEqual({ host: 'cli', argv: ['test'], flags: {} });
+      expect(ctx.hostContext).toEqual({ host: 'cli', binaryName: 'test-cli', argv: ['test'], flags: {} });
       cleanup();
     });
 
@@ -193,7 +193,7 @@ describe('createTestContext', () => {
     });
 
     it('should accept custom host context', () => {
-      const custom = { host: 'cli' as const, argv: ['custom'], flags: { verbose: true } };
+      const custom = { host: 'cli' as const, binaryName: 'test-cli', argv: ['custom'], flags: { verbose: true } };
       const { ctx, cleanup } = createTestContext({ hostContext: custom });
       expect(ctx.hostContext).toEqual(custom);
       cleanup();

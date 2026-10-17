@@ -3,7 +3,7 @@ import { noopUI } from '@kb-labs/plugin-contracts';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ExecutionRequest } from '@kb-labs/plugin-execution-factory';
-import { createErrorEnvelope, createProductErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createProductErrorEnvelope, createValidatedErrorEnvelope } from '@kb-labs/core-platform';
 import { executeCommandV3 } from './execute-command.js';
 
 describe('executeCommandV3 environment', () => {
@@ -19,6 +19,7 @@ describe('executeCommandV3 environment', () => {
     } as unknown as PlatformContainer;
 
     await executeCommandV3({
+      binaryName: 'kb',
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
       commandPath: 'test run',
@@ -53,6 +54,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     const exitCode = await executeCommandV3({
+      binaryName: 'kb',
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
       commandPath: 'test run',
@@ -73,7 +75,8 @@ describe('executeCommandV3 plugin command result output', () => {
   it('frames a factory-normalized returned typed failure once in JSON mode', async () => {
     const json = vi.fn();
     const error = vi.fn();
-    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+    const envelope = createValidatedErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      templateValues: { binary: 'kb' },
       correlationId: 'returned-failure-correlation',
       message: 'The operation failed.',
       hint: 'Resolve the reported command failure, then run the command again.',
@@ -87,6 +90,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     const exitCode = await executeCommandV3({
+      binaryName: 'kb',
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
       commandPath: 'test run',
@@ -114,6 +118,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     const exitCode = await executeCommandV3({
+      binaryName: 'kb',
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
       commandPath: 'test run',
@@ -140,6 +145,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const error = vi.fn();
     const envelope = createErrorEnvelope('KB_PLUGIN_NOT_FOUND', {
       correlationId: 'plugin-not-found-correlation',
+      details: { plugin: '@kb-labs/not-published' },
       message: 'Plugin @kb-labs/not-published was not found in the registry.',
       hint: 'Check the exact package name and package source. If available, run `kb marketplace install @kb-labs/not-published`; `kb marketplace plugins list` shows installed plugins.',
     });
@@ -151,6 +157,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     const exitCode = await executeCommandV3({
+      binaryName: 'kb',
       pluginId: '@kb-labs/test-plugin',
       pluginVersion: '1.0.0',
       commandPath: 'test run',
@@ -165,7 +172,7 @@ describe('executeCommandV3 plugin command result output', () => {
     expect(exitCode).toBe(1);
     expect(json).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledOnce();
-    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^Plugin @kb-labs\/not-published was not found in the registry\. \[KB_PLUGIN_NOT_FOUND\]\n  Hint:  Check the exact package name and package source\. If available, run `kb marketplace install @kb-labs\/not-published`; `kb marketplace plugins list` shows installed plugins\.\n  Correlation ID: plugin-not-found-correlation$/), {
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^Plugin @kb-labs\/not-published was not found in the registry\. \[KB_PLUGIN_NOT_FOUND\]\n  plugin: @kb-labs\/not-published\n  Hint:  Check the exact package name and package source\. If available, run `kb marketplace install @kb-labs\/not-published`; `kb marketplace plugins list` shows installed plugins\.\n  Correlation ID: plugin-not-found-correlation$/), {
       hint: 'Check the exact package name and package source. If available, run `kb marketplace install @kb-labs/not-published`; `kb marketplace plugins list` shows installed plugins.',
     });
   });
@@ -182,6 +189,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     const exitCode = await executeCommandV3({
+      binaryName: 'kb',
       pluginId: '@kb-labs/test-plugin', pluginVersion: '1.0.0', commandPath: 'test run', handlerPath: 'dist/commands/test.js',
       argv: [], flags: { json: true }, ui: { ...noopUI, json }, platform, platformContainer,
     });
@@ -217,6 +225,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     const exitCode = await executeCommandV3({
+      binaryName: 'kb',
       pluginId: '@kb-labs/test-plugin', pluginVersion: '1.0.0', commandPath: 'test run', handlerPath: 'dist/commands/test.js',
       argv: [], flags: { json: true }, ui: { ...noopUI, json }, platform, platformContainer,
     });
@@ -240,6 +249,7 @@ describe('executeCommandV3 plugin command result output', () => {
     const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
 
     await executeCommandV3({
+      binaryName: 'kb',
       pluginId: '@kb-labs/commit', pluginVersion: '1.0.0', commandPath: 'commit open',
       handlerPath: 'dist/commands/open.js', argv: [], flags: { json: true },
       ui: { ...noopUI, json }, platform: {} as unknown as PlatformServices, platformContainer,

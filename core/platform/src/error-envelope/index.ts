@@ -4,6 +4,7 @@
  */
 
 export * from './types.js';
+export type { ValidatedErrorEnvelope } from './validated-envelope.js';
 export * from './execution-request.js';
 export * from './execution-response.js';
 export * from './execution-transport.js';

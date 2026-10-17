@@ -50,7 +50,7 @@ describe('gatewayApiFetch auth mapping', () => {
         code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
         message: 'The Gateway returned an invalid UX result.',
         hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
-        details: { gatewayUrl: 'https://gateway.test', status: '403', operation: 'Gateway request' },
+        details: { gatewayUrl: 'https://gateway.test', httpStatus: '403', requestStage: 'Gateway request' },
         correlationId: expect.any(String),
       },
     });
@@ -72,7 +72,7 @@ describe('gatewayApiFetch auth mapping', () => {
     expect(malformed).toMatchObject({
       code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
       message: 'The Gateway returned an invalid UX result.',
-      details: { gatewayUrl: 'https://gateway.test', status: '403', operation: 'Gateway request' },
+      details: { gatewayUrl: 'https://gateway.test', httpStatus: '403', requestStage: 'Gateway request' },
       correlationId: expect.any(String),
     });
     expect(JSON.stringify(malformed)).not.toContain('raw body');
@@ -105,7 +105,7 @@ describe('gatewayApiFetch auth mapping', () => {
     expect(missing).toMatchObject({
       code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
       details: {
-        remoteCode: 'KB_AUTH_FORBIDDEN', gatewayUrl: 'https://gateway.test', status: '403', operation: 'Gateway request',
+        remoteCode: 'KB_AUTH_FORBIDDEN', gatewayUrl: 'https://gateway.test', httpStatus: '403', requestStage: 'Gateway request',
       },
     });
     expect(JSON.stringify(missing)).not.toContain('remote attacker');
@@ -132,7 +132,7 @@ describe('gatewayApiFetch auth mapping', () => {
     await expect(gatewayApiFetch('http://127.0.0.1:4000/api')).rejects.toMatchObject({
       envelope: {
         code: 'KB_CONFIG_INVALID',
-        details: { path: '.kb/session.json', reason: 'invalid' },
+        details: { path: '.kb/session.json' },
         hint: 'Run "kb auth login" to replace the saved authentication data, then retry the command.',
       },
     });
@@ -297,7 +297,7 @@ describe('readGatewaySuccessData', () => {
       envelope: {
         code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
         message: 'The Gateway returned an invalid UX result.',
-        details: { operation: 'Gateway request', gatewayUrl: 'https://gateway.test', status: '200' },
+        details: { requestStage: 'Gateway request', gatewayUrl: 'https://gateway.test', httpStatus: '200' },
       },
     });
     const failure = new Response(JSON.stringify({
@@ -322,7 +322,7 @@ describe('readGatewaySuccessData', () => {
     })).rejects.toMatchObject({
       envelope: {
         code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
-        details: { status: '200', operation: 'Gateway login', gatewayUrl: 'https://gateway.test' },
+        details: { httpStatus: '200', requestStage: 'Gateway login', gatewayUrl: 'https://gateway.test' },
         hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
       },
     });

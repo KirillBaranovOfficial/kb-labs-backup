@@ -32,6 +32,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
           'KB_RUNTIME_INPUT_INVALID',
           'Missing required flag: --handler.',
           'Run `kb workflow job run --help` to see the required flags.',
+          { details: { field: 'handler' } },
         );
       }
 
@@ -45,6 +46,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
             'KB_RUNTIME_INPUT_INVALID',
             'The --input value is not valid JSON.',
             'Pass valid JSON with `--input`, then retry `kb workflow job run`.',
+            { details: { field: 'input' } },
           );
         }
       }
@@ -85,7 +87,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
                 'KB_RUNTIME_COMMAND_FAILED',
                 `Job ${result.id} ended with status ${status.status}.`,
                 `Inspect the result with: kb workflow job status ${result.id}`,
-                status.error,
+                { cause: status.error },
               );
             }
 
@@ -98,6 +100,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
               'KB_RUNTIME_COMMAND_FAILED',
               `Timed out waiting for job ${result.id} to finish.`,
               `Inspect the job with: kb workflow job status ${result.id}`,
+              {},
             );
           }
         }

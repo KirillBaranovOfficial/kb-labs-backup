@@ -27,16 +27,16 @@ function decodeGatewayFailureBody(
 ): ErrorEnvelope {
   if (isUxResult(parsed) && !parsed.ok) {
     const protocolDetails = {
-      status: String(status),
-      operation: context.operation,
+      httpStatus: String(status),
+      requestStage: context.operation,
       gatewayUrl: context.gatewayUrl,
     };
     return withGatewayUrl(decodeErrorEnvelope(parsed.error, { protocolDetails }), context.gatewayUrl);
   }
 
   const details = {
-    status: String(status),
-    operation: context.operation,
+    httpStatus: String(status),
+    requestStage: context.operation,
     gatewayUrl: context.gatewayUrl,
   };
   return createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {

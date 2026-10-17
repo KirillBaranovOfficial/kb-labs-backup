@@ -130,7 +130,7 @@ async function execute(requestId: string, message: ExecuteMessage): Promise<void
     const handlerModule = await import(handlerPath);
     const handler = handlerModule.default ?? handlerModule;
     if (typeof handler.execute !== 'function') {
-      throw new PluginError(`Handler at ${handlerPath} does not export an execute function`, 'KB_PLUGIN_LOAD_FAILED');
+      throw new PluginError(`Handler at ${handlerPath} does not export an execute function`, 'KB_PLUGIN_LOAD_FAILED', { plugin: descriptor.pluginId });
     }
     const handlerInput = descriptor.hostType === 'ws'
       ? rehydrateWSInput(input as WSInputReference, platform.websocket)

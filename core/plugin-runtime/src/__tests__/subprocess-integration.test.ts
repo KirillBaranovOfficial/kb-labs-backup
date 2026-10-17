@@ -56,7 +56,7 @@ describe('Subprocess Integration Tests', () => {
       requestId: 'sandbox-error-ipc',
       handlerId: 'test:sandbox-error',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
     const handlerPath = new URL('./fixtures/sandbox-error-handler.mjs', import.meta.url).pathname;
 
@@ -160,7 +160,7 @@ describe('Subprocess Integration Tests', () => {
           requestId: 'subprocess-req-123',
           handlerId: 'test:subprocess',
           permissions: {},
-          hostContext: { host: 'cli', argv: [], flags: {} },
+          hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
         };
 
       const runResult = await runInSubprocess<CommandResult<unknown>>({
@@ -207,7 +207,7 @@ describe('Subprocess Integration Tests', () => {
       const descriptor: PluginContextDescriptor = {
         hostType: 'cli', pluginId: '@kb-labs/test-stdio', pluginVersion: '1.0.0',
         requestId: 'stdio-req', handlerId: 'test:stdio', permissions: { platform: { cache: true } },
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
       const logs: string[] = [];
       const result = await runInSubprocess({
@@ -264,7 +264,7 @@ describe('Subprocess Integration Tests', () => {
       const descriptor: PluginContextDescriptor = {
         hostType: 'cli', pluginId: '@kb-labs/test-bootstrap-eof', pluginVersion: '1.0.0',
         requestId: 'bootstrap-eof-request', handlerId: 'test:bootstrap-eof', permissions: {},
-        hostContext: { host: 'cli', argv: [], flags: {} },
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       };
       await channel.send({
         type: 'execution:start',
@@ -341,7 +341,7 @@ describe('Subprocess Integration Tests', () => {
           pluginVersion: '1.0.0',
           requestId: 'timeout-req',
           permissions: {},
-          hostContext: { host: 'cli', argv: [], flags: {} },
+          hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
         };
 
         await expect(
@@ -383,7 +383,7 @@ describe('Subprocess Integration Tests', () => {
           pluginVersion: '1.0.0',
           requestId: 'abort-req',
           permissions: {},
-          hostContext: { host: 'cli', argv: [], flags: {} },
+          hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
         };
 
         const abortController = new AbortController();

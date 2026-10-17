@@ -74,7 +74,8 @@ describe('resolved execution mode contract', () => {
         schema: PlatformUserConfigSchema,
       })).rejects.toMatchObject({
         code: 'KB_CONFIG_INVALID',
-        details: { path: 'platform.execution.mode', hint },
+        details: { path: 'platform.execution.mode' },
+        metadata: { hint },
       });
       expect(await readFile(filePath, 'utf8')).toBe(original);
     } finally {

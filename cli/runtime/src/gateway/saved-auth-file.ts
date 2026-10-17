@@ -8,7 +8,7 @@ export class SavedAuthFileError extends ErrorEnvelopeError {
     super(createErrorEnvelope('KB_CONFIG_INVALID', {
       message: `Saved authentication file ${filePath} is ${reason}.`,
       hint: 'Run "kb auth login" to replace the saved authentication data, then retry the command.',
-      details: { path: filePath, reason },
+      details: { path: filePath },
     }));
     this.name = 'SavedAuthFileError';
     Object.setPrototypeOf(this, SavedAuthFileError.prototype);

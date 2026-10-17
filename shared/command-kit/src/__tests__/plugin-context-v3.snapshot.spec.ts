@@ -21,7 +21,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
       pluginId: '@kb-labs/system',
       pluginVersion: '0.1.0',
       cwd: '/test',
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
       ui: {
         colors: {} as any,
         symbols: {} as any,

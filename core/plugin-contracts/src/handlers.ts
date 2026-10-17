@@ -6,7 +6,13 @@
 
 import type { PluginContextV3 } from './context.js';
 import type { FailureKind } from '@kb-labs/core-contracts';
-import type { ErrorCode, ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import type {
+  DetailsOptionFor,
+  ErrorEnvelope,
+  PlatformErrorCode,
+  ProductErrorCode,
+  ValidatedErrorEnvelope,
+} from '@kb-labs/core-platform/error-envelope';
 
 /**
  * Standard metadata automatically injected by runtime
@@ -63,12 +69,23 @@ export interface StandardMeta {
  *
  * @template T Result data type
  */
-export interface CommandError extends Pick<ErrorEnvelope, 'code' | 'message' | 'hint' | 'cause' | 'diagnostics'> {
-  code: ErrorCode;
+type CommandErrorFields = Pick<ErrorEnvelope, 'message' | 'hint' | 'cause' | 'diagnostics'> & {
   correlationId?: string;
   kind?: FailureKind;
+};
+
+export type CataloguedCommandErrorFor<C extends PlatformErrorCode> = CommandErrorFields & { code: C } & DetailsOptionFor<C>;
+
+type CataloguedCommandError = {
+  [C in PlatformErrorCode]: CataloguedCommandErrorFor<C>;
+}[PlatformErrorCode];
+
+type ProductCommandError = CommandErrorFields & {
+  code: ProductErrorCode;
   details?: Record<string, string>;
-}
+};
+
+export type CommandError = CataloguedCommandError | ProductCommandError | ValidatedErrorEnvelope;
 
 export interface CommandFailure {
   ok: false;

@@ -76,7 +76,7 @@ describe('core toErrorEnvelope for command-kit errors', () => {
     );
     expect(validateErrorEnvelope(envelope)).toEqual([]);
     expect(envelope.code).toBe('KB_RUNTIME_INPUT_INVALID');
-    expect(envelope.details).toEqual({ name: 'Required', value: 'Unexpected value' });
+    expect(envelope.details).toEqual({ field: 'name, value' });
   });
 
   it('delegates AdapterUnavailableError and unknown values to core-platform', () => {

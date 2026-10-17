@@ -134,7 +134,7 @@ describe('revoked session families', () => {
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${token}` },
     });
     expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({ error: { code: 'KB_AUTH_SESSION_REVOKED', details: { reason: 'revoked' } } });
+    expect(response.json()).toMatchObject({ error: { code: 'KB_AUTH_SESSION_REVOKED', details: { gatewayUrl: 'http://kblabs-cloud.kblabs.ru', reason: 'revoked' } } });
   });
 });
 
@@ -146,7 +146,7 @@ describe('bad cookie', () => {
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=not-a-jwt` },
     });
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', details: { reason: 'invalid' } } });
+    expect(r.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', details: { gatewayUrl: 'http://kblabs-cloud.kblabs.ru', reason: 'invalid' } } });
   });
 
   it('returns 401 for a JWT signed with a different secret', async () => {
@@ -160,7 +160,7 @@ describe('bad cookie', () => {
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${foreign}` },
     });
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', details: { reason: 'invalid' } } });
+    expect(r.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', details: { gatewayUrl: 'http://kblabs-cloud.kblabs.ru', reason: 'invalid' } } });
   });
 });
 
@@ -174,7 +174,7 @@ describe('CD-1: middleware checks User.status on every request', () => {
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${token}` },
     });
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: { code: 'KB_AUTH_USER_INACTIVE', details: { reason: 'inactive' } } });
+    expect(r.json()).toMatchObject({ error: { code: 'KB_AUTH_USER_INACTIVE', details: { gatewayUrl: 'http://kblabs-cloud.kblabs.ru', reason: 'inactive' } } });
   });
 
   it('rejects when the user no longer exists', async () => {

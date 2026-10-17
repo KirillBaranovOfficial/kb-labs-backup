@@ -66,7 +66,7 @@ export const pluginsScaffold = defineSystemCommand<PluginsScaffoldFlags, Plugins
     try {
       await fs.access(dir);
       ctx.platform?.logger?.warn('Directory already exists', { dir });
-      throwSystemCataloguedFailure('KB_RUNTIME_INPUT_INVALID', `Directory ${pluginName} already exists.`, `Choose a different plugin name and rerun the command; "${dir}" already exists.`, { path: dir });
+      throwSystemCataloguedFailure('KB_RUNTIME_INPUT_INVALID', `Directory ${pluginName} already exists.`, `Choose a different plugin name and rerun the command; "${dir}" already exists.`, { field: dir });
     } catch (err: unknown) {
       if ((err as { code?: string }).code !== 'ENOENT') {
         throw err;

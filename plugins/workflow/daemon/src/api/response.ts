@@ -1,8 +1,9 @@
 import type { FastifyReply } from 'fastify';
 import {
-  createErrorEnvelope,
+  createValidatedErrorEnvelope,
   getCatalogEntry,
   type PlatformErrorCode,
+  type DetailsFor,
 } from '@kb-labs/core-platform';
 import {
   createUxFailureResult,
@@ -15,22 +16,27 @@ export type ApiSuccessResponse<T> = UxSuccessResult<T>;
 export type ApiErrorResponse = UxFailureResult;
 export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
 
+type RequiredKeys<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K }[keyof T];
+type FailureDetails<C extends PlatformErrorCode> = [RequiredKeys<DetailsFor<C>>] extends [never]
+  ? [hint?: string, details?: DetailsFor<C>]
+  : [hint: string | undefined, details: DetailsFor<C>];
+
 export function ok<T>(data: T): ApiSuccessResponse<T> {
   return createUxSuccessResult(data);
 }
 
-export function fail(
+export function fail<C extends PlatformErrorCode>(
   reply: FastifyReply,
-  code: PlatformErrorCode,
+  code: C,
   message: string,
-  hint?: string,
-  details?: Record<string, string>,
+  ...failureDetails: FailureDetails<C>
 ): ApiErrorResponse {
+  const [hint, details] = failureDetails;
   const catalogEntry = getCatalogEntry(code);
   if (!catalogEntry?.httpStatus) {
     throw new Error(`Workflow API error code "${code}" has no catalogued HTTP status.`);
   }
-  const envelope = createErrorEnvelope(code, { message, hint, details });
+  const envelope = createValidatedErrorEnvelope(code, { message, hint, details });
   reply.code(catalogEntry.httpStatus);
   return createUxFailureResult(envelope);
 }

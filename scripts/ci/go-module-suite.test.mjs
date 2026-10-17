@@ -24,7 +24,8 @@ function temporaryDirectory(prefix) {
 
 // case: S-261.1
 test('registry-driven suite runs discovered packages with clean HOME and TMPDIR variants', () => {
-  const fixture = temporaryDirectory('go-module-suite-');
+  const fixture = mkdtempSync(path.join('/tmp', 'go-module-suite-'));
+  temporaryDirectories.push(fixture);
   const modulesRoot = path.join(fixture, 'modules');
   const moduleOne = path.join(modulesRoot, 'first');
   const moduleTwo = path.join(modulesRoot, 'second');
@@ -58,9 +59,12 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
   const tests = calls.filter((call) => call.args.startsWith('test '));
   assert.equal(tests.length, 4, 'two discovered modules run in each of two TMPDIR variants');
   assert.ok(calls.some((call) => call.args.includes('fixture/first/e2e')) === false, 'e2e packages are excluded');
+  assert.equal(new Set(tests.map((call) => call.tmpdir)).size, 4, 'every module run has a fresh TMPDIR root');
+  assert.deepEqual(tests.map((call) => path.dirname(call.tmpdir)), ['/tmp', '/tmp', fixture, fixture]);
+  assert.notEqual(tests[0].tmpdir, tests[1].tmpdir, 'module runs in variant one do not share temp state');
+  assert.notEqual(tests[2].tmpdir, tests[3].tmpdir, 'module runs in variant two do not share temp state');
   for (const call of calls) {
-    assert.ok(call.home.startsWith(fixture));
-    assert.ok(call.tmpdir.startsWith(fixture));
+    assert.ok(call.home.startsWith(call.tmpdir));
     assert.equal(call.platform_root, '');
     assert.equal(call.kb_home, '');
     assert.equal(call.net_offset, '');
@@ -72,6 +76,50 @@ test('registry-driven suite runs discovered packages with clean HOME and TMPDIR 
   }
   assert.match(result.stdout, /modules\/first.*PASS/s);
   assert.match(result.stdout, /modules\/second.*PASS/s);
+});
+
+// case: S-261.1
+test('suite refuses a TMPDIR root without Unix socket path capacity before running packages', () => {
+  const fixture = temporaryDirectory('go-module-suite-long-tmp-');
+  const longDefaultTemp = path.join(fixture, 'x'.repeat(180));
+  mkdirSync(longDefaultTemp);
+  const modulesRoot = path.join(fixture, 'modules');
+  const moduleDir = path.join(modulesRoot, 'first');
+  mkdirSync(moduleDir, { recursive: true });
+  writeFileSync(path.join(moduleDir, 'go.mod'), 'module fixture/first\n\ngo 1.22\n');
+  const registry = path.join(fixture, 'devkit.yaml');
+  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n`);
+  const invocations = path.join(fixture, 'go-invocations.jsonl');
+  const fakeGo = path.join(fixture, 'go');
+  writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first'; fi\n`);
+  const chmod = spawnSync('chmod', ['+x', fakeGo]);
+  assert.equal(chmod.status, 0);
+
+  const result = spawnSync(process.execPath, [suite, '--registry', registry, '--root', fixture, '--go', fakeGo], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, TMPDIR: longDefaultTemp, GO_SUITE_LOG: invocations },
+  });
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.match(result.stderr, /GO_SUITE_TMPDIR_SOCKET_PATH_TOO_LONG/);
+  assert.match(result.stderr, /variant two/);
+  assert.equal(
+    result.stderr.trim().split('. Rerun with: ').at(-1),
+    `TMPDIR='/tmp' '${process.execPath}' '${suite}' '--registry' '${registry}' '--root' '${fixture}' '--go' '${fakeGo}'`,
+  );
+  assert.equal(existsSync(invocations), false, 'preflight refusal happens before go list or go test');
+
+  const gate = path.join(root, 'scripts/ci/go-module-suite-gate.mjs');
+  const registeredCheck = spawnSync(process.execPath, [gate], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, TMPDIR: longDefaultTemp, GO_SUITE_LOG: invocations, KB_DEVKIT_CHECK_NAME: 'go-module-suite' },
+  });
+  assert.equal(registeredCheck.status, 1, registeredCheck.stderr || registeredCheck.stdout);
+  const issue = JSON.parse(registeredCheck.stdout).issues[0];
+  assert.equal(issue.fix, 'Rerun with: kb-devkit check --only go-module-suite');
+  assert.ok(issue.message.endsWith("Rerun with: TMPDIR='/tmp' kb-devkit check --only go-module-suite"));
+  assert.equal(existsSync(invocations), false, 'registered preflight refusal happens before go list or go test');
 });
 
 // case: S-261.1

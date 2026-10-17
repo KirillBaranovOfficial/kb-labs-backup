@@ -20,6 +20,7 @@ export function platformAuthFailure(input: PlatformAuthGateInput): ErrorEnvelope
   return input.gatewayUrl
     ? createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: input.gatewayUrl } })
     : createErrorEnvelope('KB_AUTH_REQUIRED', {
+      details: { gatewayUrl: 'unconfigured' },
       hint: 'Run "kb auth login --help" to configure the Gateway URL and credentials.',
     });
 }

@@ -123,11 +123,8 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         throw new ConfigWriteError(
           'KB_CONFIG_INVALID',
           'Project scope accepts plugin settings under plugins.<configSection>.<key>',
-          {
-            path: key,
-            reason: 'project-scope-path',
-            ...(correctedCommand ? { command: correctedCommand } : {}),
-          },
+          { path: key, ...(correctedCommand ? { nextCommand: correctedCommand } : {}) },
+          { reason: 'project-scope-path' },
         );
       }
 
@@ -192,8 +189,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
               const settingPath = segments.join('.');
               throw new ConfigWriteError('KB_PLUGIN_SETTINGS_INVALID', `${settingPath}: ${validation.cause}`, {
                 path: settingPath,
-                cause: validation.cause,
-              });
+              }, { cause: validation.cause });
             }
             return [];
           }

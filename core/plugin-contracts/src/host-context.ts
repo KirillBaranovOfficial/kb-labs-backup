@@ -10,6 +10,8 @@
  */
 export interface CliHostContext {
   readonly host: 'cli';
+  /** Registered executable name from the CLI manifest. */
+  readonly binaryName: string;
   /** Raw command line arguments */
   readonly argv: string[];
   /** Parsed flags */

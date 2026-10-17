@@ -54,9 +54,8 @@ export class TerminalEventRenderer implements IEventRenderer {
         if (!isErrorEnvelope(event.error)) {
           throw new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
             details: {
-              operation: 'execution event rendering',
-              gatewayUrl: 'configured Gateway',
-              status: 'malformed error envelope',
+              requestStage: 'execution event rendering',
+              fields: 'error envelope',
             },
           }));
         }

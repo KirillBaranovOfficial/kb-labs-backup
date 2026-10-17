@@ -250,7 +250,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
         throw new ProjectRegistryError(
           'KB_RUNTIME_INPUT_INVALID',
           `Invalid project name "${requestedName}": use letters, digits, ".", "_" or "-" (max 64, starting with a letter or digit).`,
-          { name: requestedName },
+          { field: 'name' },
         );
       }
       const id = deriveProjectId(canonical);

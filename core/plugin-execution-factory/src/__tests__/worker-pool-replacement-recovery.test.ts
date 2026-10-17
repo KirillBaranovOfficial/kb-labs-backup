@@ -22,7 +22,7 @@ function makeRequest(): ExecutionRequest {
       requestId: 'replacement-recovery',
       handlerId: 'crash',
       permissions: {},
-      hostContext: { host: 'cli', argv: [], flags: {} },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     },
   };
 }

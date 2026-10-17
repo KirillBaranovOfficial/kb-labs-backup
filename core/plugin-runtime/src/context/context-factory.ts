@@ -169,6 +169,7 @@ export function createPluginContextV3<TConfig = unknown>(
 
   // 4. Create runtime API (sandboxed fs, fetch, env)
   const runtime = createRuntimeAPI({
+    pluginId: descriptor.pluginId,
     permissions: descriptor.permissions,
     cwd,
     outdir,

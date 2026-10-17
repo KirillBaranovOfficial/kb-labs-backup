@@ -54,7 +54,7 @@ function makeCtx(): { ctx: PluginContextV3; json: Payload[]; text: string[] } {
     platform: { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() } } as never,
     runtime: { fs: {} as never, fetch: vi.fn(), env: vi.fn() },
     api: {} as never,
-    hostContext: { host: 'cli' as const, argv: [], flags: {} },
+    hostContext: { host: 'cli' as const, binaryName: 'kb', argv: [], flags: {} },
     trace: noopTraceContext,
   };
   return { ctx, json, text };

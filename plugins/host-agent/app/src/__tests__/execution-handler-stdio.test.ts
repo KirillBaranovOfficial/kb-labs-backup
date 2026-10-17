@@ -44,7 +44,7 @@ describe('ExecutionHandler subprocess transport', () => {
           descriptor: {
             hostType: 'cli', pluginId: '@test/sample', pluginVersion: '1.0.0', requestId: 'req-stdio',
             handlerId: 'sample:handler', permissions: { platform: { cache: true } },
-            hostContext: { host: 'cli', argv: [], flags: {} },
+            hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
           },
         }],
       })).resolves.toBe('executed');

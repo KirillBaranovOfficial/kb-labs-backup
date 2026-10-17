@@ -159,7 +159,7 @@ describe("Context Structure (Runtime Verification)", () => {
     pluginVersion: "1.0.0",
     requestId: "test-req-123",
     permissions: {},
-    hostContext: { host: "cli", argv: [], flags: {} },
+    hostContext: { host: "cli", binaryName: 'kb', argv: [], flags: {} },
   };
 
   it("should provide complete context structure to handlers", () => {

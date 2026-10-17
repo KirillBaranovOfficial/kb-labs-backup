@@ -8,6 +8,7 @@ export function renderErrorEnvelope(envelope: CommandError): string {
     `${envelope.message} [${envelope.code}]`,
     ...(envelope.cause ? [`  Cause: ${envelope.cause}`] : []),
     ...(envelope.diagnostics ?? []).map((item) => `  - ${item.code} (${item.severity})${item.path ? ` ${item.path}${item.line ? `:${item.line}` : ''}` : ''}: ${item.message}${item.hint ? ` — ${item.hint}` : ''}`),
+    ...Object.entries(envelope.details ?? {}).map(([key, value]) => `  ${key}: ${value}`),
     `  Hint:  ${envelope.hint}`,
     ...(envelope.correlationId ? [`  Correlation ID: ${envelope.correlationId}`] : []),
   ].join('\n');
@@ -40,15 +41,7 @@ export function handleError(err: unknown, correlationId?: string): CommandFailur
   const typedEnvelope = toErrorEnvelope(source, correlationId ? { correlationId } : {});
   return {
     ok: false,
-    error: {
-      code: typedEnvelope.code,
-      message: typedEnvelope.message,
-      ...(typedEnvelope.cause ? { cause: typedEnvelope.cause } : {}),
-      hint: typedEnvelope.hint,
-      ...(typedEnvelope.correlationId ? { correlationId: typedEnvelope.correlationId } : {}),
-      ...(typedEnvelope.details ? { details: typedEnvelope.details } : {}),
-      ...(typedEnvelope.diagnostics ? { diagnostics: typedEnvelope.diagnostics } : {}),
-    },
+    error: typedEnvelope,
   };
 }
 

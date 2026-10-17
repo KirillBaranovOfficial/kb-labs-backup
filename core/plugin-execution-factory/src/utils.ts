@@ -5,7 +5,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { createErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope, isErrorCode } from '@kb-labs/core-platform';
+import { createErrorEnvelope, createValidatedErrorEnvelope, ErrorEnvelopeError, SerializedErrorEnvelopeError, serializeError, toErrorEnvelope, isErrorCode } from '@kb-labs/core-platform';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import type { ExecutionDiagnostics, ExecutionError, ExecutionRequest } from './types.js';
 import { TimeoutError, AbortError, WorkerCrashedError, isExecutionLayerError } from './errors.js';
@@ -101,7 +101,7 @@ function normalizeErrorEnvelope(error: unknown, correlationId?: string): ErrorEn
       const details = Object.fromEntries(
         Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
       );
-      return createErrorEnvelope('KB_RUNTIME_TIMEOUT', {
+      return createValidatedErrorEnvelope('KB_RUNTIME_TIMEOUT', {
         details,
         ...(correlationId ? { correlationId } : {}),
       });
@@ -110,10 +110,9 @@ function normalizeErrorEnvelope(error: unknown, correlationId?: string): ErrorEn
       const details = Object.fromEntries(
         Object.entries(error.details ?? {}).map(([key, value]) => [key, String(value)]),
       );
-      return createErrorEnvelope(error.code, { details });
+      return createValidatedErrorEnvelope(error.code, { details });
     }
-    const details = error instanceof TimeoutError ? { failureReason: 'timed out' } : undefined;
-    return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', details ? { details } : {});
+    return createErrorEnvelope('KB_RUNTIME_UNEXPECTED');
   }
   if (error instanceof Error) {
     return toErrorEnvelope(error);

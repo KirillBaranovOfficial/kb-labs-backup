@@ -14,7 +14,7 @@ export function createCronEnabledCommand(enabled: boolean) {
         const id = input.argv?.[0];
         const outputJson = input.flags?.json ?? false;
         if (!id) {
-          return workflowCommandError('KB_RUNTIME_INPUT_INVALID', 'Missing cron ID.', `Run kb workflow crons ${action} --help to see the required arguments.`);
+          return workflowCommandError('KB_RUNTIME_INPUT_INVALID', 'Missing cron ID.', `Run kb workflow crons ${action} --help to see the required arguments.`, { details: { field: 'id' } });
         }
         try {
           const result = await new WorkflowDaemonClient().setCronEnabled(id, enabled);
@@ -26,6 +26,7 @@ export function createCronEnabledCommand(enabled: boolean) {
               'KB_RUNTIME_CRON_PLUGIN_READ_ONLY',
               error.message,
               error.hint,
+              {},
             );
           }
           return handleError(error);

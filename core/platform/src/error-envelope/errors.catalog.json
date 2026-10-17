@@ -45,7 +45,11 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Adapter package {package} is not installed on this platform.",
-      "hint": "kb marketplace install {package} --scope platform"
+      "hint": "kb marketplace install {package} --scope platform",
+      "structuredDetailFields": [
+        "path",
+        "slot"
+      ]
     },
     {
       "code": "KB_ADAPTER_OPERATION_FAILED",
@@ -75,7 +79,10 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Adapter package {package} does not declare platform slot {slot}.",
-      "hint": "Install a provider that declares {slot} with `kb marketplace install <pkg> --scope platform`, then retry."
+      "hint": "Install a provider that declares {slot} with `kb marketplace install <pkg> --scope platform`, then retry.",
+      "structuredDetailFields": [
+        "path"
+      ]
     },
     {
       "code": "KB_AUTH_CLOCK_SKEW",
@@ -216,7 +223,10 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "This access token no longer satisfies the Gateway token contract.",
-      "hint": "For a machine client, exchange its clientId and clientSecret at POST /auth/token or rotate its refreshToken at POST /auth/refresh. For a user client, refresh its session at POST /auth/refresh/cli or sign in again with \"kb auth login --gateway-url {gatewayUrl} --email <email>\"."
+      "hint": "For a machine client, exchange its clientId and clientSecret at POST /auth/token or rotate its refreshToken at POST /auth/refresh. For a user client, refresh its session at POST /auth/refresh/cli or sign in again with \"kb auth login --gateway-url {gatewayUrl} --email <email>\".",
+      "structuredDetailFields": [
+        "reason"
+      ]
     },
     {
       "code": "KB_AUTH_MCP_CREDENTIAL_REQUIRED",
@@ -348,11 +358,14 @@
       "message": "Configuration value {path} is invalid.",
       "hint": "Provide a valid value for {path} (see the cause) and retry; \"kb config get {path}\" shows the current one.",
       "structuredDetailFields": [
+        "contractPath",
         "exitCode",
         "hostStartupCode",
         "launcherLog",
         "log",
         "nextCommand",
+        "remedyOperation",
+        "remedyPlatformRoot",
         "stderrTail"
       ]
     },
@@ -425,7 +438,10 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The configuration references {variable}, which has no value.",
-      "hint": "Set the environment variable or store the secret, then retry."
+      "hint": "Set the environment variable or store the secret, then retry.",
+      "structuredDetailFields": [
+        "secretName"
+      ]
     },
     {
       "code": "KB_CONFIG_SECRET_PLAINTEXT",
@@ -608,7 +624,10 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Refusing to expose the host without authentication on a non-loopback address.",
-      "hint": "Enable authentication or bind to a loopback address."
+      "hint": "Enable authentication or bind to a loopback address.",
+      "structuredDetailFields": [
+        "bindHost"
+      ]
     },
     {
       "code": "KB_HOST_IDENTITY_MISMATCH",
@@ -655,7 +674,10 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The host {service} address was not passed to this runtime.",
-      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime."
+      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime.",
+      "structuredDetailFields": [
+        "project"
+      ]
     },
     {
       "code": "KB_HOST_OPERATION_LOCK_UNSUPPORTED",
@@ -1355,7 +1377,11 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The requested package version does not match its immutable Marketplace integrity pin.",
-      "hint": "Do not use this version. Verify the registry publication, publish a higher version, then run `kb marketplace update` to install it."
+      "hint": "Do not use this version. Verify the registry publication, publish a higher version, then run `kb marketplace update` to install it.",
+      "structuredDetailFields": [
+        "package",
+        "scope"
+      ]
     },
     {
       "code": "KB_MARKETPLACE_PACKAGE_INVALID",
@@ -1420,7 +1446,10 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Published version {installedVersion} is immutable and its registry integrity differs from the installed pin.",
-      "hint": "Publish a higher version, then run `kb marketplace install {package}@latest --scope {scope}`."
+      "hint": "Publish a higher version, then run `kb marketplace install {package}@latest --scope {scope}`.",
+      "structuredDetailFields": [
+        "requestedVersion"
+      ]
     },
     {
       "code": "KB_MARKETPLACE_VERSION_NOT_HIGHER",
@@ -1431,7 +1460,10 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Marketplace can only install a version higher than the installed version {installedVersion}.",
-      "hint": "Publish a version higher than {installedVersion}, then run `kb marketplace update {package} --scope {scope}`."
+      "hint": "Publish a version higher than {installedVersion}, then run `kb marketplace update {package} --scope {scope}`.",
+      "structuredDetailFields": [
+        "requestedVersion"
+      ]
     },
     {
       "code": "KB_PLUGIN_ABORTED",
@@ -1463,7 +1495,9 @@
       "message": "Plugin command violated the command result contract.",
       "hint": "Return command data from the handler, or return a typed failure with a catalogued code, message, and hint.",
       "structuredDetailFields": [
-        "field"
+        "command",
+        "field",
+        "plugin"
       ]
     },
     {
@@ -1546,7 +1580,10 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Plugin is not installed in this project.",
-      "hint": "Run `kb marketplace install {package}` in this project."
+      "hint": "Run `kb marketplace plugins list` to discover available plugins.",
+      "structuredDetailFields": [
+        "package"
+      ]
     },
     {
       "code": "KB_PLUGIN_PERMISSION_DENIED",
@@ -1566,7 +1603,11 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Plugin {plugin} loads its own copy of the platform package {package}.",
-      "hint": "Make the platform package a peer dependency of the plugin and reinstall it; run \"kb marketplace plugins doctor\" for details."
+      "hint": "Make the platform package a peer dependency of the plugin and reinstall it; run \"kb marketplace plugins doctor\" for details.",
+      "structuredDetailFields": [
+        "ownCopy",
+        "requester"
+      ]
     },
     {
       "code": "KB_PLUGIN_SDK_INCOMPATIBLE",
@@ -1771,7 +1812,10 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Project service {serviceId} is not declared for project {projectId}.",
-      "hint": "Run `kb project show {projectId}` to confirm the project, then use a declared service ID."
+      "hint": "Run `kb project show {projectId}` to confirm the project, then use a declared service ID.",
+      "structuredDetailFields": [
+        "path"
+      ]
     },
     {
       "code": "KB_PROJECT_UNKNOWN",
@@ -1815,7 +1859,14 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Stable tag and npm baseline have diverged.",
-      "hint": "Resolve the stable tag and npm version mismatch, then rerun release preflight."
+      "hint": "Resolve the stable tag and npm version mismatch, then rerun release preflight.",
+      "structuredDetailFields": [
+        "check",
+        "classification",
+        "distTag",
+        "gitVersion",
+        "npmVersion"
+      ]
     },
     {
       "code": "KB_RELEASE_BRANCH_NOT_MASTER",
@@ -1825,7 +1876,13 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Release must be started from the master branch.",
-      "hint": "Run the release command from the master branch, then retry."
+      "hint": "Run the release command from the master branch, then retry.",
+      "structuredDetailFields": [
+        "check",
+        "classification",
+        "branch",
+        "expected"
+      ]
     },
     {
       "code": "KB_RELEASE_BUILD_FAILED",
@@ -1845,7 +1902,13 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "A release check failed.",
-      "hint": "Resolve the failed release check shown in the report, then rerun `kb release checks`."
+      "hint": "Resolve the failed release check shown in the report, then rerun `kb release checks`.",
+      "structuredDetailFields": [
+        "check",
+        "package",
+        "classification",
+        "rule"
+      ]
     },
     {
       "code": "KB_RELEASE_CHECK_TIMEOUT",
@@ -1855,7 +1918,13 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "A release check timed out.",
-      "hint": "Inspect the check output and runner resources, then rerun `kb release checks`."
+      "hint": "Inspect the check output and runner resources, then rerun `kb release checks`.",
+      "structuredDetailFields": [
+        "check",
+        "package",
+        "classification",
+        "rule"
+      ]
     },
     {
       "code": "KB_RELEASE_DOCKER_UNAVAILABLE",
@@ -1865,7 +1934,13 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "Docker is not available.",
-      "hint": "Start Docker Desktop and confirm `docker info` succeeds, then retry."
+      "hint": "Start Docker Desktop and confirm `docker info` succeeds, then retry.",
+      "structuredDetailFields": [
+        "check",
+        "classification",
+        "package",
+        "rule"
+      ]
     },
     {
       "code": "KB_RELEASE_GIT_PUSH_REJECTED",
@@ -1899,7 +1974,13 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The release plan is invalid.",
-      "hint": "Correct the release plan input identified in the cause, then rerun the release command."
+      "hint": "Correct the release plan input identified in the cause, then rerun the release command.",
+      "structuredDetailFields": [
+        "check",
+        "package",
+        "classification",
+        "rule"
+      ]
     },
     {
       "code": "KB_RELEASE_PROMOTE_FAILED",
@@ -1929,7 +2010,15 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "The release registry is unreachable.",
-      "hint": "Run `./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset <N>`, then retry."
+      "hint": "Run `./tools/kb-dev/kb-dev ensure verdaccio --config .kb/devservices.dev.yaml --net-offset <N>`, then retry.",
+      "structuredDetailFields": [
+        "check",
+        "classification",
+        "target",
+        "registry",
+        "package",
+        "rule"
+      ]
     },
     {
       "code": "KB_RELEASE_SMOKE_FAILED",
@@ -1959,7 +2048,11 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "A required registry or GitHub token is missing.",
-      "hint": "Configure the required registry token or authenticate with `gh auth login`, then retry."
+      "hint": "Configure the required registry token or authenticate with `gh auth login`, then retry.",
+      "structuredDetailFields": [
+        "check",
+        "classification"
+      ]
     },
     {
       "code": "KB_RELEASE_TREE_DIRTY",
@@ -1969,7 +2062,13 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "Working tree has uncommitted changes.",
-      "hint": "Commit or discard the unrelated changes, then retry the release command."
+      "hint": "Commit or discard the unrelated changes, then retry the release command.",
+      "structuredDetailFields": [
+        "check",
+        "classification",
+        "changes",
+        "toolGenerated"
+      ]
     },
     {
       "code": "KB_RUNTIME_APPROVAL_INPUT_INVALID",
@@ -2025,7 +2124,10 @@
       "message": "The command could not complete.",
       "hint": "Run `{binary} --help` to review available commands, then rerun the command.",
       "structuredDetailFields": [
-        "command"
+        "clickUpCode",
+        "clickUpStatus",
+        "command",
+        "inboxCode"
       ],
       "runtimeTemplateParameters": {
         "binary": "required"
@@ -2072,7 +2174,22 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "This destructive action requires explicit confirmation.",
-      "hint": "Verify the target and effect, then rerun the command with --yes."
+      "hint": "Verify the target and effect, then rerun the command with --yes.",
+      "structuredDetailFields": [
+        "action",
+        "resource",
+        "effect",
+        "reversible",
+        "irreversible",
+        "severity",
+        "confirmWith",
+        "confirmationRequired",
+        "destructive",
+        "blastRadiusCount",
+        "blastRadiusUnit",
+        "blastRadiusScope",
+        "recovery"
+      ]
     },
     {
       "code": "KB_RUNTIME_CRON_LIST_FAILED",
@@ -2159,6 +2276,7 @@
       "message": "The Gateway returned an invalid UX result.",
       "hint": "Run \"kb-create doctor\" to check the Gateway, then retry the command.",
       "structuredDetailFields": [
+        "gatewayUrl",
         "requestStage",
         "httpStatus",
         "remoteCorrelationId",
@@ -2177,7 +2295,10 @@
       "message": "The provided input is invalid.",
       "hint": "Correct the reported fields and retry.",
       "structuredDetailFields": [
-        "field"
+        "candidates",
+        "field",
+        "inboxCode",
+        "waitingSteps"
       ]
     },
     {
@@ -2192,7 +2313,12 @@
       "hint": "Run `{binary} --help` to review available commands, then retry with a registered command.",
       "runtimeTemplateParameters": {
         "binary": "required"
-      }
+      },
+      "structuredDetailFields": [
+        "command",
+        "pluginDiagnostics",
+        "suggestions"
+      ]
     },
     {
       "code": "KB_RUNTIME_PAYLOAD_TOO_LARGE",
@@ -2355,7 +2481,12 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The requested resource was not found.",
-      "hint": "Check the resource ID or name, then rerun the command."
+      "hint": "Check the resource ID or name, then rerun the command.",
+      "structuredDetailFields": [
+        "plugin",
+        "route",
+        "upstreamStatus"
+      ]
     },
     {
       "code": "KB_RUNTIME_TIMEOUT",
@@ -2370,7 +2501,11 @@
       "hintWithoutCorrelationId": "Run `kb logs query` to inspect the timeout, then retry or increase the timeout.",
       "runtimeTemplateParameters": {
         "correlationId": "optional"
-      }
+      },
+      "structuredDetailFields": [
+        "serviceId",
+        "timeoutMs"
+      ]
     },
     {
       "code": "KB_RUNTIME_UNEXPECTED",
@@ -2385,7 +2520,8 @@
       "hintWithoutCorrelationId": "Run `kb logs query` to inspect the failure details and stack.",
       "structuredDetailFields": [
         "dep",
-        "remoteCorrelationId"
+        "remoteCorrelationId",
+        "target"
       ],
       "runtimeTemplateParameters": {
         "correlationId": "optional"
@@ -2652,7 +2788,12 @@
       "retryable": true,
       "processExitClass": "operation-failure",
       "message": "A monitored service reported a failure.",
-      "hint": "Run `kb-dev status` to inspect the service and its health checks."
+      "hint": "Run `kb-dev status` to inspect the service and its health checks.",
+      "structuredDetailFields": [
+        "service",
+        "status",
+        "timeout"
+      ]
     },
     {
       "code": "KB_UPDATE_APPLY_FAILED",
@@ -2807,7 +2948,12 @@
       "processExitClass": "operation-failure",
       "httpStatus": 500,
       "message": "A worker process crashed.",
-      "hint": "Run `kb health` to inspect worker pool health, then retry after workers recover."
+      "hint": "Run `kb health` to inspect worker pool health, then retry after workers recover.",
+      "structuredDetailFields": [
+        "exitCode",
+        "signal",
+        "workerId"
+      ]
     },
     {
       "code": "WORKER_START_FAILED",
@@ -2818,7 +2964,13 @@
       "processExitClass": "operation-failure",
       "httpStatus": 503,
       "message": "A worker could not be started.",
-      "hint": "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after the recorded delay."
+      "hint": "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after the recorded delay.",
+      "structuredDetailFields": [
+        "failedAt",
+        "failureAttempt",
+        "failureMessage",
+        "retryInMs"
+      ]
     },
     {
       "code": "WORKER_TREE_UNVERIFIED",
@@ -2840,7 +2992,13 @@
       "processExitClass": "operation-failure",
       "httpStatus": 503,
       "message": "No worker is available and worker startup is failing.",
-      "hint": "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after workers recover."
+      "hint": "Run `kb health` to inspect the recorded worker start cause ({failureCode}), then retry after workers recover.",
+      "structuredDetailFields": [
+        "failedAt",
+        "failureAttempt",
+        "failureMessage",
+        "retryInMs"
+      ]
     },
     {
       "code": "KB_RUNTIME_FRAME_TOO_LARGE",
@@ -2850,7 +3008,11 @@
       "retryable": false,
       "processExitClass": "operation-failure",
       "message": "The child process sent a control frame larger than the supported limit.",
-      "hint": "Reduce the plugin platform RPC payload, then retry the command."
+      "hint": "Reduce the plugin platform RPC payload, then retry the command.",
+      "structuredDetailFields": [
+        "actualBytes",
+        "maximumBytes"
+      ]
     }
   ]
 }

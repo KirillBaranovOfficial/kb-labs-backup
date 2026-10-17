@@ -68,6 +68,7 @@ describe("getLoggerMetadataFromHost", () => {
     it("should extract CLI fields", () => {
       const context: CliHostContext = {
         host: "cli",
+        binaryName: "kb",
         argv: ["kb", "workflow:run", "--workflow-id", "my-flow"],
         flags: { workflowId: "my-flow" },
       };
@@ -83,6 +84,7 @@ describe("getLoggerMetadataFromHost", () => {
     it("should handle empty argv", () => {
       const context: CliHostContext = {
         host: "cli",
+        binaryName: "kb",
         argv: [],
         flags: {},
       };
