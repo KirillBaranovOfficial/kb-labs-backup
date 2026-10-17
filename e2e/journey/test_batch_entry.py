@@ -164,11 +164,11 @@ exit 2
         self.assertTrue((self.root / "out/local/local.json").is_file())
         self.assertTrue((self.root / "out/secured/secured.json").is_file())
         for stage_log in ("reset.log", "build.log", "release-build-output-check.log", "unit.log", "candidate.log"):
-            self.assertTrue((self.root / "out" / stage_log).is_file(), stage_log)
+            self.assertTrue((self.root / "out/shared" / stage_log).is_file(), stage_log)
         for mode in ("local", "secured"):
             self.assertTrue((self.root / f"out/{mode}/batch.log").is_file())
-        self.assertIn("deadbeef", (self.root / "out/run.json").read_text())
-        summary = (self.root / "out/summary.md").read_text()
+        self.assertIn("deadbeef", (self.root / "out/shared/run.json").read_text())
+        summary = (self.root / "out/shared/summary.md").read_text()
         self.assertIn("- Commit: `deadbeef`", summary)
         self.assertIn("- Baseline: `j28`", summary)
         self.assertIn("- Build base: `origin/master`", summary)
@@ -220,7 +220,7 @@ exit 2
             import json
             mode_metadata = json.loads((self.root / f"out/{mode}/batch-metadata.json").read_text())
             self.assertEqual(mode_metadata["mode"], mode)
-        summary = (self.root / "out/summary.md").read_text()
+        summary = (self.root / "out/shared/summary.md").read_text()
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: FAIL"])
 
     # case: S-262.1
@@ -255,10 +255,10 @@ exit 2
                 os.killpg(process.pid, signal.SIGKILL)
                 process.communicate(timeout=10)
             os.close(ready_read)
-        summary = (self.root / "out/summary.md").read_text()
+        summary = (self.root / "out/shared/summary.md").read_text()
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: INTERRUPTED"])
         import json
-        metadata = json.loads((self.root / "out/batch-metadata.json").read_text())
+        metadata = json.loads((self.root / "out/shared/batch-metadata.json").read_text())
         self.assertGreaterEqual(metadata["stageDurationsSeconds"]["reset"], 0)
         self.assertEqual(metadata["result"], "INTERRUPTED")
 
@@ -270,9 +270,9 @@ exit 2
         self.assertIn("next: git fetch --all --prune", result.stderr)
         self.assertNotIn("not found", result.stderr)
         self.assertFalse(self.calls.exists())
-        self.assertTrue((self.root / "out/summary.md").is_file())
-        self.assertTrue((self.root / "out/batch-metadata.json").is_file())
-        self.assertTrue((self.root / "out/build.log").is_file())
+        self.assertTrue((self.root / "out/shared/summary.md").is_file())
+        self.assertTrue((self.root / "out/shared/batch-metadata.json").is_file())
+        self.assertTrue((self.root / "out/shared/build.log").is_file())
 
     # case: S-262.2
     def test_unit_failure_summary_points_to_relative_stage_log(self):
@@ -286,21 +286,36 @@ exit 2
             check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        summary = (self.root / "out/summary.md").read_text()
+        summary = (self.root / "out/shared/summary.md").read_text()
         self.assertIn("- Failed stage: `unit`", summary)
         self.assertIn("- Stage log: `unit.log`", summary)
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: FAIL"])
-        self.assertEqual((self.root / "out/unit.log").read_text(), "unit failure fixture\n")
+        self.assertEqual((self.root / "out/shared/unit.log").read_text(), "unit failure fixture\n")
 
     # case: S-262.1
-    def test_entry_preserves_root_outputs_when_build_fails_before_modes(self):
-        result = self._run(fail_build=True)
+    def test_entry_declares_shared_artifacts_before_build_failure(self):
+        artifact_outputs = self.root / "github-output"
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root,
+            env={**self.env, "FAIL_AFFECTED_BUILD": "1", "GITHUB_OUTPUT": str(artifact_outputs)},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("devkit affected build failed", result.stderr)
         self.assertNotIn("not found", result.stderr)
-        self.assertTrue((self.root / "out/summary.md").is_file())
-        self.assertTrue((self.root / "out/batch-metadata.json").is_file())
-        self.assertTrue((self.root / "out/build.log").is_file())
+        shared = self.root / "out/shared"
+        self.assertTrue((shared / "summary.md").is_file())
+        self.assertTrue((shared / "batch-metadata.json").is_file())
+        self.assertTrue((shared / "build.log").is_file())
+        declarations = dict(line.split("=", 1) for line in artifact_outputs.read_text().splitlines())
+        self.assertEqual(declarations, {
+            "artifact_shared": str(shared),
+            "artifact_local": str(self.root / "out/local"),
+            "artifact_secured": str(self.root / "out/secured"),
+        })
         self.assertFalse((self.root / "out/local").exists())
         self.assertFalse((self.root / "out/secured").exists())
 
@@ -332,6 +347,7 @@ exit 2
         self.assertEqual(len(entries), 1)
         self.assertEqual(job_env["BATCH_OUTPUT"], ".journey/batch/${{ github.run_id }}")
         self.assertEqual(entries[0]["run"], 'e2e/journey/batch.sh "$BATCH_OUTPUT" "$BATCH_BASELINE"')
+        self.assertEqual(entries[0]["id"], "batch")
         self.assertEqual(entries[0]["env"]["BATCH_BASELINE"], "${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}")
         self.assertEqual(entries[0]["env"]["KB_DEVKIT_BASE_REF"], "${{ github.event.pull_request.base.sha || format('origin/{0}', env.JOURNEY_DEFAULT_BRANCH) }}")
         self.assertEqual(job_env["GOTOOLCHAIN"], "local")
@@ -356,13 +372,21 @@ exit 2
         self.assertEqual(sum("journey-local" in step.get("with", {}).get("name", "") for step in steps), 1)
         self.assertEqual(sum("journey-secured" in step.get("with", {}).get("name", "") for step in steps), 1)
         artifact_steps = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
-        self.assertEqual([step["with"]["path"] for step in artifact_steps], [
-            "${{ env.BATCH_OUTPUT }}/local/", "${{ env.BATCH_OUTPUT }}/secured/",
+        self.assertEqual([step["with"]["name"] for step in artifact_steps], [
+            "journey-shared", "journey-local", "journey-secured",
         ])
-        self.assertEqual([step["with"]["if-no-files-found"] for step in artifact_steps], ["warn", "warn"])
+        self.assertEqual([step["with"]["path"] for step in artifact_steps], [
+            "${{ steps.batch.outputs.artifact_shared }}",
+            "${{ steps.batch.outputs.artifact_local }}",
+            "${{ steps.batch.outputs.artifact_secured }}",
+        ])
+        self.assertTrue(all(step["if"] == "always() && steps.batch.outputs.artifact_shared != ''"
+                            for step in artifact_steps))
+        self.assertEqual([step["with"]["if-no-files-found"] for step in artifact_steps], ["warn", "warn", "warn"])
         self.assertEqual(node_step["with"]["node-version-file"], "package.json")
         summary_step = next(step for step in steps if step.get("name") == "Add batch summary")
         self.assertEqual(summary_step["if"], "always()")
+        self.assertEqual(summary_step["env"]["BATCH_SHARED_OUTPUT"], "${{ steps.batch.outputs.artifact_shared }}")
         failed_step_expression = summary_step["env"]["FAILED_STEP"]
         self.assertIn("steps.node.outcome == 'failure' && 'Set up Node'", failed_step_expression)
         self.assertIn("steps.pnpm.outcome == 'failure' && 'Set up pnpm'", failed_step_expression)
@@ -371,7 +395,7 @@ exit 2
             **os.environ,
             "GITHUB_STEP_SUMMARY": str(summary_result),
             "FAILED_STEP": "Set up pnpm",
-            "BATCH_OUTPUT": ".journey/batch/test-run",
+            "BATCH_SHARED_OUTPUT": "",
         }
         summary_command = summary_step["run"]
         missing_summary = subprocess.run(
@@ -399,10 +423,10 @@ exit 2
             cwd=self.root, env=env, text=True, capture_output=True, check=False,
         )
         self.assertNotEqual(result.returncode, 0)
-        build_log = (self.root / "out/build.log").read_text()
+        build_log = (self.root / "out/shared/build.log").read_text()
         self.assertIn("preflight fixture failed", build_log)
         self.assertNotIn("candidate", self.calls.read_text())
-        self.assertIn("- Failed stage: `build`", (self.root / "out/summary.md").read_text())
+        self.assertIn("- Failed stage: `build`", (self.root / "out/shared/summary.md").read_text())
 
     # case: S-262.1
     def test_candidate_output_preflight_fails_before_package_packing(self):
