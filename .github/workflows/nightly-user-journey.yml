@@ -9,6 +9,10 @@ permissions:
   contents: read
   issues: write # Updates the pinned status issue and failure-fingerprint issues.
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   installer:
     name: Fresh install journeys

@@ -231,3 +231,19 @@ func TestExternalCheckCrashIsNotReportedAsAStandardsFinding(t *testing.T) {
 		t.Fatalf("failure exposed raw process output: %#v", issues[0])
 	}
 }
+
+func TestExternalCheckRetainsIssuesWhenCommandFails(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '{\"issues\":[{\"check\":\"ci-clean-machine-lanes\",\"severity\":\"error\",\"message\":\"journey claim failed\",\"fix\":\"Rerun with: kb-devkit check --only ci-clean-machine-lanes\"}]}\\n'\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write check script: %v", err)
+	}
+	rule := &externalRule{name: "ci-clean-machine-lanes", run: script, phase: "check", scope: "workspace", workspaceRoot: root}
+	issues := rule.CheckWorkspace(&workspace.Workspace{Root: root})
+	if len(issues) != 1 {
+		t.Fatalf("issues = %#v, want the issue emitted before command failure", issues)
+	}
+	if issues[0].Message != "journey claim failed" || issues[0].Fix != "Rerun with: kb-devkit check --only ci-clean-machine-lanes" {
+		t.Fatalf("issue = %#v, want the emitted detail and rerun command", issues[0])
+	}
+}

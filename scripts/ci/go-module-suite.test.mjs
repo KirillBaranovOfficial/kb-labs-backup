@@ -1,0 +1,178 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { accessSync, constants, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { test } from 'node:test';
+import { load } from 'js-yaml';
+import { nativeInstallCommands } from '../../e2e/journey/native-macos-install.mjs';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const temporaryDirectories = [];
+
+test.after(() => {
+  for (const directory of temporaryDirectories) rmSync(directory, { recursive: true, force: true });
+});
+const suite = path.join(root, 'scripts/ci/go-module-suite.mjs');
+
+function temporaryDirectory(prefix) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+// case: S-261.1
+test('registry-driven suite runs discovered packages with clean HOME and TMPDIR variants', () => {
+  const fixture = temporaryDirectory('go-module-suite-');
+  const modulesRoot = path.join(fixture, 'modules');
+  const moduleOne = path.join(modulesRoot, 'first');
+  const moduleTwo = path.join(modulesRoot, 'second');
+  mkdirSync(path.join(moduleOne, 'e2e'), { recursive: true });
+  mkdirSync(moduleTwo, { recursive: true });
+  writeFileSync(path.join(moduleOne, 'go.mod'), 'module fixture/first\n\ngo 1.22\n');
+  writeFileSync(path.join(moduleTwo, 'go.mod'), 'module fixture/second\n\ngo 1.22\n');
+  const registry = path.join(fixture, 'devkit.yaml');
+  writeFileSync(registry, `workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n`);
+  const invocations = path.join(fixture, 'go-invocations.jsonl');
+  const fakeGo = path.join(fixture, 'go');
+  writeFileSync(fakeGo, `#!/bin/sh\nprintf '%s\\n' "{\\"args\\":\\"$*\\",\\"cwd\\":\\"$PWD\\",\\"home\\":\\"$HOME\\",\\"tmpdir\\":\\"$TMPDIR\\",\\"platform_root\\":\\"$KB_PLATFORM_ROOT\\",\\"kb_home\\":\\"$KB_HOME\\",\\"net_offset\\":\\"$KB_NET_OFFSET\\",\\"goflags\\":\\"$GOFLAGS\\"}" >> "$GO_SUITE_LOG"\nif [ "$1" = list ]; then printf '%s\\n' 'fixture/first' 'fixture/first/e2e' 'fixture/second'; fi\n`);
+  const chmod = spawnSync('chmod', ['+x', fakeGo]);
+  assert.equal(chmod.status, 0);
+
+  const result = spawnSync(process.execPath, [suite, '--registry', registry, '--root', fixture, '--go', fakeGo], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      TMPDIR: fixture,
+      GO_SUITE_LOG: invocations,
+      KB_PLATFORM_ROOT: '/must/be/unset',
+      KB_HOME: '/must/be/unset',
+      KB_NET_OFFSET: '99',
+      GOFLAGS: '-tags=contaminated',
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const calls = readFileSync(invocations, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const tests = calls.filter((call) => call.args.startsWith('test '));
+  assert.equal(tests.length, 4, 'two discovered modules run in each of two TMPDIR variants');
+  assert.ok(calls.some((call) => call.args.includes('fixture/first/e2e')) === false, 'e2e packages are excluded');
+  for (const call of calls) {
+    assert.ok(call.home.startsWith(fixture));
+    assert.ok(call.tmpdir.startsWith(fixture));
+    assert.equal(call.platform_root, '');
+    assert.equal(call.kb_home, '');
+    assert.equal(call.net_offset, '');
+    assert.equal(call.goflags, '');
+  }
+  for (const call of tests) {
+    assert.ok(call.args.includes('fixture/first') || call.args.includes('fixture/second'));
+    assert.ok(!call.args.includes('./...'), 'go test receives the discovered package set');
+  }
+  assert.match(result.stdout, /modules\/first.*PASS/s);
+  assert.match(result.stdout, /modules\/second.*PASS/s);
+});
+
+// case: S-261.1
+test('registry discovery fails when it is empty or a registered pattern has no modules', () => {
+  const fixture = temporaryDirectory('go-module-suite-empty-');
+  const modules = path.join(fixture, 'modules');
+  mkdirSync(modules, { recursive: true });
+  const registry = path.join(fixture, 'devkit.yaml');
+  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      match: []\n');
+  const empty = spawnSync(process.execPath, [suite, '--registry', registry, '--root', fixture], { cwd: root, encoding: 'utf8' });
+  assert.notEqual(empty.status, 0);
+  assert.match(empty.stderr, /match array|empty set/);
+
+  writeFileSync(registry, 'workspace:\n  categories:\n    go-binary:\n      match:\n        - "modules/*"\n');
+  const unmatched = spawnSync(process.execPath, [suite, '--registry', registry, '--root', fixture], { cwd: root, encoding: 'utf8' });
+  assert.notEqual(unmatched.status, 0);
+  assert.match(unmatched.stderr, /matched no modules/);
+});
+
+// case: S-261.1
+test('local Go suite workspace check derives modules from the devkit go-binary registry', () => {
+  const devkit = load(readFileSync(path.join(root, 'devkit.yaml'), 'utf8'));
+  const check = devkit.custom_checks.find((item) => item.name === 'go-module-suite');
+  assert.equal(check.scope, 'workspace');
+  assert.equal(check.categories, undefined);
+  assert.equal(check.on.includes('check'), true);
+  assert.match(check.run, /scripts\/ci\/go-module-suite-gate\.mjs/);
+  assert.match(readFileSync(path.join(root, 'scripts/ci/go-module-suite-gate.mjs'), 'utf8'), /go-module-suite\.mjs/);
+  assert.equal(existsSync(path.join(root, '.github/workflows/go-module-tests.yml')), false);
+});
+
+// case: S-261.3
+test('nightly journey workflow syncs the scoreboard through the GitHub issue owner', () => {
+  const workflow = load(readFileSync(path.join(root, '.github/workflows/nightly-user-journey.yml'), 'utf8'));
+  assert.equal(workflow.permissions.issues, 'write');
+  const report = workflow.jobs.report;
+  assert.equal(report.permissions.issues, 'write');
+  assert.ok(report.steps.some((step) => step.name === 'Aggregate matrix, compare yesterday, and sync issues'));
+  const syncStep = report.steps.find((step) => step.name === 'Aggregate matrix, compare yesterday, and sync issues');
+  assert.ok(syncStep.env.GITHUB_TOKEN);
+  assert.equal(syncStep.env.NIGHTLY_STATUS_ISSUE, '0');
+  assert.ok(report.steps.some((step) => step.name === 'Add detailed report to job summary'));
+  assert.ok(report.steps.some((step) => step.uses?.startsWith('actions/upload-artifact@')
+    && step.with?.name === 'nightly-user-journey-${{ github.run_id }}'));
+});
+
+// case: S-261.2
+test('reusable installer workflow runs a native macOS install from the candidate artifact', () => {
+  const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+  assert.deepEqual(workflow.jobs.journey.strategy.matrix.os, ['ubuntu-latest']);
+  const native = workflow.jobs.native_macos;
+  assert.equal(native['runs-on'], 'macos-latest');
+  const downloads = native.steps.find((step) => step.uses?.startsWith('actions/download-artifact@'));
+  assert.equal(downloads.with.name, 'installer-journey-candidate');
+  const setup = native.steps.find((step) => step.name === 'Install candidate natively and smoke the installed CLI');
+  assert.equal(setup.run, 'e2e/journey/native-macos-smoke.sh');
+  assert.doesNotThrow(() => accessSync(path.join(root, setup.run), constants.X_OK));
+  assert.deepEqual(native.steps.filter((step) => step.run).map((step) => step.run), ['e2e/journey/native-macos-smoke.sh']);
+  assert.ok(!native.steps.some((step) => step.uses?.startsWith('docker/')));
+  assert.equal(native['timeout-minutes'] > 0, true);
+});
+
+// case: S-261.2
+test('native macOS smoke entry installs the candidate and runs the installed CLI', () => {
+  const commands = nativeInstallCommands({ workspace: '/workspace', tempRoot: '/tmp/native', platformRoot: '/tmp/platform' });
+  assert.deepEqual(commands.map(({ command, args, cwd }) => [command, args, cwd]), [
+    ['make', ['build', 'BINARY=/tmp/native/kb-create'], '/workspace/tools/kb-create'],
+    ['/tmp/native/kb-create', [
+      'install', '--json', '--index', '/workspace/.journey/release/journey-candidate/release-index.json',
+      '--platform-root', '/tmp/platform', '--project-root', '/workspace', '--scenario', 'explore',
+      '--scenario-answers', '{"access.mode":"local"}', '--registry', 'http://127.0.0.1:4873',
+    ], '/workspace'],
+    ['/tmp/platform/node_modules/.bin/kb', ['--version'], '/workspace'],
+    ['/tmp/platform/node_modules/.bin/kb', ['doctor', '--json'], '/workspace'],
+    ['/tmp/platform/node_modules/.bin/kb', ['project', 'add', '/workspace', '--json'], '/workspace'],
+    ['/tmp/platform/node_modules/.bin/kb', ['qa', 'cases', 'list', '--json'], '/workspace'],
+  ]);
+});
+
+// case: S-261.2
+test('shared candidate services start, publish, and clean up the native origin and registry', () => {
+  const fixture = temporaryDirectory('journey-candidate-services-');
+  const bin = path.join(fixture, 'bin');
+  mkdirSync(bin);
+  const pids = path.join(fixture, 'service-pids');
+  const publish = path.join(fixture, 'publish-call');
+  for (const command of ['python3', 'npx']) {
+    writeFileSync(path.join(bin, command), '#!/bin/sh\nprintf "%s\\n" "$$" >> "$SERVICE_PIDS"\nexec sleep 3600\n', { mode: 0o755 });
+  }
+  writeFileSync(path.join(bin, 'curl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  writeFileSync(path.join(bin, 'sudo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  writeFileSync(path.join(bin, 'sh'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$PUBLISH_CALL"\nexit 0\n', { mode: 0o755 });
+  const result = spawnSync('/bin/bash', ['-e', '-c', 'source "$1"; trap "journey_stop_host_services" EXIT; journey_start_host_services; journey_stop_host_services; trap - EXIT', 'candidate-services-test', path.join(root, 'e2e/journey/candidate-services.sh')], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: fixture, SERVICE_PIDS: pids, PUBLISH_CALL: publish, KB_JOURNEY_WORKSPACE_SOURCE: root },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(readFileSync(publish, 'utf8'), /e2e\/publisher\/publish\.sh/);
+  assert.equal(readdirSync(fixture).some((entry) => entry.startsWith('kb-journey-host-services.')), false);
+  for (const pid of readFileSync(pids, 'utf8').trim().split('\n')) {
+    assert.notEqual(spawnSync('kill', ['-0', pid]).status, 0, `service process ${pid} must be stopped`);
+  }
+});
