@@ -92,7 +92,8 @@
     "pnpm": ">=9.0.0"
   },
   "kb": {
-    "manifest": "./dist/manifest.js"
+    "manifest": "./dist/manifest.js",
+    "requiredOutputs": ["./dist/index.html"]
   },
   "publishConfig": {
     "access": "public"

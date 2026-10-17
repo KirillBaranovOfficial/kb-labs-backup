@@ -133,6 +133,16 @@ if ! env KB_DEVKIT_BASE_REF="$BUILD_BASE" "$work/kb-devkit" run build --affected
   echo "devkit affected build failed; see $OUT/build.log; next: (cd tools/kb-devkit && KB_DEVKIT_BASE_REF='$BUILD_BASE' go run . run build --affected)" >&2
   exit 1
 fi
+output_check_rc=0
+node "$ROOT/e2e/scripts/validate-package-outputs.mjs" --build-outputs "$ROOT" > "$OUT/release-build-output-check.log" 2>&1 || output_check_rc=$?
+cat "$OUT/release-build-output-check.log" >> "$OUT/build.log"
+if [ "$output_check_rc" -ne 0 ]; then
+  finish_stage
+  record_failure_log build build.log
+  cat "$OUT/release-build-output-check.log" >&2
+  echo "release package build outputs are missing; see $OUT/build.log" >&2
+  exit 1
+fi
 finish_stage
 unit_home=$(mktemp -d "${TMPDIR:-/tmp}/kb-batch-unit.XXXXXX")
 unit_rc=0
