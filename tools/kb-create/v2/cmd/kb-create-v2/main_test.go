@@ -181,6 +181,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv(host.KBHomeEnv, filepath.Join(home, ".kb"))
 	root := filepath.Join(home, "kb-platform")
+	registerTestHostProcessTreeCleanup(t, root)
 	hostBinary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -219,31 +220,6 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		deps.Command = cmd
 		return deps
 	}
-	t.Cleanup(func() {
-		var statusOutput, statusError bytes.Buffer
-		statusCode := clikitcommand.Execute(newRootCommand(), []string{"status", "--platform-root", root, "--json"}, &statusOutput, &statusError)
-		var status struct {
-			Data struct {
-				Host struct {
-					State string `json:"state"`
-				} `json:"host"`
-			} `json:"data"`
-		}
-		if statusCode.Code() != 0 {
-			t.Errorf("read test host state during cleanup: %s %s", statusOutput.String(), statusError.String())
-			return
-		}
-		if err := json.Unmarshal(statusOutput.Bytes(), &status); err != nil {
-			t.Errorf("decode test host state during cleanup: %v", err)
-			return
-		}
-		if status.Data.Host.State == host.StateRunning {
-			var stopOutput, stopError bytes.Buffer
-			if code := clikitcommand.Execute(newRootCommand(), []string{"stop", "--platform-root", root, "--json"}, &stopOutput, &stopError); code.Code() != 0 {
-				t.Errorf("stop test host during cleanup: %s %s", stopOutput.String(), stopError.String())
-			}
-		}
-	})
 	var installOutput, installError bytes.Buffer
 	installCode := clikitcommand.Execute(newRootCommandWithDependencyFactory(commandFactory), []string{"install", "--json", "--index", indexPath,
 		"--platform-root", root, "--service-profile", "default", "--scenario", "explore"}, &installOutput, &installError)
@@ -309,26 +285,8 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 				Code string `json:"code"`
 			} `json:"error"`
 		}
-		if operation == "apply" {
-			lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte("\n"))
-			if len(lines) != 2 {
-				t.Fatalf("schema-1 apply stream has %d records: %s", len(lines), stdout.String())
-			}
-			var terminal struct {
-				Meta struct {
-					Stream struct {
-						ExitCode int `json:"exitCode"`
-					} `json:"stream"`
-				} `json:"meta"`
-			}
-			if err := json.Unmarshal(lines[0], &failureRecord); err != nil {
-				t.Fatalf("schema-1 apply failure is not JSON: %v; %s", err, lines[0])
-			}
-			if err := json.Unmarshal(lines[1], &terminal); err != nil || terminal.Meta.Stream.ExitCode != diag.ExitCode(diag.New(contracts.CodeGatewayIndexUnavailable, "unavailable")).Code() {
-				t.Fatalf("schema-1 apply terminal = %s (%v)", lines[1], err)
-			}
-		} else if err := json.Unmarshal(stdout.Bytes(), &failureRecord); err != nil {
-			t.Fatalf("schema-1 %s failure is not JSON: %v; %s", operation, err, stdout.String())
+		if err := json.Unmarshal(stdout.Bytes(), &failureRecord); err != nil {
+			t.Fatalf("schema-1 %s failure is not one JSON document: %v; %s", operation, err, stdout.String())
 		}
 		if failureRecord.Error.Code != contracts.CodeGatewayIndexUnavailable {
 			t.Fatalf("schema-1 %s code = %q, want %s: %s", operation, failureRecord.Error.Code, contracts.CodeGatewayIndexUnavailable, stdout.String())
@@ -1645,51 +1603,62 @@ func TestApplyCommandForwardsScenarioAnswersBeforeMutation(t *testing.T) {
 	t.Setenv("HOME", home)
 	index := writeJSONInstallFixture(t, home)
 	root := filepath.Join(home, "platform")
-	_, failure, code, output := executeForTest(t, operationTestSetup{
-		Operation: "apply", JSON: true, Index: index, PlatformRoot: root,
-		ScenarioID: "commit", ScenarioAnswers: "{invalid",
-		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
-		NodePreflight: func() error { return nil },
+	command := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
+		deps := productionCommandDependencies(cmd)
+		deps.NodeCheck = func() error { return nil }
+		deps.Runtime = &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}}
+		return deps
 	})
-	if code == 0 || (failure != nil && failure.Code != contracts.CodeScenarioInvalid) ||
-		!strings.Contains(output, contracts.CodeScenarioInvalid) || !strings.Contains(output, "decode scenario answers") {
-		t.Fatalf("apply scenario validation exit=%d failure=%v output=%s", code, failure, output)
+	var stdout, stderr bytes.Buffer
+	code := clikitcommand.Execute(command, []string{"apply", "--json", "--index", index,
+		"--platform-root", root, "--scenario", "commit", "--scenario-answers", "{invalid"}, &stdout, &stderr)
+	var response struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Cause   string `json:"cause"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("apply scenario validation is not one JSON document: %v; stdout=%s stderr=%s", err, stdout.String(), stderr.String())
+	}
+	if code.Code() == 0 || response.OK || response.Error.Code != contracts.CodeScenarioInvalid ||
+		!strings.Contains(response.Error.Cause, "decode scenario answers") {
+		t.Fatalf("apply scenario validation exit=%d envelope=%#v stdout=%s stderr=%s", code.Code(), response, stdout.String(), stderr.String())
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("invalid scenario answers mutated platform root %q: stat error=%v", root, err)
 	}
 }
 
-// case: S-039.1
-func TestApplyJSONStreamReturnsItsAppliedReceipt(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	index := writeJSONInstallFixture(t, home)
-	root := filepath.Join(home, "platform")
-	_, failure, code, output := executeForTest(t, operationTestSetup{
-		Operation: "apply", JSON: true, Index: index, PlatformRoot: root,
-		ScenarioID: "custom", ScenarioAnswers: `{"access.mode":"local"}`,
-		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
-		NodePreflight: func() error { return nil },
-	})
-	if code != 0 || failure != nil {
-		t.Fatalf("apply JSON exit=%d failure=%v output=%s", code, failure, output)
+func TestApplyCommandBoundarySerializesOneJSONDocument(t *testing.T) {
+	descriptor, ok := lookupOperationDescriptor("apply")
+	if !ok || descriptor.JSONStream {
+		t.Fatal("apply must use the single-document JSON boundary")
 	}
-	var applyResult map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		var envelope struct {
-			OK   bool           `json:"ok"`
-			Data map[string]any `json:"data"`
-		}
-		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
-			t.Fatalf("invalid apply JSONL record %q: %v", line, err)
-		}
-		if envelope.OK && envelope.Data["operation"] == "apply" {
-			applyResult = envelope.Data
-		}
+	descriptor.Handler = func(context.Context, *cobra.Command, *commandFlagReader, commandDependencies) (any, *diag.Diag) {
+		return applyCommandResult{Operation: "apply"}, nil
 	}
-	if applyResult == nil || applyResult["receipt"] == nil || applyResult["logPath"] == "" {
-		t.Fatalf("apply JSON stream omitted the completed receipt result: %s", output)
+	root := &cobra.Command{Use: "kb-create"}
+	child := &cobra.Command{Use: "apply", RunE: func(cmd *cobra.Command, _ []string) error {
+		return callDescriptor(cmd, descriptor, nil, commandDependencies{Command: cmd})
+	}}
+	child.Flags().Bool("json", false, "emit machine-readable output")
+	root.AddCommand(child)
+	var stdout, stderr bytes.Buffer
+	if code := clikitcommand.Execute(root, []string{"apply", "--json"}, &stdout, &stderr); code.Code() != 0 {
+		t.Fatalf("apply command boundary exit=%d stdout=%s stderr=%s", code.Code(), stdout.String(), stderr.String())
+	}
+	var response struct {
+		OK   bool               `json:"ok"`
+		Data applyCommandResult `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
+		t.Fatalf("apply stdout is not one JSON document: %v: %s", err, stdout.String())
+	}
+	if !response.OK || response.Data.Operation != "apply" {
+		t.Fatalf("apply JSON document is incomplete: %s", stdout.String())
 	}
 }
 

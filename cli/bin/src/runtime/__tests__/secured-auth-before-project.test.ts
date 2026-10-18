@@ -189,6 +189,46 @@ describe('secured CLI auth ordering', () => {
   });
 
   // case: S-041.17
+  it('denies project registration when the access mode cannot be resolved', async () => {
+    isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-unknown-access-mode-'));
+    process.env.HOME = isolatedHome;
+    process.env.KB_HOME = path.join(isolatedHome, '.kb');
+    delete process.env.KB_GATEWAY_URL;
+    delete process.env.KB_PLATFORM_ROOT;
+    process.env.GATEWAY_PORT = '4300';
+    process.env.KB_NET_OFFSET = '200';
+    const project = path.join(isolatedHome, 'anonymous-project');
+    await mkdir(project, { recursive: true });
+    mocks.loadPlatformConfiguration.mockResolvedValue({
+      platformConfig: {},
+      rawConfig: { gateway: { access: {} } },
+      rawPlatformConfig: { gateway: { access: {} } },
+      effectiveConfig: undefined,
+      platformRoot: isolatedHome,
+      projectRoot: isolatedHome,
+      sameLocation: true,
+      sources: { platformDefaults: 'platform', platform: 'env', project: 'platform', fields: {} },
+    });
+    mocks.hasUsablePlatformAuth.mockResolvedValue({ authenticated: false });
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const exitCode = await executeCli(['project', 'add', project, '--json'], { cwd: isolatedHome });
+
+    expect(exitCode).toBe(1);
+    expect(stdout.mock.calls).toHaveLength(1);
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_AUTH_REQUIRED',
+        hint: createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'http://127.0.0.1:4500' } }).hint,
+      },
+    });
+    expect(mocks.hasUsablePlatformAuth).not.toHaveBeenCalled();
+    expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
+    expect(mocks.initializePlatform).not.toHaveBeenCalled();
+  });
+
+  // case: S-041.17
   it('joins project-resolution failures to the same resolved context record', async () => {
     isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-project-error-context-'));
     process.env.HOME = isolatedHome;

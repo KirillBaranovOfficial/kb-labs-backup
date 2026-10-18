@@ -159,6 +159,12 @@ class SensitiveValueRegistry {
   public register(values: readonly string[]): void {
     this.current = Object.freeze([...new Set([...this.current, ...values.filter(Boolean)])]);
   }
+
+  public redactString(value: string): string {
+    return [...this.current]
+      .sort((left, right) => right.length - left.length)
+      .reduce((redacted, sensitive) => redacted.split(sensitive).join('[REDACTED]'), value);
+  }
 }
 
 let processSensitiveValues: SensitiveValueRegistry | undefined;
@@ -366,9 +372,7 @@ class ContextLogger implements IContextLogger {
   }
 
   private redactString(value: string): string {
-    return [...this.sensitiveValues.values]
-      .sort((left, right) => right.length - left.length)
-      .reduce((redacted, sensitive) => redacted.split(sensitive).join('[REDACTED]'), value);
+    return this.sensitiveValues.redactString(value);
   }
 
   private redactError(error?: Error): Error | undefined {
@@ -423,4 +427,9 @@ export function createProcessRootLogContext(context: PlatformLogContext): Platfo
 /** Register resolved values in the launcher-owned process root registry. */
 export function registerProcessSensitiveValues(values: readonly string[]): void {
   getProcessSensitiveValues().register(values);
+}
+
+/** Redact a rendered diagnostic string through the process-owned secret registry. */
+export function redactProcessSensitiveString(value: string): string {
+  return getProcessSensitiveValues().redactString(value);
 }

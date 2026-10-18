@@ -1008,7 +1008,8 @@ def main() -> int:
         command = ["node", "./cli/bin/dist/bin.js", "qa", "coverage", "show",
                    "--level", "all", "--mode", mode, "--json"]
         with invocation_context(step_id="journey.case-selection"):
-            result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120)
+            result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120,
+                                      workspace_root=Path.cwd())
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
         results.append(read_coverage_result(result))

@@ -140,8 +140,9 @@ const manifestFor = item => {
     return manifest;
   }
   const packageJSON = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
-  const declaredManifest = packageJSON.kb?.manifest;
-  if (declaredManifest) throw new Error(`${item.name} declares kb.manifest but its build did not emit dist/manifest.json; rebuild the package with @kb-labs/devkit/tsup/node`);
+  const declarationField = packageJSON.kb?.adapter?.manifest ? 'kb.adapter.manifest' : 'kb.manifest';
+  const declaredManifest = packageJSON.kb?.adapter?.manifest ?? packageJSON.kb?.manifest;
+  if (declaredManifest) throw new Error(`${item.name} declares ${declarationField} but its build did not emit dist/manifest.json; rebuild the package with @kb-labs/devkit/tsup/node`);
   return undefined;
 };
 

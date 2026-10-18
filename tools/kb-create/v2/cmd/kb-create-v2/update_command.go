@@ -22,6 +22,7 @@ import (
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/telemetry"
 	"github.com/kb-labs/create/v2/transport"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -127,7 +128,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		}
 		plan = *response.Plan
 	}
-	if failure := requireUpdateSecrets(plan, secretStore, input, layout.InstallRoot()); failure != nil {
+	if failure := requireUpdateSecrets(active, plan, secretStore, input, layout.InstallRoot()); failure != nil {
 		return updateCommandResult{}, failure
 	}
 	updateSummary, err := resolve.SummarizeUpdate(active, plan, resolved.Catalog)
@@ -196,10 +197,24 @@ func refuseUpdateSecretChanges(input updateCommandInput, root string, store secr
 	return nil
 }
 
-func requireUpdateSecrets(plan contracts.ResolvedInstallPlan, store secrets.Store, input updateCommandInput, root string) *diag.Diag {
+func requireUpdateSecrets(active contracts.InstallReceipt, plan contracts.ResolvedInstallPlan, store secrets.Store, input updateCommandInput, root string) *diag.Diag {
+	previouslyRequired := make(map[string]struct{}, len(active.Plan.Request.SecretInputs))
+	for _, secret := range active.Plan.Request.SecretInputs {
+		previouslyRequired[secret] = struct{}{}
+	}
 	for _, secret := range plan.Request.SecretInputs {
+		if _, alreadyOwned := previouslyRequired[secret]; alreadyOwned {
+			continue
+		}
 		exists, err := store.Exists(secret)
-		if err != nil || !exists {
+		if err != nil {
+			failure := contracts.NewDiag(contracts.CodeApplyFailed,
+				"the installation secret store could not be read during update",
+				"run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", root, "--json")+"` to inspect the installation, then retry `"+input.RetryCommand+"`.", err)
+			failure.Meta = map[string]any{"secret": secret}
+			return failure
+		}
+		if !exists {
 			return updateSecretDiagnostic(root, secret, input.Index, input.RequestFile)
 		}
 	}
@@ -312,6 +327,11 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	updated.Plan.Request.PlatformRoot = root
 	if err := receipt.Write(stage, updated); err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update receipt could not be finalized", "inspect the staged operation log, then rerun `kb-create update`", err)
+	}
+	if err := shim.EnsureVersionTarget(root, stage); err != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the verified update could not prepare the kb command for the new version",
+			updateActivationRetryHint(input), err)
 	}
 	logRelative, err := filepath.Rel(installRoot, transcript.Path())
 	if err != nil {

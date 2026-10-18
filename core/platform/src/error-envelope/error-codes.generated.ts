@@ -545,7 +545,7 @@ export interface CatalogDetailsFor {
   "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string; "reason"?: string };
   "KB_CONFIG_APPLY_FAILED": Record<string, never>;
   "KB_CONFIG_CONFLICT": { "path": string };
-  "KB_CONFIG_INVALID": { "path": string; "contractPath"?: string; "exitCode"?: string; "hostStartupCode"?: string; "launcherLog"?: string; "log"?: string; "nextCommand"?: string; "remedyOperation"?: string; "remedyPlatformRoot"?: string; "stderrTail"?: string };
+  "KB_CONFIG_INVALID": { "path": string; "contractPath"?: string; "exitCode"?: string; "hostStartupCode"?: string; "launcherLog"?: string; "log"?: string; "nextCommand"?: string; "readinessError"?: string; "readinessURL"?: string; "remedyOperation"?: string; "remedyPlatformRoot"?: string; "stderrTail"?: string; "waited"?: string };
   "KB_CONFIG_LLM_KEY_INVALID": { "provider": string };
   "KB_CONFIG_LLM_PROVIDER_TIMEOUT": Record<string, never>;
   "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": Record<string, never>;
@@ -647,7 +647,7 @@ export interface CatalogDetailsFor {
   "KB_PLUGIN_ABORTED": Record<string, never>;
   "KB_PLUGIN_COMMAND_FAILED": { "command": string; "failureReason": string; "plugin": string };
   "KB_PLUGIN_COMMAND_SHADOWED": { "command": string; "plugin": string };
-  "KB_PLUGIN_CONTRACT_VIOLATION": { "command"?: string; "field"?: string; "plugin"?: string };
+  "KB_PLUGIN_CONTRACT_VIOLATION": { "command"?: string; "field"?: string; "plugin"?: string; "observedType"?: string; "observedValuePreview"?: string };
   "KB_PLUGIN_CRASHED": { "plugin": string };
   "KB_PLUGIN_INSTALL_FAILED": { "plugin": string };
   "KB_PLUGIN_INTEGRITY_MISMATCH": { "actual": string; "expected": string; "plugin": string };
@@ -709,7 +709,7 @@ export interface CatalogDetailsFor {
   "KB_RUNTIME_CRON_NOT_FOUND": Record<string, never>;
   "KB_RUNTIME_CRON_PLUGIN_READ_ONLY": Record<string, never>;
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": Record<string, never>;
-  "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string };
+  "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": { "fields": string; "originalCode": string; "field"?: string; "observedType"?: string; "observedValuePreview"?: string };
   "KB_RUNTIME_DISK_FULL": { "path": string };
   "KB_RUNTIME_FRAME_TOO_LARGE": { "actualBytes"?: string; "maximumBytes"?: string };
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": { "gatewayUrl"?: string; "requestStage"?: string; "httpStatus"?: string; "remoteCorrelationId"?: string; "remoteCode"?: string; "fields"?: string };
@@ -2351,7 +2351,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_AUTH_USER_INACTIVE": ["reason"],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": [],
-  "KB_CONFIG_INVALID": ["contractPath","exitCode","hostStartupCode","launcherLog","log","nextCommand","remedyOperation","remedyPlatformRoot","stderrTail"],
+  "KB_CONFIG_INVALID": ["contractPath","exitCode","hostStartupCode","launcherLog","log","nextCommand","readinessError","readinessURL","remedyOperation","remedyPlatformRoot","stderrTail","waited"],
   "KB_CONFIG_LLM_KEY_INVALID": [],
   "KB_CONFIG_LLM_PROVIDER_TIMEOUT": [],
   "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": [],
@@ -2453,7 +2453,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_PLUGIN_ABORTED": [],
   "KB_PLUGIN_COMMAND_FAILED": [],
   "KB_PLUGIN_COMMAND_SHADOWED": [],
-  "KB_PLUGIN_CONTRACT_VIOLATION": ["command","field","plugin"],
+  "KB_PLUGIN_CONTRACT_VIOLATION": ["command","field","plugin","observedType","observedValuePreview"],
   "KB_PLUGIN_CRASHED": [],
   "KB_PLUGIN_INSTALL_FAILED": [],
   "KB_PLUGIN_INTEGRITY_MISMATCH": [],
@@ -2515,7 +2515,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_RUNTIME_CRON_NOT_FOUND": [],
   "KB_RUNTIME_CRON_PLUGIN_READ_ONLY": [],
   "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE": [],
-  "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": [],
+  "KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION": ["field","observedType","observedValuePreview"],
   "KB_RUNTIME_DISK_FULL": [],
   "KB_RUNTIME_FRAME_TOO_LARGE": ["actualBytes","maximumBytes"],
   "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE": ["gatewayUrl","requestStage","httpStatus","remoteCorrelationId","remoteCode","fields"],

@@ -36,6 +36,7 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
 from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
                                   verify_stable_installation_spellings)
+from installed_fixture import active_path
 from installer_case_steps import (assert_immutable_publish_conflict,
                                   assert_provenance_mismatch_refusal)
 from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_create_cli_result
@@ -149,6 +150,23 @@ def journey_layout_path_violations(journey_root: Path, layout: dict, owner_modul
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_active_platform_path_resolves_through_the_product_current_link(self):
+        with tempfile.TemporaryDirectory(prefix="journey-active-platform-path-") as temporary:
+            root = Path(temporary)
+            platform = root / "platform"
+
+            def install(args):
+                fake_product_install(args)
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            index = root / "release-index.json"
+            index.write_text("{}\n")
+            _seed_installed_fixture(platform, launcher="kb-create", index=index,
+                                    run_command=install, label="active path fixture")
+            config = active_path(platform, "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
+            self.assertTrue(config.is_file())
+            self.assertEqual(config, platform / "versions/1.0.0/.kb/kb.config.jsonc")
+
     def test_immutable_publish_conflict_assertion_uses_catalogue_and_compares_digests(self):
         package = "@kb-labs/sample"
         version = "1.0.0-cand.abcdef123456"
@@ -409,7 +427,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 assert_gateway_index_diagnosis({"error": {**error, "message": error["message"].replace("unsupported schema 1", "malformed")}},
                                                index, root)
 
-    def test_gateway_index_refusal_reader_accepts_recorded_document_and_stream(self):
+    def test_gateway_index_refusal_reader_accepts_recorded_document_for_apply(self):
         fixtures = Path(__file__).parent / "testdata"
         expected_hint = (
             "Remove the derived index with `'rm' '--' "
@@ -418,9 +436,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
             "'/tmp/kb-journey-home-utz9qm1f/pc001-explicit-gateway-root'` to rebuild it from the installation receipt."
         )
         for command, fixture in (("plan", "gateway-index-plan-refusal.json"),
-                                 ("apply", "gateway-index-apply-refusal.jsonl")):
-            with self.subTest(fixture=fixture):
-                expected_exit = int((fixtures / Path(fixture).with_suffix(".exit")).read_text().strip())
+                                 ("apply", "gateway-index-plan-refusal.json")):
+            with self.subTest(command=command):
+                expected_exit = int((fixtures / "gateway-index-plan-refusal.exit").read_text().strip())
                 result = subprocess.CompletedProcess(["kb-create", command, "--json"], expected_exit,
                                                     (fixtures / fixture).read_text(), "")
                 envelope = read_kb_create_cli_result(command, result)
@@ -433,14 +451,13 @@ class InstallerCaseStepsTest(unittest.TestCase):
     def test_s025_gateway_index_refusals_follow_each_command_output_form(self):
         fixtures = Path(__file__).parent / "testdata"
         plan_stdout = (fixtures / "gateway-index-plan-refusal.json").read_text()
-        apply_stdout = (fixtures / "gateway-index-apply-refusal.jsonl").read_text()
         root = Path("/tmp/kb-journey-home-utz9qm1f/pc001-explicit-gateway-root")
         index = Path("/tmp/kb-journey-home-utz9qm1f/.kb/launcher/gateway-roots.json")
         error = json.loads(plan_stdout)["error"]
         document = json.dumps({"ok": False, "error": error})
         outputs = {
             "plan": (plan_stdout, 1),
-            "apply": (kb_create_stream({"ok": False, "error": error}, 1), 1),
+            "apply": (document, 1),
             "status": (document, 1),
             "doctor": (document, 1),
             "uninstall": (document, 1),
@@ -653,10 +670,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
             def run_command(args):
                 calls.append(args)
+                project = args[args.index("--project-root") + 1]
                 error = {"code": "KB_INSTALL_INPUT_REQUIRED", "message": "project directory must exist",
-                         "hint": "Run mkdir -p 'missing-project' or pass an existing project directory."}
+                         "hint": f"Create it with 'mkdir' '-p' '{project}' or pass an existing project directory."}
                 envelope = {"ok": False, "error": error}
-                output = (kb_create_stream(envelope, 2) if args[1] in {"install", "apply"}
+                output = (kb_create_stream(envelope, 2) if args[1] == "install"
                           else json.dumps(envelope))
                 return subprocess.CompletedProcess(args, 2, output, "")
 
@@ -670,7 +688,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual([call[1] for call in calls], ["install", "plan", "apply"])
 
     # case: S-039.1
-    def test_apply_scenario_claim_checks_command_stream_and_receipt_preference(self):
+    def test_apply_scenario_claim_checks_single_document_and_receipt_preference(self):
         with tempfile.TemporaryDirectory(prefix="journey-apply-scenario-") as temp:
             root = Path(temp)
             platform = root / "platform"
@@ -685,22 +703,20 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     "providerPreferences": {"cache": "state-broker"},
                 }}}
                 apply_result = {"operation": "apply", "receipt": receipt, "logPath": "/tmp/apply.log"}
-                records = [
-                    {"ok": True, "data": {"phase": "Install packages", "state": "completed"}},
-                    {"ok": True, "data": apply_result, "meta": {"stream": {"result": True}}},
-                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 0}}},
-                ]
                 return subprocess.CompletedProcess(args, 0,
-                    "\n".join(json.dumps(record) for record in records) + "\n", "")
+                    json.dumps({"ok": True, "data": apply_result}), "")
 
-            journey = run_apply_scenario_step(mode="local", launcher="kb-create", stable_index=index,
-                                              platform_root=platform, run_command=run_command)
+            with patch.object(installer_case_steps, "unused_loopback_gateway_url",
+                              return_value="http://127.0.0.1:4999"):
+                journey = run_apply_scenario_step(mode="local", launcher="kb-create", stable_index=index,
+                                                  platform_root=platform, run_command=run_command)
             claim = next(step for step in journey.steps if step.cases == ["S-039.1"])
             self.assertEqual(claim.status, "PASS", claim.message)
             self.assertEqual(calls[0], [
                 "kb-create", "apply", "--json", "--index", str(index),
                 "--platform-root", str(root / "s039-apply-scenario-local"),
-                "--service-profile", "default", "--scenario", "commit",
+                "--service-profile", "default", "--gateway-url", "http://127.0.0.1:4999",
+                "--scenario", "commit",
                 "--scenario-answers", '{"cache":"state-broker"}',
             ])
 
@@ -717,12 +733,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 apply_result = {"operation": "apply", "receipt": {"plan": {"request": {
                     "platformRoot": str(apply_root), "providerPreferences": {"cache": "other"},
                 }}}, "logPath": "/tmp/apply.log"}
-                records = [
-                    {"ok": True, "data": apply_result, "meta": {"stream": {"result": True}}},
-                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 0}}},
-                ]
                 return subprocess.CompletedProcess(args, 0,
-                    "\n".join(json.dumps(record) for record in records) + "\n", "")
+                    json.dumps({"ok": True, "data": apply_result}), "")
 
             journey = run_apply_scenario_step(mode="local", launcher="kb-create", stable_index=index,
                                               platform_root=platform, run_command=run_command)
@@ -750,12 +762,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 error = {"code": "KB_INSTALL_INPUT_REQUIRED", "message": "request is invalid",
                          "hint": (f"Correct platformRoot in request file '{request_path}', then retry: "
                                   f"kb-create apply --index '{index_path}' --input '{request_path}' --json")}
-                records = [
-                    {"ok": False, "error": error},
-                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 2}}},
-                ]
                 return subprocess.CompletedProcess(args, 2,
-                    "\n".join(json.dumps(record) for record in records) + "\n", "")
+                    json.dumps({"ok": False, "error": error}), "")
 
             journey = run_invalid_request_step(mode="local", launcher="kb-create", stable_index=index,
                                                platform_root=platform, run_command=run_command)
@@ -765,10 +773,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(calls[0][1:3], ["apply", "--json"])
             self.assertEqual(requests[0]["platformRoot"], "")
 
-    def test_apply_result_helper_decodes_stream_result_event(self):
+    def test_apply_result_helper_decodes_single_result_document(self):
         result = subprocess.CompletedProcess(["kb-create", "apply", "--json"], 0,
-            '{"ok":true,"data":{"operation":"apply","receipt":{},"logPath":"/tmp/apply.log"},"meta":{"stream":{"result":true}}}\n'
-            '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":0}}}\n', "")
+            '{"ok":true,"data":{"operation":"apply","receipt":{},"logPath":"/tmp/apply.log"}}', "")
         self.assertEqual(_data(result, "apply")['operation'], "apply")
 
     def test_root_offset_assertion_checks_services_and_transport_urls(self):
@@ -878,8 +885,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                             f"Verification: project registered. Next: run `'kb-create' 'status'` and "
                             f"`'kb' 'project' 'show' '{selected_path}'`.\n", "")
                     result_data = {"operation": "apply" if not first_install else "install", "receipt": receipt_data}
-                    result = {"ok": True, "data": result_data, "meta": {"stream": {"result": True}}}
-                    return subprocess.CompletedProcess(args, 0, kb_create_stream(result, 0), "")
+                    result = {"ok": True, "data": result_data}
+                    if args[1] == "install":
+                        result["meta"] = {"stream": {"result": True}}
+                    output = kb_create_stream(result, 0) if args[1] == "install" else json.dumps(result)
+                    return subprocess.CompletedProcess(args, 0, output, "")
                 if args[1] == "update":
                     return subprocess.CompletedProcess(args, 0,
                         '{"ok":true,"data":{"ok":true,"alreadyUpToDate":true}}', "")
@@ -890,7 +900,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         "\"hint\":\"Run `'kb' 'auth' 'login' '--gateway-url' 'URL' '--email' 'EMAIL'`, "
                         "then `'kb' 'project' 'add' 'PATH'`, then `'kb' 'project' 'show' 'PATH'`.\","
                         '"correlationId":"fixture"}}')
-                    return subprocess.CompletedProcess(args, 2, kb_create_stream(json.loads(error), 2), "")
+                    return subprocess.CompletedProcess(args, 2, error, "")
                 if args[1] == "project":
                     if len(args) > 2 and args[2] == "show":
                         registry_path = Path.home() / ".kb/projects.json"
@@ -983,6 +993,34 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(calls, ["status", "stop", "uninstall"])
         self.assertFalse(root.exists())
 
+    def test_fixture_cleanup_failure_is_recorded_with_the_step_failure(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installer-cleanup-failure-") as temp:
+            root = Path(temp) / "platform"
+            receipt = root / ".kb/v2/receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text("{}")
+            move_test_platform_into_container(root)
+
+            def fail_cleanup(args):
+                raise RuntimeError(f"cleanup {args[1]} failed")
+
+            journey = Journey("local", "fixture-cleanup-preserves-step-failure")
+            step_error = RuntimeError("S-023.17 lifecycle assertion failed")
+
+            def fail_step():
+                try:
+                    raise step_error
+                finally:
+                    cleanup_installer_fixture_root(root, "kb-create", fail_cleanup)
+
+            journey.step("isolated installer lifecycle", "platform.install", fail_step, cases=["S-023.17"])
+
+        result = journey.steps[-1]
+        self.assertEqual(result.status, "FAIL")
+        self.assertIn("S-023.17 lifecycle assertion failed", result.message)
+        self.assertIn("fixture cleanup also failed: cleanup status failed", result.message)
+        self.assertEqual(step_error.args[0], result.message)
+
     def test_offline_plan_step_primes_and_uses_its_own_root_cache(self):
         with tempfile.TemporaryDirectory(prefix="journey-offline-plan-") as temp:
             root = Path(temp)
@@ -996,12 +1034,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     payload = {"ok": True, "data": {"host": {"state": "stopped"},
                               "running": False, "reachable": False}}
                 elif args[1] == "apply":
-                    payload = {"ok": True, "data": {"operation": "apply"},
-                               "meta": {"stream": {"result": True}}}
+                    payload = {"ok": True, "data": {"operation": "apply"}}
                 else:
                     payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"},
                               "artifacts": [{"resolvedFrom": "cache"}]}}}
-                output = kb_create_stream(payload, 0) if args[1] == "apply" else json.dumps(payload)
+                output = json.dumps(payload)
                 return subprocess.CompletedProcess(args, 0, output, "")
 
             journey = run_offline_plan_step(mode="local", launcher="kb-create", stable_index=index,
@@ -1288,9 +1325,11 @@ class InstallerCaseStepsTest(unittest.TestCase):
                          "hint": "Stop process 42 (fixture) and rerun `kb-create apply`.",
                          "details": {"port": "4173", "pid": "42", "command": "fixture"}}
                 return subprocess.CompletedProcess(args, 1,
-                    kb_create_stream({"ok": False, "error": error}, 1), "")
+                    json.dumps({"ok": False, "error": error}), "")
 
-            with patch("installer_case_steps.socket.socket") as socket_factory:
+            with patch.object(installer_case_steps, "unused_loopback_gateway_url",
+                              return_value="http://127.0.0.1:4199"), \
+                    patch("installer_case_steps.socket.socket") as socket_factory:
                 journey = run_port_conflict_step(mode="local", launcher="kb-create", stable_index=index,
                                                  platform_root=root, run_command=run_command)
             owner = socket_factory.return_value.__enter__.return_value
@@ -1299,6 +1338,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
         owner.bind.assert_called_once_with(("127.0.0.1", 4173))
         self.assertEqual([args[1] for args in calls], ["plan", "apply"])
+        self.assertEqual(calls[0][calls[0].index("--gateway-url") + 1], "http://127.0.0.1:4199")
+        self.assertEqual(calls[1][calls[1].index("--gateway-url") + 1], "http://127.0.0.1:4199")
 
     def test_repeat_plan_compares_install_owned_files_while_host_stays_running(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:
@@ -1576,9 +1617,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
             def run_command(args):
                 if args[1] == "apply":
-                    payload = {"ok": True, "data": {"operation": "apply"},
-                               "meta": {"stream": {"result": True}}}
-                    output = kb_create_stream(payload, 0)
+                    payload = {"ok": True, "data": {"operation": "apply"}}
+                    output = json.dumps(payload)
                 else:
                     payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"}, "artifacts": [
                         {"id": "platform", "resolvedFrom": "cache"},
@@ -1720,6 +1760,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[1].status, "PASS")
         self.assertEqual(len(calls), 17)
         self.assertEqual(calls[0][1], "install")
+        self.assertIn("--gateway-url", calls[0])
+        self.assertNotEqual(calls[0][calls[0].index("--gateway-url") + 1], "http://127.0.0.1:4100")
         self.assertEqual(calls[-1][1], "uninstall")
 
     def test_fixture_seeder_uses_product_install_and_requirement_is_an_explicit_fault(self):
@@ -1835,12 +1877,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                    run_command=fail_every_command)
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
+            owners = {claim: step.name for step in journey.steps for claim in step.cases}
             expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2", "S-054.23",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
                         "S-187.4", "S-187.5", "S-187.6", "S-187.9", "S-187.11", "S-187.12", "S-124.14"}
             self.assertEqual(set(claims), expected)
+            self.assertEqual(owners["S-023.17"], "install, update twice, restart, and uninstall inside a fresh container")
             blocked = {"PC-001.5", "S-023.16", "S-223.3", "S-181.6"}
             self.assertTrue(all(claims[claim] == "BLOCKED" for claim in blocked))
             self.assertTrue(all(claims[claim] == "FAIL" for claim in expected - blocked))

@@ -402,8 +402,8 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     const platformConfig = {
       platform,
       platformConfig: {},
-      rawConfig: {},
-      rawPlatformConfig: {},
+      rawConfig: { gateway: { access: { mode: 'local' } } },
+      rawPlatformConfig: { gateway: { access: { mode: 'local' } } },
       effectiveConfig: {},
       platformRoot: workspaceRoot,
       projectRoot: workspaceRoot,

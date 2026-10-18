@@ -935,8 +935,8 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 			_ = starter.stop()
 		}
 	})
-	firstOutput := runApplyStreamForTest(t, resolved, deps)
-	firstResult := applyResultFromStream(t, firstOutput)
+	firstOutput := runApplyForTest(t, resolved, deps)
+	firstResult := applyResultFromJSONDocument(t, firstOutput)
 	password := firstResult.FirstAdmin.Password
 	if password == "" || strings.Count(firstOutput, password) != 1 {
 		t.Fatalf("first result did not disclose exactly one generated password")
@@ -978,7 +978,7 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 	if err := starter.stop(); err != nil {
 		t.Fatal(err)
 	}
-	secondOutput := runApplyStreamForTest(t, resolved, deps)
+	secondOutput := runApplyForTest(t, resolved, deps)
 	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
 		present, err := store.Exists(name)
 		if err != nil || present {
@@ -1051,10 +1051,7 @@ type failFirstAdminResultWriter struct {
 }
 
 func (writer *failFirstAdminResultWriter) Write(value []byte) (int, error) {
-	if bytes.Contains(value, []byte(`"result":true`)) {
-		return 0, errors.New("closed output")
-	}
-	return writer.Buffer.Write(value)
+	return 0, errors.New("closed output")
 }
 
 func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.T) {
@@ -1085,14 +1082,13 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 			_ = starter.stop()
 		}
 	})
-	command := &cobra.Command{Use: "kb-create apply"}
+	applied, failure := executeApply(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
+	if failure != nil {
+		t.Fatalf("prepare apply result: %v", failure)
+	}
 	var stdout, stderr failFirstAdminResultWriter
-	command.SetOut(&stdout)
-	command.SetErr(&stderr)
-	deps.Command = command
-	completion, failure := executeApplyStream(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
-	if failure != nil || completion.ExitStatus.Code() == 0 {
-		t.Fatalf("apply with a failing result writer = completion %#v, failure %v; want typed output failure", completion, failure)
+	if code := emitApplyResultForTest(t, applied, &stdout, &stderr); code == 0 {
+		t.Fatal("apply with a failing result writer succeeded")
 	}
 	if disclosed, err := store.BootstrapDisclosed(); err != nil || disclosed {
 		t.Fatalf("failed final result write recorded disclosure = %v, err %v", disclosed, err)
@@ -1103,8 +1099,8 @@ func TestApplyResultWriteFailureLeavesDisclosureMarkerAbsentForRetry(t *testing.
 		}
 		starter.stop = nil
 	}
-	output := runApplyStreamForTest(t, resolved, deps)
-	result := applyResultFromStream(t, output)
+	output := runApplyForTest(t, resolved, deps)
+	result := applyResultFromJSONDocument(t, output)
 	password := result.FirstAdmin.Password
 	if password == "" || !strings.Contains(output, password) {
 		t.Fatalf("retry after failed result write did not disclose the first-admin password")
@@ -1193,7 +1189,7 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 		}
 	})
 	registrations := 0
-	run := func(rootSpelling string) (int, string) {
+	run := func(rootSpelling string) (int, string, string) {
 		var stdout, stderr bytes.Buffer
 		command := newRootCommandWithDependencyFactory(func(cmd *cobra.Command) commandDependencies {
 			deps := productionCommandDependencies(cmd)
@@ -1214,9 +1210,10 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 			args = append(args, "--platform-root", rootSpelling)
 		}
 		code := clikitcommand.Execute(command, args, &stdout, &stderr)
-		return code.Code(), stdout.String() + stderr.String()
+		return code.Code(), stdout.String(), stderr.String()
 	}
-	firstCode, firstOutput := run("")
+	firstCode, firstStdout, firstStderr := run("")
+	firstOutput := firstStdout + firstStderr
 	activeRoot := platformRootForTest(t, root)
 	store := secrets.Store{PlatformRoot: activeRoot}
 	password, present, err := store.Get("gateway.bootstrap.password")
@@ -1245,11 +1242,12 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 		"current":      layout.PlatformRoot(),
 		"version-root": activeRoot,
 	}
-	secondCode, secondOutput := run(rootBySpelling[retrySpelling])
+	secondCode, secondStdout, secondStderr := run(rootBySpelling[retrySpelling])
+	secondOutput := secondStdout + secondStderr
 	if secondCode != 0 || !strings.Contains(secondOutput, password) || !strings.Contains(secondOutput, `"state":"disclosed"`) {
 		t.Fatalf("retry after registration failure did not disclose the stored credential: exit=%d", secondCode)
 	}
-	secondResult := applyResultFromStream(t, secondOutput)
+	secondResult := installResultFromJSONStream(t, secondStdout, secondCode)
 	registrationGateway, err := gateway.OriginFromHealthURL(secondResult.Receipt.Verification.HostHealthURL)
 	if err != nil {
 		t.Fatal(err)
@@ -1275,7 +1273,8 @@ func testJSONInstallRegistrationFailureDefersDisclosureUntilSuccessfulRetry(t *t
 		}
 		starter.stop = nil
 	}
-	thirdCode, thirdOutput := run(rootBySpelling[retrySpelling])
+	thirdCode, thirdStdout, thirdStderr := run(rootBySpelling[retrySpelling])
+	thirdOutput := thirdStdout + thirdStderr
 	if thirdCode != 0 || strings.Contains(thirdOutput, password) || !strings.Contains(thirdOutput, "previously-disclosed") || !strings.Contains(thirdOutput, "issued by an earlier run") {
 		t.Fatalf("third run did not return the non-secret prior-disclosure notice: exit=%d", thirdCode)
 	}
@@ -1288,40 +1287,50 @@ func (operationLogTestRunner) Run(_ context.Context, output io.Writer, _ string,
 	return err
 }
 
-func runApplyStreamForTest(t *testing.T, resolved resolvedPlan, deps commandDependencies) string {
+func runApplyForTest(t *testing.T, resolved resolvedPlan, deps commandDependencies) string {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	command := &cobra.Command{Use: "kb-create apply"}
-	command.SetOut(&stdout)
-	command.SetErr(&stderr)
-	deps.Command = command
-	completion, failure := executeApplyStream(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
-	if failure != nil || completion.ExitStatus.Code() != 0 {
-		t.Fatalf("apply stream failed: completion=%#v failure=%v stdout=%s stderr=%s", completion, failure, stdout.String(), stderr.String())
+	applied, failure := executeApply(context.Background(), applyCommandInput{Resolved: &resolved}, deps)
+	if failure != nil {
+		t.Fatalf("apply failed: %v", failure)
+	}
+	if code := emitApplyResultForTest(t, applied, &stdout, &stderr); code != 0 {
+		t.Fatalf("apply failed: exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	return stdout.String()
 }
 
-func applyResultFromStream(t *testing.T, output string) applyCommandResult {
+func emitApplyResultForTest(t *testing.T, applied applyCommandResult, stdout, stderr io.Writer) int {
 	t.Helper()
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		var record struct {
-			Meta struct {
-				Stream struct {
-					Result bool `json:"result"`
-				} `json:"stream"`
-			} `json:"meta"`
-			Data applyCommandResult `json:"data"`
-		}
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("decode apply stream record: %v", err)
-		}
-		if record.Meta.Stream.Result {
-			return record.Data
-		}
+	descriptor, ok := lookupOperationDescriptor("apply")
+	if !ok {
+		t.Fatal("apply command is not registered")
 	}
-	t.Fatal("apply stream has no result record")
-	return applyCommandResult{}
+	descriptor.Handler = func(context.Context, *cobra.Command, *commandFlagReader, commandDependencies) (any, *diag.Diag) {
+		return applied, nil
+	}
+	root := &cobra.Command{Use: "kb-create"}
+	child := &cobra.Command{Use: "apply", RunE: func(cmd *cobra.Command, _ []string) error {
+		return callDescriptor(cmd, descriptor, nil, commandDependencies{Command: cmd})
+	}}
+	child.Flags().Bool("json", false, "emit machine-readable output")
+	root.AddCommand(child)
+	return clikitcommand.Execute(root, []string{"apply", "--json"}, stdout, stderr).Code()
+}
+
+func applyResultFromJSONDocument(t *testing.T, output string) applyCommandResult {
+	t.Helper()
+	var envelope struct {
+		OK   bool               `json:"ok"`
+		Data applyCommandResult `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+		t.Fatalf("decode apply JSON document: %v: %s", err, output)
+	}
+	if !envelope.OK {
+		t.Fatalf("apply JSON document is not a success envelope: %s", output)
+	}
+	return envelope.Data
 }
 
 func assertSecretAbsent(t *testing.T, label string, output []byte, password string) {
@@ -1340,32 +1349,12 @@ func assertSecretAbsent(t *testing.T, label string, output []byte, password stri
 
 func assertSingleAdminResultRecord(t *testing.T, output, email, password string) {
 	t.Helper()
-	var resultRecords int
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		var record struct {
-			Meta struct {
-				Stream struct {
-					Result bool `json:"result"`
-				} `json:"stream"`
-			} `json:"meta"`
-			Data applyCommandResult `json:"data"`
-		}
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("decode apply stream record: %v", err)
-		}
-		if !record.Meta.Stream.Result {
-			continue
-		}
-		resultRecords++
-		if record.Data.FirstAdmin == nil || record.Data.FirstAdmin.Email != email || record.Data.FirstAdmin.Password != password {
-			t.Fatal("first-administrator result did not contain the expected email and credential")
-		}
-		if password == "" && record.Data.FirstAdmin.State != firstAdminPreviouslyDisclosed {
-			t.Fatalf("repeat first-administrator state = %q, want %q", record.Data.FirstAdmin.State, firstAdminPreviouslyDisclosed)
-		}
+	result := applyResultFromJSONDocument(t, output)
+	if result.FirstAdmin == nil || result.FirstAdmin.Email != email || result.FirstAdmin.Password != password {
+		t.Fatal("first-administrator result did not contain the expected email and credential")
 	}
-	if resultRecords != 1 {
-		t.Fatalf("apply stream has %d result records; want exactly one", resultRecords)
+	if password == "" && result.FirstAdmin.State != firstAdminPreviouslyDisclosed {
+		t.Fatalf("repeat first-administrator state = %q, want %q", result.FirstAdmin.State, firstAdminPreviouslyDisclosed)
 	}
 }
 

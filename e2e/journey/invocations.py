@@ -182,8 +182,6 @@ _REPORT_ROOT: ContextVar[Path | None] = ContextVar("journey_report_root", defaul
 _UNEXPECTED_DIAGNOSTICS: ContextVar[list[dict[str, Any]] | None] = ContextVar("journey_unexpected_diagnostics", default=None)
 # `root.go` routes these registered commands to JSON stream executors. Every
 # other registered kb-create command returns one ADR-0049 document.
-KB_CREATE_JSON_STREAM_COMMANDS = frozenset({"install", "apply"})
-
 def store_report_secret(env: MutableMapping[str, str], key: str, value: str, source: str) -> str:
     """Validate and store a harness credential where subprocesses and reports can redact it."""
     if not redaction.is_secret_key(key):
@@ -447,38 +445,30 @@ def read_ux_cli_stream(result: subprocess.CompletedProcess[str]) -> list[dict[st
     return records
 
 
-def read_kb_create_cli_stream(command: str, result: subprocess.CompletedProcess[str]) -> list[dict[str, Any]]:
-    """Validate that a kb-create command registered for streams emitted a valid stream."""
-    if command not in KB_CREATE_JSON_STREAM_COMMANDS:
-        _invalid_ux_result(f"kb-create {command} is registered for a single JSON document, not a stream")
-    records = read_ux_cli_stream(result)
-    if result.returncode != 0:
-        failures = [record for record in records[:-1] if record.get("ok") is False]
-        for record in failures:
-            _validate_error_process_status(decode_ux_error_result(record), result.returncode,
-                                          records[-1].get("meta", {}).get("stream", {}).get("exitCode"))
-    return records
-
-
 def read_kb_create_cli_result(command: str, result: subprocess.CompletedProcess[str]) -> dict[str, Any]:
-    """Validate the registered kb-create command's JSON output form and return its result."""
-    if command not in KB_CREATE_JSON_STREAM_COMMANDS:
+    """Read the single document or JSON stream actually emitted by kb-create."""
+    try:
         envelope = read_ux_cli_result(result)
-        if envelope.get("ok") is False:
-            _validate_error_process_status(decode_ux_error_result(envelope), result.returncode)
-        return envelope
-    records = read_kb_create_cli_stream(command, result)
+    except ValueError as document_error:
+        try:
+            records = read_ux_cli_stream(result)
+        except ValueError as stream_error:
+            raise document_error from stream_error
+        result_records = [record for record in records[:-1]
+                          if record.get("ok") is True
+                          and record.get("meta", {}).get("stream", {}).get("result") is True]
+        failures = [record for record in records[:-1] if record.get("ok") is False]
+        if result.returncode == 0:
+            if len(result_records) != 1:
+                _invalid_ux_result(f"kb-create {command} stream must contain exactly one result record")
+            return result_records[0]
+        if len(failures) != 1:
+            _invalid_ux_result(f"kb-create {command} stream must contain exactly one error result")
+        return failures[0]
     if result.returncode == 0:
-        results = [record for record in records[:-1]
-                   if record.get("ok") is True
-                   and record.get("meta", {}).get("stream", {}).get("result") is True]
-        if len(results) != 1:
-            _invalid_ux_result(f"kb-create {command} stream must contain exactly one result record")
-        return results[0]
-    failures = [record for record in records[:-1] if record.get("ok") is False]
-    if len(failures) != 1:
-        _invalid_ux_result(f"kb-create {command} stream must contain exactly one error result")
-    return failures[0]
+        return envelope
+    _validate_error_process_status(decode_ux_error_result(envelope), result.returncode)
+    return envelope
 
 
 def describe_cli_failure(command: str, stdout: str, stderr: str, returncode: int) -> str:
@@ -754,18 +744,30 @@ def logs_from_query_envelope(envelope: Mapping[str, Any]) -> list[dict[str, Any]
     return [record for record in logs if isinstance(record, dict)] if isinstance(logs, list) else []
 
 
+def _resolve_invoked_executable(executable: str, cwd: str | Path | None,
+                                env: Mapping[str, str]) -> str | None:
+    if os.path.dirname(executable):
+        path = Path(executable)
+        if not path.is_absolute() and cwd is not None:
+            path = Path(cwd) / path
+        candidate = str(path)
+    else:
+        candidate = shutil.which(executable, path=env.get("PATH"))
+    return os.path.realpath(candidate) if candidate is not None else None
+
+
 def _unexpected_error_diagnostics(argv: list[str], stdout: str, stderr: str,
                                   cwd: str | Path | None, env: Mapping[str, str] | None) -> dict[str, Any] | None:
+    effective_env = env if env is not None else os.environ
+    kb_cli = _kb_shim_evidence(effective_env)
+    if (not argv or kb_cli is None
+            or _resolve_invoked_executable(argv[0], cwd, effective_env) != kb_cli["realpath"]):
+        return None
     is_unexpected, correlation_id = parse_unexpected_correlation_id(stdout, stderr)
     if not is_unexpected:
         return None
     if correlation_id is None:
         return {"queryError": "KB_RUNTIME_UNEXPECTED omitted its correlationId"}
-    effective_env = env if env is not None else os.environ
-    kb_cli = _kb_shim_evidence(effective_env)
-    if not argv or kb_cli is None or os.path.realpath(argv[0]) != kb_cli["realpath"]:
-        return {"correlationId": correlation_id,
-                "queryError": "diagnostic retrieval requires the installed kb executable"}
     try:
         query = subprocess.run(
             [argv[0], "logs", "query", "--correlation-id", correlation_id, "--json"],

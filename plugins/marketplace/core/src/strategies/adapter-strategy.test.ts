@@ -32,7 +32,7 @@ describe('AdapterStrategy', () => {
     await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
       name: identity,
       type: 'module',
-      kb: { manifest: './manifest.mjs' },
+      kb: { adapter: { manifest: './manifest.mjs' } },
     }));
     await fs.writeFile(path.join(root, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
       schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: identity, name: identity, version: '1.0.0', type: 'core',
@@ -59,7 +59,7 @@ describe('AdapterStrategy', () => {
     const brokenRoot = path.join(platformRoot, 'broken');
     await fs.mkdir(brokenRoot);
     await fs.writeFile(path.join(brokenRoot, 'package.json'), JSON.stringify({
-      name: 'broken', type: 'module', kb: { manifest: './manifest.mjs' },
+      name: 'broken', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
     }));
     await fs.writeFile(path.join(brokenRoot, 'manifest.mjs'), 'export const manifest = { schema: "kb.adapter/1", implements: "ICache" };');
     await expect(strategy.detectKind(brokenRoot)).rejects.toBeInstanceOf(AdapterManifestLoadError);

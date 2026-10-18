@@ -824,6 +824,34 @@ func TestTypedStartupEnvelopeIsTheHostFailureCause(t *testing.T) {
 	}
 }
 
+func TestTypedConfigStartupFailureKeepsReadinessEvidence(t *testing.T) {
+	configFailure := diag.New("KB_CONFIG_INVALID", "Analytics retention must be a positive integer.",
+		diag.WithCause("platform.adapterOptions.analytics.retentionDays must be a positive integer"),
+		diag.WithMeta(map[string]any{"path": "platform.adapterOptions.analytics.retentionDays"}))
+	envelope, err := diag.ToEnvelope(configFailure)
+	if err != nil {
+		t.Fatalf("serialize config failure: %v", err)
+	}
+	stderr, err := json.Marshal(map[string]any{"ok": false, "error": envelope})
+	if err != nil {
+		t.Fatalf("marshal config failure: %v", err)
+	}
+
+	failure := StartFailure(State{Dir: t.TempDir()}, errors.New("readiness check failed"), map[string]string{
+		"stderrTail": string(stderr), "waited": "5s", "readinessURL": "http://127.0.0.1:5250/health",
+		"readinessError": "connection refused",
+	})
+	result, err := diag.ToEnvelope(failure)
+	if err != nil {
+		t.Fatalf("serialize startup failure: %v", err)
+	}
+	if result.Code != "KB_CONFIG_INVALID" || result.Details["path"] != "platform.adapterOptions.analytics.retentionDays" ||
+		result.Details["waited"] != "5s" || result.Details["readinessURL"] != "http://127.0.0.1:5250/health" ||
+		result.Details["readinessError"] != "connection refused" {
+		t.Fatalf("startup envelope = %+v; want the original config error and catalogued readiness evidence", result)
+	}
+}
+
 // case: S-222.11
 func TestHostEnvironmentSuppressesCompletedBootstrapPasswordFromAllSources(t *testing.T) {
 	t.Setenv(secrets.BootstrapPasswordEnvironment, "inherited-bootstrap-password")

@@ -33,6 +33,18 @@ describe('platform authentication gate', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  // case: S-041.17
+  it('denies protected commands when the platform access mode is unresolved', async () => {
+    const handler = vi.fn(async () => 0);
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'unknown', commandPath: 'project add', commandKind: 'system', requiresSession: true,
+      hasAuth: false, gatewayUrl: 'http://127.0.0.1:4000',
+    }, handler);
+    const required = createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'http://127.0.0.1:4000' } });
+    expect(result).toEqual({ error: required });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   // case: S-203.14
   it('returns a host connectivity error when auth verification cannot reach the Gateway', async () => {
     const hostError = {

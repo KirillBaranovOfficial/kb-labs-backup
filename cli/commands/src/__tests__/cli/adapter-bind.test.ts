@@ -87,6 +87,16 @@ afterEach(async () => {
 });
 
 describe('kb adapter list', () => {
+  it('resolves the platform root from the CLI module when running inside a registered project', async () => {
+    vi.stubEnv('KB_PLATFORM_ROOT', '');
+    const { ctx, outputs } = context();
+
+    const code = await adapterList.run(ctx, [], { json: true });
+
+    expect(code).toBe(0);
+    expect(outputs[0]).toMatchObject({ ok: true });
+  });
+
   // case: S-211.6
   it('reports a runtime adapter load failure with its recovery command', async () => {
     const { ctx, outputs } = context();

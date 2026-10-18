@@ -13,7 +13,7 @@ import {
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import { formatError } from './errors/index';
-import { createErrorEnvelope, createValidatedErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
+import { createContextLogger, createErrorEnvelope, createProcessRootLogContext, createValidatedErrorEnvelope, logUnexpectedCliError, mapErrorEnvelopeToExitCode, toErrorEnvelope, type DetailsFor, type ErrorCode, type ErrorEnvelope, type PlatformErrorCode } from '@kb-labs/core-platform';
 import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
@@ -410,7 +410,16 @@ export function defineSystemCommand<
         });
         if (envelope.code === 'KB_RUNTIME_UNEXPECTED') {
           if (ctx.platform?.logger) {
-            logUnexpectedCliError(ctx.platform.logger, error, envelope.correlationId);
+            const logger = createContextLogger(
+              ctx.platform.logger,
+              createProcessRootLogContext({
+                applicationId: 'kb',
+                serviceId: 'kb',
+                instanceId: `${process.pid}`,
+                layer: 'cli',
+              }),
+            ).forComponent('cli-error-boundary');
+            logUnexpectedCliError(logger, error, envelope.correlationId);
           }
         }
         if (jsonMode) {

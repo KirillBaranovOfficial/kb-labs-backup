@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 
 from platform_update_steps import _json_command
 from installed_fixture import (
+    active_path,
     add_installed_manifest_requirement as _add_installed_manifest_requirement,
     cleanup_fixture_root as cleanup_installer_fixture_root,
     install_fixture_root as _seed_installed_fixture,
@@ -37,17 +38,18 @@ from installed_fixture import (
     layout_relative,
     layout_value,
     stop_fixture_host as stop_installer_fixture_host,
+    unused_loopback_gateway_url,
 )
 from invocations import (
     CompletedProcess,
     decode_ux_error_result,
     decode_ux_success_result,
     read_kb_create_cli_result,
-    read_kb_create_cli_stream,
     catalogued_error_hint,
     catalogued_error_message,
     open_http,
     read_ux_cli_result,
+    read_ux_cli_stream,
     run_command as evidence_run_command,
 )
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
@@ -63,7 +65,7 @@ CommandRunner = Callable[..., CompletedProcess]
 def parse_install_refusal(result: CompletedProcess[str]) -> dict | None:
     """Return the typed product envelope from a failed JSON install stream."""
     try:
-        envelope = read_kb_create_cli_stream("install", result)
+        envelope = read_ux_cli_stream(result)
     except ValueError:
         return None
     return next((decode_ux_error_result(record) for record in envelope[:-1]
@@ -661,10 +663,12 @@ def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
     """Prove apply reports a foreign owner for the Gateway port it resolved."""
     journey = Journey(mode, f"port-conflict-{mode}")
     conflict_root = platform_root.parent / "pc001-port-conflict-root"
+    conflict_gateway_url = unused_loopback_gateway_url()
 
     def port_conflict_ux() -> None:
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
                                            "--platform-root", str(conflict_root),
+                                           "--gateway-url", conflict_gateway_url,
                                            "--service-profile", "default", "--scenario", "commit"],
                              "PC-001 port-conflict plan").get("plan", {})
         health_url = plan.get("host", {}).get("healthUrl")
@@ -677,6 +681,7 @@ def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
             owner.listen(1)
             result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                   "--platform-root", str(conflict_root),
+                                  "--gateway-url", conflict_gateway_url,
                                   "--service-profile", "default", "--scenario", "commit"])
         envelope, error = _diagnostic(result, "PC-001 port conflict")
         details = error.get("details", error.get("meta", {}))
@@ -893,7 +898,8 @@ def run_missing_project_request_steps(*, mode: str, launcher: str, stable_index:
                 registry_changed = path_state(registry_path) != registry_before
                 if (result.returncode == 0 or error.get("code") != "KB_INSTALL_INPUT_REQUIRED"
                         or "must exist" not in error.get("message", "")
-                        or "mkdir -p" not in hint or "existing project directory" not in hint
+                        or "'mkdir' '-p'" not in hint
+                        or "existing project directory" not in hint
                         or target.exists() or receipt_path.exists() or shim_changed or registry_changed
                         or scenario_path.exists() or Path(str(scenario_path) + ".tmp").exists()):
                     raise RuntimeError(f"missing project {operation} was not rejected before mutation: "
@@ -1237,6 +1243,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
             result = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                   "--platform-root", str(platform_root), "--service-profile", "default",
                                   "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
+                                  "--gateway-url", unused_loopback_gateway_url(),
                                   "--project-root", str(project_root)])
             install_data = _data(result, "JSON custom-scenario install with project")
             receipt = install_data.get("receipt", {})
@@ -1317,6 +1324,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
             initial = run_command([launcher, "install", "--json", "--index", str(stable_index),
                                    "--platform-root", str(root), "--service-profile", "default",
                                    "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
+                                   "--gateway-url", unused_loopback_gateway_url(),
                                    "--project-root", str(selected_alias)])
             initial_data = _data(initial, "initial install for repeated project selection")
             recorded_identity = {field: initial_data.get("receipt", {}).get(field)
@@ -1616,19 +1624,13 @@ def run_apply_scenario_step(*, mode: str, launcher: str, stable_index: Path,
         answers = json.dumps({"cache": "state-broker"}, separators=(",", ":"))
         result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                               "--platform-root", str(apply_root), "--service-profile", "default",
+                              "--gateway-url", unused_loopback_gateway_url(),
                               "--scenario", "commit", "--scenario-answers", answers])
         try:
-            records = read_kb_create_cli_stream("apply", result)
-            terminal = records[-1] if records else {}
-            stream = terminal.get("meta", {}).get("stream", {})
-            apply_results = [decode_ux_success_result(record) for record in records[:-1]
-                             if record.get("ok") is True
-                             and record.get("meta", {}).get("stream", {}).get("result") is True]
-            if (result.returncode != 0 or not stream.get("terminal") or stream.get("exitCode") != 0
-                    or terminal.get("ok") is not True or terminal.get("data", "not-null") is not None
-                    or len(apply_results) != 1):
-                raise RuntimeError("apply JSON stream omitted its successful apply result or terminal record")
-            apply_result = apply_results[0]
+            apply_result = read_kb_create_cli_result("apply", result)
+            if result.returncode != 0 or apply_result.get("ok") is not True:
+                raise RuntimeError("apply JSON document did not contain its successful result")
+            apply_result = decode_ux_success_result(apply_result)
             request = apply_result.get("receipt", {}).get("plan", {}).get("request", {})
             if (apply_result.get("operation") != "apply" or request.get("platformRoot") != str(apply_root)
                     or request.get("providerPreferences", {}).get("cache") != "state-broker"
@@ -1805,11 +1807,8 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 if (result.get("operation") != "apply" or not (install_root / layout_value('currentLink')).is_symlink()
                         or sorted(path.name for path in parent.iterdir()) != ["install"]):
                     raise RuntimeError("install into an empty target did not create only its versioned container")
-            except Exception as error:
-                try:
-                    cleanup_installer_fixture_root(install_root, launcher, run_command)
-                except Exception as cleanup_error:
-                    error.add_note(f"empty-root install cleanup also failed: {cleanup_error}")
+            except Exception:
+                cleanup_installer_fixture_root(install_root, launcher, run_command)
                 raise
             else:
                 cleanup_installer_fixture_root(install_root, launcher, run_command)
@@ -1906,7 +1905,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             raise RuntimeError("doctor did not report the platform-layout version root directory")
         with tempfile.TemporaryDirectory(prefix="pc001-unversioned-") as temporary:
             legacy_root = Path(temporary) / "legacy-platform"
-            shutil.copytree(apply_root.resolve(), legacy_root, symlinks=True)
+            shutil.copytree(active_platform_root(apply_root), legacy_root, symlinks=True)
             legacy_request = Path(temporary) / "request.json"
             legacy_receipt = legacy_root / ".kb/v2/receipt.json"
             request = json.loads(legacy_receipt.read_text())["plan"]["request"]
@@ -2440,7 +2439,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             _add_installed_manifest_requirement(root, requirement)
             result = run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"])
             payload = _data(result, "doctor safe-default repair")
-            config = installed_path(root, "sharedRuntimePaths.kb_kb_config_jsonc.platformPath").read_text()
+            config = active_path(root, "sharedRuntimePaths.kb_kb_config_jsonc.platformPath").read_text()
             if payload.get("operation") != "doctor-fix" or not payload.get("snapshot", {}).get("id") or "hostRestarted" not in payload:
                 raise RuntimeError("doctor --fix omitted operation, snapshot, or host restart result")
             if "manifest-safe-value" not in config:
@@ -2455,7 +2454,9 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         with _installed_fixture(root, launcher=launcher, index=stable_index, run_command=run_command,
                                 label="doctor missing-projection fixture") as receipt_path:
             _add_installed_manifest_requirement(root, requirement)
-            inject_existing_fault(root, "sharedRuntimePaths.kb_kb_config_jsonc.platformPath", lambda _current: None)
+            inject_existing_fault(
+                root, "currentLink", lambda _current: None,
+                layout_value("sharedRuntimePaths.kb_kb_config_jsonc.platformPath"))
             result = run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"])
             envelope, payload = _payload(result, "doctor fix unresolved input")
             repair = payload.get("repair", {})
@@ -2542,8 +2543,10 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
         requirement = {"id": "fixture.default", "path": "/fixture/default", "required": True,
                        "default": "\"manifest-safe-value\"", "hint": "safe default"}
         try:
+            isolated_gateway = unused_loopback_gateway_url()
             receipt_path = _seed_installed_fixture(root, launcher=launcher, index=stable_index,
-                                                   run_command=run_command, label="isolated-root doctor fixture")
+                                                   run_command=run_command, label="isolated-root doctor fixture",
+                                                   gateway_url=isolated_gateway)
             _add_installed_manifest_requirement(root, requirement)
             stop_installer_fixture_host(root, launcher, run_command)
             result = run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"])
@@ -2564,11 +2567,8 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
                 if (spelling_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "running"
                         or spelling_status.get("installation", {}).get("receiptId") != main_receipt_id):
                     raise RuntimeError(f"status through {spelling} did not identify platform A's original running host")
-        except BaseException as original:
-            try:
-                cleanup_installer_fixture_root(root, launcher, run_command)
-            except BaseException as cleanup_error:
-                original.add_note(f"fixture cleanup also failed: {cleanup_error}")
+        except BaseException:
+            cleanup_installer_fixture_root(root, launcher, run_command)
             raise
 
     journey.step("repair an isolated root without stopping the running platform", "platform.install",

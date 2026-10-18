@@ -69,12 +69,12 @@ export interface StandardMeta {
  *
  * @template T Result data type
  */
-type CommandErrorFields = Pick<ErrorEnvelope, 'message' | 'hint' | 'cause' | 'diagnostics'> & {
+type CommandErrorFields = Pick<ErrorEnvelope, 'message' | 'cause' | 'diagnostics'> & {
   correlationId?: string;
   kind?: FailureKind;
 };
 
-export type CataloguedCommandErrorFor<C extends PlatformErrorCode> = CommandErrorFields & { code: C } & DetailsOptionFor<C>;
+export type CataloguedCommandErrorFor<C extends PlatformErrorCode> = CommandErrorFields & { code: C; hint?: string } & DetailsOptionFor<C>;
 
 type CataloguedCommandError = {
   [C in PlatformErrorCode]: CataloguedCommandErrorFor<C>;
@@ -82,6 +82,7 @@ type CataloguedCommandError = {
 
 type ProductCommandError = CommandErrorFields & {
   code: ProductErrorCode;
+  hint: string;
   details?: Record<string, string>;
 };
 

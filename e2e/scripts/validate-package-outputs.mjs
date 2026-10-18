@@ -75,6 +75,7 @@ export function validatePackageContents(manifest, packedPaths) {
   bins.forEach((target) => check('bin', target));
   exportTargets(manifest.exports).forEach((target) => check('exports', target));
   check('kb.manifest', manifest.kb?.manifest);
+  check('kb.adapter.manifest', manifest.kb?.adapter?.manifest);
   for (const target of manifest.kb?.requiredOutputs ?? []) check('kb.requiredOutputs', target);
   return failures;
 }
@@ -196,7 +197,7 @@ export async function inspectPackedFixture(sourceDirectory) {
       const reason = adapter.kind === 'failed'
         ? `product adapter loader rejected ${packageJson.name}: ${adapter.reason}`
         : `product loaders could not classify ${packageJson.name} as a plugin or adapter`;
-      if (loaded.kind === 'failed') {
+      if (adapter.kind === 'failed' || loaded.kind === 'failed') {
         return { packageName: packageJson.name, kind: 'invalid', failures: [
           `product discovery could not load the packed manifest: ${loaded.cause}; ${reason}`,
         ] };
@@ -279,7 +280,7 @@ export async function validateTarballAgainstWorkspace(tarball, packages, workspa
     return execFileSync('tar', ['-xOzf', tarball, archivePath], { encoding: 'utf8' });
   };
   const sourcePackedManifest = packWorkspaceSource(source.directory);
-  const sourceManifestPath = source.manifest.kb?.manifest;
+  const sourceManifestPath = source.manifest.kb?.adapter?.manifest ?? source.manifest.kb?.manifest;
   if (typeof sourceManifestPath === 'string') {
     const relativePath = sourceManifestPath.replace(/^\.\//, '');
     const sourcePath = join(source.directory, relativePath);

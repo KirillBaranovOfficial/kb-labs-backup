@@ -181,10 +181,10 @@ export async function executeCli(
   let loadedConfig = configResolution.value;
   const protection = registryStore.protectionFor(authRoute);
   const authExempt = !protection.requiresSession
-    || isPlatformAuthExemptFlag("help") && global.help
-    || isPlatformAuthExemptFlag("version") && global.version;
+    || isPlatformAuthExemptFlag("help") && global.help === true
+    || isPlatformAuthExemptFlag("version") && global.version === true;
   let gatewayTarget: Awaited<ReturnType<typeof configuredGatewayUrl>> | undefined;
-  if (accessMode === 'secured' && !authExempt) {
+  if (accessMode !== 'local' && !authExempt) {
     try {
       gatewayTarget = await configuredGatewayUrl(cwd, loadedConfig.platformRoot);
     } catch (error) {
@@ -193,7 +193,7 @@ export async function executeCli(
   }
   const authCheck: Awaited<ReturnType<typeof hasUsablePlatformAuth>> = accessMode === 'secured' && !authExempt
     ? await hasUsablePlatformAuth(gatewayTarget)
-    : { authenticated: true };
+    : { authenticated: accessMode === 'local' || authExempt };
   const authResult = global.version && isPlatformAuthExemptFlag("version")
     ? { value: true }
     : await dispatchWithPlatformAuthGate({

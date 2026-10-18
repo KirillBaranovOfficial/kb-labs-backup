@@ -27,13 +27,12 @@ func (darwinHostResourceSource) Snapshot() HostResourceSnapshot {
 		result.Unavailable["hw.memsize"] = "returned zero"
 	}
 	result.LogicalCPUs = int(read32("hw.logicalcpu"))
-	page := read32("hw.pagesize")
-	var available uint64
-	for _, name := range []string{"vm.page_free_count", "vm.page_inactive_count", "vm.page_purgeable_count"} {
-		available += uint64(read32(name))
+	if available, err := darwinAvailableMemory(uint64(read32("hw.pagesize"))); err != nil {
+		result.Unavailable["host_statistics64"] = err.Error()
+	} else {
+		result.AvailableMemory = available
+		result.MemoryAvailableKnown = true
 	}
-	result.AvailableMemory = available * uint64(page)
-	result.MemoryAvailableKnown = page > 0 && result.Unavailable["vm.page_free_count"] == "" && result.Unavailable["vm.page_inactive_count"] == "" && result.Unavailable["vm.page_purgeable_count"] == ""
 	level := read32("kern.memorystatus_vm_pressure_level")
 	switch level {
 	case 1:

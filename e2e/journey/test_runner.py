@@ -133,6 +133,17 @@ def build_wizard_pty_fixture(binary: Path) -> None:
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
+    def test_confirmation_hint_preserves_invocation_arguments_and_adds_yes(self):
+        runner = importlib.import_module("runner")
+        invocation = ["/tmp/bin/kb-create", "uninstall", "--platform-root", "/tmp/a b",
+                      "--registry", "http://registry.test:4873", "--json"]
+        hint = ("rerun `'kb-create' 'uninstall' '--platform-root' '/tmp/a b' '--registry' "
+                "'http://registry.test:4873' '--json' '--yes'`")
+
+        self.assertTrue(runner.confirmation_hint_matches_invocation(hint, invocation))
+        self.assertFalse(runner.confirmation_hint_matches_invocation(
+            hint.replace("/tmp/a b", "/tmp/other"), invocation))
+
     def test_main_rejects_missing_or_malformed_ownership_before_running_steps(self):
         from journey_selection import JourneySelectionError
         runner = importlib.import_module("runner")
@@ -389,6 +400,40 @@ thread.join()
         self.assertEqual(setup["installer"], "commit")
         self.assertEqual(setup["marketplace_packages"], ())
         self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
+
+    def test_secured_project_state_is_probed_only_after_initial_login(self):
+        runner = importlib.import_module("runner")
+        journey = Journey("secured", "initial-secured-session-order")
+        graph = FlowGraph(journey, {"auth": ("host-running",), "project": ("host-running",)},
+                          states={"host-running": {"passed": True, "evidence": "host ready"}})
+        events = []
+        runner.establish_initial_secured_session(graph, lambda: events.append("login"))
+        graph.probe_state("project-registered", "project", "project show",
+                          lambda: events.append("project probe"))
+        self.assertEqual(events, ["login", "project probe"])
+        self.assertTrue(graph.states["session"]["passed"])
+        self.assertTrue(graph.states["project-registered"]["passed"])
+
+    def test_recovery_reestablishes_host_before_dependent_session(self):
+        runner = importlib.import_module("runner")
+        journey = Journey("secured", "recovery-host-session-order")
+        graph = FlowGraph(
+            journey, {"host": ("platform-installed",), "auth": ("host-running",)},
+            states={"platform-installed": {"passed": True, "evidence": "installed"},
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "session": {"passed": True, "evidence": "session ready"}},
+        )
+        graph.invalidate_state("host-running", group="auth", step="recovery", evidence="host restarted")
+        graph.invalidate_state("session", group="auth", step="recovery", evidence="session revoked")
+        events = []
+        runner.reestablish_host_and_session(
+            graph, "recovery", lambda: events.append("host probe"),
+            lambda: events.append("login"))
+        consumer = graph.flow("secured consumer", "auth", "auth", lambda: events.append("consumer"))
+        self.assertEqual(events, ["host probe", "login", "consumer"])
+        self.assertEqual(consumer, "PASS")
+        self.assertTrue(graph.states["host-running"]["passed"])
+        self.assertTrue(graph.states["session"]["passed"])
 
     def test_selected_step_completion_names_unrun_step_and_claim(self):
         runner = importlib.import_module("runner")
@@ -821,7 +866,7 @@ thread.join()
                 scenario="commit", selected_owners=selected_owners,
                 extra_update_group=update_group,
                 update_runner=lambda **_kwargs: Journey("local", "unregistrable-update-journey"))
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 1, output)
         self.assertIn("selected step never ran", output)
         self.assertIn(owner_name, output)
         self.assertIn(claim, output)
@@ -852,6 +897,90 @@ thread.join()
         self.assertEqual(observed["events"], [
             "host:stop", "host:start", "host:stop", *isolated_groups, "host:start",
         ])
+
+    def test_failed_update_keeps_candidate_version_known_and_runs_independent_cleanup(self):
+        update_calls = []
+        update_results = []
+        def fail_update(**kwargs):
+            update_calls.append(kwargs)
+            receipt_path = Path(kwargs["platform_root"]) / "current" / ".kb" / "v2" / "receipt.json"
+            receipt = json.loads(receipt_path.read_text())
+            receipt["plan"]["serviceGraph"]["platformVersion"] = kwargs["updated_version"]
+            receipt_path.write_text(json.dumps(receipt))
+            journey = Journey("secured", "platform-update", parent=kwargs["parent_journey"])
+
+            def fail_stage():
+                raise RuntimeError("outside-install path changed: /tmp/launcher/index.json")
+
+            journey.step("stage candidate update", "platform.update", fail_stage, cases=["S-023.3"])
+            journey.step("verify updated receipt", "platform.update", lambda: None,
+                         cases=["S-023.4"], requires=("step:stage candidate update",))
+            update_results.append(journey.result().__dict__)
+            return journey
+
+        with tempfile.TemporaryDirectory(prefix="journey-main-failed-update-") as temporary:
+            code, output, service, outer, _observed = self._run_selected_main(
+                Path(temporary), "secured", selection="", update_runner=fail_update)
+
+        self.assertEqual(len(update_calls), 1)
+        self.assertEqual(code, 1, output)
+        self.assertIn("outside-install path changed", output)
+        states = importlib.import_module("runner").ACTIVE_OUTER_GRAPH.states
+        self.assertEqual(states["expected-platform-version"], "2.120.2")
+        self.assertTrue(states["platform-version-known"]["passed"])
+        cleanup = next(step for step in outer["steps"] if step["name"] == "uninstall platform")
+        self.assertEqual(cleanup["status"], "PASS")
+        dependent_flow = next(step for step in outer["steps"]
+                              if step["name"] == "workflow execution journey")
+        self.assertEqual(dependent_flow["status"], "BLOCKED")
+        self.assertIn("host-running", dependent_flow["message"])
+        update_failure = next(step for step in update_results[0]["steps"]
+                              if step["name"] == "stage candidate update")
+        update_dependent = next(step for step in update_results[0]["steps"]
+                                if step["name"] == "verify updated receipt")
+        self.assertEqual(update_failure["status"], "FAIL")
+        self.assertEqual(update_dependent["status"], "BLOCKED")
+        self.assertIn("outside-install path changed", update_dependent["message"])
+
+    def test_failed_update_emits_blocked_secured_auth_and_workflow_claims(self):
+        runner = importlib.import_module("runner")
+        auth_claims = [f"S-042.{step}" for step in range(1, 7)]
+        workflow_claims = [f"S-056.{step}" for step in range(1, 4)]
+        selected = auth_claims + workflow_claims
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_CASES": ",".join(selected),
+            "KB_JOURNEY_SELECTED_STEPS": ",".join(selected),
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "auth,workflow",
+            "KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore",
+        }, clear=False):
+            selection = importlib.import_module("journey_selection").read_journey_selection(os.environ)
+            journey = Journey("secured", "update-failure-dependent-claims", selection=selection)
+            groups = runner.outer_selection_groups()
+            graph = FlowGraph(
+                journey,
+                runner.OUTER_GROUP_DEPENDENCIES,
+                states={"host-running": {
+                    "passed": False,
+                    "evidence": "post-update host probe failed after update changed an outside-root path",
+                    "group": "update",
+                    "step": "verify state after update/rollback/channel",
+                    "claim": "S-023.3",
+                }},
+                groups=groups,
+            )
+            auth_status = graph.flow("secured auth journey", "auth", "auth.invite-reset",
+                                     lambda: self.fail("blocked auth actions must not run"), cases=auth_claims)
+            workflow_status = graph.flow("workflow execution journey", "workflow", "workflow",
+                                         lambda: self.fail("blocked workflow actions must not run"),
+                                         cases=workflow_claims)
+
+        self.assertEqual((auth_status, workflow_status), ("BLOCKED", "BLOCKED"))
+        claims = {claim: step for step in journey.steps for claim in step.cases}
+        self.assertEqual(set(claims), set(selected))
+        for claim in selected:
+            self.assertEqual(claims[claim].status, "BLOCKED", claim)
+            self.assertIn("state host-running", claims[claim].message, claim)
+            self.assertIn("post-update host probe failed", claims[claim].message, claim)
 
     def test_main_selected_update_runs_only_the_declared_rollback_scan_chain(self):
         runner = importlib.import_module("runner")

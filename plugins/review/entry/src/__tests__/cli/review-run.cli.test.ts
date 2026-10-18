@@ -202,6 +202,30 @@ describe('review:run', () => {
     expect(noopLoader.fail).toHaveBeenCalled();
   });
 
+  it('keeps a malformed analysis hint attributable through review run error handling', async () => {
+    mockedGetReposWithChanges.mockResolvedValue(['packages/core']);
+    mockedResolveGitScope.mockResolvedValue({ files: [{ path: 'c.ts', content: '' }] } as unknown as ScopedFiles);
+    mockedRunReview.mockRejectedValue(Object.assign(new Error('Review failed.'), {
+      code: 'REVIEW_FAILED',
+      hint: { message: 'Review failed', interpolation: { file: 'src/a.ts' } },
+    }));
+
+    const { ui } = createCapturedUI();
+    const result = await reviewRunCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: { json: true } }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        details: {
+          field: 'hint',
+          observedType: 'object',
+          observedValuePreview: expect.stringContaining('Review failed'),
+        },
+      },
+    });
+  });
+
   it('RR-08: --files flag reads specific files via ctx.runtime.fs.glob', async () => {
     mockedRunReview.mockResolvedValue(makeReviewResult() as unknown as ReviewResult);
 

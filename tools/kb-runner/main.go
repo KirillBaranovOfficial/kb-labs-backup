@@ -33,11 +33,11 @@ func executeCommand(args []string, stdout, stderr io.Writer) diag.ExitStatus {
 }
 
 func executeInvocation(invocation string, args []string, stdout, stderr io.Writer) diag.ExitStatus {
-	root := command.InvocationRoot(invocation)
+	root := runnerRoot{Root: command.InvocationRoot(invocation), invocation: invocation}
 	if len(args) > 0 && args[0] == "__keeper" {
 		return diag.ProcessExitStatus(proc.KeeperMain())
 	}
-	if command.HandleRootHelp(args, root, "<run|gate|ps|wait|events|proc|quota|own|gc> [flags]", stdout) {
+	if command.HandleRootHelp(args, root, runnerUsage(), stdout) {
 		return diag.SuccessStatus()
 	}
 	code, err := executeRoot(root, args, stdout, stderr)
@@ -57,43 +57,78 @@ func executeInvocation(invocation string, args []string, stdout, stderr io.Write
 }
 
 func execute(args []string, stdout, stderr io.Writer) (int, error) {
-	return executeRoot(command.InvocationRoot(os.Args[0]), args, stdout, stderr)
+	return executeRoot(runnerRoot{Root: command.InvocationRoot(os.Args[0]), invocation: os.Args[0]}, args, stdout, stderr)
 }
 
-func executeRoot(root command.Root, args []string, stdout, stderr io.Writer) (int, error) {
+type runnerRoot struct {
+	command.Root
+	invocation string
+}
+
+func (root runnerRoot) Invocation() string { return root.invocation }
+
+func (root runnerRoot) InvocationCommand() string { return shellQuote(root.invocation) }
+
+func executeRoot(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
-		return 2, fmt.Errorf("usage: %s <run|gate|ps|wait|events|proc|quota|own|gc> [flags]", root.Name())
+		return 2, fmt.Errorf("usage: %s %s", root.Name(), runnerUsage())
 	}
-	switch args[0] {
-	case "run":
-		return runCommand(args[1:], stdout, stderr)
-	case "ps":
-		return psCommand(args[1:], stdout)
-	case "wait":
-		return waitCommand(args[1:], stdout, stderr)
-	case "gate":
-		return gateCommand(args[1:], stdout, stderr)
-	case "events":
-		return eventsCommand(args[1:], stdout)
-	case "proc":
-		return procCommand(args[1:], stdout)
-	case "quota":
-		return quotaCommand(args[1:], stdout, stderr)
-	case "own":
-		return ownCommand(args[1:], stdout)
-	case "gc":
-		return gcCommand(args[1:], stdout)
-	default:
-		status, _ := command.HandleUnknownCommand(root, args, stdout, stderr, result.ResolveMode(false, false, ""), false)
-		return status.Code(), nil
+	for _, registered := range runnerCommands {
+		if registered.name == args[0] {
+			return registered.execute(root, args[1:], stdout, stderr)
+		}
 	}
+	status, _ := command.HandleUnknownCommand(root.Root, args, stdout, stderr, result.ResolveMode(false, false, ""), false)
+	return status.Code(), nil
 }
 
-func procCommand(args []string, output io.Writer) (int, error) {
+type runnerCommand struct {
+	name    string
+	execute func(runnerRoot, []string, io.Writer, io.Writer) (int, error)
+}
+
+var runnerCommands = []runnerCommand{
+	{name: "run", execute: runCommand},
+	{name: "gate", execute: gateCommand},
+	{name: "ps", execute: func(root runnerRoot, args []string, stdout, _ io.Writer) (int, error) {
+		return psCommand(root, args, stdout)
+	}},
+	{name: "wait", execute: waitCommand},
+	{name: "events", execute: func(root runnerRoot, args []string, stdout, _ io.Writer) (int, error) {
+		return eventsCommand(root, args, stdout)
+	}},
+	{name: "proc", execute: func(root runnerRoot, args []string, stdout, _ io.Writer) (int, error) {
+		return procCommand(root, args, stdout)
+	}},
+	{name: "quota", execute: quotaCommand},
+	{name: "own", execute: func(root runnerRoot, args []string, stdout, _ io.Writer) (int, error) {
+		return ownCommand(root, args, stdout)
+	}},
+	{name: "gc", execute: func(root runnerRoot, args []string, stdout, _ io.Writer) (int, error) {
+		return gcCommand(root, args, stdout)
+	}},
+}
+
+func runnerUsage() string {
+	names := make([]string, len(runnerCommands))
+	for index, registered := range runnerCommands {
+		names[index] = registered.name
+	}
+	return "<" + strings.Join(names, "|") + "> [flags]"
+}
+
+func procCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		_, err := fmt.Fprintf(output, "Usage: %s proc identity <pid> | %s proc inventory --json\n", root.Name(), root.Name())
+		if err != nil {
+			return 1, fmt.Errorf("kb-runner proc: write usage: %w", err)
+		}
+		return 0, nil
+	}
 	if len(args) == 2 && args[0] == "inventory" && args[1] == "--json" {
 		entries, err := proc.ProcessInventory()
 		if err != nil {
-			return 1, fmt.Errorf("kb-runner proc inventory: %w\nnext: run `kb-runner proc inventory --json` from a session allowed to inspect the host process table", err)
+			return 1, procInventoryFailure(root.Name(), root.Invocation(), err)
 		}
 		if err := json.NewEncoder(output).Encode(entries); err != nil {
 			return 1, fmt.Errorf("kb-runner proc inventory: write JSON: %w", err)
@@ -101,18 +136,18 @@ func procCommand(args []string, output io.Writer) (int, error) {
 		return 0, nil
 	}
 	if len(args) != 2 || args[0] != "identity" {
-		return 2, errors.New("kb-runner proc: usage: kb-runner proc identity <pid> or proc inventory --json; next: run `kb-runner proc identity <pid>` with a live PID or `kb-runner proc inventory --json`")
+		return 2, fmt.Errorf("%s proc: usage: %s proc identity <pid> or proc inventory --json; next: %s proc --help", root.Name(), root.Name(), root.InvocationCommand())
 	}
 	pid, err := strconv.Atoi(args[1])
 	if err != nil || pid <= 0 {
-		return 2, fmt.Errorf("kb-runner proc identity: PID %q must be a positive decimal process ID; next: run `kb-runner proc identity <pid>` with a live PID", args[1])
+		return 2, fmt.Errorf("%s proc identity: PID %q must be a positive decimal process ID; next: %s proc --help", root.Name(), args[1], root.InvocationCommand())
 	}
 	identity, alive, err := proc.ProcessIdentity(pid)
 	if err != nil {
-		return 1, fmt.Errorf("kb-runner proc identity: cannot inspect PID %d: %w\nnext: run `kb-runner proc identity %d` as the process owner", pid, err, pid)
+		return 1, procIdentityFailure(root.Name(), root.Invocation(), pid, err)
 	}
 	if !alive {
-		return 3, fmt.Errorf("kb-runner proc identity: PID %d is not live\nnext: pass a currently live PID to `kb-runner proc identity <pid>`", pid)
+		return 3, fmt.Errorf("%s proc identity: PID %d is not live\nnext: %s proc --help", root.Name(), pid, root.InvocationCommand())
 	}
 	if _, err := fmt.Fprintln(output, identity); err != nil {
 		return 1, fmt.Errorf("kb-runner proc identity: write identity for PID %d: %w", pid, err)
@@ -120,7 +155,15 @@ func procCommand(args []string, output io.Writer) (int, error) {
 	return 0, nil
 }
 
-func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
+func procInventoryFailure(rootName, invocation string, err error) error {
+	return fmt.Errorf("%s proc inventory: %w\nnext: %s proc --help", rootName, err, shellQuote(invocation))
+}
+
+func procIdentityFailure(rootName, invocation string, pid int, err error) error {
+	return fmt.Errorf("%s proc identity: cannot inspect PID %d: %w\nnext: %s proc --help", rootName, pid, err, shellQuote(invocation))
+}
+
+func runCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tag := fs.String("tag", "", "run label")
@@ -151,10 +194,10 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 		command = command[1:]
 	}
 	if len(command) == 0 {
-		return 2, errors.New("kb-runner run: provide a command after --; next: kb-runner run --help")
+		return 2, fmt.Errorf("%s run: provide a command after --; next: %s run --help", root.Name(), root.InvocationCommand())
 	}
 	if *tag == "" || *state == "" || *stall <= 0 || *stdoutPath == "" || *stderrPath == "" {
-		return 2, errors.New("kb-runner run: --tag, --state, positive --stall, --stdout, and --stderr are required; next: kb-runner run --help")
+		return 2, fmt.Errorf("%s run: --tag, --state, positive --stall, --stdout, and --stderr are required; next: %s run --help", root.Name(), root.InvocationCommand())
 	}
 	var minFreeBytes uint64
 	var err error
@@ -164,7 +207,7 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 		minFreeBytes, err = strconv.ParseUint(*minFree, 10, 64)
 	}
 	if err != nil {
-		return 2, fmt.Errorf("kb-runner run: invalid --min-free: %w; next: pass an integer byte count, for example --min-free 12000000000", err)
+		return 2, fmt.Errorf("%s run: invalid --min-free: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
 	}
 	memBytes, err := proc.ParseResourceSize(*memory)
 	if *memory == "" {
@@ -172,7 +215,7 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 		err = nil
 	}
 	if err != nil {
-		return 2, fmt.Errorf("kb-runner run: invalid --mem: %w; next: pass a size such as --mem 2G", err)
+		return 2, fmt.Errorf("%s run: invalid --mem: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
 	}
 	diskBytes, err := proc.ParseResourceSize(*disk)
 	if *disk == "" {
@@ -180,11 +223,11 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 		err = nil
 	}
 	if err != nil {
-		return 2, fmt.Errorf("kb-runner run: invalid --disk: %w; next: pass a size such as --disk 3G", err)
+		return 2, fmt.Errorf("%s run: invalid --disk: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
 	}
 	cpuMin, cpuMax, err := parseCPURange(*cpus)
 	if err != nil {
-		return 2, fmt.Errorf("kb-runner run: invalid --cpus: %w; next: pass --cpus N or --cpus MIN..MAX", err)
+		return 2, fmt.Errorf("%s run: invalid --cpus: %w; next: %s run --help", root.Name(), err, root.InvocationCommand())
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -195,7 +238,7 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 	keepPaths = append(keepPaths, *stdoutPath, *stderrPath)
 	run, err := proc.Start(ctx, proc.Config{HelperPath: helper, StateDir: *state, Tag: *tag, LatestTag: *latestTag, Stall: *stall, StdoutPath: *stdoutPath, StderrPath: *stderrPath, StdinPath: *stdinPath, SlotGroup: *slotGroup, Slots: *slots, WaitGate: *waitGate, HoldGate: *holdGate, MinFree: minFreeBytes, CostKey: *costKey, MemoryBytes: memBytes, CPUsMin: cpuMin, CPUsMax: cpuMax, DiskBytes: diskBytes, Env: envVars, Keep: keepPaths, Command: command})
 	if err != nil {
-		return 1, fmt.Errorf("kb-runner run: %w\nnext: inspect state directory access with ls -ld %s, then retry: %s", err, shellQuote(*state), shellJoin(os.Args))
+		return 1, fmt.Errorf("%s run: %w\nInspect state directory access before retrying:\nnext: ls -ld %s\nnext: %s", root.Name(), err, shellQuote(*state), shellJoin(os.Args))
 	}
 	if err := run.Wait(); err != nil {
 		var exitErr *exec.ExitError
@@ -204,14 +247,22 @@ func runCommand(args []string, stdout, stderr io.Writer) (int, error) {
 			if code == 0 {
 				return 0, nil
 			}
-			return code, fmt.Errorf("kb-runner: supervised command exited with status %d; inspect its tree and lifecycle at %s\nnext: kb-runner ps --state %s", code, filepath.Join(*state, "events.jsonl"), shellQuote(*state))
+			return code, supervisedCommandFailure(root, *state, code)
 		}
-		return 1, fmt.Errorf("kb-runner: keeper wait failed: %w\nnext: inspect run state with kb-runner ps --state %s", err, shellQuote(*state))
+		return 1, keeperWaitFailure(root, *state, err)
 	}
 	if _, err := fmt.Fprintf(stdout, "run %s completed\n", *tag); err != nil {
-		return 1, fmt.Errorf("kb-runner: write completion output: %w", err)
+		return 1, fmt.Errorf("%s: write completion output: %w", root.Name(), err)
 	}
 	return 0, nil
+}
+
+func supervisedCommandFailure(root runnerRoot, state string, code int) error {
+	return fmt.Errorf("%s: supervised command exited with status %d; inspect its tree and lifecycle at %s\nnext: %s ps --state %s", root.Name(), code, filepath.Join(state, "events.jsonl"), root.InvocationCommand(), shellQuote(state))
+}
+
+func keeperWaitFailure(root runnerRoot, state string, err error) error {
+	return fmt.Errorf("%s: keeper wait failed: %w\nnext: %s ps --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(state))
 }
 
 func parseCPURange(value string) (int, int, error) {
@@ -233,9 +284,9 @@ func parseCPURange(value string) (int, int, error) {
 	return minimum, maximum, nil
 }
 
-func quotaCommand(args []string, stdout, stderr io.Writer) (int, error) {
+func quotaCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
 	if len(args) == 0 {
-		return 2, errors.New("kb-runner quota: usage: quota <show|set> --state DIR; next: kb-runner quota show --help")
+		return 2, fmt.Errorf("%s quota: usage: quota <show|set> --state DIR; next: %s quota show --help", root.Name(), root.InvocationCommand())
 	}
 	action := args[0]
 	fs := flag.NewFlagSet("quota "+action, flag.ContinueOnError)
@@ -248,28 +299,32 @@ func quotaCommand(args []string, stdout, stderr io.Writer) (int, error) {
 		return 2, err
 	}
 	if *state == "" {
-		return 2, errors.New("kb-runner quota: --state is required; next: pass --state DIR")
+		helpAction := action
+		if helpAction != "show" && helpAction != "set" {
+			helpAction = "show"
+		}
+		return 2, fmt.Errorf("%s quota: --state is required; next: %s quota %s --help", root.Name(), root.InvocationCommand(), helpAction)
 	}
 	switch action {
 	case "set":
 		if *memory == "" && *cpus == "" && *minFree == "" {
-			return 2, errors.New("kb-runner quota set: provide --memory, --cpus, or --min-free; next: kb-runner quota set --help")
+			return 2, fmt.Errorf("%s quota set: provide --memory, --cpus, or --min-free; next: %s quota set --help", root.Name(), root.InvocationCommand())
 		}
 		if err := proc.SetQuota(*state, *memory, *cpus, *minFree); err != nil {
-			return 1, fmt.Errorf("kb-runner quota set: %w; next: check state directory access with ls -ld %s", err, shellQuote(*state))
+			return 1, fmt.Errorf("%s quota set: %w; next: ls -ld %s", root.Name(), err, shellQuote(*state))
 		}
 		return quotaShow(*state, stdout)
 	case "show":
 		return quotaShow(*state, stdout)
 	default:
-		return 2, fmt.Errorf("kb-runner quota: unknown action %q; next: kb-runner quota show --help", action)
+		return 2, fmt.Errorf("%s quota: unknown action %q; next: %s quota show --help", root.Name(), action, root.InvocationCommand())
 	}
 }
 
 func quotaShow(state string, stdout io.Writer) (int, error) {
 	quota, err := proc.ShowQuota(state)
 	if err != nil {
-		return 1, fmt.Errorf("kb-runner quota show: %w; next: check state directory access with ls -ld %s", err, shellQuote(state))
+		return 1, fmt.Errorf("kb-runner quota show: %w; next: ls -ld %s", err, shellQuote(state))
 	}
 	memSource, cpuSource, diskSource := "default", "default", "default"
 	if quota.MemorySet {
@@ -316,7 +371,7 @@ func (values *pathListFlag) Set(value string) error {
 	return nil
 }
 
-func psCommand(args []string, output io.Writer) (int, error) {
+func psCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
 	state := fs.String("state", "", "directory containing run records")
 	leftovers := fs.Bool("leftovers", false, "list every uncleaned owned resource")
@@ -324,12 +379,12 @@ func psCommand(args []string, output io.Writer) (int, error) {
 		return 2, err
 	}
 	if *state == "" {
-		return 2, errors.New("kb-runner ps: --state is required; next: kb-runner ps --help")
+		return 2, fmt.Errorf("%s ps: --state is required; next: %s ps --help", root.Name(), root.InvocationCommand())
 	}
 	if *leftovers {
 		entries, err := proc.Leftovers(*state)
 		if err != nil {
-			return 1, fmt.Errorf("kb-runner ps: list leftovers: %w\nnext: check state access with ls -ld %s", err, shellQuote(*state))
+			return 1, fmt.Errorf("%s ps: list leftovers: %w\nnext: ls -ld %s", root.Name(), err, shellQuote(*state))
 		}
 		if len(entries) == 0 {
 			_, err := fmt.Fprintln(output, "No resource leftovers.")
@@ -344,7 +399,7 @@ func psCommand(args []string, output io.Writer) (int, error) {
 	}
 	listing := proc.List(*state)
 	if listing.Error != nil {
-		return 1, fmt.Errorf("kb-runner ps: read run state: %w\nnext: check directory access with ls -ld %s", listing.Error, shellQuote(*state))
+		return 1, fmt.Errorf("%s ps: read run state: %w\nnext: ls -ld %s", root.Name(), listing.Error, shellQuote(*state))
 	}
 	if len(listing.Runs) == 0 {
 		if _, err := fmt.Fprintln(output, "No supervised runs."); err != nil {
@@ -394,7 +449,7 @@ func psCommand(args []string, output io.Writer) (int, error) {
 	return 0, nil
 }
 
-func eventsCommand(args []string, output io.Writer) (int, error) {
+func eventsCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	fs := flag.NewFlagSet("events", flag.ContinueOnError)
 	state := fs.String("state", "", "directory containing events.jsonl")
 	follow := fs.Bool("follow", false, "continue streaming appended events")
@@ -403,7 +458,7 @@ func eventsCommand(args []string, output io.Writer) (int, error) {
 		return 2, err
 	}
 	if *state == "" {
-		return 2, errors.New("kb-runner events: --state is required; next: kb-runner events --help")
+		return 2, fmt.Errorf("%s events: --state is required; next: %s events --help", root.Name(), root.InvocationCommand())
 	}
 	ctx := context.Background()
 	if *follow {
@@ -413,15 +468,29 @@ func eventsCommand(args []string, output io.Writer) (int, error) {
 	}
 	filters, err := proc.ParseEventFilter(*filter)
 	if err != nil {
-		return 2, fmt.Errorf("kb-runner events: %w; next: use --filter start,exit,stall,queued,blocked,teardown", err)
+		return 2, fmt.Errorf("%s events: %w; next: %s events --help", root.Name(), err, root.InvocationCommand())
 	}
 	if err := proc.Events(ctx, *state, *follow, filters, output); err != nil && !errors.Is(err, context.Canceled) {
-		return 1, fmt.Errorf("kb-runner events: %w\nnext: check event file access with ls -l %s", err, shellQuote(filepath.Join(*state, "events.jsonl")))
+		return 1, fmt.Errorf("%s events: %w\nnext: ls -l %s", root.Name(), err, shellQuote(filepath.Join(*state, "events.jsonl")))
 	}
 	return 0, nil
 }
 
-func gateCommand(args []string, stdout, stderr io.Writer) (int, error) {
+func gateCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		_, err := fmt.Fprintf(stdout, "Usage: %s gate status <name> --state <dir> | %s gate hold <name> [run flags] -- <command>\n", root.Name(), root.Name())
+		if err != nil {
+			return 1, fmt.Errorf("kb-runner gate: write usage: %w", err)
+		}
+		return 0, nil
+	}
+	if len(args) == 2 && args[0] == "status" && (args[1] == "--help" || args[1] == "-h") {
+		_, err := fmt.Fprintf(stdout, "Usage: %s gate status <name> --state <dir>\n", root.Name())
+		if err != nil {
+			return 1, fmt.Errorf("kb-runner gate status: write usage: %w", err)
+		}
+		return 0, nil
+	}
 	if len(args) >= 2 && args[0] == "status" && args[1] != "" {
 		fs := flag.NewFlagSet("gate status", flag.ContinueOnError)
 		fs.SetOutput(stderr)
@@ -430,11 +499,11 @@ func gateCommand(args []string, stdout, stderr io.Writer) (int, error) {
 			return 2, err
 		}
 		if *state == "" {
-			return 2, errors.New("kb-runner gate status: --state is required; next: kb-runner gate status --help")
+			return 2, fmt.Errorf("%s gate status: --state is required; next: %s gate status --help", root.Name(), root.InvocationCommand())
 		}
 		gate, held, err := proc.GateStatus(*state, args[1])
 		if err != nil {
-			return 1, fmt.Errorf("kb-runner gate status: %w; next: kb-runner ps --state %s", err, shellQuote(*state))
+			return 1, fmt.Errorf("%s gate status: %w; next: %s ps --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 		}
 		if held {
 			_, err = fmt.Fprintf(stdout, "held\t%s\tpid=%d\tidentity=%s\n", gate.Tag, gate.PID, gate.Identity)
@@ -447,15 +516,15 @@ func gateCommand(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, nil
 	}
 	if len(args) < 2 || args[0] != "hold" || args[1] == "" {
-		return 2, errors.New("kb-runner gate: usage: kb-runner gate status <name> --state <dir> or gate hold <name> [run flags] -- <command>; next: kb-runner gate --help")
+		return 2, fmt.Errorf("%s gate: usage: %s gate status <name> --state <dir> or gate hold <name> [run flags] -- <command>; next: %s gate --help", root.Name(), root.InvocationCommand(), root.InvocationCommand())
 	}
 	name := args[1]
 	runArgs := append([]string(nil), args[2:]...)
 	runArgs = append([]string{"--hold-gate", name}, runArgs...)
-	return runCommand(runArgs, stdout, stderr)
+	return runCommand(root, runArgs, stdout, stderr)
 }
 
-func waitCommand(args []string, stdout, stderr io.Writer) (int, error) {
+func waitCommand(root runnerRoot, args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tag := fs.String("tag", "", "run tag to await")
@@ -465,7 +534,7 @@ func waitCommand(args []string, stdout, stderr io.Writer) (int, error) {
 		return 2, err
 	}
 	if (*tag == "") == (*latestTag == "") || *state == "" {
-		return 2, errors.New("kb-runner wait: provide exactly one of --tag or --latest-tag, and --state; next: kb-runner wait --help")
+		return 2, fmt.Errorf("%s wait: provide exactly one of --tag or --latest-tag, and --state; next: %s wait --help", root.Name(), root.InvocationCommand())
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -477,9 +546,9 @@ func waitCommand(args []string, stdout, stderr io.Writer) (int, error) {
 		run, err = proc.WaitTag(ctx, *state, *tag)
 	}
 	if err != nil {
-		return 1, fmt.Errorf("kb-runner wait: %w; next: kb-runner ps --state %s", err, shellQuote(*state))
+		return 1, fmt.Errorf("%s wait: %w; next: %s ps --state %s", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 	}
-	return renderWaitOutcome(run, *state, stdout, os.Args[0])
+	return renderWaitOutcome(run, *state, stdout, root.Invocation())
 }
 
 func renderWaitOutcome(run proc.RunInfo, state string, stdout io.Writer, executable string) (int, error) {
@@ -511,7 +580,7 @@ func renderWaitOutcome(run proc.RunInfo, state string, stdout io.Writer, executa
 		}
 		return 1, errors.New("kb-runner wait: run ended without an exit code or signal")
 	case proc.StatusLost:
-		return 1, fmt.Errorf("kb-runner wait: run %s was lost: %s; next: kb-runner ps --state %s", run.Tag, run.Error, shellQuote(state))
+		return 1, fmt.Errorf("%s wait: run %s was lost: %s; next: %s ps --state %s", executable, run.Tag, run.Error, executable, shellQuote(state))
 	case proc.StatusDirty:
 		entry, ok := diag.LookupCatalog("KB_RUNTIME_RUN_DIRTY")
 		if !ok {
@@ -555,27 +624,34 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func ownCommand(args []string, output io.Writer) (int, error) {
+func ownCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		_, err := fmt.Fprintf(output, "Usage: %s own path --create dir|file PATH | %s own docker-compose NAME -f FILE... -- COMPOSE-ARGV... | %s own container|network|volume ID\n", root.Name(), root.Name(), root.Name())
+		if err != nil {
+			return 1, fmt.Errorf("kb-runner own: write usage: %w", err)
+		}
+		return 0, nil
+	}
 	if len(args) < 2 {
-		return 2, errors.New("kb-runner own: usage: own path --create dir|file PATH or own docker-compose NAME -f FILE... -- COMPOSE-ARGV...; next: call own from a command started by kb-runner run")
+		return 2, fmt.Errorf("%s own: usage: own path --create dir|file PATH or own docker-compose NAME -f FILE... -- COMPOSE-ARGV...; next: %s own --help", root.Name(), root.InvocationCommand())
 	}
 	runID := os.Getenv("KBLABS_CLIPROC_RUN")
 	state := os.Getenv("KBLABS_CLIPROC_STATE")
 	if runID == "" || state == "" {
-		return 2, errors.New("kb-runner own: no active run marker; run this command inside kb-runner run so the resource has a cleanup owner\nnext: kb-runner run --help")
+		return 2, fmt.Errorf("%s own: no active run marker; run this command inside %s run so the resource has a cleanup owner\nnext: %s run --help", root.Name(), root.Name(), root.InvocationCommand())
 	}
 	resource := proc.Resource{Kind: proc.ResourceKind(args[0])}
 	var ownErr error
 	switch resource.Kind {
 	case proc.ResourcePath:
 		if len(args) != 4 || args[1] != "--create" {
-			return 2, errors.New("kb-runner own path: usage: own path --create dir|file PATH; next: create external paths through this exclusive ownership command")
+			return 2, fmt.Errorf("%s own path: usage: own path --create dir|file PATH; next: %s own --help", root.Name(), root.InvocationCommand())
 		}
 		ownErr = proc.CreateOwnedPath(state, runID, args[3], proc.OwnedPathType(args[2]))
 		resource.ID = args[3]
 	case proc.ResourceCompose:
 		if len(args) < 5 {
-			return 2, errors.New("kb-runner own docker-compose: usage: own docker-compose NAME -f FILE... -- COMPOSE-ARGV...; next: pass the same Compose prefix used to create the project")
+			return 2, fmt.Errorf("%s own docker-compose: usage: own docker-compose NAME -f FILE... -- COMPOSE-ARGV...; next: %s own --help", root.Name(), root.InvocationCommand())
 		}
 		resource.ID = args[1]
 		separator := -1
@@ -603,22 +679,22 @@ func ownCommand(args []string, output io.Writer) (int, error) {
 		ownErr = proc.RegisterResource(state, runID, resource)
 	}
 	if ownErr != nil {
-		return 1, ownFailure(args, state, resource, ownErr)
+		return 1, ownFailure(root.Name(), root.Invocation(), args, state, resource, ownErr)
 	}
 	_, err := fmt.Fprintf(output, "owned %s %s\n", resource.Kind, resource.ID)
 	return 0, err
 }
 
-func ownFailure(args []string, state string, resource proc.Resource, ownErr error) error {
+func ownFailure(rootName, invocation string, args []string, state string, resource proc.Resource, ownErr error) error {
 	var unsupported *proc.PathXattrUnsupportedError
 	if errors.As(ownErr, &unsupported) {
-		invocation := shellJoin(append([]string{"kb-runner", "own"}, args...))
-		return fmt.Errorf("kb-runner own: %w\nnext: inspect the mount with `df -P %s`, choose a mount that supports user xattrs, then rerun: `%s`", ownErr, shellQuote(unsupported.Path), invocation)
+		command := shellJoin(append([]string{invocation, "own"}, args...))
+		return fmt.Errorf("%s own: %w\nCheck filesystem capacity before retrying:\nnext: df -P %s\nnext: %s", rootName, ownErr, shellQuote(unsupported.Path), command)
 	}
-	return fmt.Errorf("kb-runner own: %w\nnext: %s; correct the resource or cleanup root, then retry", ownErr, ownershipNextCommand(state, resource))
+	return fmt.Errorf("%s own: %w; correct the resource or cleanup root, then retry:\nnext: %s", rootName, ownErr, ownershipNextCommand(invocation, state, resource))
 }
 
-func ownershipNextCommand(state string, resource proc.Resource) string {
+func ownershipNextCommand(invocation, state string, resource proc.Resource) string {
 	switch resource.Kind {
 	case proc.ResourcePath:
 		return "ls -ld " + shellQuote(resource.ID) + " " + shellQuote(filepath.Join(state, "cleanup-roots.json"))
@@ -637,22 +713,22 @@ func ownershipNextCommand(state string, resource proc.Resource) string {
 	case proc.ResourceVolume:
 		return "docker volume inspect " + shellQuote(resource.ID)
 	default:
-		return "kb-runner own --help"
+		return shellJoin([]string{invocation, "own", "--help"})
 	}
 }
 
-func gcCommand(args []string, output io.Writer) (int, error) {
+func gcCommand(root runnerRoot, args []string, output io.Writer) (int, error) {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
 	state := fs.String("state", "", "directory containing run records")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
 	if *state == "" {
-		return 2, errors.New("kb-runner gc: --state is required; next: kb-runner gc --help")
+		return 2, fmt.Errorf("%s gc: --state is required; next: %s gc --help", root.Name(), root.InvocationCommand())
 	}
 	outcomes, err := proc.GarbageCollect(*state)
 	if err != nil {
-		return 1, fmt.Errorf("kb-runner gc: cleanup failed: %w\nnext: inspect remaining entries with kb-runner ps --state %s --leftovers", err, shellQuote(*state))
+		return 1, fmt.Errorf("%s gc: cleanup failed: %w\nnext: %s ps --state %s --leftovers", root.Name(), err, root.InvocationCommand(), shellQuote(*state))
 	}
 	for _, outcome := range outcomes {
 		if _, err := fmt.Fprintf(output, "%s\t%s\t%s", outcome.Resource.Kind, outcome.Resource.ID, outcome.Outcome); err != nil {

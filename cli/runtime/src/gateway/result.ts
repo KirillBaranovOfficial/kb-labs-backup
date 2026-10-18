@@ -15,7 +15,9 @@ export function withGatewayUrl(envelope: ErrorEnvelope, gatewayUrl?: string): Er
     ...envelope,
     message: fill(envelope.message),
     hint: fill(envelope.hint),
-    details: { ...envelope.details, gatewayUrl: resolvedGatewayUrl },
+    ...(envelope.details?.gatewayUrl === '<url>'
+      ? { details: { ...envelope.details, gatewayUrl: resolvedGatewayUrl } }
+      : {}),
   };
 }
 

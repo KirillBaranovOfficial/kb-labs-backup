@@ -15,8 +15,6 @@ from typing import Callable
 from service_steps import Journey
 from invocations import (
     CompletedProcess,
-    PIPE,
-    STDOUT,
     decode_ux_success_result,
     invocation_context,
     read_ux_cli_result,
@@ -36,13 +34,12 @@ EDITED_GREETING = "Edited demo greeting for ${who}!"
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str],
          command_runner: Callable[..., CompletedProcess[str]]) -> str:
-    result = command_runner(command, cwd=cwd, env=env, text=True,
-                            stdout=PIPE, stderr=STDOUT,
-                            check=False)
+    result = command_runner(command, cwd=cwd, env=env, text=True, check=False)
+    output = (result.stdout or "") + (result.stderr or "")
     if result.returncode != 0:
-        detail = " ".join((result.stdout or "").split())
+        detail = " ".join(output.split())
         raise RuntimeError(f"{' '.join(command)} exited {result.returncode}; {detail or 'no output'}")
-    return result.stdout or ""
+    return output
 
 
 def _invoke(command: list[str], *, cwd: Path, env: dict[str, str],
@@ -442,8 +439,7 @@ def run_plugin_author_flow(
             stdout = stdout.decode(errors="replace")
         if isinstance(stderr, bytes):
             stderr = stderr.decode(errors="replace")
-        return CompletedProcess(command, result.returncode,
-                                            stdout=stdout + stderr, stderr=stderr)
+        return CompletedProcess(command, result.returncode, stdout=stdout, stderr=stderr)
     plugin_root = project / PLUGIN_DIR
     entry = project / ENTRY_DIR
     core_source = project / CORE_SOURCE

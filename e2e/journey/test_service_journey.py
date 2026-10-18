@@ -33,6 +33,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
                             prepare_service_api_session, service_api_token,
                             run_grouped_service_steps, run_service_steps)
 from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
+from journey_selection import JourneySelection
 from invocations import catalogued_error_hint, run_pty_command, store_report_secret
 from steps.auth import run_secured_auth_steps
 
@@ -92,6 +93,23 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_required_probe_refreshes_mutated_state_outside_claim_selection(self):
+        selection = JourneySelection(
+            requested=("S-001.1",), claims=frozenset({"S-001.1"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="service-local:explore", requested_runners="service-local:explore",
+        )
+        journey = Journey("secured", "required-state-refresh", selection=selection)
+        graph = FlowGraph(journey, {"host": ()}, states={
+            "host-running": {"passed": False, "evidence": "update invalidated the previous host probe",
+                             "group": "update", "step": "platform update"},
+        })
+
+        result = graph.probe_state("host-running", "host", "post-update health", lambda: None, required=True)
+
+        self.assertEqual(result.status, "PASS")
+        self.assertTrue(graph.states["host-running"]["passed"])
+
     def test_invalidated_state_is_reestablished_by_its_declared_probe(self):
         journey = Journey("secured", "mutated-shared-state-restored")
         graph = FlowGraph(
@@ -1128,7 +1146,8 @@ raise SystemExit(1)
             env.pop("KB_HOME", None)
             env.pop("KB_NET_OFFSET", None)
             from hermetic_cli import run_hermetic_cli
-            proc = run_hermetic_cli(command, cwd=root, env=env, timeout=120)
+            proc = run_hermetic_cli(command, cwd=root, env=env, timeout=120,
+                                    workspace_root=root)
             self.assertEqual(proc.returncode, 0, f"qa coverage show failed: {proc.stderr or proc.stdout}")
             payload = json.loads(proc.stdout)
             self.assertTrue(payload.get("ok"), payload)
@@ -1149,7 +1168,8 @@ raise SystemExit(1)
             corrupted_run_file.write_text(json.dumps(corrupted_data))
 
             corrupted_proc = run_hermetic_cli([node, str(cli_bin), "qa", "coverage", "show", "--mode", "local",
-                                              "--run", str(corrupted_run_file), "--json"], cwd=root, env=env, timeout=120)
+                                              "--run", str(corrupted_run_file), "--json"], cwd=root, env=env, timeout=120,
+                                              workspace_root=root)
             self.assertIn("claims[2].status must be PASS or FAIL", corrupted_proc.stdout + corrupted_proc.stderr)
 
     def test_service_step_exception_is_saved_and_later_steps_continue(self):

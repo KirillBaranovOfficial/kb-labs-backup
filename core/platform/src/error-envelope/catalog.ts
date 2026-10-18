@@ -6,6 +6,7 @@
  */
 
 import catalogData from './errors.catalog.json';
+import { redactProcessSensitiveString } from '../logging/context.js';
 import { markValidatedErrorEnvelope, type ValidatedErrorEnvelope } from './validated-envelope.js';
 import type {
   ErrorAction,
@@ -54,6 +55,41 @@ export function getCatalogEntry(code: PlatformErrorCode): ErrorCatalogEntry | un
 /** Map catalogued command failures to the CLI usage exit code at shared boundaries. */
 export function mapErrorEnvelopeToExitCode(code: ErrorCode): number {
   return code === 'KB_RUNTIME_INPUT_INVALID' || code === 'KB_RUNTIME_UNKNOWN_COMMAND' ? 2 : 1;
+}
+
+/** Render contract evidence without depending on Node-only inspection APIs. */
+export function describeContractValue(value: unknown): { observedType: string; observedValuePreview: string } {
+  const observedType = value === null ? 'null'
+    : Array.isArray(value) ? 'array'
+      : value instanceof Error ? 'error'
+        : typeof value;
+  const visited = new WeakSet<object>();
+  let rendered: string;
+  try {
+    rendered = renderContractValue(value, visited, 0);
+  } catch (cause) {
+    const causeType = cause instanceof Error ? cause.name : typeof cause;
+    rendered = `[unrenderable ${observedType}; renderer threw ${causeType}]`;
+  }
+  return { observedType, observedValuePreview: redactProcessSensitiveString(rendered).slice(0, 256) };
+}
+
+function renderContractValue(value: unknown, visited: WeakSet<object>, depth: number): string {
+  if (typeof value === 'string') return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
+  if (typeof value === 'undefined') return 'undefined';
+  if (typeof value === 'bigint') return `${value}n`;
+  if (typeof value === 'symbol') return value.toString();
+  if (typeof value === 'function') return `[Function ${value.name || 'anonymous'}]`;
+  if (typeof value !== 'object' || value === null) return String(value);
+  if (value instanceof Error) return `${value.name}(${renderContractValue(value.message, visited, depth + 1)})`;
+  if (visited.has(value)) return '[Circular]';
+  if (depth >= 3) return Array.isArray(value) ? '[…]' : '{…}';
+  visited.add(value);
+  if (Array.isArray(value)) {
+    return `[${value.slice(0, 8).map((item) => renderContractValue(item, visited, depth + 1)).join(', ')}${value.length > 8 ? ', …' : ''}]`;
+  }
+  const entries = Object.entries(value).slice(0, 8);
+  return `{ ${entries.map(([key, item]) => `${key}: ${renderContractValue(item, visited, depth + 1)}`).join(', ')}${Object.keys(value).length > 8 ? ', …' : ''} }`;
 }
 
 /** Substitutes only catalogue-declared names; all other brace text remains literal. */
@@ -159,16 +195,16 @@ function buildErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFiel
   const parsedDetails = toStringMap(options.details);
   const parsedTemplateValues = toStringMap(options.templateValues);
   if (parsedDetails === null || parsedTemplateValues === null) {
-    throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
+    throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers', options.details);
   }
   const details = parsedDetails ?? {};
   const templateValuesInput = parsedTemplateValues ?? {};
   for (const [key, value] of Object.entries(details)) {
     if (typeof value !== 'string') {
-      throw createErrorDetailsContractViolation(key, 'must be a string identifier');
+      throw createErrorDetailsContractViolation(key, 'must be a string identifier', value);
     }
     if (isSerializedStructuredValue(value)) {
-      throw createErrorDetailsContractViolation(key, 'contains serialized JSON');
+      throw createErrorDetailsContractViolation(key, 'contains serialized JSON', value);
     }
   }
   const parameterNames = catalogTemplateParameterNames[code];
@@ -190,7 +226,11 @@ function buildErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFiel
     if (templateValues[name] === undefined || templateValues[name].trim() === '') violationFields.push(name);
   }
   if (violationFields.length > 0) {
-    return createDiagnosticContractViolation(code, [...new Set(violationFields)].sort());
+    const field = [...new Set(violationFields)].sort()[0]!;
+    const observed = Object.hasOwn(details, field) ? details[field]
+      : Object.hasOwn(templateValuesInput, field) ? templateValuesInput[field]
+        : undefined;
+    return createDiagnosticContractViolation(code, [...new Set(violationFields)].sort(), field, observed);
   }
   const envelope: ErrorEnvelope = {
     code: entry.code,
@@ -226,9 +266,10 @@ function buildErrorEnvelope(code: PlatformErrorCode, options: EnvelopeOptionFiel
   return markValidatedErrorEnvelope(envelope);
 }
 
-function createDiagnosticContractViolation(originalCode: string, fields: readonly string[]): ValidatedErrorEnvelope {
+function createDiagnosticContractViolation(originalCode: string, fields: readonly string[], field: string, observedValue: unknown): ValidatedErrorEnvelope {
+  const evidence = describeContractValue(observedValue);
   return createErrorEnvelope('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION', {
-    details: { originalCode, fields: fields.join(', ') },
+    details: { originalCode, fields: fields.join(', '), field, ...evidence },
   });
 }
 
@@ -241,9 +282,12 @@ export function isSerializedStructuredValue(value: string): boolean {
   }
 }
 
-export function createErrorDetailsContractViolation(key: string, reason: string): Error & { code: string; hint: string } {
+export function createErrorDetailsContractViolation(key: string, reason: string, observedValue?: unknown): Error & { code: string; hint: string; field: string; observedType: string; observedValuePreview: string } {
+  const evidence = describeContractValue(observedValue);
   return Object.assign(new Error(`Error detail "${key}" ${reason}; use result data or error.diagnostics.`), {
     code: 'KB_PLUGIN_CONTRACT_VIOLATION',
     hint: 'Keep error.details values as identifiers; return structured reports in data or gate findings in error.diagnostics.',
+    field: key,
+    ...evidence,
   });
 }
