@@ -49,7 +49,7 @@ import tempfile
 
 
 from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
-                         KB_CREATE_JSON_STREAM_COMMANDS, read_kb_create_cli_result,
+                         read_kb_create_cli_result,
                          read_ux_cli_result, read_ux_cli_stream)
 from test_catalog_exit_status import catalogued_exit
 
@@ -378,10 +378,9 @@ def bad_sink():
                 read_ux_cli_result(result)
 
     def test_catalogued_stream_reports_process_and_terminal_statuses(self):
-        stream = ('{"ok":false,"error":{"code":"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE","message":"failed"}}\n'
-                  '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":2}}}\n')
-        result = subprocess.CompletedProcess(["kb-create", "apply"], 1, stream, "")
-        with self.assertRaisesRegex(ValueError, r"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE \(operation-failure\).*process status 1.*terminal status 2"):
+        document = '{"ok":false,"error":{"code":"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE","message":"failed"}}'
+        result = subprocess.CompletedProcess(["kb-create", "apply"], 2, document, "")
+        with self.assertRaisesRegex(ValueError, r"catalogued error KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE \(operation-failure\) has process status 2.*expected 1"):
             read_kb_create_cli_result("apply", result)
 
     def test_setup_failure_description_preserves_typed_error_and_hint(self):
@@ -389,33 +388,19 @@ def bad_sink():
         detail = describe_cli_failure("kb-create doctor", output, "", 2)
         self.assertEqual(detail, "kb-create doctor exited 2: KB_DOCTOR_INVALID; Manifest scan failed.; hint: Run `kb-create doctor --fix` and retry.")
 
-    def test_kb_create_output_forms_match_registered_command_dispatch(self):
-        root = Path(__file__).resolve().parents[2]
-        registry = (root / "tools/kb-create/v2/cmd/kb-create-v2/root.go").read_text()
-        descriptors = re.findall(
-            r'(?ms)^\s*\{Name: "([^"]+)"(.*?)(?=^\s*\{Name: "|^\s*\})', registry
-        )
-        stream_commands = {
-            name for name, body in descriptors
-            if re.search(r"if jsonMode\(cmd\)\s*\{\s*return execute\w+Stream\(", body)
-        }
-        self.assertTrue(descriptors, "could not read kb-create operation descriptors from root.go")
-        self.assertEqual(stream_commands, KB_CREATE_JSON_STREAM_COMMANDS)
-
     def test_command_reader_enforces_document_and_stream_forms(self):
         fixtures = Path(__file__).parent / "testdata"
         document = (fixtures / "gateway-index-plan-refusal.json").read_text()
-        stream = (fixtures / "gateway-index-apply-refusal.jsonl").read_text()
         plan_status = int((fixtures / "gateway-index-plan-refusal.exit").read_text().strip())
-        apply_status = int((fixtures / "gateway-index-apply-refusal.exit").read_text().strip())
+        apply_status = plan_status
         plan_result = subprocess.CompletedProcess(["kb-create", "plan"], plan_status, document, "")
-        apply_result = subprocess.CompletedProcess(["kb-create", "apply"], apply_status, stream, "")
+        apply_result = subprocess.CompletedProcess(["kb-create", "apply"], apply_status,
+            '{"ok":false,"error":{"code":"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE","message":"The sealed release index is unavailable."}}', "")
         self.assertEqual(read_kb_create_cli_result("plan", plan_result)["ok"], False)
         self.assertEqual(read_kb_create_cli_result("apply", apply_result)["ok"], False)
-        with self.assertRaisesRegex(ValueError, "not JSON"):
-            read_kb_create_cli_result("plan", apply_result)
-        with self.assertRaisesRegex(ValueError, "non-JSON record"):
-            read_kb_create_cli_result("apply", plan_result)
+        with self.assertRaisesRegex(ValueError, "CLI response is not JSON"):
+            read_kb_create_cli_result("apply", subprocess.CompletedProcess(
+                ["kb-create", "apply"], apply_status, f"{document.strip()}\n{document.strip()}\n", ""))
         for status in (plan_status, apply_status):
             self.assertEqual(status, catalogued_exit("KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE"))
 

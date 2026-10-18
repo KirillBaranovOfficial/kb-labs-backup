@@ -688,7 +688,7 @@ func TestFreshInstallWritesCompleteRunningIdentityBeforeFirstUpdate(t *testing.T
 			t.Errorf("fresh-install host process %d did not exit", processID)
 		}
 	})
-	runApplyStreamForTest(t, resolved, deps)
+	runApplyForTest(t, resolved, deps)
 	recorded, err := host.NewRecordedRunner(root)
 	if err != nil {
 		t.Fatal(err)
@@ -764,7 +764,7 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 	resolved := resolvedPlan{Plan: plan, State: state}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
 		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
-	runApplyStreamForTest(t, resolved, deps)
+	runApplyForTest(t, resolved, deps)
 	installed = true
 	if _, code, output := inst.run("status", "--json"); code != 0 {
 		t.Fatalf("status after fresh install: %s", output)
@@ -935,7 +935,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		}
 	})
 	operationName = "install"
-	runApplyStreamForTest(t, resolvedPlan{Plan: installPlan, State: state}, deps)
+	runApplyForTest(t, resolvedPlan{Plan: installPlan, State: state}, deps)
 
 	layout, err := versionroot.New(root)
 	if err != nil {

@@ -177,7 +177,10 @@ describe('installed platform adapter defaults', () => {
       mkdir(projectRoot, { recursive: true }),
       mkdir(home, { recursive: true }),
     ]);
-    await writeFile(path.join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapters: {} } }));
+    await writeFile(path.join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
+      gateway: { access: { mode: 'local' } },
+      platform: { adapters: {} },
+    }));
 
     const result = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'project', 'list', '--json'], {
       cwd: projectRoot,
@@ -293,7 +296,9 @@ describe('installed platform adapter defaults', () => {
 
     const config = JSON.parse(releaseConfig.replace(/,\s*([}\]])/g, '$1')) as {
       platform: { adapters: Record<string, string>; adapterOptions?: Record<string, unknown> };
+      gateway?: { access?: { mode?: string }; [key: string]: unknown };
     };
+    config.gateway = { ...config.gateway, access: { ...config.gateway?.access, mode: 'local' } };
     delete config.platform.adapters.storage;
     if (config.platform.adapterOptions) delete config.platform.adapterOptions.storage;
     await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), `${JSON.stringify(config, null, 2)}\n`);
@@ -439,6 +444,7 @@ describe('installed platform adapter defaults', () => {
 
     const configPath = path.join(versionRoot, '.kb', 'kb.config.jsonc');
     const config = {
+      gateway: { access: { mode: 'local' } },
       execution: { mode: 'in-process' },
       platform: {
         adapters: {
@@ -616,7 +622,9 @@ describe('installed platform adapter defaults', () => {
     const releaseConfig = workspaceConfig.replace(/"mode":\s*"development",\s*/, '');
     const config = JSON.parse(releaseConfig.replace(/,\s*([}\]])/g, '$1')) as {
       platform: { adapters: Record<string, string>; adapterOptions?: Record<string, unknown> };
+      gateway?: { access?: { mode?: string }; [key: string]: unknown };
     };
+    config.gateway = { ...config.gateway, access: { ...config.gateway?.access, mode: 'local' } };
     delete config.platform.adapters.storage;
     if (config.platform.adapterOptions) delete config.platform.adapterOptions.storage;
     await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), `${JSON.stringify(config, null, 2)}\n`);

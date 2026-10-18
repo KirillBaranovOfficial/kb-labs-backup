@@ -10,10 +10,8 @@ from platform_channel_steps import decode_canary_apply_result, run_platform_chan
 from test_install_layout import create_test_install_container
 from test_catalog_exit_status import catalogued_exit
 
-def apply_stream(record: dict, exit_code: int) -> str:
-    terminal = {"ok": True, "data": None,
-                "meta": {"stream": {"terminal": True, "exitCode": exit_code}}}
-    return "\n".join([json.dumps(record), json.dumps(terminal)]) + "\n"
+def apply_document(record: dict) -> str:
+    return json.dumps(record)
 
 
 class PlatformChannelStepsTest(unittest.TestCase):
@@ -48,24 +46,23 @@ class PlatformChannelStepsTest(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}), "")
         if args[1] == "apply":
             if self.record_apply_refusal:
-                fixture = Path(__file__).parent / "testdata/gateway-index-apply-refusal.jsonl"
+                fixture = Path(__file__).parent / "testdata/gateway-index-plan-refusal.json"
                 return subprocess.CompletedProcess(args, 1, fixture.read_text(), "")
             if self.fail_canary_preflight:
-                return subprocess.CompletedProcess(args, 1, apply_stream({"ok": False, "error": {
+                return subprocess.CompletedProcess(args, 1, apply_document({"ok": False, "error": {
                     "code": "KB_INSTALL_MEMORY_INSUFFICIENT",
                     "message": "The platform install needs at least 1228.80 MiB of available memory; 1200.00 MiB is available.",
                     "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.",
                     "meta": {"minimum": "1228.80 MiB", "available": "1200.00 MiB"}, "correlationId": "c-memory",
-                }}, 1), "")
+                }}), "")
             fresh_active_root = create_test_install_container(self.fresh_root)
             (fresh_active_root / ".kb/v2").mkdir(parents=True, exist_ok=True)
             plan = {"platformChannel": "canary", "serviceGraph": {"platformVersion": "3.0.2-canary.1"},
                     "artifacts": [{"kind": "platform", "version": "3.0.2-canary.1", "sha256": "platform"},
                                   {"kind": "sdk", "version": "3.0.2-canary.1", "sha256": "sdk"}]}
             (fresh_active_root / ".kb/v2/receipt.json").write_text(json.dumps({"plan": plan}))
-            result = {"ok": True, "data": {"receipt": {"plan": plan}},
-                      "meta": {"stream": {"result": True}}}
-            return subprocess.CompletedProcess(args, 0, apply_stream(result, 0), "")
+            result = {"ok": True, "data": {"receipt": {"plan": plan}}}
+            return subprocess.CompletedProcess(args, 0, apply_document(result), "")
         if args[1] == "update" and str(self.root / "canary-index.json") in args:
             self._write_receipt("3.0.2-canary.1", "canary")
             if "--json" not in args:
@@ -136,8 +133,8 @@ class PlatformChannelStepsTest(unittest.TestCase):
         self.assertNotIn("S-052.2", claims)
         self.assertEqual([command[1] for command in self.commands], ["plan", "stop", "apply", "start"])
 
-    def test_s053_canary_apply_refusal_reads_recorded_apply_stream(self):
-        fixture = Path(__file__).parent / "testdata/gateway-index-apply-refusal.jsonl"
+    def test_s053_canary_apply_refusal_reads_recorded_json_document(self):
+        fixture = Path(__file__).parent / "testdata/gateway-index-plan-refusal.json"
         command = subprocess.CompletedProcess(["kb-create", "apply", "--json"], 1, fixture.read_text(), "")
         error = decode_canary_apply_result(command)
         self.assertEqual(error["code"], "KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE")
@@ -145,7 +142,7 @@ class PlatformChannelStepsTest(unittest.TestCase):
         self.assertIn("rm", error["hint"])
         self.assertIn("doctor", error["hint"])
 
-    def test_s053_canary_step_decodes_recorded_stream_refusal(self):
+    def test_s053_canary_step_decodes_recorded_document_refusal(self):
         self.record_apply_refusal = True
         result = run_platform_channel_steps(
             mode="local", launcher="kb-create", platform_root=self.root,

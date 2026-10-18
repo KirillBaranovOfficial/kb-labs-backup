@@ -79,7 +79,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 self.assertNotEqual(child_env["HOME"], caller_home)
                 self.assertFalse(Path(child_env["HOME"]).exists())
                 self.assertNotIn("KB_HOME", child_env)
-                self.assertNotIn("KB_PLATFORM_ROOT", child_env)
+                self.assertEqual(Path(child_env["KB_PLATFORM_ROOT"]), Path(child_env["HOME"]) / "platform")
                 self.assertNotIn("KB_NET_OFFSET", child_env)
             self.assertEqual(json.loads(output.getvalue()), {
                 "selection": ["S-042"], "steps": ["S-042.1"],

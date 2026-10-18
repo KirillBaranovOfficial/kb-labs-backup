@@ -390,6 +390,40 @@ thread.join()
         self.assertEqual(setup["marketplace_packages"], ())
         self.assertEqual(setup["command_help_paths"], (("commit", "commit", "--help"),))
 
+    def test_secured_project_state_is_probed_only_after_initial_login(self):
+        runner = importlib.import_module("runner")
+        journey = Journey("secured", "initial-secured-session-order")
+        graph = FlowGraph(journey, {"auth": ("host-running",), "project": ("host-running",)},
+                          states={"host-running": {"passed": True, "evidence": "host ready"}})
+        events = []
+        runner.establish_initial_secured_session(graph, lambda: events.append("login"))
+        graph.probe_state("project-registered", "project", "project show",
+                          lambda: events.append("project probe"))
+        self.assertEqual(events, ["login", "project probe"])
+        self.assertTrue(graph.states["session"]["passed"])
+        self.assertTrue(graph.states["project-registered"]["passed"])
+
+    def test_recovery_reestablishes_host_before_dependent_session(self):
+        runner = importlib.import_module("runner")
+        journey = Journey("secured", "recovery-host-session-order")
+        graph = FlowGraph(
+            journey, {"host": ("platform-installed",), "auth": ("host-running",)},
+            states={"platform-installed": {"passed": True, "evidence": "installed"},
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "session": {"passed": True, "evidence": "session ready"}},
+        )
+        graph.invalidate_state("host-running", group="auth", step="recovery", evidence="host restarted")
+        graph.invalidate_state("session", group="auth", step="recovery", evidence="session revoked")
+        events = []
+        runner.reestablish_host_and_session(
+            graph, "recovery", lambda: events.append("host probe"),
+            lambda: events.append("login"))
+        consumer = graph.flow("secured consumer", "auth", "auth", lambda: events.append("consumer"))
+        self.assertEqual(events, ["host probe", "login", "consumer"])
+        self.assertEqual(consumer, "PASS")
+        self.assertTrue(graph.states["host-running"]["passed"])
+        self.assertTrue(graph.states["session"]["passed"])
+
     def test_selected_step_completion_names_unrun_step_and_claim(self):
         runner = importlib.import_module("runner")
         with patch.object(runner, "FIRST_FAILURE", ""):
