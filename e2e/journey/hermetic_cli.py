@@ -7,6 +7,8 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Mapping
 
+from installed_fixture import write_local_access_mode
+
 from invocations import (
     CompletedProcess,
     print_report_text,
@@ -22,7 +24,7 @@ def run_hermetic_cli(
     runner: Callable[..., CompletedProcess[str]] | None = None,
     timeout: float = 300,
 ) -> CompletedProcess[str]:
-    """Run a host-side CLI with fresh HOME and no installed-platform overrides."""
+    """Run a host-side CLI with fresh HOME and explicit local access mode."""
     if len(command) > 1 and Path(command[1]).as_posix().endswith("cli/bin/dist/bin.js"):
         workspace_root = Path(cwd or Path.cwd())
         cli_entry = Path(command[1])
@@ -38,6 +40,8 @@ def run_hermetic_cli(
         child_env.pop(key, None)
     with tempfile.TemporaryDirectory(prefix="kb-journey-home-") as home:
         child_env["HOME"] = home
+        platform_root = write_local_access_mode(Path(home) / "platform")
+        child_env["KB_PLATFORM_ROOT"] = str(platform_root)
         return run_command(command, cwd=cwd, env=child_env, runner=runner, timeout=timeout)
 
 

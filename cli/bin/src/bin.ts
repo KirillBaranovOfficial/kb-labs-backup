@@ -16,7 +16,8 @@
  * the raw process arguments (argv[2..]), then ensures the platform is
  * gracefully shut down via `platform.shutdown()` before the process exits.
  * If `run()` returns a numeric exit code, that code is forwarded to
- * `process.exit()` so the shell receives the correct status.
+ * `process.exitCode` so Node can finish flushing stdout and stderr before the
+ * shell receives the correct status.
  */
 
 const rawCliArgs = process.argv.slice(2);
@@ -104,6 +105,9 @@ process.env.CLI_VERSION = __KB_CLI_VERSION__;
   }
 
   if (typeof code === "number") {
+    await new Promise<void>((resolve, reject) => {
+      process.stdout.write('', (error) => error ? reject(error) : resolve());
+    });
     process.exit(code);
   }
 })();

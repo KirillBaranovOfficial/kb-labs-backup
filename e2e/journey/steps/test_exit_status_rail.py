@@ -4,7 +4,7 @@ import json
 import subprocess
 import unittest
 
-from invocations import read_kb_create_cli_result, read_ux_cli_result, run_command
+from invocations import read_kb_create_cli_result, read_ux_cli_result, read_ux_cli_stream, run_command
 
 
 class InvocationExitStatusRailTests(unittest.TestCase):
@@ -31,9 +31,9 @@ class InvocationExitStatusRailTests(unittest.TestCase):
         }}) + "\n" + json.dumps({"ok": True, "data": None, "meta": {"stream": {
             "terminal": True, "exitCode": 2,
         }}}) + "\n")
-        result = subprocess.CompletedProcess(["kb-create", "apply", "--json"], 1, stdout, "")
+        result = subprocess.CompletedProcess(["kb-create", "install", "--json"], 1, stdout, "")
         with self.assertRaisesRegex(ValueError, r"KB_INSTALL_GATEWAY_INDEX_UNAVAILABLE \(operation-failure\).*process status 1.*terminal status 2"):
-            read_kb_create_cli_result("apply", result)
+            read_ux_cli_stream(result)
 
 
 if __name__ == "__main__":

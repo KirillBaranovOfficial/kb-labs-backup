@@ -19,6 +19,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
+from typing import Callable
 
 from studio_steps import (create_studio_access_tokens, create_studio_environment,
                           create_studio_member, run_studio_browser_step)
@@ -60,8 +61,8 @@ from invocations import (
     open_http,
     print_report_text,
     read_kb_create_cli_result,
-    read_kb_create_cli_stream,
     read_ux_cli_result,
+    read_ux_cli_stream,
     run_command,
     run_pty_command,
     start_background_command,
@@ -280,23 +281,42 @@ def probe_platform_state(graph: FlowGraph, env: dict[str, str], launcher: str,
         graph.probe_state("platform-version-known", mutator_group, mutator_step,
                           version_probe)
 
-    def host_probe() -> str | None:
-        result, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
-        try:
-            payload = decode_ux_success_result(read_kb_create_cli_result("status", result))
-            if (result.returncode != 0 or payload.get("running") is not True
-                    or payload.get("reachable") is not True):
-                return f"kb-create status reports running={payload.get('running')!r}, reachable={payload.get('reachable')!r}"
-        except (json.JSONDecodeError, ValueError, AttributeError) as error:
-            return f"kb-create status could not establish host health: {error}"
-        status, _, _ = open_http(urllib.request.urlopen,
-                                 urllib.request.Request("http://127.0.0.1:4000/ready"),
-                                 timeout=10, env=env)
-        return None if status == 200 else f"gateway /ready returned HTTP {status}"
-
     if include_host:
         graph.probe_state("host-running", mutator_group, mutator_step,
-                          host_probe)
+                          lambda: host_running_probe(env, launcher))
+
+
+def host_running_probe(env: dict[str, str], launcher: str) -> str | None:
+    """Verify the installed host before scheduling any state that depends on it."""
+    result, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
+    try:
+        payload = decode_ux_success_result(read_kb_create_cli_result("status", result))
+        if (result.returncode != 0 or payload.get("running") is not True
+                or payload.get("reachable") is not True):
+            return f"kb-create status reports running={payload.get('running')!r}, reachable={payload.get('reachable')!r}"
+    except (json.JSONDecodeError, ValueError, AttributeError) as error:
+        return f"kb-create status could not establish host health: {error}"
+    status, _, _ = open_http(urllib.request.urlopen,
+                             urllib.request.Request("http://127.0.0.1:4000/ready"),
+                             timeout=10, env=env)
+    return None if status == 200 else f"gateway /ready returned HTTP {status}"
+
+
+def reestablish_host_and_session(graph: FlowGraph, mutation: str,
+                                 host_probe: Callable[[], str | None],
+                                 login: Callable[[], None]) -> None:
+    """Restore the host state before signing in and publishing the dependent session state."""
+    graph.probe_state("host-running", "host", mutation, host_probe)
+    if graph.states.get("host-running", {}).get("passed") is not True:
+        return
+    login()
+    graph.probe_state("session", "auth", "fresh admin CLI login", lambda: None)
+
+
+def establish_initial_secured_session(graph: FlowGraph, login: Callable[[], None]) -> None:
+    """Sign in before any secured project probe can invoke protected CLI commands."""
+    login()
+    graph.probe_state("session", "auth", "secured administrator login", lambda: None)
 
 
 def establish_project_registration(graph: FlowGraph, project_root: Path, env: dict[str, str]) -> None:
@@ -1226,7 +1246,7 @@ def _main(*, update_variant_runner=None):
             return finalize_run(False)
         if operation == "install":
             try:
-                records = read_kb_create_cli_stream("install", result)
+                records = read_ux_cli_stream(result)
             except json.JSONDecodeError:
                 records = []
             terminal = records[-1] if records else {}
@@ -1399,6 +1419,11 @@ def _main(*, update_variant_runner=None):
                                              "workflow", "analytics", "studio"])
         _run_final_uninstall(outer_graph, env, launcher)
         return finalize_run(False)
+
+    if mode == "secured":
+        from service_runner import restore_secured_cli_login
+        establish_initial_secured_session(
+            outer_graph, lambda: restore_secured_cli_login(BIN / "kb", env))
 
     verify_listener_ownership()
 
@@ -1936,11 +1961,11 @@ def _main(*, update_variant_runner=None):
                     on_valid_password=store_recovered_password,
                 )
                 from service_runner import restore_secured_cli_login
-                restore_secured_cli_login(BIN / "kb", service_env)
-                outer_graph.probe_state("session", "auth", "fresh admin CLI login", lambda: None)
-                probe_platform_state(outer_graph, env, launcher, mutator_group="host",
-                                     mutator_step=mutation, include_installed=False,
-                                     include_version=False)
+                reestablish_host_and_session(
+                    outer_graph, mutation,
+                    lambda: host_running_probe(env, launcher),
+                    lambda: restore_secured_cli_login(BIN / "kb", service_env),
+                )
                 added, _ = run(kb_command([ "project", "add", "--json"], executable=str(BIN / "kb")),
                                env=service_env, cwd=PROJECT, timeout=90)
                 if added.returncode != 0:

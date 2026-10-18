@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import layout_relative, layout_value, write_local_access_mode
 
 import json
 import os
@@ -19,7 +19,8 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                 tempfile.TemporaryDirectory(prefix="kb-command-scope-cwd-") as cwd, \
                 tempfile.TemporaryDirectory(prefix="kb-command-scope-project-") as project:
             env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
-            env.pop("KB_PLATFORM_ROOT", None)
+            env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
+                Path(home) / "platform", Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc"))
             env.pop("KB_NET_OFFSET", None)
 
             def invoke(args: list[str]) -> tuple[int, dict]:
@@ -76,7 +77,8 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
         with tempfile.TemporaryDirectory(prefix="kb-global-flags-home-") as home, \
                 tempfile.TemporaryDirectory(prefix="kb-global-flags-cwd-") as cwd:
             env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
-            env.pop("KB_PLATFORM_ROOT", None)
+            env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
+                Path(home) / "platform", Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc"))
             env.pop("KB_NET_OFFSET", None)
             for args in (["--help"], ["--version"]):
                 result = run_command(
@@ -109,7 +111,8 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
         with tempfile.TemporaryDirectory(prefix="kb-platform-command-home-") as home, \
                 tempfile.TemporaryDirectory(prefix="kb-platform-command-cwd-") as cwd:
             env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
-            env.pop("KB_PLATFORM_ROOT", None)
+            env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
+                Path(home) / "platform", Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc"))
             env.pop("KB_NET_OFFSET", None)
             for args in (["hello", "--json"], ["logs", "query", "--json"]):
                 result = run_command(
@@ -152,7 +155,8 @@ def run_config_failure_steps(journey: Journey, repo_root: Path) -> None:
                 tempfile.TemporaryDirectory(prefix="kb-config-failure-cwd-") as cwd, \
                 tempfile.TemporaryDirectory(prefix="kb-config-failure-projects-") as projects:
             env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
-            env.pop("KB_PLATFORM_ROOT", None)
+            env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
+                Path(home) / "platform", Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc"))
             env.pop("KB_NET_OFFSET", None)
 
             def invoke(args: list[str], command_cwd: Path = cwd) -> tuple[int, dict]:

@@ -144,6 +144,48 @@ def inject_existing_version_fault(root: Path, identity: str, transform: PathTran
     return _mutate_existing_target(target, transform, identity)
 
 
+def write_local_access_mode(platform_root: Path, source_config: Path | None = None) -> Path:
+    """Create a platform config fixture with explicit local access mode."""
+    config_path = Path(platform_root) / ".kb" / "kb.config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    if source_config is None:
+        config = {"gateway": {"access": {"mode": "local"}}}
+    else:
+        from invocations import run_command
+
+        workspace_root = Path(__file__).resolve().parents[2]
+        for source in workspace_root.iterdir():
+            if source.name in {".git", ".kb", "node_modules"}:
+                continue
+            destination = Path(platform_root) / source.name
+            if not destination.exists() and not destination.is_symlink():
+                destination.symlink_to(source, target_is_directory=source.is_dir())
+        modules_link = Path(platform_root) / "node_modules"
+        if modules_link.is_symlink():
+            modules_link.unlink()
+        if not modules_link.exists():
+            modules_link.symlink_to(
+                workspace_root / "node_modules" / ".pnpm" / "node_modules", target_is_directory=True)
+        parser_module = (workspace_root / "core/config/dist/index.js").as_uri()
+        script = (
+            "import { readFileSync, writeFileSync } from 'node:fs'; "
+            "const { parseJsonc } = await import(process.argv[1]); "
+            "const config = parseJsonc(readFileSync(process.argv[2], 'utf8')); "
+            "config.gateway ??= {}; config.gateway.access ??= {}; "
+            "config.gateway.access.mode = 'local'; "
+            "writeFileSync(process.argv[3], JSON.stringify(config));"
+        )
+        result = run_command(
+            ["node", "--input-type=module", "-e", script, parser_module, str(source_config), str(config_path)],
+            cwd=workspace_root, timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"could not create local-mode config fixture: {result.stderr or result.stdout}")
+        return Path(platform_root)
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    return Path(platform_root)
+
+
 def install_fixture_root(root: Path, *, launcher: str, index: Path, run_command: Callable[..., CompletedProcess],
                          label: str, selection: tuple[str, str] | None = None) -> Path:
     """Obtain a complete installation only through the product installer."""

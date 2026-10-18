@@ -20,7 +20,7 @@ CommandRunner = Callable[[list[str]], CompletedProcess]
 
 
 def decode_canary_apply_result(command: CompletedProcess) -> dict:
-    """Decode the result frame from apply's command-registered JSON stream."""
+    """Decode apply's single JSON result document."""
     envelope = read_kb_create_cli_result("apply", command)
     return (decode_ux_success_result(envelope) if command.returncode == 0
             else decode_ux_error_result(envelope))

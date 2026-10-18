@@ -43,11 +43,11 @@ from invocations import (
     decode_ux_error_result,
     decode_ux_success_result,
     read_kb_create_cli_result,
-    read_kb_create_cli_stream,
     catalogued_error_hint,
     catalogued_error_message,
     open_http,
     read_ux_cli_result,
+    read_ux_cli_stream,
     run_command as evidence_run_command,
 )
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
@@ -63,7 +63,7 @@ CommandRunner = Callable[..., CompletedProcess]
 def parse_install_refusal(result: CompletedProcess[str]) -> dict | None:
     """Return the typed product envelope from a failed JSON install stream."""
     try:
-        envelope = read_kb_create_cli_stream("install", result)
+        envelope = read_ux_cli_stream(result)
     except ValueError:
         return None
     return next((decode_ux_error_result(record) for record in envelope[:-1]
@@ -1618,17 +1618,10 @@ def run_apply_scenario_step(*, mode: str, launcher: str, stable_index: Path,
                               "--platform-root", str(apply_root), "--service-profile", "default",
                               "--scenario", "commit", "--scenario-answers", answers])
         try:
-            records = read_kb_create_cli_stream("apply", result)
-            terminal = records[-1] if records else {}
-            stream = terminal.get("meta", {}).get("stream", {})
-            apply_results = [decode_ux_success_result(record) for record in records[:-1]
-                             if record.get("ok") is True
-                             and record.get("meta", {}).get("stream", {}).get("result") is True]
-            if (result.returncode != 0 or not stream.get("terminal") or stream.get("exitCode") != 0
-                    or terminal.get("ok") is not True or terminal.get("data", "not-null") is not None
-                    or len(apply_results) != 1):
-                raise RuntimeError("apply JSON stream omitted its successful apply result or terminal record")
-            apply_result = apply_results[0]
+            apply_result = read_kb_create_cli_result("apply", result)
+            if result.returncode != 0 or apply_result.get("ok") is not True:
+                raise RuntimeError("apply JSON document did not contain its successful result")
+            apply_result = decode_ux_success_result(apply_result)
             request = apply_result.get("receipt", {}).get("plan", {}).get("request", {})
             if (apply_result.get("operation") != "apply" or request.get("platformRoot") != str(apply_root)
                     or request.get("providerPreferences", {}).get("cache") != "state-broker"
