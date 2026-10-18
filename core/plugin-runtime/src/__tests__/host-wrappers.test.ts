@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { wrapCliResult, wrapRestResult, unwrapRestData } from '../host/index.js';
 import type { RunResult, ExecutionMeta, PluginContextDescriptor } from '@kb-labs/plugin-contracts';
 import { createUxSuccessResult, isUxResult } from '@kb-labs/core-platform/ux-result';
-import { createProductErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { createErrorEnvelope, createProductErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 
 describe('Host Wrappers', () => {
   const mockExecutionMeta: ExecutionMeta = {
@@ -126,6 +126,26 @@ describe('Host Wrappers', () => {
       expect(result.exitCode).toBe(1);
       expect(result.ok).toBe(false);
       expect(result.error).toMatchObject({ code: 'KB_RUNTIME_COMMAND_FAILED', message: 'failed', hint: 'Resolve the failure, then retry.' });
+    });
+
+    it('fills an omitted catalogued failure hint from the platform error catalogue', () => {
+      const result = wrapCliResult({
+        ok: true,
+        data: {
+          ok: false,
+          error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'failed' },
+        },
+        executionMeta: mockExecutionMeta,
+      }, mockDescriptor);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.error).toMatchObject({
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        message: 'failed',
+        hint: createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+          templateValues: { binary: 'kb' },
+        }).hint,
+      });
     });
 
     // case: S-203.1

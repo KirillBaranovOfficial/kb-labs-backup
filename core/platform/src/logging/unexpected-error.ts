@@ -1,19 +1,22 @@
-import type { ILogger } from '../adapters/logger.js';
+import type { IContextLogger } from './context.js';
 
 /** Write the queryable diagnostic record for an unexpected CLI failure. */
 export function logUnexpectedCliError(
-  logger: ILogger,
+  logger: IContextLogger,
   error: unknown,
   correlationId?: string,
 ): void {
   const cause = error instanceof Error ? error : new Error(String(error));
-  logger.error('CLI command failed unexpectedly', cause, {
+  logger.forOperation('cli.command.failed', { correlationId }).event('error', {
     event: 'cli.unexpected_error',
-    ...(correlationId ? { correlationId } : {}),
-    errorClass: cause.name,
-    errorMessage: cause.message,
-    causeChain: errorCauseChain(cause),
-    stack: cause.stack ?? '',
+    message: 'CLI command failed unexpectedly',
+    error: cause,
+    fields: {
+      errorClass: cause.name,
+      errorMessage: cause.message,
+      causeChain: errorCauseChain(cause),
+      stack: cause.stack ?? '',
+    },
   });
 }
 
