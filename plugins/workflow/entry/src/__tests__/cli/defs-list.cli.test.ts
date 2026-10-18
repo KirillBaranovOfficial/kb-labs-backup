@@ -130,6 +130,31 @@ describe('workflow:defs list', () => {
     expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
+  it('keeps the daemon error hint shape in the shared contract diagnostic', async () => {
+    const thrown = Object.assign(new Error('Workflow API failed.'), {
+      code: 'WORKFLOW_REQUEST_FAILED',
+      hint: { key: 'errors.workflow.list', params: { project: 'project-a' } },
+    });
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ listWorkflows: async () => { throw thrown; } });
+    });
+
+    const { ui } = createCapturedUI();
+    const result = await defsListCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: { json: true } }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        details: {
+          field: 'hint',
+          observedType: 'object',
+          observedValuePreview: expect.stringContaining('errors.workflow.list'),
+        },
+      },
+    });
+  });
+
   it('DL-08: renders Tags column joined by comma', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({

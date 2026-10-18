@@ -136,6 +136,26 @@ class PtyInvocationTest(unittest.TestCase):
 
         self.assertEqual(diagnostic, {"correlationId": "cli-by-name-1", "queryError": "not-json"})
 
+    def test_non_cli_report_does_not_query_nested_unexpected_error_text(self):
+        with tempfile.TemporaryDirectory(prefix="journey-nested-diagnostic-") as temp:
+            root = Path(temp)
+            target = root / "installed-kb"
+            target.write_text("#!/bin/sh\nexit 9\n")
+            target.chmod(0o755)
+            (root / "kb").symlink_to(target)
+            env = {"PATH": str(root), "KB_JOURNEY_CLI_PATH": str(root / "kb")}
+            catalog_path = Path(__file__).resolve().parents[2] / "core/platform/src/error-envelope/errors.catalog.json"
+            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+            unexpected = next(item for item in catalog["codes"] if item["code"] == "KB_RUNTIME_UNEXPECTED")
+            correlation_id = "nested-correlation\\"
+            hint = unexpected["hint"].replace("{correlationId}", correlation_id)
+            service_report = json.dumps({"message": f"{unexpected['message']} [KB_RUNTIME_UNEXPECTED]\nHint: {hint}"})
+
+            diagnostic = invocations._unexpected_error_diagnostics(
+                ["python3", "service_runner.py"], service_report, "", root, env)
+
+        self.assertIsNone(diagnostic)
+
     def test_invocation_records_kb_environment_and_resolved_shim_with_shared_redaction(self):
         with tempfile.TemporaryDirectory(prefix="journey-kb-shim-evidence-") as temp:
             root = Path(temp)

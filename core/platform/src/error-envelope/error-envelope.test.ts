@@ -7,6 +7,7 @@ import type { CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from
 import type { ErrorCode, ProductErrorCode } from './index.js';
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
+import { registerProcessSensitiveValues } from '../logging/context.js';
 import {
   ERROR_STAGES,
   ErrorEnvelopeError,
@@ -354,7 +355,13 @@ describe('createErrorEnvelope', () => {
       details: { undeclaredEvidence: 'unexpected' },
     });
     expect(envelope.code).toBe('KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION');
-    expect(envelope.details).toEqual({ originalCode: 'KB_RUNTIME_UNEXPECTED', fields: 'undeclaredEvidence' });
+    expect(envelope.details).toMatchObject({
+      originalCode: 'KB_RUNTIME_UNEXPECTED',
+      fields: 'undeclaredEvidence',
+      field: 'undeclaredEvidence',
+      observedType: 'string',
+      observedValuePreview: "'unexpected'",
+    });
   });
 
   it('retains a cause that adds information beyond the message', () => {
@@ -647,6 +654,49 @@ describe('toErrorEnvelope (platform errors)', () => {
       code: 'KB_PLUGIN_CONTRACT_VIOLATION',
       hint: expect.stringContaining('error.diagnostics'),
     });
+  });
+
+  it('keeps the observed product hint shape when a thrown error has a malformed hint', () => {
+    const objectHint = { key: 'errors.review.failed', params: { file: 'src/a.ts' } };
+    const malformed = Object.assign(new Error('Review failed.'), {
+      code: 'REVIEW_FAILED',
+      hint: objectHint,
+    });
+
+    expect(toErrorEnvelope(malformed, { correlationId: 'malformed-product-hint' })).toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      correlationId: 'malformed-product-hint',
+      details: {
+        field: 'hint',
+        observedType: 'object',
+        observedValuePreview: expect.stringContaining('errors.review.failed'),
+      },
+    });
+    expect(toErrorEnvelope(Object.assign(new Error('Missing hint.'), { code: 'REVIEW_FAILED' }))).toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      details: { field: 'hint', observedType: 'undefined', observedValuePreview: 'undefined' },
+    });
+  });
+
+  it('redacts registered secrets in malformed field keys and values before bounding the preview', () => {
+    const secret = 'x81-round6-malformed-secret-value';
+    registerProcessSensitiveValues([secret]);
+    const malformed = Object.assign(new Error('Review failed.'), {
+      code: 'REVIEW_FAILED',
+      hint: {
+        [secret]: secret,
+        nested: { password: secret },
+        tail: 'x'.repeat(400),
+      },
+    });
+
+    const envelope = toErrorEnvelope(malformed);
+    const preview = envelope.details?.observedValuePreview ?? '';
+
+    expect(envelope.details).toMatchObject({ field: 'hint', observedType: 'object' });
+    expect(preview).toContain('[REDACTED]');
+    expect(preview).not.toContain(secret);
+    expect(preview.length).toBeLessThanOrEqual(256);
   });
 
   // case: S-054.19

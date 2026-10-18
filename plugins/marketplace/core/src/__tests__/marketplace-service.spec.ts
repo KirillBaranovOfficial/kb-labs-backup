@@ -59,7 +59,7 @@ async function createAdapterDir(tmpDir: string, name: string, id: string): Promi
   await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
     name: id,
     version: '1.0.0',
-    kb: { manifest: './dist/adapter-manifest.js' },
+    kb: { adapter: { manifest: './dist/adapter-manifest.js' } },
   }));
   await fs.writeFile(path.join(dir, 'dist', 'adapter-manifest.js'), `export const manifest = ${JSON.stringify({
     schema: 'kb.adapter/1', manifestVersion: '1.0.0', id, name: id, version: '1.0.0', type: 'core', implements: 'ITestAdapter', networkRequired: false,
@@ -475,7 +475,7 @@ describe('MarketplaceService', () => {
       const packageRoot = path.join(tmpDir, 'packages', 'broken-adapter');
       await fs.mkdir(packageRoot, { recursive: true });
       await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
-        name: '@kb-labs/broken-adapter', version: '1.0.0', type: 'module', kb: { manifest: './manifest.mjs' },
+        name: '@kb-labs/broken-adapter', version: '1.0.0', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
       }));
       await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = { schema: "kb.adapter/1", implements: "ICache" };');
       const state = { installed: false, committed: false };
@@ -603,7 +603,7 @@ describe('MarketplaceService', () => {
         JSON.stringify({
           name: '@kb-labs/local-plugin-entry',
           version: '0.1.0',
-          kb: { manifest: './dist/manifest.js' },
+          kb: { adapter: { manifest: './dist/manifest.js' } },
         }),
       );
       const source = createMockSource(new Map());

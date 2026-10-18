@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertSealedPlatformOverrides, mergeMinimumReleaseAgeExclude, NpmPackageSource } from './npm-source.js';
 import type { PackageMetadataError, PlatformArtifactPinsError } from './npm-source.js';
 
@@ -68,7 +68,7 @@ async function createLocalRegistry(root: string): Promise<{
         version: '1.0.0',
         type: 'module',
         dependencies: options.dependencies ?? {},
-        kb: { manifest: './manifest.mjs' },
+        kb: { adapter: { manifest: './manifest.mjs' } },
       }));
       await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
         schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: name, name, version: '1.0.0',
@@ -157,6 +157,18 @@ describe('NpmPackageSource', () => {
       integrity: expect.stringMatching(/^sha512-/),
     });
     expect(fetch).toHaveBeenCalledWith('https://registry.test/@kb-labs%2Fcustom');
+  });
+
+  it('classifies the shipped analytics-file package using its published KB metadata', async () => {
+    const packagePath = path.resolve(fileURLToPath(new URL('../../../../adapters/analytics-file/package.json', import.meta.url)));
+    const packageJson = JSON.parse(await fs.readFile(packagePath, 'utf8')) as {
+      name: string; kb: { manifest?: string; adapter?: unknown };
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => packument(packageJson.name, packageJson.kb)));
+    const result = await new NpmPackageSource({ registryUrl: 'https://registry.test' })
+      .resolve(packageJson.name);
+
+    expect(result.primaryKind).toBe('adapter');
   });
 
   it('resolves adapter kind from exact-version package manifest metadata', async () => {

@@ -2,13 +2,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { declaredManifestPath, loadAdapterManifest } from './adapter-manifest-loader.js';
+import { declaredAdapterManifestPath, declaredManifestPath, loadAdapterManifest } from './adapter-manifest-loader.js';
 
-describe('declaredManifestPath', () => {
-  it('reads only the canonical kb.manifest field', () => {
+describe('package manifest declarations', () => {
+  it('reads only the plugin package manifest declaration', () => {
     expect(declaredManifestPath({ kb: { manifest: './dist/manifest.js' } })).toBe('./dist/manifest.js');
+    expect(declaredManifestPath({ kb: { adapter: { manifest: './dist/manifest.js' } } })).toBeUndefined();
     expect(declaredManifestPath({ kbLabs: { manifest: './dist/legacy.js' } })).toBeUndefined();
     expect(declaredManifestPath({})).toBeUndefined();
+  });
+
+  it('reads only the adapter-specific package manifest declaration', () => {
+    expect(declaredAdapterManifestPath({ kb: { adapter: { manifest: './dist/manifest.js' } } })).toBe('./dist/manifest.js');
+    expect(declaredAdapterManifestPath({ kb: { manifest: './dist/manifest.js' } })).toBeUndefined();
   });
 });
 
@@ -20,12 +26,12 @@ describe('loadAdapterManifest', () => {
     tempRoot = undefined;
   });
 
-  it('loads a typed manifest from the sole kb.manifest declaration for an installed package', async () => {
+  it('loads a typed manifest from the sole kb.adapter declaration for an installed package', async () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-loader-'));
     const packageRoot = path.join(tempRoot, 'node_modules', '@fixture', 'cache');
     await fs.mkdir(packageRoot, { recursive: true });
     await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
-      name: '@fixture/cache', type: 'module', kb: { manifest: './manifest.mjs' },
+      name: '@fixture/cache', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
     }));
     await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
       schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture-cache', name: 'Fixture Cache', version: '1.0.0',
@@ -44,7 +50,7 @@ describe('loadAdapterManifest', () => {
     const packageRoot = path.join(tempRoot, 'missing-network');
     await fs.mkdir(packageRoot, { recursive: true });
     await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
-      name: 'missing-network', type: 'module', kb: { manifest: './manifest.mjs' },
+      name: 'missing-network', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
     }));
     await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
       schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'missing-network', name: 'Missing Network', version: '1.0.0',
@@ -56,7 +62,7 @@ describe('loadAdapterManifest', () => {
     });
   });
 
-  it('returns not-adapter for packages without kb.manifest', async () => {
+  it('returns not-adapter for packages without kb.adapter.manifest', async () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-loader-'));
     const packageRoot = path.join(tempRoot, 'plain');
     await fs.mkdir(packageRoot, { recursive: true });
@@ -66,7 +72,7 @@ describe('loadAdapterManifest', () => {
     await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = {};');
 
     await expect(loadAdapterManifest({ packageRoot })).resolves.toMatchObject({
-      kind: 'not-adapter', reason: expect.stringContaining('kb.manifest'),
+      kind: 'not-adapter', reason: expect.stringContaining('kb.adapter.manifest'),
     });
   });
 
@@ -75,7 +81,7 @@ describe('loadAdapterManifest', () => {
     const packageRoot = path.join(tempRoot, 'broken');
     await fs.mkdir(packageRoot, { recursive: true });
     await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
-      name: 'broken', type: 'module', kb: { manifest: './manifest.mjs' },
+      name: 'broken', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
     }));
     await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = { schema: "kb.adapter/1", implements: "ICache" };');
 
@@ -90,7 +96,7 @@ describe('loadAdapterManifest', () => {
     const packageRoot = path.join(tempRoot, 'invalid-schema');
     await fs.mkdir(packageRoot, { recursive: true });
     await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
-      name: 'invalid-schema', type: 'module', kb: { manifest: './manifest.mjs' },
+      name: 'invalid-schema', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
     }));
     await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = { ${schemaField}implements: "ICache" };`);
 
