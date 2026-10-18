@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import socket
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator, Optional
@@ -81,6 +82,13 @@ def layout_relative(identity: str, suffix: str) -> str:
     return str(base / child)
 
 
+def unused_loopback_gateway_url() -> str:
+    """Select a currently unused loopback port for an isolated product fixture."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{probe.getsockname()[1]}"
+
+
 def installed_path(root: Path, identity: str, *suffix: str) -> Path:
     """Resolve an installed path from a layout identity and optional children."""
     path = Path(root) / _identity_value(identity)
@@ -90,6 +98,11 @@ def installed_path(root: Path, identity: str, *suffix: str) -> Path:
             raise ValueError(f"path suffix escapes layout identity {identity!r}")
         path /= child
     return path
+
+
+def active_path(root: Path, identity: str, *suffix: str) -> Path:
+    """Resolve a platform content path inside the product-selected version."""
+    return installed_path(active_platform_root(root), identity, *suffix)
 
 
 def active_platform_root(root: Path) -> Path:
@@ -145,13 +158,16 @@ def inject_existing_version_fault(root: Path, identity: str, transform: PathTran
 
 
 def install_fixture_root(root: Path, *, launcher: str, index: Path, run_command: Callable[..., CompletedProcess],
-                         label: str, selection: tuple[str, str] | None = None) -> Path:
+                         label: str, selection: tuple[str, str] | None = None,
+                         gateway_url: str | None = None) -> Path:
     """Obtain a complete installation only through the product installer."""
     args = [launcher, "install", "--json", "--index", str(index), "--platform-root", str(root),
             "--service-profile", "default", "--scenario", "explore",
             "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"]
     if selection:
         args.extend(selection)
+    if gateway_url:
+        args.extend(("--gateway-url", gateway_url))
     result = run_command(args)
     if result.returncode != 0:
         raise RuntimeError(f"{label}: product install exited {result.returncode}")

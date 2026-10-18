@@ -19,13 +19,13 @@ from invocations import (
     print_report_text,
     read_ux_http_result,
     record_invocation,
+    run_harness_command,
     run_streaming_command,
     store_report_secret,
     write_report_json,
     write_report_text,
 )
 
-PLAYWRIGHT_HEADLESS_SHELL = Path("chromium_headless_shell-1217/chrome-linux/headless_shell")
 PLAYWRIGHT_IMAGE_REBUILD_COMMAND = "e2e/journey/run.sh --no-build"
 
 
@@ -56,9 +56,16 @@ def _playwright_browser_preflight(env: dict[str, str]) -> str | None:
     if not browsers_path:
         return ("PLAYWRIGHT_BROWSERS_PATH is not set; rebuild the runner image with "
                 f"`{PLAYWRIGHT_IMAGE_REBUILD_COMMAND}`.")
-    executable = Path(browsers_path) / PLAYWRIGHT_HEADLESS_SHELL
-    if not executable.is_file():
-        return (f"Playwright Chromium headless shell is missing at {executable}; "
+    try:
+        discovered = run_harness_command(
+            ["node", "-e", "process.stdout.write(require('@playwright/test').chromium.executablePath())"])
+    except OSError:
+        discovered = None
+    executable = Path(discovered.stdout) if discovered and discovered.returncode == 0 else None
+    if (executable is None or not executable.is_file()
+            or not executable.is_relative_to(Path(browsers_path))):
+        location = str(executable) if executable else "Playwright did not report its Chromium executable"
+        return (f"Playwright Chromium headless shell is missing at {location}; "
                 f"rebuild the runner image with `{PLAYWRIGHT_IMAGE_REBUILD_COMMAND}`.")
     return None
 
