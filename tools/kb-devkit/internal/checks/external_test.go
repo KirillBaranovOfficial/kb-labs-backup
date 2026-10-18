@@ -124,9 +124,10 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 		Workspace struct {
 			Root     string `json:"root"`
 			Packages []struct {
-				Name     string `json:"name"`
-				Category string `json:"category"`
-				RelPath  string `json:"relPath"`
+				Name        string `json:"name"`
+				Category    string `json:"category"`
+				RelPath     string `json:"relPath"`
+				BuildTarget bool   `json:"buildTarget"`
 			} `json:"packages"`
 		} `json:"workspace"`
 	}
@@ -138,6 +139,9 @@ func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.
 	}
 	if input.Workspace.Packages[0].Category != "adapter" || input.Workspace.Packages[1].Category != "ts-lib" {
 		t.Fatalf("package categories = %#v, want resolved devkit categories", input.Workspace.Packages)
+	}
+	if input.Workspace.Packages[0].BuildTarget || input.Workspace.Packages[1].BuildTarget {
+		t.Fatalf("build targets = %#v, want false because config declares no build task", input.Workspace.Packages)
 	}
 	if result, ok := results["workspace"]; !ok || len(result.Issues) != 0 || result.ChecksRun != 1 {
 		t.Fatalf("clean workspace check result = %#v, want one successful anchored check", result)

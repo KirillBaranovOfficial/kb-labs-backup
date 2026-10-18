@@ -11,18 +11,26 @@ import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '../../core/plu
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const checker = path.join(root, 'scripts/checks/check-node-engine-policy.mjs');
 const generator = path.join(root, 'tools/clikit/toolchain/generate-node-policy.mjs');
-const devkit = path.join(root, 'tools/kb-devkit/kb-devkit');
+const devkitModule = path.join(root, 'tools/kb-devkit');
 const realDockerfileStatusBeforeTests = dockerfileWorktreeStatus();
 
 // case: S-260.2
 test('the shipped Node policy passes the workspace check', () => {
-  const result = spawnSync(devkit, ['check', '--only', 'node-engine-policy', '--json'], {
+  const result = runDevkitCheck();
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).ok, true, result.stdout);
+});
+
+test('node-engine-policy check diagnoses missing external-check input', () => {
+  const result = spawnSync(process.execPath, [checker], {
     cwd: root,
     encoding: 'utf8',
   });
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).ok, true, result.stdout);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /requires workspace input on stdin; next: kb-devkit check --only node-engine-policy --json/);
+  assert.doesNotMatch(result.stderr, /SyntaxError|Unexpected end of JSON/);
 });
 
 test('workspace engine policy names every package whose declaration differs', async () => {
@@ -94,10 +102,7 @@ test('node-engine-policy check rejects a second handwritten Go policy constant',
   const source = await readFile(sourcePath, 'utf8');
   try {
     await writeFile(sourcePath, `${source}\nconst SupportedNodeMajor = 24\n`);
-    const result = spawnSync(devkit, ['check', '--only', 'node-engine-policy', '--json'], {
-      cwd: root,
-      encoding: 'utf8',
-    });
+    const result = runDevkitCheck();
     assert.notEqual(result.status, 0, result.stdout);
     assert.match(result.stdout + result.stderr, /SupportedNodeMajor redeclared|already declared/);
   } finally {
@@ -212,6 +217,13 @@ function runCheck(workspaceRoot, packages) {
       workspaceRoot,
       workspace: { packages },
     }),
+    encoding: 'utf8',
+  });
+}
+
+function runDevkitCheck() {
+  return spawnSync('go', ['-C', devkitModule, 'run', '.', 'check', '--only', 'node-engine-policy', '--json'], {
+    cwd: root,
     encoding: 'utf8',
   });
 }

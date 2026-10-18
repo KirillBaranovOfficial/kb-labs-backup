@@ -6,7 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '../../core/plugin-runtime/src/platform-resolve/node-engine.mjs';
 import { nodeImageIssues } from './node-engine-dockerfiles.mjs';
 
-const input = JSON.parse(await readStdin());
+const inputText = await readStdin();
+if (inputText.trim() === '') {
+  console.error('node-engine-policy requires workspace input on stdin; next: kb-devkit check --only node-engine-policy --json');
+  process.exit(2);
+}
+const input = JSON.parse(inputText);
 const check = input.check ?? 'node-engine-policy';
 const issues = [];
 const workspaceRoot = typeof input.workspaceRoot === 'string' ? path.resolve(input.workspaceRoot) : undefined;

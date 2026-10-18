@@ -39,8 +39,9 @@ func DiscoverAll(root string, cfg *config.DevkitConfig) ([]Package, error) {
 // of O(total_files_in_workspace).
 //
 // Pattern semantics (pnpm-workspace.yaml subset):
-//   "platform/*/packages/**"  → expand * with ReadDir at each level
-//   "infra/kb-labs-devkit"    → literal path, stat package.json directly
+//
+//	"platform/*/packages/**"  → expand * with ReadDir at each level
+//	"infra/kb-labs-devkit"    → literal path, stat package.json directly
 //
 // Recursion depth for ** is controlled by cfg.Workspace.MaxDepth (default 3).
 func discoverPackages(root string, cfg *config.DevkitConfig) ([]Package, error) {
@@ -96,20 +97,16 @@ func resolveWorkspaceDirs(root string, cfg *config.DevkitConfig) ([]string, erro
 		}
 	}
 
-	// Also register any literal paths declared in category match patterns
-	// that are not covered by the workspace file (e.g. Go binaries not in pnpm-workspace.yaml).
-	// Only literal paths (no * or **) are considered here.
+	// Category match patterns are also package declarations. Discover packages
+	// covered by those patterns even when pnpm intentionally excludes them,
+	// such as candidate-only fixtures with their own build tasks.
 	if cfg != nil {
 		for _, nc := range cfg.Workspace.Categories {
 			for _, pattern := range nc.Category.Match {
-				if strings.ContainsAny(pattern, "*?") {
-					continue // glob — already handled by pnpm-workspace expansion
-				}
-				dir := filepath.Join(root, pattern)
-				if seen[dir] {
-					continue
-				}
-				if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+				for _, dir := range expandPattern(root, pattern, maxDepth) {
+					if seen[dir] || isExcluded(root, dir, cfg.Workspace.Exclude) {
+						continue
+					}
 					seen[dir] = true
 					pkgDirs = append(pkgDirs, dir)
 				}

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { buildCommand, failureMessage, inspectPackedFixture, validatePackageContents, validatePackedSource, validateTarballAgainstWorkspace } from './validate-package-outputs.mjs';
+import { buildCommand, failureMessage, inspectPackedFixture, validatePackageContents, validatePackedSource, validateTarballAgainstWorkspace, validateReleaseBuildOutputs, validateWorkspacePackageContents } from './validate-package-outputs.mjs';
+import registryManifest from '../platform/registry-manifest.json' with { type: 'json' };
+import { releasePackageNames } from '../platform/journey-update-packages.mjs';
 
 test('rejects a packed manifest that diverges from the source package manifest', () => {
   const source = {
@@ -89,27 +91,41 @@ test('requires declared build outputs and every main/export target to be packed'
   ]);
 });
 
-test('requires a package files build directory to be present in the archive', () => {
-  const failures = validatePackageContents(
-    { name: '@kb-labs/example', files: ['dist'] },
-    ['package/package.json', 'package/README.md'],
-  );
-  assert.deepEqual(failures, [{ field: 'files', target: 'dist' }]);
+test('release preflight requires dist even when files is only an npm inclusion filter', t => {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-dist-required-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const packageDirectory = join(root, 'packages/example');
+  mkdirSync(packageDirectory, { recursive: true });
+  const manifest = { name: '@kb-labs/example', files: ['dist'] };
+  writeFileSync(join(packageDirectory, 'package.json'), JSON.stringify(manifest));
+  const failures = validateReleaseBuildOutputs(new Map([
+    [manifest.name, { directory: packageDirectory, manifest }],
+  ]), { core: [{ name: manifest.name }] });
+  assert.deepEqual(failures, [{
+    packageName: manifest.name,
+    message: 'ERROR: @kb-labs/example is missing required release output dist before packing. ' +
+      'Build it with: corepack pnpm -r --filter "@kb-labs/example..." --workspace-concurrency=2 build',
+  }]);
 });
 
 test('requires Studio to pack dist/index.html and reports its exact dependency build command', () => {
-  const manifest = { name: '@kb-labs/studio-app', files: ['dist'], main: './dist/index.js' };
+  const manifest = {
+    name: '@kb-labs/studio-app',
+    files: ['dist'],
+    main: './dist/index.js',
+    kb: { requiredOutputs: ['./dist/index.html'] },
+  };
   const failures = validatePackageContents(manifest, [
     'package/package.json', 'package/dist/index.js',
   ]);
-  assert.deepEqual(failures, [{ field: 'Studio', target: './dist/index.html' }]);
+  assert.deepEqual(failures, [{ field: 'kb.requiredOutputs', target: './dist/index.html' }]);
   assert.equal(
     buildCommand(manifest.name),
     'corepack pnpm -r --filter "@kb-labs/studio-app..." --workspace-concurrency=2 build',
   );
   assert.equal(
     failureMessage(manifest, '/tmp/kb-labs-studio-app-2.0.0.tgz', failures[0]),
-    'ERROR: @kb-labs/studio-app (kb-labs-studio-app-2.0.0.tgz) is missing packed Studio output ./dist/index.html. ' +
+    'ERROR: @kb-labs/studio-app (kb-labs-studio-app-2.0.0.tgz) is missing packed kb.requiredOutputs output ./dist/index.html. ' +
       'Build it with: corepack pnpm -r --filter "@kb-labs/studio-app..." --workspace-concurrency=2 build',
   );
 });
@@ -220,4 +236,57 @@ test('rejects a packed adapter fixture with an invalid adapter manifest', async 
   } finally {
     rmSync(output, { recursive: true, force: true });
   }
+});
+
+
+test('preflight rejects missing declared workspace outputs before pnpm pack', () => {
+  const manifest = {
+    name: '@kb-labs/example',
+    files: ['dist'],
+    main: './dist/index.js',
+  };
+  const failures = validateWorkspacePackageContents(manifest, ['package.json', 'src/index.ts']);
+  assert.deepEqual(failures, [{ field: 'main', target: './dist/index.js' }]);
+  assert.equal(
+    buildCommand(manifest.name),
+    'corepack pnpm -r --filter "@kb-labs/example..." --workspace-concurrency=2 build',
+  );
+});
+
+test('release package set excludes the source-only devkit tooling package', () => {
+  assert.equal(releasePackageNames(registryManifest).includes('@kb-labs/devkit'), false);
+});
+
+
+test('release build preflight reports a missing dist output and exact package build command', t => {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-build-preflight-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const packageDirectory = join(root, 'packages/example');
+  mkdirSync(packageDirectory, { recursive: true });
+  const manifest = { name: '@kb-labs/example', files: ['dist'], main: './dist/index.js' };
+  writeFileSync(join(packageDirectory, 'package.json'), JSON.stringify(manifest));
+  const failures = validateReleaseBuildOutputs(new Map([
+    [manifest.name, { directory: packageDirectory, manifest }],
+  ]), { core: [{ name: manifest.name }] });
+  assert.deepEqual(failures, [
+    {
+      packageName: manifest.name,
+      message: 'ERROR: @kb-labs/example is missing required release output dist before packing. ' +
+        'Build it with: corepack pnpm -r --filter "@kb-labs/example..." --workspace-concurrency=2 build',
+    },
+    {
+      packageName: manifest.name,
+      message: 'ERROR: @kb-labs/example is missing required main output ./dist/index.js before packing. ' +
+        'Build it with: corepack pnpm -r --filter "@kb-labs/example..." --workspace-concurrency=2 build',
+    },
+  ]);
+});
+
+// case: S-262.1
+test('devkit pack-extra build task emits the package-declared adapter manifest', () => {
+  const fixture = new URL('../fixtures/adapters/llm-deterministic/', import.meta.url);
+  execFileSync(process.execPath, [new URL('./build-pack-extra.mjs', import.meta.url).pathname], { cwd: fixture });
+  const output = JSON.parse(readFileSync(new URL('../fixtures/adapters/llm-deterministic/dist/manifest.json', import.meta.url), 'utf8'));
+  assert.equal(output.id, 'e2e-llm-deterministic');
+  assert.equal(output.implements, 'ILLM');
 });

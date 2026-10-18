@@ -10,12 +10,13 @@ import (
 
 // Package represents a single package in the monorepo.
 type Package struct {
-	Name     string // @acme/core-runtime
-	Dir      string // absolute path
-	Category string // ts-lib, go-binary, site, ...
-	Preset   string // node-lib, go-binary, ...
-	Language string // typescript, go
-	RelPath  string // relative to workspace root
+	Name        string // @acme/core-runtime
+	Dir         string // absolute path
+	Category    string // ts-lib, go-binary, site, ...
+	Preset      string // node-lib, go-binary, ...
+	Language    string // typescript, go
+	RelPath     string // relative to workspace root
+	BuildTarget bool   // whether the resolved devkit task graph defines a build task
 }
 
 // Workspace holds all discovered packages and the root path.
@@ -37,6 +38,15 @@ func New(root string, cfg *config.DevkitConfig) (*Workspace, error) {
 		Root:      root,
 		Packages:  pkgs,
 		byAbsPath: make(map[string]*Package),
+	}
+
+	// Resolve the build task through the same category/task model used by the scheduler.
+	if cfg != nil {
+		for i := range ws.Packages {
+			if build, ok := cfg.Tasks["build"]; ok {
+				ws.Packages[i].BuildTarget = build.ResolveVariant(ws.Packages[i].Category) != nil
+			}
+		}
 	}
 
 	// Build reverse index: every file under a package dir maps to that package.

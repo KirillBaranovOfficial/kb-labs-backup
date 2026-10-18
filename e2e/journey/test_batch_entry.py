@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from test_environment import isolated_environment
 
 REPO = Path(__file__).resolve().parents[2]
 ENTRY_SHELL = shutil.which("dash") or "sh"
@@ -17,9 +18,11 @@ class JourneyBatchEntryTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         (self.root / "e2e/journey").mkdir(parents=True)
+        (self.root / "e2e/scripts").mkdir(parents=True)
         (self.root / "prompts").mkdir()
         (self.root / "tools/kb-devkit").mkdir(parents=True)
         shutil.copy2(REPO / "e2e/journey/batch.sh", self.root / "e2e/journey/batch.sh")
+        shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         self.calls = self.root / "calls.log"
         self._script(self.root / "e2e/journey/run.sh", '''#!/bin/sh
 printf 'journey %s %s\\n' "$KB_JOURNEY_ONLY" "$*" >> "$CALLS"
@@ -49,8 +52,25 @@ exit 0
 printf 'candidate\\n' >> "$CALLS"
 exit 0
 ''')
+        self._script(self.bin / "node", '''#!/bin/sh
+case "$*" in
+  *--build-outputs*)
+    printf 'build-output-check\\n' >> "$CALLS"
+    if [ "${FAIL_OUTPUT_CHECK:-}" = 1 ]; then
+      printf 'preflight fixture failed\\n'
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
+exit 2
+''')
         self._script(self.bin / "python3", '''#!/bin/sh
 printf 'unit\\n' >> "$CALLS"
+if [ "${FAIL_UNIT:-}" = 1 ]; then
+  printf 'unit failure fixture\\n'
+  exit 1
+fi
 exit 0
 ''')
         self._script(self.bin / "go", '''#!/bin/sh
@@ -75,6 +95,10 @@ exit 2
 ''')
         self._script(self.bin / "git", '''#!/bin/sh
 [ "$1 $2" = "rev-parse HEAD" ] && { echo deadbeef; exit 0; }
+if [ "$1" = "-C" ] && [ "$3 $4 $5" = "rev-parse --short HEAD" ]; then
+  echo deadbee
+  exit 0
+fi
 if [ "$1 $2 $3" = "rev-parse --verify --quiet" ]; then
   [ "${MISSING_BASE_REF:-}" = "$4" ] && exit 1
   echo deadbeef
@@ -83,17 +107,17 @@ fi
 exit 2
 ''')
         self.env = {
-            **os.environ,
-            "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
+            **isolated_environment(
+                Path(self.root / "home"), self.bin,
+                required_tools=("git", "dirname", "mkdir", "mktemp", "date", "rm", "cat", "cp", "grep", "env", "chmod", "mv", "node", "bash"),
+            ),
             "CALLS": str(self.calls),
             "REPORTS": str(self.root / ".journey/reports"),
             "ATTEMPT_MARKER": str(self.root / "first-attempt"),
             "BLOCK_FIFO": str(self.root / "reset.fifo"),
-            "HOME": str(self.root / "home"),
             "KB_DEVKIT_BASE_REF": "origin/master",
         }
         Path(self.env["REPORTS"]).mkdir(parents=True)
-        Path(self.env["HOME"]).mkdir()
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -131,6 +155,7 @@ exit 2
         self.assertEqual(calls, [
             "journey  --down",
             "build",
+            "build-output-check",
             "unit",
             "candidate",
             "journey service-local:explore --no-build",
@@ -138,8 +163,12 @@ exit 2
         ])
         self.assertTrue((self.root / "out/local/local.json").is_file())
         self.assertTrue((self.root / "out/secured/secured.json").is_file())
-        self.assertIn("deadbeef", (self.root / "out/run.json").read_text())
-        summary = (self.root / "out/summary.md").read_text()
+        for stage_log in ("reset.log", "build.log", "release-build-output-check.log", "unit.log", "candidate.log"):
+            self.assertTrue((self.root / "out/shared" / stage_log).is_file(), stage_log)
+        for mode in ("local", "secured"):
+            self.assertTrue((self.root / f"out/{mode}/batch.log").is_file())
+        self.assertIn("deadbeef", (self.root / "out/shared/run.json").read_text())
+        summary = (self.root / "out/shared/summary.md").read_text()
         self.assertIn("- Commit: `deadbeef`", summary)
         self.assertIn("- Baseline: `j28`", summary)
         self.assertIn("- Build base: `origin/master`", summary)
@@ -176,8 +205,22 @@ exit 2
         local_runs = [row for row in self.calls.read_text().splitlines()
                       if row == "journey service-local:explore --no-build"]
         self.assertEqual(len(local_runs), 1)
+        secured_runs = [row for row in self.calls.read_text().splitlines()
+                        if row == "journey service-secured:explore --no-build"]
+        self.assertEqual(len(secured_runs), 1)
         self.assertFalse((self.root / "out/local/infra-failed.log").exists())
-        summary = (self.root / "out/summary.md").read_text()
+        self.assertTrue((self.root / "out/local/local.json").is_file())
+        self.assertTrue((self.root / "out/secured/secured.json").is_file())
+        self.assertFalse((self.root / "out/local/secured.json").exists())
+        self.assertFalse((self.root / "out/secured/local.json").exists())
+        self.assertTrue((self.root / "out/secured/batch.log").is_file())
+        for mode in ("local", "secured"):
+            for stage_log in ("reset.log", "build.log", "unit.log", "candidate.log"):
+                self.assertTrue((self.root / f"out/{mode}/{stage_log}").is_file())
+            import json
+            mode_metadata = json.loads((self.root / f"out/{mode}/batch-metadata.json").read_text())
+            self.assertEqual(mode_metadata["mode"], mode)
+        summary = (self.root / "out/shared/summary.md").read_text()
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: FAIL"])
 
     # case: S-262.1
@@ -212,10 +255,10 @@ exit 2
                 os.killpg(process.pid, signal.SIGKILL)
                 process.communicate(timeout=10)
             os.close(ready_read)
-        summary = (self.root / "out/summary.md").read_text()
+        summary = (self.root / "out/shared/summary.md").read_text()
         self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: INTERRUPTED"])
         import json
-        metadata = json.loads((self.root / "out/batch-metadata.json").read_text())
+        metadata = json.loads((self.root / "out/shared/batch-metadata.json").read_text())
         self.assertGreaterEqual(metadata["stageDurationsSeconds"]["reset"], 0)
         self.assertEqual(metadata["result"], "INTERRUPTED")
 
@@ -227,19 +270,52 @@ exit 2
         self.assertIn("next: git fetch --all --prune", result.stderr)
         self.assertNotIn("not found", result.stderr)
         self.assertFalse(self.calls.exists())
-        self.assertTrue((self.root / "out/summary.md").is_file())
-        self.assertTrue((self.root / "out/batch-metadata.json").is_file())
-        self.assertTrue((self.root / "out/build.log").is_file())
+        self.assertTrue((self.root / "out/shared/summary.md").is_file())
+        self.assertTrue((self.root / "out/shared/batch-metadata.json").is_file())
+        self.assertTrue((self.root / "out/shared/build.log").is_file())
+
+    # case: S-262.2
+    def test_unit_failure_summary_points_to_relative_stage_log(self):
+        env = {**self.env, "FAIL_UNIT": "1"}
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        summary = (self.root / "out/shared/summary.md").read_text()
+        self.assertIn("- Failed stage: `unit`", summary)
+        self.assertIn("- Stage log: `unit.log`", summary)
+        self.assertEqual([line for line in summary.splitlines() if line.startswith("- Result:")], ["- Result: FAIL"])
+        self.assertEqual((self.root / "out/shared/unit.log").read_text(), "unit failure fixture\n")
 
     # case: S-262.1
-    def test_entry_preserves_root_outputs_when_build_fails_before_modes(self):
-        result = self._run(fail_build=True)
+    def test_entry_declares_shared_artifacts_before_build_failure(self):
+        artifact_outputs = self.root / "github-output"
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root,
+            env={**self.env, "FAIL_AFFECTED_BUILD": "1", "GITHUB_OUTPUT": str(artifact_outputs)},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("devkit affected build failed", result.stderr)
         self.assertNotIn("not found", result.stderr)
-        self.assertTrue((self.root / "out/summary.md").is_file())
-        self.assertTrue((self.root / "out/batch-metadata.json").is_file())
-        self.assertTrue((self.root / "out/build.log").is_file())
+        shared = self.root / "out/shared"
+        self.assertTrue((shared / "summary.md").is_file())
+        self.assertTrue((shared / "batch-metadata.json").is_file())
+        self.assertTrue((shared / "build.log").is_file())
+        declarations = dict(line.split("=", 1) for line in artifact_outputs.read_text().splitlines())
+        self.assertEqual(declarations, {
+            "artifact_shared": str(shared),
+            "artifact_local": str(self.root / "out/local"),
+            "artifact_secured": str(self.root / "out/secured"),
+        })
         self.assertFalse((self.root / "out/local").exists())
         self.assertFalse((self.root / "out/secured").exists())
 
@@ -265,9 +341,13 @@ exit 2
         self.assertEqual(spec["jobs"]["journey"]["timeout-minutes"], 180)
         steps = spec["jobs"]["journey"]["steps"]
         job_env = spec["jobs"]["journey"]["env"]
+        self.assertNotIn("KB_JOURNEY_CI", job_env)
         self.assertEqual(job_env["JOURNEY_DEFAULT_BRANCH"], "${{ github.event.repository.default_branch }}")
         entries = [step for step in steps if "e2e/journey/batch.sh" in step.get("run", "")]
         self.assertEqual(len(entries), 1)
+        self.assertEqual(job_env["BATCH_OUTPUT"], ".journey/batch/${{ github.run_id }}")
+        self.assertEqual(entries[0]["run"], 'e2e/journey/batch.sh "$BATCH_OUTPUT" "$BATCH_BASELINE"')
+        self.assertEqual(entries[0]["id"], "batch")
         self.assertEqual(entries[0]["env"]["BATCH_BASELINE"], "${{ inputs.baseline || env.JOURNEY_DEFAULT_BRANCH }}")
         self.assertEqual(entries[0]["env"]["KB_DEVKIT_BASE_REF"], "${{ github.event.pull_request.base.sha || format('origin/{0}', env.JOURNEY_DEFAULT_BRANCH) }}")
         self.assertEqual(job_env["GOTOOLCHAIN"], "local")
@@ -292,23 +372,32 @@ exit 2
         self.assertEqual(sum("journey-local" in step.get("with", {}).get("name", "") for step in steps), 1)
         self.assertEqual(sum("journey-secured" in step.get("with", {}).get("name", "") for step in steps), 1)
         artifact_steps = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
-        self.assertEqual([step["with"]["path"].rsplit("/", 2)[-2] for step in artifact_steps], ["local", "secured"])
-        for step, mode in zip(artifact_steps, ("local", "secured"), strict=True):
-            artifact_paths = step["with"]["path"].splitlines()
-            self.assertIn(f".journey/batch/${{{{ github.run_id }}}}/summary.md", artifact_paths)
-            self.assertIn(f".journey/batch/${{{{ github.run_id }}}}/batch-metadata.json", artifact_paths)
-            self.assertIn(f".journey/batch/${{{{ github.run_id }}}}/build.log", artifact_paths)
-            self.assertIn(f".journey/batch/${{{{ github.run_id }}}}/{mode}/", artifact_paths)
-        self.assertEqual([step["with"]["if-no-files-found"] for step in artifact_steps], ["warn", "warn"])
+        self.assertEqual([step["with"]["name"] for step in artifact_steps], [
+            "journey-shared", "journey-local", "journey-secured",
+        ])
+        self.assertEqual([step["with"]["path"] for step in artifact_steps], [
+            "${{ steps.batch.outputs.artifact_shared }}",
+            "${{ steps.batch.outputs.artifact_local }}",
+            "${{ steps.batch.outputs.artifact_secured }}",
+        ])
+        self.assertTrue(all(step["if"] == "always() && steps.batch.outputs.artifact_shared != ''"
+                            for step in artifact_steps))
+        self.assertEqual([step["with"]["if-no-files-found"] for step in artifact_steps], ["warn", "warn", "warn"])
         self.assertEqual(node_step["with"]["node-version-file"], "package.json")
         summary_step = next(step for step in steps if step.get("name") == "Add batch summary")
         self.assertEqual(summary_step["if"], "always()")
+        self.assertEqual(summary_step["env"]["BATCH_SHARED_OUTPUT"], "${{ steps.batch.outputs.artifact_shared }}")
         failed_step_expression = summary_step["env"]["FAILED_STEP"]
         self.assertIn("steps.node.outcome == 'failure' && 'Set up Node'", failed_step_expression)
         self.assertIn("steps.pnpm.outcome == 'failure' && 'Set up pnpm'", failed_step_expression)
         summary_result = self.root / "github-step-summary.md"
-        env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary_result), "FAILED_STEP": "Set up pnpm"}
-        summary_command = summary_step["run"].replace("${{ github.run_id }}", "test-run")
+        env = {
+            **os.environ,
+            "GITHUB_STEP_SUMMARY": str(summary_result),
+            "FAILED_STEP": "Set up pnpm",
+            "BATCH_SHARED_OUTPUT": "",
+        }
+        summary_command = summary_step["run"]
         missing_summary = subprocess.run(
             ["sh", "-c", summary_command],
             cwd=self.root,
@@ -324,6 +413,32 @@ exit 2
         self.assertFalse(any("e2e/journey/run.sh" in command for command in commands))
         self.assertFalse(any("prepare-candidate.sh" in command for command in commands))
         self.assertEqual(len(entries), sum("e2e/journey/batch.sh" in command for command in commands))
+
+
+    # case: S-262.1
+    def test_missing_release_output_fails_build_stage_before_candidate(self):
+        env = {**self.env, "FAIL_OUTPUT_CHECK": "1"}
+        result = subprocess.run(
+            [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), str(self.root / "out")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        build_log = (self.root / "out/shared/build.log").read_text()
+        self.assertIn("preflight fixture failed", build_log)
+        self.assertNotIn("candidate", self.calls.read_text())
+        self.assertIn("- Failed stage: `build`", (self.root / "out/shared/summary.md").read_text())
+
+    # case: S-262.1
+    def test_candidate_output_preflight_fails_before_package_packing(self):
+        shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
+        env = {**self.env, "FAIL_OUTPUT_CHECK": "1"}
+        result = subprocess.run(
+            ["bash", str(self.root / "e2e/journey/prepare-candidate.sh")],
+            cwd=self.root, env=env, text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("preflight fixture failed", result.stdout)
+        self.assertFalse((self.root / "e2e/packages").exists())
 
 
 if __name__ == "__main__":

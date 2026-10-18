@@ -26,6 +26,22 @@ workspace:
       language: typescript
       preset: e2e-suite
 
+    # Candidate-pack extras live outside pnpm's workspace because they are
+    # installed only by the isolated journey registry. Devkit still discovers
+    # and builds them through this category so a clean release build owns their
+    # generated manifests.
+    e2e-pack-adapter:
+      match:
+        - "e2e/fixtures/adapters/*"
+      language: javascript
+      preset: node-lib
+
+    e2e-pack-plugin:
+      match:
+        - "e2e/journey/fixtures/*"
+      language: javascript
+      preset: node-lib
+
     # Infrastructure E2E suites — one package per domain, each runs `playwright
     # test`. Subject is the platform/gateway/services layer, not a single plugin.
     # Same preset + the same workspace:* --affected tracking.
@@ -494,6 +510,26 @@ tasks:
       deps:
         - "^build"
 
+    - categories: [e2e-pack-adapter]
+      command: node ../../../scripts/build-pack-extra.mjs
+      inputs:
+        - "manifest.js"
+        - "src/**"
+        - "package.json"
+      outputs:
+        - "dist/**"
+      cache: false
+
+    - categories: [e2e-pack-plugin]
+      command: node ../../../../e2e/scripts/build-pack-extra.mjs
+      inputs:
+        - "manifest.js"
+        - "src/**"
+        - "package.json"
+      outputs:
+        - "dist/**"
+      cache: false
+
     - categories: [ts-lib, ts-app, adapter, core-runtime]
       command: tsup
       inputs:
@@ -763,6 +799,11 @@ tasks:
 #   { ok: boolean, items: [{ target, message, fix? }] }
 
 custom_checks:
+  - name: release-build-graph
+    run: node scripts/checks/check-release-build-graph.mjs
+    on: [check]
+    scope: workspace
+
   - name: node-engine-policy
     run: node scripts/checks/check-node-engine-policy.mjs
     on: [check]

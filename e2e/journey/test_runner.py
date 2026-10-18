@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import ast
-import platform
 import shutil
 import sys
 import tempfile
@@ -113,6 +112,24 @@ def state_producer_order_violations(source_text: str, dependencies: dict[str, tu
                     f"runner.py:{node.lineno}: gate {group!r} consumes state {state!r} "
                     f"before its {producer!r} producer is scheduled at line {registered_at}")
     return violations
+
+
+def build_wizard_pty_fixture(binary: Path) -> None:
+    module_root = Path(__file__).resolve().parents[2] / "tools" / "kb-create"
+    env = dict(os.environ, GOTOOLCHAIN="local")
+    result = subprocess.run(
+        ["go", "build", "-o", str(binary), "./v2/testsupport/wizard-pty"],
+        cwd=module_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"could not build wizard PTY fixture from {module_root / 'v2/testsupport/wizard-pty'}: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
 
 
 class RunnerInstallFailureTests(unittest.TestCase):
@@ -289,11 +306,6 @@ thread.join()
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux procfs is required for PTY read readiness")
     def test_real_pty_go_wizard_bufio_reader_uses_linux_kernel_readiness(self):
         runner = importlib.import_module("runner")
-        machine = platform.machine().lower()
-        machine = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
-        binary = Path(__file__).resolve().parent / ".cache" / f"wizard-pty-linux-{machine}"
-        if not binary.is_file():
-            self.fail(f"missing cross-compiled wizard fixture {binary}; build with the Round 8 report command")
         expectations = [
             (r"Project directory \(press Enter to install without a project\)", ""),
             (r"Platform channel", "stable"),
@@ -314,6 +326,8 @@ thread.join()
             return answer
 
         with tempfile.TemporaryDirectory(prefix="journey-go-wizard-") as temporary:
+            binary = Path(temporary) / "wizard-pty"
+            build_wizard_pty_fixture(binary)
             platform_root = Path(temporary) / "platform"
             result, _ = runner.run_pty_command(
                 [str(binary), str(platform_root)], timeout=10, on_read_ready=respond,
@@ -325,6 +339,12 @@ thread.join()
         self.assertEqual(len(judged), len(expectations))
         for prompt, transcript in judged:
             self.assertRegex(transcript, prompt)
+
+    def test_wizard_pty_fixture_builds_from_checked_in_go_source(self):
+        with tempfile.TemporaryDirectory(prefix="journey-go-wizard-build-") as temporary:
+            binary = Path(temporary) / "wizard-pty"
+            build_wizard_pty_fixture(binary)
+            self.assertTrue(binary.is_file())
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux procfs is required for PTY read readiness")
     def test_real_pty_unexpected_prompt_fails_at_the_terminal_read(self):

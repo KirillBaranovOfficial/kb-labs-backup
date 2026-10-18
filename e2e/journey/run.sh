@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 export KB_JOURNEY_WORKSPACE_SOURCE="$ROOT"
 export KB_JOURNEY_GIT_REVISION="$(git rev-parse HEAD)"
+export KB_JOURNEY_RUNNER_UID="$(id -u)"
+export KB_JOURNEY_RUNNER_GID="$(id -g)"
 
 no_build=0
 resolve_only=0
@@ -56,11 +58,7 @@ elif command -v docker-compose >/dev/null 2>&1; then
   COMPOSE=(docker-compose)
   COMPOSE_AVAILABLE=1
 fi
-if [[ "${KB_JOURNEY_CI:-0}" == "1" ]]; then
-  COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/docker-compose.ci.yml -f e2e/journey/docker-compose.yml)
-else
-  COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
-fi
+COMPOSE_FILES=(-f e2e/docker-compose.yml -f e2e/journey/docker-compose.yml)
 if (( COMPOSE_AVAILABLE )); then
   COMPOSE+=("${COMPOSE_FILES[@]}")
 fi

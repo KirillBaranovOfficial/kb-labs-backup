@@ -14,8 +14,6 @@ yarn-error.log*
 # Build artifacts
 # ───────────────
 dist/
-!e2e/journey/fixtures/analytics-emitter/dist/
-!e2e/journey/fixtures/analytics-emitter/dist/**
 build/
 .cache/
 .temp/

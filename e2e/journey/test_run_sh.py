@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+from test_environment import isolated_environment
 
 
 class RunShellOptionTests(unittest.TestCase):
@@ -27,12 +28,11 @@ class RunShellOptionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             docker.chmod(0o755)
-            env = {
-                **os.environ,
-                "HOME": str(home),
-                "PATH": f"{bin_dir}:/Users/kirillbaranov/.nvm/versions/node/v24.18.1/bin:{os.environ['PATH']}",
-                "KB_JOURNEY_ONLY": "agent:commit",
-            }
+            env = isolated_environment(
+                home, bin_dir,
+                required_tools=("bash", "git", "dirname", "docker", "python3", "date", "mkdir", "rm", "find"),
+                overrides={"KB_JOURNEY_ONLY": "agent:commit"},
+            )
             for options in (("--no-build", "--resolve-only"), ("--resolve-only", "--no-build")):
                 result = subprocess.run(["bash", str(script), *options], cwd=root, env=env,
                                         text=True, capture_output=True, check=False)
@@ -62,8 +62,9 @@ class RunShellOptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="journey-run-options-unknown-") as temporary:
             home = Path(temporary) / "home"
             home.mkdir()
+            env = isolated_environment(home, Path(temporary) / "bin", required_tools=("bash",))
             result = subprocess.run(["bash", str(script), "--not-a-journey-option"], cwd=root,
-                                    env={**os.environ, "HOME": str(home)}, text=True,
+                                    env=env, text=True,
                                     capture_output=True, check=False)
         self.assertEqual(result.returncode, 2)
         self.assertIn("Unknown journey option", result.stderr)
@@ -74,8 +75,9 @@ class RunShellOptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="journey-run-options-conflict-") as temporary:
             home = Path(temporary) / "home"
             home.mkdir()
+            env = isolated_environment(home, Path(temporary) / "bin", required_tools=("bash",))
             result = subprocess.run(["bash", str(script), "--resolve-only", "--prepare-only"], cwd=root,
-                                    env={**os.environ, "HOME": str(home)}, text=True,
+                                    env=env, text=True,
                                     capture_output=True, check=False)
         self.assertEqual(result.returncode, 2)
         self.assertIn("cannot be combined", result.stderr)

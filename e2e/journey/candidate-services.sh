@@ -18,18 +18,23 @@ journey_start_container_services() {
   if "${compose[@]}" exec -T verdaccio sh -s -- /verdaccio/storage < e2e/journey/storage_has_packages.sh >/dev/null 2>&1; then
     echo "WARNING: reusing non-empty Verdaccio storage; existing package versions must match the local tarballs."
   fi
-  JOURNEY_PUBLISHER_ID=$("${compose[@]}" run -d --name "journey-publisher-$$" publisher)
+  JOURNEY_PUBLISHER_ID=$("${compose[@]}" run -d --name "journey-publisher-$$" \
+    -e "PUBLISHER_DIAGNOSTIC_NEXT=${compose[*]} logs verdaccio" publisher)
 }
 
 journey_wait_container_publisher() {
-  local exit_code
+  local exit_code log_path
   if [[ -z "$JOURNEY_PUBLISHER_ID" ]]; then
     echo "Journey package publisher was not started. Next: call journey_start_container_services from e2e/journey/run.sh." >&2
     return 2
   fi
   exit_code=$(docker wait "$JOURNEY_PUBLISHER_ID")
   if [[ "$exit_code" != "0" ]]; then
-    echo "Journey package publisher container exited $exit_code. Next: cat .journey/reports/container-outcomes.json" >&2
+    if ! log_path=$(docker logs "$JOURNEY_PUBLISHER_ID" 2>&1 | python3 e2e/journey/container_outcomes.py --report-dir .journey/reports --write-log-name publisher); then
+      echo "Journey package publisher container exited $exit_code; its logs could not be captured or saved. Next: docker logs $JOURNEY_PUBLISHER_ID" >&2
+      return 1
+    fi
+    echo "Journey package publisher container exited $exit_code. Next: cat $log_path" >&2
     return 1
   fi
 }

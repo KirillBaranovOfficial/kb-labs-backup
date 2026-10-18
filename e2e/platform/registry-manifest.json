@@ -7,7 +7,6 @@
     { "name": "@kb-labs/host-app" },
     { "name": "@kb-labs/platform-client" },
     { "name": "@kb-labs/project-runtime-app" },
-    { "name": "@kb-labs/devkit" },
     { "name": "@kb-labs/sdk" },
     { "name": "@kb-labs/core-runtime" },
     { "name": "@kb-labs/core-contracts" },

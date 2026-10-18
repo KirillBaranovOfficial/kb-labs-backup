@@ -7,7 +7,13 @@ BASELINE=${2:-${BATCH_BASELINE:-j28}}
 BUILD_BASE=${KB_DEVKIT_BASE_REF:-local/main...HEAD}
 case "$OUT" in /*) ;; *) OUT="$ROOT/$OUT" ;; esac
 mkdir -p "$OUT"
-: > "$OUT/build.log"
+SHARED_OUT="$OUT/shared"
+mkdir -p "$SHARED_OUT"
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  printf 'artifact_shared=%s\nartifact_local=%s\nartifact_secured=%s\n' \
+    "$SHARED_OUT" "$OUT/local" "$OUT/secured" >> "$GITHUB_OUTPUT"
+fi
+: > "$SHARED_OUT/build.log"
 cd "$ROOT"
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/kb-journey-batch.XXXXXX")
@@ -46,10 +52,10 @@ finish_stage() {
 write_metadata() {
   result=$1
   total_seconds=$(($(date +%s) - batch_started_at))
-  for metadata_mode in batch local secured; do
-    metadata_file="$OUT/batch-metadata.json"
+  for metadata_mode in shared local secured; do
+    metadata_file="$SHARED_OUT/batch-metadata.json"
     metadata_mode_json=""
-    if [ "$metadata_mode" != batch ]; then
+    if [ "$metadata_mode" != shared ]; then
       [ -d "$OUT/$metadata_mode" ] || continue
       metadata_file="$OUT/$metadata_mode/batch-metadata.json"
       metadata_mode_json=",\"mode\":\"$metadata_mode\""
@@ -68,7 +74,7 @@ cleanup() {
   elif [ "$status" -eq 0 ]; then result=PASS
   else result=FAIL
   fi
-  printf '\n- Result: %s\n' "$result" >> "$OUT/summary.md"
+  printf '\n- Result: %s\n' "$result" >> "$SHARED_OUT/summary.md"
   write_metadata "$result"
   if [ -n "$unit_home" ] && [ -d "$unit_home" ]; then
     if ! chmod -R u+w "$unit_home"; then echo "could not make temporary HOME writable for cleanup: $unit_home" >&2; fi
@@ -84,12 +90,16 @@ trap 'interrupted=1; exit 130' INT
 trap 'interrupted=1; exit 143' TERM
 
 commit=$(git rev-parse HEAD)
-printf '{"commit":"%s","baseline":"%s","buildBase":"%s"}\n' "$commit" "$BASELINE" "$BUILD_BASE" > "$OUT/run.json"
+printf '{"commit":"%s","baseline":"%s","buildBase":"%s"}\n' "$commit" "$BASELINE" "$BUILD_BASE" > "$SHARED_OUT/run.json"
 printf '# Journey batch\n\n- Commit: `%s`\n- Baseline: `%s`\n- Build base: `%s`\n' \
-  "$commit" "$BASELINE" "$BUILD_BASE" > "$OUT/summary.md"
+  "$commit" "$BASELINE" "$BUILD_BASE" > "$SHARED_OUT/summary.md"
+record_failure_log() {
+  printf '\n- Failed stage: `%s`\n- Stage log: `%s`\n' "$1" "$2" >> "$SHARED_OUT/summary.md"
+}
 validate_build_base_ref() {
   build_base_ref=$1
   if ! git rev-parse --verify --quiet "$build_base_ref^{commit}" >/dev/null 2>&1; then
+    record_failure_log build build.log
     echo "affected-build base ref '$build_base_ref' is missing from this checkout; next: git fetch --all --prune" >&2
     exit 1
   fi
@@ -107,44 +117,59 @@ rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
 rm -rf .journey/reports/invocations
 start_stage reset
 reset_rc=0
-e2e/journey/run.sh --down > "$OUT/reset.log" 2>&1 || reset_rc=$?
+e2e/journey/run.sh --down > "$SHARED_OUT/reset.log" 2>&1 || reset_rc=$?
 finish_stage
 if [ "$reset_rc" -ne 0 ]; then
-  echo "journey stack reset failed; see $OUT/reset.log; next: e2e/journey/run.sh --down" >&2
+  record_failure_log reset reset.log
+  echo "journey stack reset failed; see $SHARED_OUT/reset.log; next: e2e/journey/run.sh --down" >&2
   exit 1
 fi
 start_stage build
 build_rc=0
-(cd tools/kb-devkit && go build -o "$work/kb-devkit" .) > "$OUT/build.log" 2>&1 || build_rc=$?
+(cd tools/kb-devkit && go build -o "$work/kb-devkit" .) > "$SHARED_OUT/build.log" 2>&1 || build_rc=$?
 if [ "$build_rc" -ne 0 ]; then
   finish_stage
-  echo "could not build kb-devkit from this checkout; see $OUT/build.log; next: (cd tools/kb-devkit && go build .)" >&2
+  record_failure_log build build.log
+  echo "could not build kb-devkit from this checkout; see $SHARED_OUT/build.log; next: (cd tools/kb-devkit && go build .)" >&2
   exit 1
 fi
-if ! env KB_DEVKIT_BASE_REF="$BUILD_BASE" "$work/kb-devkit" run build --affected >> "$OUT/build.log" 2>&1; then
+if ! env KB_DEVKIT_BASE_REF="$BUILD_BASE" "$work/kb-devkit" run build --affected >> "$SHARED_OUT/build.log" 2>&1; then
   finish_stage
-  echo "devkit affected build failed; see $OUT/build.log; next: (cd tools/kb-devkit && KB_DEVKIT_BASE_REF='$BUILD_BASE' go run . run build --affected)" >&2
+  record_failure_log build build.log
+  echo "devkit affected build failed; see $SHARED_OUT/build.log; next: (cd tools/kb-devkit && KB_DEVKIT_BASE_REF='$BUILD_BASE' go run . run build --affected)" >&2
+  exit 1
+fi
+output_check_rc=0
+node "$ROOT/e2e/scripts/validate-package-outputs.mjs" --build-outputs "$ROOT" > "$SHARED_OUT/release-build-output-check.log" 2>&1 || output_check_rc=$?
+cat "$SHARED_OUT/release-build-output-check.log" >> "$SHARED_OUT/build.log"
+if [ "$output_check_rc" -ne 0 ]; then
+  finish_stage
+  record_failure_log build build.log
+  cat "$SHARED_OUT/release-build-output-check.log" >&2
+  echo "release package build outputs are missing; see $SHARED_OUT/build.log" >&2
   exit 1
 fi
 finish_stage
 unit_home=$(mktemp -d "${TMPDIR:-/tmp}/kb-batch-unit.XXXXXX")
 unit_rc=0
 start_stage unit
-HOME="$unit_home" env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET python3 -m unittest discover -s e2e/journey -p 'test_*.py' > "$OUT/unit.log" 2>&1 || unit_rc=$?
+HOME="$unit_home" env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET python3 -m unittest discover -s e2e/journey -p 'test_*.py' > "$SHARED_OUT/unit.log" 2>&1 || unit_rc=$?
 if ! chmod -R u+w "$unit_home"; then echo "could not make temporary HOME writable for cleanup: $unit_home" >&2; fi
 if ! rm -rf "$unit_home"; then echo "could not remove temporary HOME: $unit_home" >&2; fi
 unit_home=""
 finish_stage
 if [ "$unit_rc" -ne 0 ]; then
-  echo "journey unit suite failed; see $OUT/unit.log; next: python3 -m unittest discover -s e2e/journey -p 'test_*.py'" >&2
+  record_failure_log unit unit.log
+  echo "journey unit suite failed; see $SHARED_OUT/unit.log; next: python3 -m unittest discover -s e2e/journey -p 'test_*.py'" >&2
   exit 1
 fi
 start_stage candidate
 candidate_rc=0
-e2e/journey/prepare-candidate.sh > "$OUT/candidate.log" 2>&1 || candidate_rc=$?
+e2e/journey/prepare-candidate.sh > "$SHARED_OUT/candidate.log" 2>&1 || candidate_rc=$?
 finish_stage
 if [ "$candidate_rc" -ne 0 ]; then
-  echo "journey candidate preparation failed; see $OUT/candidate.log; next: e2e/journey/prepare-candidate.sh" >&2
+  record_failure_log candidate candidate.log
+  echo "journey candidate preparation failed; see $SHARED_OUT/candidate.log; next: e2e/journey/prepare-candidate.sh" >&2
   exit 1
 fi
 
@@ -153,7 +178,7 @@ for mode in local secured; do
   mode_out="$OUT/$mode"
   mkdir -p "$mode_out"
   start_stage "$mode"
-  cp "$OUT/reset.log" "$OUT/build.log" "$OUT/unit.log" "$OUT/candidate.log" "$mode_out/"
+  cp "$SHARED_OUT/reset.log" "$SHARED_OUT/build.log" "$SHARED_OUT/unit.log" "$SHARED_OUT/candidate.log" "$mode_out/"
   scenario="service-$mode:explore"
   rc=0
   KB_JOURNEY_ONLY="$scenario" e2e/journey/run.sh --no-build > "$mode_out/batch.log" 2>&1 || rc=$?
@@ -170,9 +195,12 @@ for mode in local secured; do
   rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
   rm -rf .journey/reports/invocations
   finish_stage
-  if [ "$rc" -ne 0 ]; then batch_rc=1; fi
+  if [ "$rc" -ne 0 ]; then
+    batch_rc=1
+    record_failure_log "$mode" "$mode/batch.log"
+  fi
 done
-cat >> "$OUT/summary.md" <<SUMMARY
+cat >> "$SHARED_OUT/summary.md" <<SUMMARY
 - Modes: local and secured
 - Reports and logs: one directory per mode
 SUMMARY

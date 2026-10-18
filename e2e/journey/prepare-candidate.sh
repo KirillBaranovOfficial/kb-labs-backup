@@ -8,6 +8,7 @@ TAG="journey-candidate"
 TARGET="$OUT/release/$TAG"
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 
+node "$ROOT/e2e/scripts/validate-package-outputs.mjs" --build-outputs "$ROOT"
 bash "$ROOT/e2e/journey/stage-runner-inputs.sh"
 
 mkdir -p "$PACKAGES" "$TARGET"

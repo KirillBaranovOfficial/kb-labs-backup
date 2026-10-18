@@ -5,6 +5,8 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { releasePackageNames } from '../platform/journey-update-packages.mjs';
+import registryManifest from '../platform/registry-manifest.json' with { type: 'json' };
 
 export function buildCommand(packageName) {
   return `corepack pnpm -r --filter "${packageName}..." --workspace-concurrency=2 build`;
@@ -12,6 +14,11 @@ export function buildCommand(packageName) {
 
 export function failureMessage(manifest, tarball, failure) {
   return `ERROR: ${manifest.name} (${basename(tarball)}) is missing packed ${failure.field} output ${failure.target}. ` +
+    `Build it with: ${buildCommand(manifest.name)}`;
+}
+
+export function buildFailureMessage(manifest, failure) {
+  return `ERROR: ${manifest.name} is missing required ${failure.field} output ${failure.target} before packing. ` +
     `Build it with: ${buildCommand(manifest.name)}`;
 }
 
@@ -62,15 +69,42 @@ export function validatePackageContents(manifest, packedPaths) {
     }
   };
 
-  // `files` is an npm inclusion filter; absent optional source files such as
-  // LICENSE are legal. Validate its build-output entries, which are the paths
-  // that can be missing because a package was not built.
-  for (const pattern of Array.isArray(manifest.files) ? manifest.files : []) {
-    if (/^(?:dist|build|lib|out)(?:\/|$)/.test(pattern)) check('files', pattern);
-  }
   check('main', manifest.main);
+  check('types', manifest.types ?? manifest.typings);
+  const bins = typeof manifest.bin === 'string' ? [manifest.bin] : Object.values(manifest.bin ?? {});
+  bins.forEach((target) => check('bin', target));
   exportTargets(manifest.exports).forEach((target) => check('exports', target));
-  if (manifest.name === '@kb-labs/studio-app') check('Studio', './dist/index.html');
+  check('kb.manifest', manifest.kb?.manifest);
+  for (const target of manifest.kb?.requiredOutputs ?? []) check('kb.requiredOutputs', target);
+  return failures;
+}
+
+export function validateWorkspacePackageContents(manifest, workspacePaths) {
+  return validatePackageContents(manifest, workspacePaths);
+}
+
+function workspacePaths(directory, root = directory, paths = []) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const absolute = join(directory, entry.name);
+    const relative = absolute.slice(root.length + 1);
+    paths.push(relative);
+    if (entry.isDirectory()) workspacePaths(absolute, root, paths);
+  }
+  return paths;
+}
+
+export function validateReleaseBuildOutputs(packages, releaseManifest = registryManifest) {
+  const failures = [];
+  for (const name of releasePackageNames(releaseManifest)) {
+    const source = packages.get(name);
+    if (!source) throw new Error(`release package is not registered in the workspace: ${name}`);
+    const paths = workspacePaths(source.directory);
+    const packageFailures = validateWorkspacePackageContents(source.manifest, paths);
+    if (!matchesTarget(paths, 'dist')) packageFailures.unshift({ field: 'release', target: 'dist' });
+    for (const failure of packageFailures) {
+      failures.push({ packageName: name, message: buildFailureMessage(source.manifest, failure) });
+    }
+  }
   return failures;
 }
 
@@ -282,6 +316,18 @@ export async function validateTarballAgainstWorkspace(tarball, packages, workspa
 }
 
 async function main() {
+  if (process.argv[2] === '--build-outputs') {
+    const workspaceRoot = process.argv[3];
+    if (!workspaceRoot) {
+      process.stderr.write('Usage: validate-package-outputs.mjs --build-outputs <workspace-root>\n');
+      return 2;
+    }
+    const failures = validateReleaseBuildOutputs(workspacePackages(workspaceRoot));
+    for (const failure of failures) process.stderr.write(`${failure.message}\n`);
+    if (failures.length > 0) return 1;
+    process.stdout.write(`Validated declared build outputs for ${releasePackageNames(registryManifest).length} release packages\n`);
+    return 0;
+  }
   const directory = process.argv[2];
   const workspaceRoot = process.argv[3];
   if (!directory || !workspaceRoot) {
