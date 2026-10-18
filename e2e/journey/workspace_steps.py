@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import layout_relative, layout_value, write_local_access_mode
 
 import json
 import os
@@ -73,7 +73,8 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
     cli = repo_root / "cli/bin/dist/bin.js"
     with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-home-") as home:
         env = {**os.environ, "HOME": home}
-        env["KB_PLATFORM_ROOT"] = str(repo_root)
+        env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
+            Path(home) / "platform", repo_root / ".kb" / "kb.config.jsonc"))
         kb_home = Path(home) / ".kb"
         kb_home.mkdir()
         shutil.copy2(repo_root / layout_value('versionStatePaths.kb_marketplace_lock'), kb_home / "marketplace.lock")
@@ -128,6 +129,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 (("auth", "status"), "authenticated"),
                 (("project", "list"), "projects"),
                 (("webhook", "list"), "webhooks"),
+                (("qa", "coverage", "show", "--level", "all", "--mode", "local"), "cases"),
             )
             for command, expected_field in commands:
                 result = run(*command, "--json")
@@ -212,7 +214,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 return f"workspace adapter listing did not resolve configured workspace packages for: {', '.join(missing)}"
             unknown = [slot for slot in expected if adapter_rows[slot].get("runtimeStatus") != "unknown"
                        or adapter_rows[slot].get("mode") != "unknown"
-                       or adapter_rows[slot].get("action", {}).get("command") != f'kb-create start --platform-root "{repo_root}"']
+                       or adapter_rows[slot].get("action", {}).get("command") != f'kb-create start --platform-root "{env["KB_PLATFORM_ROOT"]}"']
             if unknown:
                 return f"stopped host adapter rows did not report unknown status with the platform-root start command for: {', '.join(unknown)}"
             return None
@@ -261,10 +263,13 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
             config_source = repo_root / ".kb/kb.config.json"
             if not config_source.exists():
                 config_source = repo_root / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')
-            (kb_dir / config_source.name).write_bytes(config_source.read_bytes())
             isolated_lock = locked
             (kb_dir / "marketplace.lock").write_text(json.dumps(isolated_lock), encoding="utf-8")
-            isolated_env = {**env, "KB_PLATFORM_ROOT": str(fixture_root), "KB_HOME": str(kb_dir)}
+            isolated_env = {
+                **env,
+                "KB_PLATFORM_ROOT": str(write_local_access_mode(fixture_root, config_source)),
+                "KB_HOME": str(kb_dir),
+            }
             with invocation_context(step_id="S-179.13"):
                 help_result = run_command(["node", str(cli), "--help"], cwd=fixture_root,
                                           env=isolated_env, timeout=120)

@@ -13,9 +13,10 @@ export interface PlatformAuthGateInput {
 }
 
 export function platformAuthFailure(input: PlatformAuthGateInput): ErrorEnvelope | null {
-  if (input.accessMode !== 'secured' || (input.help && isPlatformAuthExemptFlag('help')) || !input.requiresSession || input.hasAuth) {
+  if ((input.help && isPlatformAuthExemptFlag('help')) || !input.requiresSession || input.accessMode === 'local') {
     return null;
   }
+  if (input.accessMode === 'secured' && input.hasAuth) { return null; }
   if (input.authError) { return input.authError; }
   return input.gatewayUrl
     ? createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: input.gatewayUrl } })

@@ -55,6 +55,8 @@ elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
     entries = [{"id": key, "source": value["source"], "scope": "project"}
                for key, value in plugins.items()]
     print(json.dumps({"ok": True, "data": {"entries": entries, "total": len(entries)}}))
+    if os.environ.get("FAKE_DISCOVERY_WARNING"):
+        print("[discover] non-blocking diagnostic", file=sys.stderr)
 elif args[:3] == ["marketplace", "plugins", "remove"]:
     lock = json.loads(lock_path.read_text())
     lock["plugins"].pop(args[3], None)
@@ -276,6 +278,15 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.status, "PASS")
         self.assertTrue(all(step["mode"] == "secured" for step in result.steps))
         self.assertEqual(len(result.case_run["claims"]), 7)
+
+    # case: S-003.3
+    def test_parseable_plugin_list_stdout_survives_discovery_stderr(self):
+        self.env["FAKE_DISCOVERY_WARNING"] = "1"
+        result = self.run_flow()
+
+        self.assertEqual(result.status, "PASS", result.steps)
+        claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
+        self.assertEqual(claims["S-003.3"], "PASS")
 
     def test_build_failure_is_reported_and_generated_files_are_cleaned(self):
         result = self.run_flow(fail_build=True)

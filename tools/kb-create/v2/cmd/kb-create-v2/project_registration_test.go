@@ -305,7 +305,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 		} else if strings.Contains(output, `"password":`) || strings.Contains(output, `"Password":`) || strings.Contains(output, password) {
 			t.Fatalf("previously disclosed repeat install returned a password: %s", output)
 		}
-		repeatResult := applyResultFromStream(t, output)
+		repeatResult := installResultFromJSONStream(t, stdout.String(), code.Code())
 		humanOutput := renderInstall(repeatResult)
 		if storedPasswordPresent {
 			if !strings.Contains(humanOutput, "Password:") || strings.Count(humanOutput, password) != 1 {
@@ -437,7 +437,7 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 	if noticeCode != 0 {
 		t.Fatalf("completed secured install for an unregistered project exit=%d output=%s", noticeCode, noticeOutput)
 	}
-	noticeResult := applyResultFromStream(t, noticeOutput)
+	noticeResult := installResultFromJSONStream(t, noticeStdout.String(), noticeCode)
 	for _, name := range []string{"gateway.bootstrap.password", secrets.BootstrapPasswordEnvironment} {
 		if present, err := (secrets.Store{PlatformRoot: root}).Exists(name); err != nil || present {
 			t.Fatalf("completed install notice for an unregistered project restored bootstrap secret %q: present=%v err=%v", name, present, err)
@@ -671,8 +671,10 @@ func TestSecuredInstallRerunsDoNotCallGatewayForEitherRecordedSpelling(t *testin
 				}
 				if !recorded {
 					notice := ""
-					if commandName == "install" || commandName == "apply" {
-						notice = applyResultFromStream(t, output).ProjectRegistrationNotice
+					if commandName == "install" {
+						notice = installResultFromJSONStream(t, stdout.String(), code).ProjectRegistrationNotice
+					} else if commandName == "apply" {
+						notice = applyResultFromJSONDocument(t, stdout.String()).ProjectRegistrationNotice
 					} else {
 						var envelope struct {
 							Data struct {

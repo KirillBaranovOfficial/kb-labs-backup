@@ -14,9 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
-	"github.com/kb-labs/clikit/stream"
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
@@ -86,23 +84,6 @@ func secretRedactionValues(store secrets.Store, plan contracts.ResolvedInstallPl
 
 func executeApply(ctx context.Context, applyInput applyCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
 	return applyPlan(ctx, applyInput, deps)
-}
-
-func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps commandDependencies) (streamCompletion, *diag.Diag) {
-	writer := stream.New(clikitcommand.StreamWriter(deps.Command))
-	deps.Runtime.Progress = streamProgress{writer: writer}
-	result, failure := executeApply(ctx, applyInput, deps)
-	if failure != nil {
-		if err := writer.Fail(failure); err != nil {
-			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
-		}
-	} else if written, emitFailure := emitFirstAdminResult(result, "apply", func() error { return writer.Result(result) }); emitFailure != nil {
-		return finishFirstAdminResultFailure(writer, deps.Command, written, emitFailure)
-	}
-	if err := writer.Finish(writer.ExitStatus()); err != nil {
-		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
-	}
-	return streamCompletion{ExitStatus: writer.ExitStatus()}, nil
 }
 
 func applyPlan(ctx context.Context, input applyCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {

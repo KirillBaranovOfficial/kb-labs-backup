@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import layout_relative, layout_value, write_local_access_mode
 
 from project_service_path import project_service_path
 
@@ -321,7 +321,8 @@ def run_project_identity_steps(journey: Journey, repo_root: Path) -> None:
                 tempfile.TemporaryDirectory(prefix="kb-project-identity-cwd-") as cwd:
             env = {**os.environ, "HOME": home}
             env.pop("KB_HOME", None)
-            env["KB_PLATFORM_ROOT"] = str(repo_root)
+            env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
+                Path(home) / "platform", repo_root / ".kb" / "kb.config.jsonc"))
             env.pop("KB_NET_OFFSET", None)
             result = run_command(
                 ["node", str(cli), "project", "show", "--json"],

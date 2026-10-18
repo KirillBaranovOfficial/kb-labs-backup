@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,15 +12,53 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 )
+
+func registerTestHostProcessTreeCleanup(t *testing.T, platformRoot string) {
+	t.Helper()
+	t.Cleanup(func() {
+		state, err := host.StateForRoot(platformRoot)
+		if err != nil {
+			t.Errorf("resolve test host state for cleanup: %v", err)
+			return
+		}
+		if _, err := os.Stat(state.HostPID()); errors.Is(err, os.ErrNotExist) {
+			return
+		} else if err != nil {
+			t.Errorf("inspect test host process record during cleanup: %v", err)
+			return
+		}
+		runner, err := host.NewRecordedRunner(platformRoot)
+		if err != nil {
+			t.Errorf("load recorded test host for process-tree cleanup: %v", err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if _, err := runner.Stop(ctx); err != nil {
+			t.Errorf("stop test host process tree during cleanup: %v", err)
+			return
+		}
+		status, err := runner.Status(ctx)
+		if err != nil {
+			t.Errorf("verify stopped test host during cleanup: %v", err)
+			return
+		}
+		if status.State == host.StateRunning || status.PID != 0 && host.ProcessAlive(status.PID) {
+			t.Errorf("test host process tree remains alive after cleanup: state=%s pid=%d", status.State, status.PID)
+		}
+	})
+}
 
 func writeVersionedReceipt(t *testing.T, root string, installed contracts.InstallReceipt) {
 	t.Helper()

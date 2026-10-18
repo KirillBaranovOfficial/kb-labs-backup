@@ -378,6 +378,7 @@ func newInstallationWithRoot(t *testing.T, launcher, fakehost, root, kbHome stri
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: spec,
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}}}
 	writeVersionedReceipt(t, root, contracts.InstallReceipt{ID: "r1", InstallationID: "installation-r1", Plan: plan})
+	registerTestHostProcessTreeCleanup(t, root)
 	if err := os.WriteFile(filepath.Join(root, "state", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -390,19 +391,6 @@ func newInstallationWithRoot(t *testing.T, launcher, fakehost, root, kbHome stri
 		t.Fatal(err)
 	}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
-	t.Cleanup(func() {
-		_, code, output := inst.run("stop", "--json")
-		if code != 0 {
-			t.Errorf("test cleanup stop failed: %s", output)
-		}
-		status, statusCode, statusOutput := inst.run("status", "--json")
-		if statusCode != 0 || status["running"] == true {
-			t.Errorf("test cleanup left host running: %s", statusOutput)
-		}
-		if pid, ok := status["host"].(map[string]any)["pid"].(float64); ok && host.ProcessAlive(int(pid)) {
-			t.Errorf("test cleanup host process %d is still alive", int(pid))
-		}
-	})
 	return inst
 }
 
