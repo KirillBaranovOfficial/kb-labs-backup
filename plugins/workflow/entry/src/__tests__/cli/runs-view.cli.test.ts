@@ -201,11 +201,13 @@ describe('workflow:runs view', () => {
     expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
-  it('RV-07: failed run returns exitCode 1', async () => {
+  // case: S-009.4
+  it('RV-07: viewing a failed run succeeds and returns its failed status', async () => {
+    const failedRun = { ...baseRun, status: 'failed' as const, result: { status: 'failed', error: { message: 'compile failed' } } };
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
         ...defaultWorkflowClient,
-        getRun: async () => ({ ...baseRun, status: 'failed' as const }),
+        getRun: async () => failedRun,
       });
     });
 
@@ -213,10 +215,32 @@ describe('workflow:runs view', () => {
     const ctx = createMockContext({ ui });
     const result = await runsViewCommand.execute(
       ctx,
+      mockCLIInput({ argv: ['run-abc'], flags: { json: 'all' } }),
+    );
+
+    expect(result).toEqual(failedRun);
+    expect(result).toMatchObject({ id: 'run-abc', status: 'failed', result: { error: { message: 'compile failed' } } });
+  });
+
+  // case: S-029.2
+  it('renders a failed run in the human view without returning a command error', async () => {
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => ({ ...baseRun, status: 'failed' as const, result: { status: 'failed', error: { message: 'compile failed' } } }),
+      });
+    });
+
+    const { ui } = createCapturedUI();
+    const sideBox = vi.fn();
+    const ctx = createMockContext({ ui: { ...ui, sideBox } });
+    const result = await runsViewCommand.execute(
+      ctx,
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result).toHaveProperty('ok', false);
+    expect(result).toBeUndefined();
+    expect(sideBox).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }));
   });
 
   it('RV-08: formatDuration returns "0ms" for durationMs=0 (BUG-007)', async () => {

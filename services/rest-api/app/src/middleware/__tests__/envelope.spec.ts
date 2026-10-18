@@ -4,14 +4,16 @@
  * Tests for response envelope middleware.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify from 'fastify';
 import { Readable } from 'node:stream';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { createContextLogger } from '@kb-labs/core-platform';
 import { registerEnvelopeMiddleware } from '../envelope';
 import { assertNoStackTraceLeak } from '../../__tests__/helpers/safe-error-envelope';
+import { platform } from '@kb-labs/core-runtime';
 
 const TEST_CONFIG: RestApiConfig = {
   port: 3000,
@@ -35,7 +37,11 @@ describe('registerEnvelopeMiddleware', () => {
   });
 
   afterEach(async () => {
-    await app.close();
+    try {
+      await app.close();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   describe('successful responses', () => {
@@ -197,6 +203,41 @@ describe('registerEnvelopeMiddleware', () => {
       expect(body.error.correlationId).toBeDefined();
       expect(body.error.message).not.toContain('Unexpected error');
       assertNoStackTraceLeak(body);
+    });
+
+    it('logs a thrown route exception with its response correlation id and stack', async () => {
+      const log = vi.spyOn(platform.logger, 'error').mockImplementation(() => {});
+      const privateValue = 'private-session-value-sentinel';
+      createContextLogger(platform.logger, {
+        applicationId: 'rest-api', serviceId: 'rest', instanceId: 'test-instance', layer: 'service',
+      }).registerSensitiveValues([privateValue]);
+      app.post('/thrown-route', async () => {
+        throw new Error(`route failed before creating a session: ${privateValue}`);
+      });
+      await app.ready();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/thrown-route?token=private-query-value-sentinel',
+        payload: { task: 'private task body sentinel' },
+      });
+      const error = response.json().error;
+      const failureRecord = log.mock.calls.find(([, thrown]) => thrown instanceof Error);
+
+      expect(response.statusCode).toBe(500);
+      expect(error.correlationId).toBeTruthy();
+      expect(failureRecord).toBeDefined();
+      expect(failureRecord?.[1]?.message).toBe('route failed before creating a session: [REDACTED]');
+      expect(failureRecord?.[1]?.stack).not.toContain(privateValue);
+      expect(failureRecord?.[2]).toMatchObject({
+        correlationId: error.correlationId,
+        errorCode: error.code,
+        statusCode: 500,
+      });
+      expect(failureRecord?.[2]).not.toHaveProperty('requestId');
+      expect(JSON.stringify(failureRecord)).not.toContain('private task body sentinel');
+      expect(JSON.stringify(failureRecord)).not.toContain(privateValue);
+      expect(JSON.stringify(failureRecord)).not.toContain('private-query-value-sentinel');
     });
 
     it('should not expose internal error details', async () => {

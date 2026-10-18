@@ -25,4 +25,4 @@ A project user finds previous workflow runs and inspects a run’s terminal stat
 | S-009.1 | Run `kb workflow runs list` | Recent runs show run ID, workflow, status, and time. |
 | S-009.2 | Run `kb workflow runs view <runId>` | Detail shows the selected run and its terminal status. |
 | S-009.3 | Run `kb workflow runs logs <runId>` | Step logs are visible for that run. |
-| S-009.4 | Select a failed run | History records the run as failed, and run detail or logs show the failure reason and failed step. |
+| S-009.4 | Select a failed run and run `kb workflow runs view <runId> --json=all` | The query exits 0 and reports the run with `status: failed`; run detail or logs show the failure reason and failed step. |

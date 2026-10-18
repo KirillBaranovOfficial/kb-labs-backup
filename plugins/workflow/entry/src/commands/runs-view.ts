@@ -208,10 +208,6 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
 
         const run = await client.getRun(runId);
 
-        if (jsonFields && run.status === 'failed') {
-          return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', `Workflow run ${runId} failed.`, `Inspect its logs with: kb workflow runs logs ${runId}`, { cause: run.result?.error?.message });
-        }
-
         // --json=fields output (--json=all for full, --json=status,jobs for selective)
         if (jsonFields) {
           if (jsonFields === 'all') {
@@ -330,9 +326,6 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
           sections,
         });
 
-        if (failed) {
-          return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', `Workflow run ${runId} failed.`, `Inspect its logs with: kb workflow runs logs ${runId}`, { cause: run.result?.error?.message });
-        }
         return undefined;
       } catch (error) {
         return handleError(error);
