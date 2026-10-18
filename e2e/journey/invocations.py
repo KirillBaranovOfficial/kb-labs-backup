@@ -758,17 +758,16 @@ def _resolve_invoked_executable(executable: str, cwd: str | Path | None,
 
 def _unexpected_error_diagnostics(argv: list[str], stdout: str, stderr: str,
                                   cwd: str | Path | None, env: Mapping[str, str] | None) -> dict[str, Any] | None:
+    effective_env = env if env is not None else os.environ
+    kb_cli = _kb_shim_evidence(effective_env)
+    if (not argv or kb_cli is None
+            or _resolve_invoked_executable(argv[0], cwd, effective_env) != kb_cli["realpath"]):
+        return None
     is_unexpected, correlation_id = parse_unexpected_correlation_id(stdout, stderr)
     if not is_unexpected:
         return None
     if correlation_id is None:
         return {"queryError": "KB_RUNTIME_UNEXPECTED omitted its correlationId"}
-    effective_env = env if env is not None else os.environ
-    kb_cli = _kb_shim_evidence(effective_env)
-    if (not argv or kb_cli is None
-            or _resolve_invoked_executable(argv[0], cwd, effective_env) != kb_cli["realpath"]):
-        return {"correlationId": correlation_id,
-                "queryError": "diagnostic retrieval requires the installed kb executable"}
     try:
         query = subprocess.run(
             [argv[0], "logs", "query", "--correlation-id", correlation_id, "--json"],

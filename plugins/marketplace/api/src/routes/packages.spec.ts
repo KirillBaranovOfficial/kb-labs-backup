@@ -396,7 +396,7 @@ describe('Marketplace API error boundary', () => {
     const packageRoot = path.join(root, 'package');
     await mkdir(packageRoot, { recursive: true });
     await writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
-      name: '@kb-labs/test-adapter', version: '1.0.0', type: 'module', kb: { manifest: './manifest.mjs' },
+      name: '@kb-labs/test-adapter', version: '1.0.0', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
     }));
     await writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = { schema: "kb.adapter/1", implements: "ICache" };');
     let packageInstalled = false;

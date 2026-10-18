@@ -9,6 +9,7 @@ import {
   validateErrorEnvelope,
   type IContextLogger,
 } from '@kb-labs/core-platform';
+import { handleError } from '@kb-labs/shared-cli-ui';
 import { normalizePluginHandlerFailure } from '../plugin-handler-failure.js';
 
 function loggerFor(records: Array<Record<string, unknown>>): IContextLogger {
@@ -90,6 +91,10 @@ describe('normalizePluginHandlerFailure', () => {
     });
 
     expect(envelope).toMatchObject({ code: 'KB_PLUGIN_CONTRACT_VIOLATION', details: { field: 'hint' } });
+    expect(envelope.details).toMatchObject({
+      observedType: 'object',
+      observedValuePreview: expect.stringContaining('[REDACTED]'),
+    });
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       event: 'plugin.handler.failed',
@@ -98,6 +103,7 @@ describe('normalizePluginHandlerFailure', () => {
       command: 'test open',
       malformedField: 'hint',
       malformedFieldType: 'object',
+      malformedFieldPreview: expect.stringContaining('[REDACTED]'),
     });
     const record = JSON.stringify(records[0]);
     expect(record).toContain('[REDACTED]');
@@ -105,6 +111,88 @@ describe('normalizePluginHandlerFailure', () => {
     const preview = records[0]?.malformedFieldPreview;
     expect(typeof preview).toBe('string');
     expect((preview as string).length).toBeLessThanOrEqual(256);
+    expect(JSON.stringify(envelope.details)).not.toContain(secret);
+    expect((envelope.details?.observedValuePreview ?? '').length).toBeLessThanOrEqual(256);
+  });
+
+  it('preserves diagnostic detail violations with redacted field evidence in the envelope and correlated log', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const logger = loggerFor(records);
+    const secret = 'x81-diagnostic-detail-secret';
+    logger.registerSensitiveValues([secret]);
+    const invalidConfigDetails = { path: 'platform.yaml', gatewayUrl: `${secret}${'x'.repeat(400)}` };
+    const diagnostic = createErrorEnvelope('KB_CONFIG_INVALID', {
+      details: invalidConfigDetails,
+    });
+    const envelope = normalizePluginHandlerFailure(diagnostic, {
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
+      command: 'test run',
+      correlationId: 'diagnostic-contract-correlation',
+      logger,
+      logContext,
+    });
+
+    expect(envelope).toMatchObject({
+      code: 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION',
+      correlationId: 'diagnostic-contract-correlation',
+      details: {
+        originalCode: 'KB_CONFIG_INVALID',
+        field: 'gatewayUrl',
+        observedType: 'string',
+        observedValuePreview: expect.stringContaining('[REDACTED]'),
+      },
+    });
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      event: 'plugin.handler.failed',
+      correlationId: 'diagnostic-contract-correlation',
+      malformedField: 'gatewayUrl',
+      malformedFieldType: 'string',
+      malformedFieldPreview: expect.stringContaining('[REDACTED]'),
+    });
+    expect(JSON.stringify(envelope)).not.toContain(secret);
+    expect(JSON.stringify(records[0])).not.toContain(secret);
+    expect(String(envelope.details?.observedValuePreview).length).toBeLessThanOrEqual(256);
+    expect(String(records[0]?.malformedFieldPreview).length).toBeLessThanOrEqual(256);
+  });
+
+  it.each([
+    { pluginId: '@kb-labs/commit', command: 'commit open', hint: { key: 'errors.commit.open', params: { path: 'plan.json' } } },
+    { pluginId: '@kb-labs/workflow', command: 'workflow defs list', hint: undefined },
+    { pluginId: '@kb-labs/review', command: 'review run', hint: { message: 'Review failed', interpolation: { file: 'src/a.ts' } } },
+  ])('keeps malformed hints attributable through the shared SDK failure helper for $command', ({ pluginId, command, hint }) => {
+    const records: Array<Record<string, unknown>> = [];
+    const returnedFailure = handleError(Object.assign(new Error(`${command} failed.`), {
+      code: 'PLUGIN_COMMAND_FAILED',
+      hint,
+    }), 'sdk-helper-correlation');
+    const envelope = normalizePluginHandlerFailure(returnedFailure.error, {
+      pluginId,
+      pluginVersion: '2.120.1',
+      command,
+      correlationId: 'sdk-helper-correlation',
+      returnedFailure: true,
+      returnedFailureError: returnedFailure.error,
+      logger: loggerFor(records),
+      logContext,
+    });
+
+    expect(envelope).toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      correlationId: 'sdk-helper-correlation',
+      details: {
+        field: 'hint',
+        observedType: hint === undefined ? 'undefined' : 'object',
+      },
+    });
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      event: 'plugin.handler.failed',
+      correlationId: 'sdk-helper-correlation',
+      malformedField: 'hint',
+      malformedFieldType: hint === undefined ? 'undefined' : 'object',
+    });
   });
 
   it('reports the invalid field from the canonical envelope schema', () => {

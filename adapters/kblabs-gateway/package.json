@@ -47,7 +47,9 @@
     "pnpm": ">=9.0.0"
   },
   "kb": {
-    "manifest": "./dist/manifest.js"
+    "adapter": {
+      "manifest": "./dist/manifest.js"
+    }
   },
   "peerDependencies": {
     "@kb-labs/sdk": "workspace:^"

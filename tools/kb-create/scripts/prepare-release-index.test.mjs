@@ -195,7 +195,7 @@ test('seals SDK runtime peers declared by the workspace package contract', () =>
     const relativePackagePath = relative(workspaceRoot, workspacePackage.path);
     if (!relativePackagePath.startsWith('adapters/') && !relativePackagePath.startsWith('services/')) continue;
     const packageJSON = JSON.parse(readFileSync(join(workspacePackage.path, 'package.json'), 'utf8'));
-    if (!packageJSON.kb?.manifest) continue;
+    if (!packageJSON.kb?.manifest && !packageJSON.kb?.adapter?.manifest) continue;
     const builtManifestPath = join(workspacePackage.path, 'dist', 'manifest.json');
     assert.ok(
       existsSync(builtManifestPath),
@@ -753,14 +753,14 @@ test('fails preparation when a staged package declares a manifest but lacks the 
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-missing-artifact', '2.0.0', '', { kb: { manifest: './dist/manifest.js' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-missing-artifact', '2.0.0', '', { kb: { adapter: { manifest: './dist/manifest.js' } } }),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
   const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, ...provenanceArgs(stage), '--binary-manifest', binaryManifest, '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
   assert.notEqual(result.status, 0);
-  assert.match(`${result.stdout}\n${result.stderr}`, /@kb-labs\/adapters-missing-artifact declares kb\.manifest but its build did not emit dist\/manifest\.json/);
+  assert.match(`${result.stdout}\n${result.stderr}`, /@kb-labs\/adapters-missing-artifact declares kb\.adapter\.manifest but its build did not emit dist\/manifest\.json/);
 });
 
 test('writes the actual SDK and binary versions as explicit compatibility relations', () => {

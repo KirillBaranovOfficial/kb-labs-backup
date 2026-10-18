@@ -15,9 +15,9 @@ if (!extras.some((extra) => extra.directory === relativeDirectory)) {
   process.stderr.write(`ERROR: ${packageManifest.name} is not declared in e2e/scripts/pack-extras.json; next: add its directory to that registry and run kb-devkit run build.\n`);
   process.exit(1);
 }
-const manifestModule = packageManifest.kb?.manifest;
+const manifestModule = packageManifest.kb?.adapter?.manifest ?? packageManifest.kb?.manifest;
 if (typeof manifestModule !== 'string' || !manifestModule.startsWith('./')) {
-  process.stderr.write(`ERROR: ${packageManifest.name} must declare kb.manifest in package.json before its candidate output can be built.\n`);
+  process.stderr.write(`ERROR: ${packageManifest.name} must declare its KB manifest module in package.json before its candidate output can be built.\n`);
   process.exit(1);
 }
 const output = path.join(packageDirectory, 'dist/manifest.json');

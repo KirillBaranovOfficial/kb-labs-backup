@@ -14,9 +14,9 @@ const MANIFEST_EMITTER = fileURLToPath(new URL('./emit-manifest-json.mjs', impor
  * Derive tsup entry points from package.json.
  * Reads two sources of published dist artifacts:
  *   1. `exports` — public module surface ("./dist/foo.js" → "src/foo.ts")
- *   2. `kb.manifest` — plugin/adapter manifest loaded at runtime by the
- *      kb-labs platform; it's referenced as a dist path but not exported,
- *      so it would otherwise be silently omitted from the build.
+ *   2. `kb.manifest` or `kb.adapter.manifest` — plugin or adapter manifest
+ *      loaded at runtime by the kb-labs platform; it's referenced as a dist
+ *      path but not exported, so it would otherwise be silently omitted.
  * Falls back to ['src/index.ts'] if nothing resolves.
  */
 function resolveEntryFromExports() {
@@ -31,7 +31,10 @@ function resolveEntryFromExports() {
         : (condition.import ?? condition.default ?? null)
       if (importPath && typeof importPath === 'string') distPaths.push(importPath)
     }
-    if (typeof pkg.kb?.manifest === 'string') distPaths.push(pkg.kb.manifest)
+    const manifestPath = typeof pkg.kb?.adapter?.manifest === 'string'
+      ? pkg.kb.adapter.manifest
+      : pkg.kb?.manifest
+    if (typeof manifestPath === 'string') distPaths.push(manifestPath)
 
     for (const p of distPaths) {
       const base = p.replace(/^\.\/dist\//, '').replace(/\.js$/, '')
@@ -53,7 +56,7 @@ function resolveEntryFromExports() {
  * package's JavaScript.
  */
 function failManifestEmission(message) {
-  console.error(`[kb-devkit] ${message}\nNext: correct the package's kb.manifest source, then run corepack pnpm --filter ${process.cwd()} build`)
+  console.error(`[kb-devkit] ${message}\nNext: correct the package's declared KB manifest source, then run corepack pnpm --filter ${process.cwd()} build`)
   process.exitCode = 1
 }
 
@@ -62,10 +65,13 @@ async function emitManifestJson() {
   let packageJSON
   try {
     packageJSON = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
-    if (typeof packageJSON.kb?.manifest !== 'string') return
-    distPath = join(process.cwd(), packageJSON.kb.manifest.replace(/^\.\//, ''))
+    const manifestPath = typeof packageJSON.kb?.adapter?.manifest === 'string'
+      ? packageJSON.kb.adapter.manifest
+      : packageJSON.kb?.manifest
+    if (typeof manifestPath !== 'string') return
+    distPath = join(process.cwd(), manifestPath.replace(/^\.\//, ''))
     if (!existsSync(distPath)) {
-      failManifestEmission(`declared manifest module ${packageJSON.kb.manifest} was not built`)
+      failManifestEmission(`declared manifest module ${manifestPath} was not built`)
       return
     }
     await execFileAsync(process.execPath, [
@@ -74,8 +80,8 @@ async function emitManifestJson() {
       '--output', join(dirname(distPath), 'manifest.json'),
     ], { cwd: process.cwd(), timeout: 30_000 })
   } catch (error) {
-    const manifestPath = packageJSON?.kb?.manifest ?? 'package.json'
-    failManifestEmission(`could not emit declarative manifest for ${manifestPath}: ${error.message}`)
+    const declaredPath = packageJSON?.kb?.adapter?.manifest ?? packageJSON?.kb?.manifest ?? 'package.json'
+    failManifestEmission(`could not emit declarative manifest for ${declaredPath}: ${error.message}`)
   }
 }
 

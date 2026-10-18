@@ -17,12 +17,23 @@ export type AdapterManifestSource =
   | { packageRoot: string }
   | { spec: string; platformRoot: string };
 
-/** Read the sole supported package manifest declaration: `kb.manifest`. */
-export function declaredManifestPath(pkgJson: Record<string, unknown>): string | undefined {
-  const kb = pkgJson.kb;
-  if (kb === null || typeof kb !== 'object' || Array.isArray(kb)) {return undefined;}
-  const manifest = (kb as Record<string, unknown>).manifest;
+function objectField(value: unknown, field: string): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {return undefined;}
+  return (value as Record<string, unknown>)[field];
+}
+
+function manifestPath(manifest: unknown): string | undefined {
   return typeof manifest === 'string' && manifest.trim() !== '' ? manifest : undefined;
+}
+
+/** Read the plugin package manifest declaration: `kb.manifest`. */
+export function declaredManifestPath(pkgJson: Record<string, unknown>): string | undefined {
+  return manifestPath(objectField(objectField(pkgJson, 'kb'), 'manifest'));
+}
+
+/** Read the adapter package manifest declaration: `kb.adapter.manifest`. */
+export function declaredAdapterManifestPath(pkgJson: Record<string, unknown>): string | undefined {
+  return manifestPath(objectField(objectField(objectField(pkgJson, 'kb'), 'adapter'), 'manifest'));
 }
 
 function packageNameFromSpec(spec: string): string {
@@ -45,7 +56,7 @@ async function resolvePackageRoot(source: AdapterManifestSource): Promise<string
 export async function resolveAdapterManifestModulePath(source: AdapterManifestSource): Promise<string | undefined> {
   const packageRoot = await resolvePackageRoot(source);
   const pkg = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')) as Record<string, unknown>;
-  const manifestField = declaredManifestPath(pkg);
+  const manifestField = declaredAdapterManifestPath(pkg);
   if (!manifestField) {return undefined;}
   const modulePath = path.resolve(packageRoot, manifestField);
   const relativePath = path.relative(packageRoot, modulePath);
@@ -82,7 +93,7 @@ export async function loadAdapterManifest(source: AdapterManifestSource): Promis
   try {
     modulePath = await resolveAdapterManifestModulePath(source);
     if (!modulePath) {
-      return { kind: 'not-adapter', reason: 'package.json does not declare kb.manifest' };
+      return { kind: 'not-adapter', reason: 'package.json does not declare kb.adapter.manifest' };
     }
     const mod = await import(pathToFileURL(modulePath).href) as { manifest?: unknown };
     if (!isRecord(mod.manifest)) {
