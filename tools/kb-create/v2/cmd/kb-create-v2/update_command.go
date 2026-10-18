@@ -22,6 +22,7 @@ import (
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/telemetry"
 	"github.com/kb-labs/create/v2/transport"
 	"github.com/kb-labs/create/v2/versionroot"
@@ -326,6 +327,11 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 	updated.Plan.Request.PlatformRoot = root
 	if err := receipt.Write(stage, updated); err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the verified update receipt could not be finalized", "inspect the staged operation log, then rerun `kb-create update`", err)
+	}
+	if err := shim.EnsureVersionTarget(root, stage); err != nil {
+		return updateCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+			"the verified update could not prepare the kb command for the new version",
+			updateActivationRetryHint(input), err)
 	}
 	logRelative, err := filepath.Rel(installRoot, transcript.Path())
 	if err != nil {

@@ -141,6 +141,25 @@ func Ensure(launcher, platformRoot string) (EnsureResult, error) {
 	return EnsureResult{}, failed(path, "the kb command has an unknown ownership classification", nil)
 }
 
+// EnsureVersionTarget writes the active-version-local kb entry without
+// changing the user's launcher symlink. Its script resolves the CLI through
+// the stable current path after the version directory is activated.
+func EnsureVersionTarget(platformRoot, versionRoot string) error {
+	layout, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return err
+	}
+	versionRelative, err := filepath.Rel(layout.VersionsDir(), versionRoot)
+	if err != nil {
+		return err
+	}
+	if filepath.IsAbs(versionRelative) || versionRelative == ".." || strings.HasPrefix(versionRelative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("version target %s is outside the install root versions directory", versionRoot)
+	}
+	stableEntry := filepath.Join(layout.PlatformRoot(), "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
+	return ensureTarget(filepath.Join(versionRoot, ".kb", "v2", "bin", "kb"), stableEntry)
+}
+
 type installationOwner struct {
 	id           string
 	root         string

@@ -31,8 +31,11 @@ from service_port_assertions import assert_service_ports_preserved
 CommandRunner = Callable[[list[str]], CompletedProcess]
 
 
-def _json_command(run_command: CommandRunner, args: list[str], label: str) -> dict:
+def _json_command(run_command: CommandRunner, args: list[str], label: str,
+                  *, after_run: Callable[[], None] | None = None) -> dict:
     result = run_command(args)
+    if after_run is not None:
+        after_run()
     try:
         value = read_kb_create_cli_result(args[1], result)
         if result.returncode != 0:
@@ -65,32 +68,44 @@ def _hash(path: Path) -> str | None:
         return None
 
 
-def _outside_install_snapshot(install_root: Path, allowed_roots: tuple[Path, ...] = ()) -> dict[str, str]:
+def _outside_install_snapshot(install_root: Path) -> dict[str, str]:
     snapshot: dict[str, str] = {}
 
-    def allowed(path: Path) -> bool:
-        return any(path == root or (root.is_dir() and path.is_relative_to(root)) for root in allowed_roots)
-
     for path in install_root.parent.iterdir():
-        if path == install_root or allowed(path):
+        if path == install_root:
             continue
         if path.is_symlink():
             snapshot[str(path)] = "symlink:" + str(path.readlink())
         elif path.is_file():
-            snapshot[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+            snapshot[str(path)] = f"file:{path.stat().st_mode:o}:sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
         elif path.is_dir():
-            snapshot[str(path)] = "directory"
+            snapshot[str(path)] = f"directory:{path.stat().st_mode:o}"
             for child in sorted(path.rglob("*")):
-                if allowed(child):
-                    continue
                 if child.is_symlink():
                     value = "symlink:" + str(child.readlink())
                 elif child.is_file():
-                    value = hashlib.sha256(child.read_bytes()).hexdigest()
+                    value = f"file:{child.stat().st_mode:o}:sha256:{hashlib.sha256(child.read_bytes()).hexdigest()}"
+                elif child.is_dir():
+                    value = f"directory:{child.stat().st_mode:o}"
                 else:
                     continue
                 snapshot[str(child)] = value
     return snapshot
+
+
+def _outside_install_changes(before: dict[str, str], after: dict[str, str]) -> list[dict[str, str | None]]:
+    return [{"path": path, "before": before.get(path), "after": after.get(path)}
+            for path in sorted(before.keys() | after.keys()) if before.get(path) != after.get(path)]
+
+
+def _assert_outside_install_unchanged(install_root: Path, before: dict[str, str], operation: str) -> None:
+    changes = _outside_install_changes(before, _outside_install_snapshot(install_root))
+    if changes:
+        detail = "; ".join(
+            f"{change['path']} (before={change['before'] or '<absent>'}; after={change['after'] or '<absent>'})"
+            for change in changes
+        )
+        raise RuntimeError(f"{operation} changed paths outside the installation container: {detail}")
 
 
 def _changed_paths(previous: object, current: object, prefix: str = "plan") -> list[str]:
@@ -122,7 +137,6 @@ def run_platform_update_steps(
     bootstrap_password: str | None = None,
     bootstrap_outside_roots: tuple[tuple[str, Path], ...] = (),
     parent_journey: Journey | None = None,
-    allowed_outside_roots: tuple[Path, ...] = (),
 ) -> Journey:
     command_runner = run_command
     def run_command(args: list[str]) -> CompletedProcess:
@@ -148,7 +162,6 @@ def run_platform_update_steps(
     installation_id = ""
     gateway_url = ""
     initial_plan: dict = {}
-    outside_install_state: dict[str, str] = {}
     running_tree_before: Path | None = None
     running_lock_before: bytes | None = None
     running_config_before: bytes | None = None
@@ -167,9 +180,8 @@ def run_platform_update_steps(
             raise RuntimeError(f"shared-state file fingerprints changed at {checkpoint}")
 
     def save_known_good_state() -> None:
-        nonlocal saved_user_session_established, installation_id, gateway_url, initial_plan, outside_install_state
+        nonlocal saved_user_session_established, installation_id, gateway_url, initial_plan
         nonlocal shared_file_fingerprints_before, running_tree_before, running_lock_before, running_config_before
-        outside_install_state = _outside_install_snapshot(platform_root, allowed_outside_roots)
         shared_file_fingerprints_before = shared_runtime_file_fingerprints(platform_root)
         running_tree_before = active_platform_root(platform_root)
         running_lock_before = (running_tree_before / layout_value('versionStatePaths.kb_marketplace_lock')).read_bytes()
@@ -245,8 +257,11 @@ def run_platform_update_steps(
 
     def update() -> None:
         nonlocal snapshot_id, updated_plan_hash, updated_plan, pending_restart_services, pending_restart_object
+        outside_before_update = _outside_install_snapshot(platform_root)
         result = _json_command(run_command, [launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
-                                            "--input", str(request_file)], "update platform")
+                                            "--input", str(request_file)], "update platform",
+                                    after_run=lambda: _assert_outside_install_unchanged(
+                                        platform_root, outside_before_update, "update"))
         snapshot = result.get("snapshot")
         receipt = result.get("receipt")
         if not isinstance(snapshot, dict) or not snapshot.get("id"):
@@ -302,11 +317,11 @@ def run_platform_update_steps(
         runtime_log_path.parent.mkdir(parents=True, exist_ok=True)
         runtime_log_path.write_text("runtime history written after update and before restart\n", encoding="utf-8")
         record_config_checkpoint("afterUpdateBeforeRestart")
+        outside_before_repeat = _outside_install_snapshot(platform_root)
         human = run_command([launcher, "update", "--platform-root", root, "--index", str(update_index), "--input", str(request_file)])
+        _assert_outside_install_unchanged(platform_root, outside_before_repeat, "repeat update")
         if human.returncode != 0 or "already up to date" not in human.stdout.lower():
             raise RuntimeError("human repeated update did not show its already-current summary")
-        if _outside_install_snapshot(platform_root, allowed_outside_roots) != outside_install_state:
-            raise RuntimeError("update changed a path outside the installation container")
 
     journey.step("stage update and leave the running host on its current version", "platform.update", update,
                  cases=["S-023.3", "S-023.7", "S-024.1", "S-203.10"], details=checkpoint_details,
@@ -404,8 +419,11 @@ def run_platform_update_steps(
                 f"repeat update plan drift before mutation: first={updated_plan_hash!r}, "
                 f"preview={preview_hash!r}, changed fields={changed_fields}"
             )
+        outside_before_repeat = _outside_install_snapshot(platform_root)
         result = _json_command(run_command, [launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
-                                            "--input", str(request_file)], "repeat update")
+                                            "--input", str(request_file)], "repeat update",
+                                    after_run=lambda: _assert_outside_install_unchanged(
+                                        platform_root, outside_before_repeat, "equal-version update"))
         receipt = result.get("receipt")
         snapshot = result.get("snapshot")
         if not isinstance(receipt, dict):
@@ -427,15 +445,15 @@ def run_platform_update_steps(
         receipt_after = receipt_path.read_bytes()
         if receipt_after != receipt_before:
             raise RuntimeError("already-current update changed the installed receipt bytes")
-        if _outside_install_snapshot(platform_root, allowed_outside_roots) != outside_install_state:
-            raise RuntimeError("equal-version update changed a path outside the installation container")
 
     journey.step("repeat the update without version drift", "platform.update", repeat_update,
                  cases=["S-023.6"])
 
     def restart_updated_host() -> None:
+        outside_before_restart = _outside_install_snapshot(platform_root)
         result = _json_command(run_command, [launcher, "restart", "--platform-root", root, "--json"],
-                               "restart after update")
+                               "restart after update", after_run=lambda: _assert_outside_install_unchanged(
+                                   platform_root, outside_before_restart, "restart"))
         if result.get("operation") != "restart" or result.get("runningVersion") != updated_version:
             raise RuntimeError("explicit restart did not bring up the installed version")
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
@@ -444,8 +462,6 @@ def run_platform_update_steps(
             raise RuntimeError("status did not clear the pending restart after restart")
         if runtime_log_path.read_text(encoding="utf-8") != "runtime history written after update and before restart\n":
             raise RuntimeError("runtime log history written before restart was lost")
-        if _outside_install_snapshot(platform_root, allowed_outside_roots) != outside_install_state:
-            raise RuntimeError("restart changed a path outside the installation container")
         assert_shared_file_fingerprints("updated host restart")
         record_config_checkpoint("afterUpdateRestart")
 
@@ -456,12 +472,17 @@ def run_platform_update_steps(
     def rollback() -> None:
         if not snapshot_id:
             raise RuntimeError("update did not produce a snapshot ID for rollback")
+        outside_before_rollback = _outside_install_snapshot(platform_root)
         human = run_command([launcher, "rollback", "--platform-root", root,
                              "--snapshot", snapshot_id, "--yes"])
+        _assert_outside_install_unchanged(platform_root, outside_before_rollback, "rollback")
         if human.returncode != 0 or "Platform rollback completed." not in human.stdout:
             raise RuntimeError("human rollback did not show its completion summary")
+        outside_before_json_rollback = _outside_install_snapshot(platform_root)
         result = _json_command(run_command, [launcher, "rollback", "--platform-root", root,
-                                            "--snapshot", snapshot_id, "--yes", "--json"], "rollback platform")
+                                            "--snapshot", snapshot_id, "--yes", "--json"], "rollback platform",
+                               after_run=lambda: _assert_outside_install_unchanged(
+                                   platform_root, outside_before_json_rollback, "JSON rollback"))
         snapshot = result.get("snapshot")
         if not isinstance(snapshot, dict) or not snapshot.get("id"):
             raise RuntimeError("rollback did not return ok=true and the restored snapshot")
@@ -601,11 +622,22 @@ def run_platform_update_steps(
         changed = original + "-changed"
         try:
             os.environ[env_name] = original
+            stopped = run_command([launcher, "stop", "--platform-root", root, "--json"])
+            if stopped.returncode != 0:
+                raise RuntimeError("the journey could not stop its host before seeding the known secret")
             seeded = run_command([launcher, "apply", "--platform-root", root, "--json", "--index",
                                   str(update_index), "--input", str(request_file),
                                   "--secret-env", f"{secret}={env_name}"])
             if seeded.returncode != 0:
+                restored = run_command([launcher, "start", "--platform-root", root, "--json"])
+                if restored.returncode != 0:
+                    raise RuntimeError("secret seeding failed and the stopped host could not be restored: "
+                                       + " ".join((restored.stderr or restored.stdout).split())[-500:])
                 raise RuntimeError("the journey could not seed its known secret through apply")
+            restored = run_command([launcher, "start", "--platform-root", root, "--json"])
+            if restored.returncode != 0:
+                raise RuntimeError("the host could not be restored after seeding the known secret: "
+                                   + " ".join((restored.stderr or restored.stdout).split())[-500:])
             identical = run_command([launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
                                      "--input", str(request_file), "--secret-env", f"{secret}={env_name}"])
             if identical.returncode != 0:

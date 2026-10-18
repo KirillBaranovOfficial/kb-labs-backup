@@ -1807,11 +1807,8 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 if (result.get("operation") != "apply" or not (install_root / layout_value('currentLink')).is_symlink()
                         or sorted(path.name for path in parent.iterdir()) != ["install"]):
                     raise RuntimeError("install into an empty target did not create only its versioned container")
-            except Exception as error:
-                try:
-                    cleanup_installer_fixture_root(install_root, launcher, run_command)
-                except Exception as cleanup_error:
-                    error.add_note(f"empty-root install cleanup also failed: {cleanup_error}")
+            except Exception:
+                cleanup_installer_fixture_root(install_root, launcher, run_command)
                 raise
             else:
                 cleanup_installer_fixture_root(install_root, launcher, run_command)
@@ -2570,11 +2567,8 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
                 if (spelling_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "running"
                         or spelling_status.get("installation", {}).get("receiptId") != main_receipt_id):
                     raise RuntimeError(f"status through {spelling} did not identify platform A's original running host")
-        except BaseException as original:
-            try:
-                cleanup_installer_fixture_root(root, launcher, run_command)
-            except BaseException as cleanup_error:
-                original.add_note(f"fixture cleanup also failed: {cleanup_error}")
+        except BaseException:
+            cleanup_installer_fixture_root(root, launcher, run_command)
             raise
 
     journey.step("repair an isolated root without stopping the running platform", "platform.install",
