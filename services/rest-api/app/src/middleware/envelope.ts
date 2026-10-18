@@ -8,6 +8,8 @@ import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { createUxFailureResult, createUxSuccessResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import { codeForHttpFailure, normalizeHttpFailure, statusForHttpFailure, toErrorEnvelope } from '@kb-labs/core-platform';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { platform } from '@kb-labs/core-runtime';
+import { createHttpLogger } from '@kb-labs/shared-http';
 import { ZodError } from 'zod';
 
 function requestFailureOptions(request: FastifyRequest, statusCode: number) {
@@ -159,13 +161,18 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
     const correlationId = String(request.id || '');
     reply.errorCode = codeForHttpFailure(error, statusCode);
 
-    if (request.kbLogger) {
-      request.kbLogger.error('Request error', error instanceof Error ? error : new Error(String(error)), {
-        errorCode: reply.errorCode,
-        statusCode,
-        correlationId,
-      });
-    }
+    createHttpLogger(platform.logger, {
+      serviceId: 'rest',
+      layer: 'service',
+      component: 'http-error',
+      operation: 'http.request.error',
+      method: request.method,
+      url: request.routeOptions.url,
+    }).forOperation('http.request.error', { correlationId }).error(
+      'Request error',
+      error instanceof Error ? error : new Error(String(error)),
+      { errorCode: reply.errorCode, statusCode },
+    );
 
     reply.serializer((payload) => JSON.stringify(payload));
     reply.status(statusCode).send({ error });
