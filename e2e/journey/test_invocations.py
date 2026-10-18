@@ -116,6 +116,26 @@ class PtyInvocationTest(unittest.TestCase):
         self.assertEqual(invocations.parse_unexpected_correlation_id(machine_output), (True, correlation_id))
         self.assertEqual(invocations.parse_unexpected_correlation_id("", human_output), (True, correlation_id))
 
+    def test_unexpected_error_queries_the_cli_when_invoked_by_name_on_path(self):
+        with tempfile.TemporaryDirectory(prefix="journey-kb-by-name-") as temp:
+            root = Path(temp)
+            target = root / "installed-kb"
+            target.write_text(
+                "#!/bin/sh\n"
+                "[ \"$1 $2 $3\" = 'logs query --correlation-id' ] && [ \"$4\" = 'cli-by-name-1' ] && [ \"$5\" = '--json' ] || exit 7\n"
+                "printf '%s\\n' 'not-json'\n"
+            )
+            target.chmod(0o755)
+            (root / "kb").symlink_to(target)
+            env = {"PATH": str(root), "KB_JOURNEY_CLI_PATH": str(root / "kb")}
+            stdout = json.dumps({"ok": False, "error": {
+                "code": "KB_RUNTIME_UNEXPECTED", "correlationId": "cli-by-name-1"}})
+
+            diagnostic = invocations._unexpected_error_diagnostics(["kb", "adapter", "list", "--json"],
+                                                                   stdout, "", root, env)
+
+        self.assertEqual(diagnostic, {"correlationId": "cli-by-name-1", "queryError": "not-json"})
+
     def test_invocation_records_kb_environment_and_resolved_shim_with_shared_redaction(self):
         with tempfile.TemporaryDirectory(prefix="journey-kb-shim-evidence-") as temp:
             root = Path(temp)

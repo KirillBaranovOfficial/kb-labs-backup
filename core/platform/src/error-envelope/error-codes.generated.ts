@@ -545,7 +545,7 @@ export interface CatalogDetailsFor {
   "KB_AUTH_USER_INACTIVE": { "gatewayUrl": string; "reason"?: string };
   "KB_CONFIG_APPLY_FAILED": Record<string, never>;
   "KB_CONFIG_CONFLICT": { "path": string };
-  "KB_CONFIG_INVALID": { "path": string; "contractPath"?: string; "exitCode"?: string; "hostStartupCode"?: string; "launcherLog"?: string; "log"?: string; "nextCommand"?: string; "remedyOperation"?: string; "remedyPlatformRoot"?: string; "stderrTail"?: string };
+  "KB_CONFIG_INVALID": { "path": string; "contractPath"?: string; "exitCode"?: string; "hostStartupCode"?: string; "launcherLog"?: string; "log"?: string; "nextCommand"?: string; "readinessError"?: string; "readinessURL"?: string; "remedyOperation"?: string; "remedyPlatformRoot"?: string; "stderrTail"?: string; "waited"?: string };
   "KB_CONFIG_LLM_KEY_INVALID": { "provider": string };
   "KB_CONFIG_LLM_PROVIDER_TIMEOUT": Record<string, never>;
   "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": Record<string, never>;
@@ -2351,7 +2351,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_AUTH_USER_INACTIVE": ["reason"],
   "KB_CONFIG_APPLY_FAILED": [],
   "KB_CONFIG_CONFLICT": [],
-  "KB_CONFIG_INVALID": ["contractPath","exitCode","hostStartupCode","launcherLog","log","nextCommand","remedyOperation","remedyPlatformRoot","stderrTail"],
+  "KB_CONFIG_INVALID": ["contractPath","exitCode","hostStartupCode","launcherLog","log","nextCommand","readinessError","readinessURL","remedyOperation","remedyPlatformRoot","stderrTail","waited"],
   "KB_CONFIG_LLM_KEY_INVALID": [],
   "KB_CONFIG_LLM_PROVIDER_TIMEOUT": [],
   "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE": [],

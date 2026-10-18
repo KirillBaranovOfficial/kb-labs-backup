@@ -69,13 +69,16 @@ describe('resolvePlatformDataRoot', () => {
   it('refuses a stable-root-only contract and names the active version path and repair command', async () => {
     tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-platform-data-unsupported-stable-contract-'));
     const installRoot = path.join(tempRoot, 'install');
+    const versionRoot = path.join(installRoot, 'versions', 'v1');
     const stableContract = path.join(installRoot, '.kb/v2/platform-layout.json');
     await mkdir(path.join(installRoot, 'versions'), { recursive: true });
+    await mkdir(versionRoot, { recursive: true });
     await mkdir(path.dirname(stableContract), { recursive: true });
     await writeFile(stableContract, await readFile(new URL('../../../../tools/kb-create/v2/contracts/platform-layout.json', import.meta.url)));
     await mkdir(path.join(installRoot, '.kb/data'), { recursive: true });
+    await symlink(path.relative(installRoot, versionRoot), path.join(installRoot, 'current'), 'dir');
 
-    const error = await resolvePlatformDataRoot(installRoot, false).catch((reason: unknown) => reason);
+    const error = await resolvePlatformDataRoot(versionRoot, false).catch((reason: unknown) => reason);
     expect(toErrorEnvelope(error)).toMatchObject({
       code: 'KB_CONFIG_INVALID',
       details: {

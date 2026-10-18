@@ -95,6 +95,27 @@ func TestCatalogGeneratesStructuredDetailFields(t *testing.T) {
 	}
 }
 
+func TestInvalidConfigCatalogIncludesHostReadinessEvidence(t *testing.T) {
+	entry, ok := LookupCatalog("KB_CONFIG_INVALID")
+	if !ok {
+		t.Fatal("KB_CONFIG_INVALID is absent from generated catalog")
+	}
+	for _, field := range []string{"readinessError", "readinessURL", "waited"} {
+		if !contains(entry.StructuredDetailFields, field) {
+			t.Errorf("KB_CONFIG_INVALID does not declare host startup detail %q", field)
+		}
+	}
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestGoToolsDoNotAssignProcessExitStatusOutsideDiag(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
