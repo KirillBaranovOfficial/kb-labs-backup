@@ -993,6 +993,34 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(calls, ["status", "stop", "uninstall"])
         self.assertFalse(root.exists())
 
+    def test_fixture_cleanup_failure_is_recorded_with_the_step_failure(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installer-cleanup-failure-") as temp:
+            root = Path(temp) / "platform"
+            receipt = root / ".kb/v2/receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text("{}")
+            move_test_platform_into_container(root)
+
+            def fail_cleanup(args):
+                raise RuntimeError(f"cleanup {args[1]} failed")
+
+            journey = Journey("local", "fixture-cleanup-preserves-step-failure")
+            step_error = RuntimeError("S-023.17 lifecycle assertion failed")
+
+            def fail_step():
+                try:
+                    raise step_error
+                finally:
+                    cleanup_installer_fixture_root(root, "kb-create", fail_cleanup)
+
+            journey.step("isolated installer lifecycle", "platform.install", fail_step, cases=["S-023.17"])
+
+        result = journey.steps[-1]
+        self.assertEqual(result.status, "FAIL")
+        self.assertIn("S-023.17 lifecycle assertion failed", result.message)
+        self.assertIn("fixture cleanup also failed: cleanup status failed", result.message)
+        self.assertEqual(step_error.args[0], result.message)
+
     def test_offline_plan_step_primes_and_uses_its_own_root_cache(self):
         with tempfile.TemporaryDirectory(prefix="journey-offline-plan-") as temp:
             root = Path(temp)
@@ -1849,12 +1877,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                    run_command=fail_every_command)
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
+            owners = {claim: step.name for step in journey.steps for claim in step.cases}
             expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-025.1", "S-025.2", "S-054.23",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
                         "S-187.4", "S-187.5", "S-187.6", "S-187.9", "S-187.11", "S-187.12", "S-124.14"}
             self.assertEqual(set(claims), expected)
+            self.assertEqual(owners["S-023.17"], "install, update twice, restart, and uninstall inside a fresh container")
             blocked = {"PC-001.5", "S-023.16", "S-223.3", "S-181.6"}
             self.assertTrue(all(claims[claim] == "BLOCKED" for claim in blocked))
             self.assertTrue(all(claims[claim] == "FAIL" for claim in expected - blocked))
