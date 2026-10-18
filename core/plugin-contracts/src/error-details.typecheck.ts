@@ -15,10 +15,15 @@ const cataloguedFailure: CommandFailure = {
   error: {
     code: 'KB_CONFIG_INVALID',
     message: 'Invalid config.',
-    hint: 'Correct llm.model.',
     details: { path: 'llm.model' },
   },
 };
+
+// @ts-expect-error Product error producers own their actionable hint.
+const productFailureWithoutHint: CommandFailure = { ok: false, error: {
+  code: 'COMMIT_NOTHING_STAGED' as ProductErrorCode,
+  message: 'Nothing is staged.',
+} };
 
 const invalidCataloguedError: CataloguedCommandErrorFor<'KB_CONFIG_INVALID'> = {
   code: 'KB_CONFIG_INVALID',
@@ -41,5 +46,6 @@ const productFailure: CommandFailure = {
 };
 
 void cataloguedFailure;
+void productFailureWithoutHint;
 void invalidCataloguedError;
 void productFailure;

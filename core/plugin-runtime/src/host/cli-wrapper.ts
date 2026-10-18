@@ -12,7 +12,7 @@ import type {
   StandardMeta,
   PluginContextDescriptor,
 } from '@kb-labs/plugin-contracts';
-import { toErrorEnvelope, type ValidatedErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { isErrorCode, toErrorEnvelope, type ValidatedErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 
 /**
@@ -27,7 +27,8 @@ function commandFailureError(value: unknown, binaryName?: string): ValidatedErro
   if (typeof error !== 'object' || error === null || Array.isArray(error) ||
       !('code' in error) || typeof error.code !== 'string' ||
       !('message' in error) || typeof error.message !== 'string' ||
-      !('hint' in error) || typeof error.hint !== 'string') {
+      ('hint' in error && error.hint !== undefined && typeof error.hint !== 'string') ||
+      ((!('hint' in error) || error.hint === undefined) && !isErrorCode(error.code))) {
     return undefined;
   }
   return toErrorEnvelope(error, binaryName ? { binary: binaryName } : {});
