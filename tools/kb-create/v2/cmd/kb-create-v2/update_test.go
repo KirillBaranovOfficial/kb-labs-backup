@@ -326,6 +326,152 @@ func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
 	}
 }
 
+// case: S-023.10
+func TestUpdateCarriesInstallOwnedSecretsWithoutRecreatingConsumedBootstrapPassword(t *testing.T) {
+	launcher, fakehost := binaries(t)
+	inst := newEmptyInstallation(t)
+	binary := []byte("sealed test launcher binary")
+	packages := map[string][]byte{
+		"/platform-1.0.0.tgz": testPackageTarball("@kb/platform", "1.0.0"),
+		"/platform-1.1.0.tgz": testPackageTarball("@kb/platform", "1.1.0"),
+		"/sdk-1.0.0.tgz":      testPackageTarball("@kb/sdk", "1.0.0"),
+		"/cli-bin-1.0.0.tgz":  testPackageTarballWithFiles("@kb-labs/cli-bin", "1.0.0", map[string][]byte{"dist/bin.js": []byte("// fixture CLI entry\n")}),
+	}
+	binaryDigest := sha256.Sum256(binary)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if packageBytes, ok := packages[request.URL.Path]; ok {
+			_, _ = writer.Write(packageBytes)
+			return
+		}
+		_, _ = writer.Write(binary)
+	}))
+	t.Cleanup(server.Close)
+	initialIndex, updateIndex, requestPath := writeSecretCommandInputs(t, inst, fakehost, server.URL, hex.EncodeToString(binaryDigest[:]), packages, true, true)
+	for _, indexPath := range []string{initialIndex, updateIndex} {
+		indexBytes, err := os.ReadFile(indexPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var source catalog.Catalog
+		if err := json.Unmarshal(indexBytes, &source); err != nil {
+			t.Fatal(err)
+		}
+		source.Platforms[0].Config = append(source.Platforms[0].Config, catalog.ConfigRequirement{
+			ID: secrets.BootstrapPassword, Path: "/gateway/bootstrap/password", Secret: true, Required: true,
+			Generate: true, Env: secrets.BootstrapPasswordEnvironment, Services: []string{"runtime"},
+		})
+		sealed, err := sealTestCatalog(t, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(sealed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(indexPath, encoded, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	requestBytes, err := os.ReadFile(requestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request contracts.InstallRequest
+	if err := json.Unmarshal(requestBytes, &request); err != nil {
+		t.Fatal(err)
+	}
+	request.SecretInputs = append(request.SecretInputs, secrets.BootstrapPassword)
+	requestBytes, err = json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, requestBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if applied := inst.runArgv([]string{launcher, "apply", "--index", initialIndex, "--input", requestPath,
+		"--platform-root", inst.root, "--json", "--secret-env", "gateway.token=INSTALL_TOKEN"}, "INSTALL_TOKEN=stable-install-secret"); applied.code != 0 {
+		t.Fatalf("apply secured install fixture: %s", applied.output)
+	}
+	store := secrets.Store{PlatformRoot: inst.root}
+	if err := store.MarkBootstrapCompleted("first-admin-ready"); err != nil {
+		t.Fatalf("record successful first-admin completion: %v", err)
+	}
+	if err := store.MarkBootstrapDisclosed(); err != nil {
+		t.Fatalf("complete first-admin secret handoff: %v", err)
+	}
+	if exists, err := store.Exists(secrets.BootstrapPassword); err != nil || exists {
+		t.Fatalf("bootstrap password after handoff exists=%t err=%v; want consumed", exists, err)
+	}
+	before, present, err := store.Get("gateway.token")
+	if err != nil || !present || before != "stable-install-secret" {
+		t.Fatalf("installed secret value=%q present=%t err=%v", before, present, err)
+	}
+	requestBytes, err = os.ReadFile(requestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(requestBytes, &request); err != nil {
+		t.Fatal(err)
+	}
+	request.Platform.Version = "1.1.0"
+	request.SecretInputs = []string{secrets.BootstrapPassword, "gateway.token"}
+	requestBytes, err = json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, requestBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if status, code, output := inst.run("status", "--json"); code != 0 {
+		t.Fatalf("status before update: %s", output)
+	} else if status["running"] != true {
+		if _, code, output := inst.run("start", "--json"); code != 0 {
+			t.Fatalf("start install before update: %s", output)
+		}
+	}
+	updated := inst.runCommand([]string{"update", "--index", updateIndex, "--input", requestPath, "--platform-root", inst.root, "--json"})
+	if updated.code != 0 {
+		t.Fatalf("update required recreating an already-consumed bootstrap password: %s", updated.output)
+	}
+	after, present, err := store.Get("gateway.token")
+	if err != nil || !present || after != before {
+		t.Fatalf("update changed install-owned secret: before=%q after=%q present=%t err=%v", before, after, present, err)
+	}
+}
+
+func TestUpdateReportsUnreadableSecretStoreSeparatelyFromMissingSecret(t *testing.T) {
+	root := t.TempDir()
+	layout, err := versionroot.ForPlatformPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storePath, err := layout.SharedRuntimePath(contracts.SharedRecordPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(storePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(storePath, []byte("not a valid secret record"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	active := contracts.InstallReceipt{}
+	plan := contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{SecretInputs: []string{"new.secret"}}}
+	updateInvocation := contracts.ShellCommand("kb-create", "update", "--index", "release index.json", "--input", "request.json", "--platform-root", root, "--json")
+	failure := requireUpdateSecrets(active, plan, secrets.Store{PlatformRoot: root, ReadOnly: true}, updateCommandInput{RetryCommand: updateInvocation}, root)
+	if failure == nil || failure.Code != contracts.CodeApplyFailed {
+		t.Fatalf("unreadable secret store diagnostic = %#v", failure)
+	}
+	if failure.Message != "the installation secret store could not be read during update" {
+		t.Fatalf("unreadable store message = %q", failure.Message)
+	}
+	doctorCommand := contracts.ShellCommand("kb-create", "doctor", "--platform-root", root, "--json")
+	wantHint := "run `" + doctorCommand + "` to inspect the installation, then retry `" + updateInvocation + "`."
+	if failure.Hint != wantHint {
+		t.Fatalf("unreadable store hint = %q, want exact doctor and update invocations %q", failure.Hint, wantHint)
+	}
+}
+
 type commandResult struct {
 	payload map[string]any
 	code    int

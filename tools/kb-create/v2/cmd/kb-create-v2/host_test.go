@@ -424,16 +424,17 @@ func newEmptyInstallation(t *testing.T) installation {
 	}
 	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	t.Cleanup(func() {
+		layout, layoutErr := versionroot.New(inst.root)
+		if layoutErr != nil || layout.Validate() != nil {
+			return
+		}
 		_, code, output := inst.run("stop", "--json")
 		if code != 0 {
 			t.Errorf("test cleanup stop failed: %s", output)
 		}
-		layout, layoutErr := versionroot.New(inst.root)
-		if layoutErr == nil && layout.Validate() == nil {
-			status, statusCode, statusOutput := inst.run("status", "--json")
-			if statusCode != 0 || status["running"] == true {
-				t.Errorf("test cleanup left host running: %s", statusOutput)
-			}
+		status, statusCode, statusOutput := inst.run("status", "--json")
+		if statusCode != 0 || status["running"] == true {
+			t.Errorf("test cleanup left host running: %s", statusOutput)
 		}
 	})
 	return inst
