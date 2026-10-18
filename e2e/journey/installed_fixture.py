@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import socket
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator, Optional
@@ -261,11 +262,18 @@ def cleanup_fixture_root(root: Path, launcher: str, run_command: Callable[..., C
     """Uninstall a product-created fixture, then remove its enclosing temp root."""
     from platform_update_steps import _json_command
 
-    stop_fixture_host(root, launcher, run_command)
-    if installed_path(root, "currentLink", ".kb/v2/receipt.json").is_file():
-        _json_command(run_command, [launcher, "uninstall", "--platform-root", str(root), "--yes", "--json"],
-                      f"uninstall installer fixture root {root}")
-    shutil.rmtree(root, ignore_errors=True)
+    primary_error = sys.exc_info()[1]
+    try:
+        stop_fixture_host(root, launcher, run_command)
+        if installed_path(root, "currentLink", ".kb/v2/receipt.json").is_file():
+            _json_command(run_command, [launcher, "uninstall", "--platform-root", str(root), "--yes", "--json"],
+                          f"uninstall installer fixture root {root}")
+        if root.exists() or root.is_symlink():
+            shutil.rmtree(root)
+    except BaseException as cleanup_error:
+        if primary_error is None:
+            raise
+        primary_error.args = (f"{primary_error}; fixture cleanup also failed: {cleanup_error}",)
 
 
 @contextmanager
@@ -276,11 +284,8 @@ def installed_fixture(root: Path, *, launcher: str, index: Path,
         receipt_path = install_fixture_root(root, launcher=launcher, index=index,
                                             run_command=run_command, label=label, selection=selection)
         yield receipt_path
-    except BaseException as original:
-        try:
-            cleanup_fixture_root(root, launcher, run_command)
-        except BaseException as cleanup_error:
-            original.add_note(f"fixture cleanup also failed: {cleanup_error}")
+    except BaseException:
+        cleanup_fixture_root(root, launcher, run_command)
         raise
     else:
         cleanup_fixture_root(root, launcher, run_command)

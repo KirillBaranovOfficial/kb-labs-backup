@@ -34,7 +34,7 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_apply_scenario_step,
                                   run_uninstall_decline_step, run_missing_project_request_steps)
 from installer_case_steps import parse_install_refusal
-from journey_resources import case_catalog_root, journey_module, resource_root, workspace_resource
+from journey_resources import case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
@@ -212,6 +212,17 @@ def journey_verdict_detail(result: dict) -> str:
     return f"{row.get('name') or 'journey step'}: {row.get('message') or 'no failure message'}"
 
 
+def confirmation_hint_matches_invocation(hint: str, invocation: list[str]) -> bool:
+    """Check that a confirmation hint reruns this command with explicit consent."""
+    prefix, separator, command_and_suffix = hint.partition("`")
+    if prefix != "rerun " or not separator:
+        return False
+    command, closing, suffix = command_and_suffix.partition("`")
+    if not closing or suffix:
+        return False
+    return parse_shell_commands(command) == [[Path(invocation[0]).name, *invocation[1:], "--yes"]]
+
+
 def reject_unprepared_studio_flow() -> None:
     raise RuntimeError("Studio browser flow was selected without running its setup")
 
@@ -258,7 +269,7 @@ def probe_platform_state(graph: FlowGraph, env: dict[str, str], launcher: str,
                          expected_version: str | None = None, *,
                          mutator_group: str = "install", mutator_step: str = "platform bootstrap",
                          include_installed: bool = True, include_version: bool = True,
-                         include_host: bool = True) -> None:
+                         include_host: bool = True, required: bool = False) -> None:
     receipt_path = PLATFORM_CURRENT / ".kb/v2/receipt.json"
 
     def version_probe() -> str | None:
@@ -276,14 +287,15 @@ def probe_platform_state(graph: FlowGraph, env: dict[str, str], launcher: str,
 
     if include_installed:
         graph.probe_state("platform-installed", "install", "platform bootstrap",
-                          lambda: None if receipt_path.is_file() else "installed V2 receipt is missing")
+                          lambda: None if receipt_path.is_file() else "installed V2 receipt is missing",
+                          required=required)
     if include_version:
         graph.probe_state("platform-version-known", mutator_group, mutator_step,
-                          version_probe)
+                          version_probe, required=required)
 
     if include_host:
         graph.probe_state("host-running", mutator_group, mutator_step,
-                          lambda: host_running_probe(env, launcher))
+                          lambda: host_running_probe(env, launcher), required=required)
 
 
 def host_running_probe(env: dict[str, str], launcher: str) -> str | None:
@@ -952,16 +964,15 @@ def run_uninstall_group(graph: FlowGraph, env: dict[str, str], launcher: str) ->
     capture_case_failure()
     if FIRST_FAILURE:
         dump_failure_state()
-    refused, _ = run([*uninstall_args, "--json"], env=env, timeout=120)
+    refusal_invocation = [*uninstall_args, "--json"]
+    refused, _ = run(refusal_invocation, env=env, timeout=120)
     try:
         refusal_payload = read_kb_create_cli_result("uninstall", refused)
     except json.JSONDecodeError:
         refusal_payload = {}
     refusal_error = decode_ux_error_result(refusal_payload)
-    expected_hint = (f'rerun `kb-create uninstall --platform-root "{PLATFORM}" '
-                     f"--registry {REGISTRY} --json --yes`")
     refusal_ok = (refused.returncode == 2 and refusal_error.get("code") == "KB_INSTALL_CONFIRMATION_REQUIRED"
-                  and refusal_error.get("hint") == expected_hint
+                  and confirmation_hint_matches_invocation(refusal_error.get("hint", ""), refusal_invocation)
                   and (PLATFORM_CURRENT / ".kb/v2/receipt.json").is_file())
     record_case("non-TTY uninstall requires confirmation", refusal_ok,
                 "non-TTY uninstall did not require --yes or left the receipt unchanged", cases=["S-050.4"])
@@ -1557,8 +1568,6 @@ def _main(*, update_variant_runner=None):
                     bootstrap_outside_roots=(("kb-home", Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb")))),
                                              ("bin", BIN)),
                     parent_journey=CASE_JOURNEY,
-                    allowed_outside_roots=(Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb"))),
-                                           Path(BIN / "kb").absolute()),
                 )
                 update_result = platform_journey.write_json(platform_report)
             except Exception as error:
@@ -1601,15 +1610,9 @@ def _main(*, update_variant_runner=None):
                         fail(f"platform channel change group: {error}")
 
     probe_platform_state(outer_graph, env, launcher,
-                         expected_version=str(base_version) if update_journey and "base_version" in locals() else None,
-                         mutator_group="update" if update_journey else "install",
-                         mutator_step="update/rollback/channel" if update_journey else "platform bootstrap",
-                         include_installed=False)
-    if host_state_needed and outer_graph.states.get("host-running", {}).get("passed") is not True:
-        block_outer_dependents(outer_graph, ["auth", "project", "marketplace", "marketplace-fixtures",
-                                             "adapters", "plugin-author", "workflow", "analytics", "studio"])
-        _run_final_uninstall(outer_graph, env, launcher)
-        return finalize_run(False)
+                         mutator_group="host" if update_journey else "install",
+                         mutator_step="verify state after update/rollback/channel" if update_journey else "platform bootstrap",
+                         include_installed=False, required=update_journey)
 
     for command, key in (("status", ""), ("doctor", "")):
         result, _ = run([launcher, command, "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)

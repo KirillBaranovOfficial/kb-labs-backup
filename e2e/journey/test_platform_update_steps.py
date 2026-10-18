@@ -9,12 +9,40 @@ import unittest
 from pathlib import Path
 
 from journey_resources import _platform_layout, shared_runtime_file_fingerprints
-from platform_update_steps import run_platform_update_steps
+from platform_update_steps import (_assert_outside_install_unchanged, _outside_install_changes,
+                                   _outside_install_snapshot, run_platform_update_steps)
 from journey_selection import read_journey_selection
 from service_steps import FlowGraph, Journey
 
 
 class PlatformUpdateStepsTest(unittest.TestCase):
+    def test_outside_install_snapshot_reports_added_changed_and_removed_paths(self):
+        before = {"/home/user/.local/share/kb-create/index.json": "sha256:old",
+                  "/home/user/.local/bin/kb": "symlink:../old/kb",
+                  "/home/user/unchanged": "same"}
+        after = {"/home/user/.local/share/kb-create/index.json": "sha256:new",
+                 "/home/user/added": "sha256:new",
+                 "/home/user/unchanged": "same"}
+
+        self.assertEqual(_outside_install_changes(before, after), [
+            {"path": "/home/user/.local/bin/kb", "before": "symlink:../old/kb", "after": None},
+            {"path": "/home/user/.local/share/kb-create/index.json", "before": "sha256:old", "after": "sha256:new"},
+            {"path": "/home/user/added", "before": None, "after": "sha256:new"},
+        ])
+
+    def test_outside_install_diagnostic_includes_shim_identity_before_and_after(self):
+        home = Path(self.temp.name) / "home"
+        root = home / "kb-platform"
+        root.mkdir(parents=True)
+        shim = home / ".local" / "bin" / "kb"
+        shim.parent.mkdir(parents=True)
+        shim.symlink_to("../../kb-platform/current/.kb/v2/bin/kb")
+        before = _outside_install_snapshot(root)
+        shim.unlink()
+
+        with self.assertRaisesRegex(RuntimeError, r"\.local/bin/kb \(before=symlink:.*current.*; after=<absent>\)"):
+            _assert_outside_install_unchanged(root, before, "update")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="journey-update-test-")
         self.root = Path(self.temp.name) / "install"
@@ -172,7 +200,15 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         elif args[1] == "stop":
             self.running_version = "stopped"
             stdout = json.dumps({"ok": True, "running": False})
+        elif args[1] == "start":
+            self.running_version = "3.0.1"
+            stdout = json.dumps({"ok": True, "running": True})
         elif args[1] == "apply":
+            if self.running_version != "stopped":
+                code = 1
+                stdout = json.dumps({"ok": False, "error": {"code": "KB_HOST_ALREADY_RUNNING",
+                                                                  "message": "The KB Labs host is already running."}})
+                return subprocess.CompletedProcess(args, code, stdout, "")
             secret_mapping = args[args.index("--secret-env") + 1]
             secret, _, env_name = secret_mapping.partition("=")
             self.secret_values[secret] = os.environ[env_name]
@@ -336,7 +372,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                          "PC-001.13", "PC-001.14", "PC-001.15"})
         self.assertEqual([command[1] for command in self.commands], [
             "status", "project", "plan", "update", "status", "update", "status", "status", "status", "status", "doctor", "status", "doctor", "adapter", "project", "plan", "update", "restart", "status",
-            "rollback", "rollback", "rollback", "status", "project", "adapter", "doctor", "restart", "adapter", "apply", "update", "update",
+            "rollback", "rollback", "rollback", "status", "project", "adapter", "doctor", "restart", "adapter", "stop", "apply", "start", "update", "update",
             "stop", "apply", "status", "doctor", "update",
         ])
         for command in (command for command in self.commands if command[1] in ("update", "rollback", "restart")):

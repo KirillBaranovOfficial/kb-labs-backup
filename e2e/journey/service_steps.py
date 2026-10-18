@@ -526,9 +526,10 @@ class FlowGraph:
 
     def probe_state(self, state: str, group: str, step: str, check: Callable[[], str | None],
                     *, after_flow: str | None = None,
-                    value: Callable[[], Any] | None = None) -> StepResult:
+                    value: Callable[[], Any] | None = None,
+                    required: bool = False) -> StepResult:
         """Run and record an explicit state precondition probe."""
-        if self.selection_active:
+        if self.selection_active and not required:
             tied_flow = self.journey.flows.get(after_flow) if after_flow else None
             if after_flow and (tied_flow is None or tied_flow[0] == "SKIPPED"):
                 return self.journey.skipped(f"state probe: {state}", "journey.state")
