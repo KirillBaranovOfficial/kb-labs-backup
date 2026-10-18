@@ -297,10 +297,58 @@ func TestResourceAdmissionBlocksMemoryAndKeepsCostedFIFO(t *testing.T) {
 		t.Fatalf("second admission = %+v, err=%v", decision, err)
 	}
 	writeAdmissionFixtureRecord(t, state, record{RunID: "second", QueueOrder: 2, Status: StatusBlocked, MemoryBytes: 30, CPUsMin: 1})
-	third := record{RunID: "third", QueueOrder: 3}
+	third := record{RunID: "third", QueueOrder: 3, MemoryBytes: 30, CPUsMin: 1}
 	decision, err = admissionStateLocked(state, third, source)
 	if err != nil || decision.Status != StatusQueued || !strings.Contains(decision.Reason, "earlier run") {
 		t.Fatalf("third admission = %+v, err=%v", decision, err)
+	}
+}
+
+// case: S-237.51
+func TestAdmissionFIFOOnlyOrdersMatchingResourceBudgets(t *testing.T) {
+	cases := []struct {
+		name          string
+		candidate     record
+		earlier       record
+		globalMinFree uint64
+		want          bool
+	}{
+		{name: "same memory budget", candidate: record{MemoryBytes: 10}, earlier: record{MemoryBytes: 10}, want: true},
+		{name: "different budget dimensions", candidate: record{CPUsMin: 1}, earlier: record{MemoryBytes: 10}},
+		{name: "same slot group", candidate: record{SlotGroup: "workers"}, earlier: record{SlotGroup: "workers"}, want: true},
+		{name: "same gate", candidate: record{WaitGate: "batch"}, earlier: record{HoldGate: "batch"}, want: true},
+		{name: "global min-free disk budget", candidate: record{}, earlier: record{DiskBytes: 10}, globalMinFree: 1, want: true},
+		{name: "unrelated run", candidate: record{}, earlier: record{WaitGate: "batch"}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := admissionResourcesOverlap(test.candidate, test.earlier, test.globalMinFree); got != test.want {
+				t.Fatalf("admissionResourcesOverlap() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+// case: S-237.51
+func TestAdmissionGlobalMinFreeOrdersDiskReservationAgainstUnreservedRun(t *testing.T) {
+	state := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(state, "runs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetQuota(state, "", "", "1"); err != nil {
+		t.Fatal(err)
+	}
+	writeAdmissionFixtureRecord(t, state, record{
+		RunID: "earlier-disk-reservation", QueueOrder: 1, Status: StatusBlocked, DiskBytes: 10,
+	})
+	source := fakeHostResourceSource{sample: HostResourceSnapshot{
+		PhysicalMemory: 1000, AvailableMemory: 900, MemoryAvailableKnown: true,
+		LogicalCPUs: 8, Pressure: "normal", PressureAvailable: true, LoadAvailable: true,
+	}}
+	candidate := record{RunID: "later-unreserved", QueueOrder: 2}
+	decision, err := admissionStateLocked(state, candidate, source)
+	if err != nil || decision.Status != StatusQueued || !strings.Contains(decision.Reason, "earlier run") {
+		t.Fatalf("global min-free FIFO decision = %+v, err=%v", decision, err)
 	}
 }
 

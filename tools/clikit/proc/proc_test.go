@@ -56,13 +56,9 @@ func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 	if !strings.Contains(string(output), "run normal completed") {
 		t.Fatalf("kb-runner did not report completion: %s", output)
 	}
-	pidBytes, err := os.ReadFile(readyFile)
+	descendant, err := waitPIDFile(readyFile, 5*time.Second)
 	if err != nil {
-		t.Fatalf("setsid descendant did not report its PID: %v; output: %s", err, output)
-	}
-	descendant, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
-	if err != nil {
-		t.Fatalf("invalid descendant PID %q: %v", pidBytes, err)
+		t.Fatalf("setsid descendant did not report a complete PID: %v; output: %s", err, output)
 	}
 	identity, found := identityForTest(t, descendant)
 	if found {
@@ -538,11 +534,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	if listing.Error != nil || len(listing.Runs) != 1 || listing.Runs[0].Status != proc.StatusRunning {
 		t.Fatalf("run did not become live before SIGKILL: %+v", listing)
 	}
-	descendantBytes, err := waitFile(t, descendantPIDFile, 3*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	descendant, err = strconv.Atoi(strings.TrimSpace(string(descendantBytes)))
+	descendant, err = waitPIDFile(descendantPIDFile, 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -565,11 +557,7 @@ func TestKilledSupervisorReapsSetsidDescendant(t *testing.T) {
 	if descendant == 0 {
 		t.Fatalf("setsid descendant absent from live tree: %+v", listing.Runs[0].Tree)
 	}
-	sleepPIDBytes, err := waitFile(t, sleepPIDFile, 3*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sleepPID, err := strconv.Atoi(strings.TrimSpace(string(sleepPIDBytes)))
+	sleepPID, err := waitPIDFile(sleepPIDFile, 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -684,11 +672,7 @@ func TestDarwinAncestryHistoryReapsDetachedDescendant(t *testing.T) {
 			t.Logf("release test-owned intermediate during cleanup: %v", err)
 		}
 	})
-	pidBytes, err := waitFile(t, pidFile, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	grandchild, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	grandchild, err := waitPIDFile(pidFile, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1229,11 +1213,7 @@ func TestLinuxDoubleForkGrandchildIsAdoptedAndReaped(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanupRun(t, state, run)
-	pidBytes, err := waitFile(t, pidFile, 3*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	grandchild, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	grandchild, err := waitPIDFile(pidFile, 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1341,7 +1321,7 @@ func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 	killBadHelper := func() {
 		data, readErr := os.ReadFile(pidFile)
 		if readErr == nil {
-			if pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr == nil {
+			if pid, ready, parseErr := parsePIDFile(data); parseErr == nil && ready {
 				_ = syscall.Kill(pid, syscall.SIGKILL)
 			}
 		}
@@ -1372,13 +1352,9 @@ func testStartRejectsHelperWithoutKeeperDispatchPromptly(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "must dispatch __keeper") {
 		t.Fatalf("Start error = %v, want clear helper-dispatch error", err)
 	}
-	data, readErr := os.ReadFile(pidFile)
+	pid, readErr := waitPIDFile(pidFile, 5*time.Second)
 	if readErr != nil {
-		t.Fatalf("invalid helper did not record its process id: %v", readErr)
-	}
-	pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
-	if parseErr != nil {
-		t.Fatal(parseErr)
+		t.Fatalf("invalid helper did not record a complete process id: %v", readErr)
 	}
 	if identity, alive := identityForTest(t, pid); alive {
 		t.Fatalf("invalid helper process %d remains alive with identity %s", pid, identity)
@@ -1508,7 +1484,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 	}
 	ps := outputPS(t, runner, state)
 	for _, tag := range activeTags(t, ps) {
-		if _, err := waitFile(t, pidFiles[tagIndex(tag)], 5*time.Second); err != nil {
+		if _, err := waitPIDFile(pidFiles[tagIndex(tag)], 5*time.Second); err != nil {
 			t.Fatalf("active worker %s did not create its pid file: %v", tag, err)
 		}
 	}
@@ -1519,7 +1495,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 		stopSlotProcess(t, pidFiles[tagIndex(tag)])
 	}
 	firstQueuedIndex := tagIndex(firstQueued)
-	if _, err := waitFile(t, pidFiles[firstQueuedIndex], 5*time.Second); err != nil {
+	if _, err := waitPIDFile(pidFiles[firstQueuedIndex], 5*time.Second); err != nil {
 		t.Fatalf("first queued run was not admitted: %v; ps: %s", err, outputPS(t, runner, state))
 	}
 	order, err := os.ReadFile(startedLog)
@@ -1535,7 +1511,7 @@ func TestSlotAdmissionIsAtomicAndFIFO(t *testing.T) {
 		}
 	}
 	secondQueuedIndex := tagIndex(secondQueued)
-	if _, err := waitFile(t, pidFiles[secondQueuedIndex], 5*time.Second); err != nil {
+	if _, err := waitPIDFile(pidFiles[secondQueuedIndex], 5*time.Second); err != nil {
 		t.Fatalf("second queued run was not admitted: %v; ps: %s", err, outputPS(t, runner, state))
 	}
 	order, err = os.ReadFile(startedLog)
@@ -1596,11 +1572,7 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 		}
 		forceKillRecordedTree(t, state)
 	})
-	firstChildBytes, err := waitFile(t, firstPIDFile, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstChild, err := strconv.Atoi(strings.TrimSpace(string(firstChildBytes)))
+	firstChild, err := waitPIDFile(firstPIDFile, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1638,13 +1610,9 @@ func testDeadKeeperIsLostReapedAndDoesNotConsumeSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	second = start("stale-waiter", secondPIDFile)
-	secondChildBytes, err := waitFile(t, secondPIDFile, 5*time.Second)
+	secondChild, err := waitPIDFile(secondPIDFile, 5*time.Second)
 	if err != nil {
 		t.Fatalf("queued run did not acquire slot after keeper death: %v; ps: %s", err, outputPS(t, runner, state))
-	}
-	secondChild, err := strconv.Atoi(strings.TrimSpace(string(secondChildBytes)))
-	if err != nil {
-		t.Fatal(err)
 	}
 	secondIdentity, alive := identityForTest(t, secondChild)
 	if !alive {
@@ -1784,13 +1752,9 @@ func TestRunWaitRecordsKeeperLossWithoutRegistryReader(t *testing.T) {
 			}
 		}
 	})
-	pidBytes, err := waitFile(t, childFile, 5*time.Second)
+	childPID, err = waitPIDFile(childFile, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
-	}
-	childPID, err = strconv.Atoi(strings.TrimSpace(string(pidBytes)))
-	if err != nil {
-		t.Fatalf("invalid child PID %q: %v", pidBytes, err)
 	}
 	childIdentity, alive := identityForTest(t, childPID)
 	if !alive {
@@ -1858,7 +1822,7 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 		}
 		forceKillRecordedTree(t, state)
 	})
-	if _, err := waitFile(t, holderPID, 5*time.Second); err != nil {
+	if _, err := waitPIDFile(holderPID, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	waiterPID := filepath.Join(state, "waiter.pid")
@@ -1886,12 +1850,149 @@ func TestWaitGateBlocksAndDeadHolderReleases(t *testing.T) {
 	if err := holder.Wait(); err == nil {
 		t.Fatal("killed gate holder returned success")
 	}
-	if _, err := waitFile(t, waiterPID, 5*time.Second); err != nil {
+	if _, err := waitPIDFile(waiterPID, 5*time.Second); err != nil {
 		t.Fatalf("dead holder did not release gate: %v; ps=%s", err, outputPS(t, runner, state))
 	}
 	stopSlotProcess(t, waiterPID)
 	if err := waiter.Wait(); err == nil {
 		t.Fatal("terminated waiter command returned success")
+	}
+}
+
+// case: S-237.51
+func TestGateWaitDoesNotBlockUnrelatedRun(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	start := func(tag string, args ...string) *exec.Cmd {
+		t.Helper()
+		base := []string{"run", "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err")}
+		command := exec.Command(runner, append(base, args...)...)
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return command
+	}
+	startHeld := func(tag, gate, started, release string) *exec.Cmd {
+		command := exec.Command(runner, "gate", "hold", gate, "--tag", tag, "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, tag+".out"), "--stderr", filepath.Join(state, tag+".err"), "--", "/bin/sh", "-c", `touch "$1"; while [ ! -f "$2" ]; do /bin/sleep 0.01; done; exit 0`, "sh", started, release)
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return command
+	}
+	stopped := make(map[*exec.Cmd]bool)
+	stop := func(command *exec.Cmd) {
+		t.Helper()
+		if command.Process != nil && !stopped[command] {
+			stopped[command] = true
+			_ = killTestProcessGroup(command)
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	}
+	holderStarted := filepath.Join(state, "holder.started")
+	holderRelease := filepath.Join(state, "holder.release")
+	holder := startHeld("admission-holder", "maintenance", holderStarted, holderRelease)
+	t.Cleanup(func() { stop(holder); forceKillRecordedTree(t, state) })
+	if _, err := waitFile(t, holderStarted, 5*time.Second); err != nil {
+		t.Fatalf("gate holder did not start: %v; ps=%s", err, outputPS(t, runner, state))
+	}
+	waiterStarted := filepath.Join(state, "waiter.started")
+	waiter := start("admission-waiter", "--wait-gate", "maintenance", "--", "/bin/sh", "-c", `touch "$1"; exec /bin/sleep 30`, "sh", waiterStarted)
+	t.Cleanup(func() { stop(waiter); forceKillRecordedTree(t, state) })
+	if !waitUntil(5*time.Second, func() bool {
+		return strings.Contains(outputPS(t, runner, state), "admission-waiter\t") && strings.Contains(outputPS(t, runner, state), "BLOCKED")
+	}) {
+		t.Fatalf("gate waiter did not become blocked: %s", outputPS(t, runner, state))
+	}
+	freeStarted := filepath.Join(state, "unrelated.started")
+	unrelated := start("admission-unrelated", "--", "/bin/sh", "-c", `touch "$1"; exec /bin/sleep 30`, "sh", freeStarted)
+	t.Cleanup(func() { stop(unrelated); forceKillRecordedTree(t, state) })
+	if _, err := waitFile(t, freeStarted, 5*time.Second); err != nil {
+		t.Fatalf("unrelated run was held behind gate waiter: %v; ps=%s", err, outputPS(t, runner, state))
+	}
+	if strings.Contains(outputPS(t, runner, state), "admission-waiter\tRUNNING") {
+		t.Fatal("gate waiter started before gate release")
+	}
+	stop(unrelated)
+	if err := os.WriteFile(holderRelease, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := waitFile(t, waiterStarted, 5*time.Second); err != nil {
+		t.Fatalf("gate waiter did not start after gate release: %v; ps=%s", err, outputPS(t, runner, state))
+	}
+	stop(waiter)
+}
+
+// case: S-237.52
+func TestGateWaitUsesLittleCPU(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	start := func(args ...string) *exec.Cmd {
+		t.Helper()
+		command := exec.Command(runner, args...)
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return command
+	}
+	stopped := make(map[*exec.Cmd]bool)
+	stop := func(command *exec.Cmd) {
+		t.Helper()
+		if command.Process != nil && !stopped[command] {
+			stopped[command] = true
+			_ = killTestProcessGroup(command)
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	}
+	holder := start("gate", "hold", "maintenance", "--tag", "cpu-holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "holder.out"), "--stderr", filepath.Join(state, "holder.err"), "--", "/bin/sleep", "30")
+	t.Cleanup(func() { stop(holder); forceKillRecordedTree(t, state) })
+	var gateStatErr error
+	if !waitUntil(5*time.Second, func() bool {
+		_, held, err := proc.GateStatus(state, "maintenance")
+		gateStatErr = err
+		if err != nil {
+			return false
+		}
+		if !held {
+			return false
+		}
+		return true
+	}) {
+		t.Fatalf("gate holder did not claim maintenance before waiter launch: %v", gateStatErr)
+	}
+	waiterStarted := filepath.Join(state, "waiter.started")
+	waiter := start("run", "--tag", "cpu-waiter", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "waiter.out"), "--stderr", filepath.Join(state, "waiter.err"), "--wait-gate", "maintenance", "--", "/bin/sh", "-c", `touch "$1"; exec /bin/sleep 30`, "sh", waiterStarted)
+	t.Cleanup(func() { stop(waiter); forceKillRecordedTree(t, state) })
+	if !waitUntil(5*time.Second, func() bool {
+		ps := outputPS(t, runner, state)
+		return strings.Contains(ps, "cpu-waiter\t") && strings.Contains(ps, "\tBLOCKED\tblocked: position=") && strings.Contains(ps, "gate: maintenance")
+	}) {
+		t.Fatalf("gate waiter did not become blocked: %s", outputPS(t, runner, state))
+	}
+	if _, err := os.Stat(waiterStarted); !os.IsNotExist(err) {
+		t.Fatalf("waiter's command started before gate release: stat=%v", err)
+	}
+	// ProcessState reports CPU for the waiting CLI process after it is stopped.
+	time.Sleep(5 * time.Second)
+	stop(waiter)
+	usage, ok := waiter.ProcessState.SysUsage().(*syscall.Rusage)
+	if !ok {
+		t.Fatal("waiter process CPU usage is unavailable")
+	}
+	cpu := time.Duration(usage.Utime.Sec)*time.Second + time.Duration(usage.Utime.Usec)*time.Microsecond + time.Duration(usage.Stime.Sec)*time.Second + time.Duration(usage.Stime.Usec)*time.Microsecond
+	t.Logf("gate waiter used %s CPU while visibly blocked for five seconds", cpu)
+	if cpu > 100*time.Millisecond {
+		t.Fatalf("gate wait consumed %s CPU over five seconds", cpu)
+	}
+	if err := holder.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Wait(); err == nil {
+		t.Fatal("killed gate holder returned success")
 	}
 }
 
@@ -2113,12 +2214,12 @@ func TestPSShowsRunningQueuedBlockedAndStalledTogether(t *testing.T) {
 	}
 	activePID := filepath.Join(state, "active.pid")
 	startWorker("active", activePID)
-	if _, err := waitFile(t, activePID, 5*time.Second); err != nil {
+	if _, err := waitPIDFile(activePID, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	holderPID := filepath.Join(state, "gate-holder.pid")
 	start("gate", "hold", "maintenance", "--tag", "gate-holder", "--state", state, "--stall", "1h", "--stdout", filepath.Join(state, "gate-holder.out"), "--stderr", filepath.Join(state, "gate-holder.err"), "--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", holderPID)
-	if _, err := waitFile(t, holderPID, 5*time.Second); err != nil {
+	if _, err := waitPIDFile(holderPID, 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	start("run", "--tag", "stalled", "--state", state, "--stall", "100ms", "--stdout", filepath.Join(state, "stalled.out"), "--stderr", filepath.Join(state, "stalled.err"), "--", "/bin/sleep", "30")
@@ -2297,13 +2398,9 @@ func readText(t *testing.T, path string) string {
 
 func stopSlotProcess(t *testing.T, pidFile string) {
 	t.Helper()
-	data, err := os.ReadFile(pidFile)
+	pid, err := waitPIDFile(pidFile, 5*time.Second)
 	if err != nil {
-		t.Fatalf("read process PID from %s: %v", pidFile, err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		t.Fatalf("parse process PID %q: %v", data, err)
+		t.Fatalf("read complete process PID from %s: %v", pidFile, err)
 	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		t.Fatalf("release slot by terminating process %d: %v", pid, err)
@@ -2342,6 +2439,68 @@ func TestKillTestProcessGroupStopsChild(t *testing.T) {
 		t.Fatal("child survived process-group cleanup")
 	}
 	waited = true
+}
+
+func TestParsePIDFileReadiness(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents []byte
+		wantPID  int
+		ready    bool
+		wantErr  bool
+	}{
+		{name: "empty file is still being written"},
+		{name: "unterminated PID is still being written", contents: []byte("123")},
+		{name: "complete PID", contents: []byte("123\n"), wantPID: 123, ready: true},
+		{name: "empty complete PID", contents: []byte("\n"), ready: true, wantErr: true},
+		{name: "invalid complete PID", contents: []byte("invalid\n"), ready: true, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gotPID, gotReady, err := parsePIDFile(test.contents)
+			if gotReady != test.ready || (gotReady && !test.wantErr && gotPID != test.wantPID) {
+				t.Fatalf("parsePIDFile(%q) = (%d, %t, %v), want PID %d ready %t", test.contents, gotPID, gotReady, err, test.wantPID, test.ready)
+			}
+			if (err != nil) != test.wantErr {
+				t.Fatalf("parsePIDFile(%q) error = %v, wantErr %t", test.contents, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func parsePIDFile(data []byte) (int, bool, error) {
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		return 0, false, nil
+	}
+	value := strings.TrimSpace(string(data))
+	pid, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, true, fmt.Errorf("parse process PID %q: %w", value, err)
+	}
+	if pid <= 0 {
+		return 0, true, fmt.Errorf("process PID %d must be positive", pid)
+	}
+	return pid, true, nil
+}
+
+func waitPIDFile(path string, timeout time.Duration) (int, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			pid, ready, parseErr := parsePIDFile(data)
+			if parseErr != nil {
+				return 0, parseErr
+			}
+			if ready {
+				return pid, nil
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return 0, fmt.Errorf("read process PID from %s: %w", path, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return 0, fmt.Errorf("timed out waiting for a complete process PID in %s", path)
 }
 
 func waitFile(t *testing.T, path string, timeout time.Duration) ([]byte, error) {
