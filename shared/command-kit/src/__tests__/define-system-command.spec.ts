@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createProductErrorEnvelope, toErrorEnvelope } from '@kb-labs/core-platform';
+import { createContextLogger, createErrorEnvelope, createProductErrorEnvelope, toErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
 import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
 import type { CommandResult } from '@kb-labs/plugin-contracts';
 import { defineSystemCommand, defineSystemCommandGroup } from '../define-system-command';
@@ -321,11 +321,15 @@ describe('defineSystemCommand', () => {
       const unexpectedExit = await unexpected.run(mockCtx, [], { json: true });
       const unexpectedEnvelope = mockUI.json.mock.calls.at(-1)?.[0];
       expect(unexpectedExit).toBe(1);
+      const error = (unexpectedEnvelope as { error: { correlationId: string; hint: string } }).error;
       expect(unexpectedEnvelope).toMatchObject({
         ok: false,
         error: {
           code: 'KB_RUNTIME_UNEXPECTED',
           correlationId: expect.any(String),
+          hint: createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+            correlationId: error.correlationId,
+          }).hint,
         },
       });
       expect(JSON.stringify(unexpectedEnvelope)).not.toContain('sensitive internal cause');
@@ -751,6 +755,14 @@ describe('defineSystemCommand', () => {
     });
 
     it('should output error in JSON mode', async () => {
+      const logger = createContextLogger(mockLogger as unknown as ILogger, {
+        applicationId: 'kb',
+        serviceId: 'kb',
+        instanceId: 'test',
+        layer: 'cli',
+      });
+      logger.registerSensitiveValues(['diagnostic-secret']);
+      mockCtx.platform.logger = logger;
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
@@ -758,7 +770,7 @@ describe('defineSystemCommand', () => {
         description: 'Test',
         flags: {},
         handler: async () => {
-          throw new Error('Handler error');
+          throw new TypeError('Handler error: diagnostic-secret');
         },
       });
 
@@ -767,16 +779,22 @@ describe('defineSystemCommand', () => {
       expect(mockUI.json).toHaveBeenCalled();
       expect(mockLogger.error).toHaveBeenCalledWith(
         'CLI command failed unexpectedly',
-        expect.objectContaining({ message: 'Handler error' }),
+        expect.objectContaining({
+          name: 'TypeError',
+          message: 'Handler error: [REDACTED]',
+          stack: expect.stringContaining('[REDACTED]'),
+        }),
         expect.objectContaining({
           event: 'cli.unexpected_error',
           correlationId: 'test-request-id',
-          errorClass: 'Error',
-          errorMessage: 'Handler error',
-          causeChain: [expect.objectContaining({ name: 'Error', message: 'Handler error' })],
-          stack: expect.any(String),
+          operation: 'cli.command.failed',
+          errorClass: 'TypeError',
+          errorMessage: 'Handler error: [REDACTED]',
+          causeChain: [expect.objectContaining({ name: 'TypeError', message: 'Handler error: [REDACTED]' })],
+          stack: expect.stringContaining('[REDACTED]'),
         }),
       );
+      expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('diagnostic-secret');
       const jsonCall = mockUI.json.mock.calls[0]?.[0];
       expect(jsonCall.ok).toBe(false);
       expect(jsonCall.error).toMatchObject({

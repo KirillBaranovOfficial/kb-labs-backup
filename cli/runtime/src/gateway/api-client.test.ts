@@ -62,7 +62,7 @@ describe('gatewayApiFetch auth mapping', () => {
     await expect(decodeGatewayFailure(new Response(JSON.stringify({ ok: false, error: canonical }), { status: 403 }), {
       operation: 'Gateway request', gatewayUrl: 'https://gateway.test',
     })).resolves.toMatchObject({
-      code: 'KB_AUTH_FORBIDDEN', details: { permission: 'users:read', gatewayUrl: 'https://gateway.test' },
+      code: 'KB_AUTH_FORBIDDEN', details: { permission: 'users:read' },
       correlationId: 'gateway-correlation',
     });
 
@@ -77,6 +77,19 @@ describe('gatewayApiFetch auth mapping', () => {
     });
     expect(JSON.stringify(malformed)).not.toContain('raw body');
     expect(JSON.stringify(malformed)).not.toContain('permission');
+  });
+
+  it('keeps Gateway transport context out of code-specific diagnostic details', async () => {
+    const canonical = createErrorEnvelope('KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', { details: { runId: 'missing-run' } });
+    const decoded = await decodeGatewayFailure(new Response(JSON.stringify({ ok: false, error: canonical }), { status: 404 }), {
+      operation: 'Workflow request', gatewayUrl: 'https://gateway.test',
+    });
+
+    expect(decoded).toMatchObject({
+      code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND',
+      details: { runId: 'missing-run' },
+    });
+    expect(decoded.details).not.toHaveProperty('gatewayUrl');
   });
 
   // case: S-203.2
@@ -94,7 +107,7 @@ describe('gatewayApiFetch auth mapping', () => {
       code: 'KB_AUTH_FORBIDDEN',
       message: 'Permission denied: users:read',
       hint: 'Ask your administrator for the permission needed to perform this operation.',
-      details: { permission: 'users:read', gatewayUrl: 'https://gateway.test' },
+      details: { permission: 'users:read' },
     });
     expect(JSON.stringify(reconstructed)).not.toContain('remote attacker');
 
