@@ -50,6 +50,8 @@ RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("e2e/journey/entrypoint.py", "/usr/local/bin/kb-journey-runner"),
     RunnerImageResource("e2e/journey/studio-playwright.config.mjs",
                         "/opt/kb-studio-playwright/playwright.config.mjs"),
+    RunnerImageResource(".journey/runner-inputs/studio-playwright-version",
+                        "/tmp/studio-playwright-version"),
     RunnerImageResource(".journey/runner-inputs/studio-specs", "/opt/kb-studio-playwright/specs"),
     RunnerImageResource("tools/clikit/diag/gen/main.go", "/opt/kb-journey/tools/clikit/diag/gen/main.go"),
     RunnerImageResource("tools/kb-create/main.go", "/opt/kb-journey/tools/kb-create/main.go"),
@@ -87,6 +89,7 @@ def stage_runner_image_inputs() -> tuple[Path, ...]:
     """Stage declared runner inputs whose repository source is generated or ignored."""
     staged_paths = list(stage_studio_playwright_specs(
         workspace_resource(".journey", "runner-inputs", "studio-specs")))
+    staged_paths.append(stage_studio_playwright_version())
     for resource in RUNNER_IMAGE_RESOURCES:
         if resource.stage_source is None:
             continue
@@ -103,6 +106,29 @@ def stage_runner_image_inputs() -> tuple[Path, ...]:
     if not staged_paths:
         raise RuntimeError("the journey runner resource set declares no staged runner inputs")
     return tuple(staged_paths)
+
+
+def stage_studio_playwright_version() -> Path:
+    """Stage the exact Playwright version installed from the workspace lockfile."""
+    playwright = workspace_resource("e2e", "studio", "node_modules", ".bin", "playwright")
+    if not playwright.is_file():
+        raise FileNotFoundError(
+            f"Studio Playwright CLI is missing at {playwright}. "
+            "Restore workspace dependencies with `corepack pnpm install --frozen-lockfile`."
+        )
+    from invocations import run_harness_command
+
+    result = run_harness_command([str(playwright), "--version"])
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"Studio Playwright version discovery failed: {detail}")
+    version = result.stdout.strip().removeprefix("Version ")
+    if not version:
+        raise ValueError("Studio Playwright version discovery returned no version")
+    destination = workspace_resource(".journey", "runner-inputs", "studio-playwright-version")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(version + "\n", encoding="utf-8")
+    return destination
 
 
 def stage_studio_playwright_specs(output_dir: Path | None = None) -> tuple[Path, ...]:

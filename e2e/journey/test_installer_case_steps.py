@@ -36,6 +36,7 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
 from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
                                   verify_stable_installation_spellings)
+from installed_fixture import active_path
 from installer_case_steps import (assert_immutable_publish_conflict,
                                   assert_provenance_mismatch_refusal)
 from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_create_cli_result
@@ -149,6 +150,23 @@ def journey_layout_path_violations(journey_root: Path, layout: dict, owner_modul
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_active_platform_path_resolves_through_the_product_current_link(self):
+        with tempfile.TemporaryDirectory(prefix="journey-active-platform-path-") as temporary:
+            root = Path(temporary)
+            platform = root / "platform"
+
+            def install(args):
+                fake_product_install(args)
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            index = root / "release-index.json"
+            index.write_text("{}\n")
+            _seed_installed_fixture(platform, launcher="kb-create", index=index,
+                                    run_command=install, label="active path fixture")
+            config = active_path(platform, "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
+            self.assertTrue(config.is_file())
+            self.assertEqual(config, platform / "versions/1.0.0/.kb/kb.config.jsonc")
+
     def test_immutable_publish_conflict_assertion_uses_catalogue_and_compares_digests(self):
         package = "@kb-labs/sample"
         version = "1.0.0-cand.abcdef123456"
@@ -652,8 +670,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
             def run_command(args):
                 calls.append(args)
+                project = args[args.index("--project-root") + 1]
                 error = {"code": "KB_INSTALL_INPUT_REQUIRED", "message": "project directory must exist",
-                         "hint": "Run mkdir -p 'missing-project' or pass an existing project directory."}
+                         "hint": f"Create it with 'mkdir' '-p' '{project}' or pass an existing project directory."}
                 envelope = {"ok": False, "error": error}
                 output = (kb_create_stream(envelope, 2) if args[1] == "install"
                           else json.dumps(envelope))
@@ -687,14 +706,17 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0,
                     json.dumps({"ok": True, "data": apply_result}), "")
 
-            journey = run_apply_scenario_step(mode="local", launcher="kb-create", stable_index=index,
-                                              platform_root=platform, run_command=run_command)
+            with patch.object(installer_case_steps, "unused_loopback_gateway_url",
+                              return_value="http://127.0.0.1:4999"):
+                journey = run_apply_scenario_step(mode="local", launcher="kb-create", stable_index=index,
+                                                  platform_root=platform, run_command=run_command)
             claim = next(step for step in journey.steps if step.cases == ["S-039.1"])
             self.assertEqual(claim.status, "PASS", claim.message)
             self.assertEqual(calls[0], [
                 "kb-create", "apply", "--json", "--index", str(index),
                 "--platform-root", str(root / "s039-apply-scenario-local"),
-                "--service-profile", "default", "--scenario", "commit",
+                "--service-profile", "default", "--gateway-url", "http://127.0.0.1:4999",
+                "--scenario", "commit",
                 "--scenario-answers", '{"cache":"state-broker"}',
             ])
 
@@ -1277,7 +1299,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 1,
                     json.dumps({"ok": False, "error": error}), "")
 
-            with patch("installer_case_steps.socket.socket") as socket_factory:
+            with patch.object(installer_case_steps, "unused_loopback_gateway_url",
+                              return_value="http://127.0.0.1:4199"), \
+                    patch("installer_case_steps.socket.socket") as socket_factory:
                 journey = run_port_conflict_step(mode="local", launcher="kb-create", stable_index=index,
                                                  platform_root=root, run_command=run_command)
             owner = socket_factory.return_value.__enter__.return_value
@@ -1286,6 +1310,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
         owner.bind.assert_called_once_with(("127.0.0.1", 4173))
         self.assertEqual([args[1] for args in calls], ["plan", "apply"])
+        self.assertEqual(calls[0][calls[0].index("--gateway-url") + 1], "http://127.0.0.1:4199")
+        self.assertEqual(calls[1][calls[1].index("--gateway-url") + 1], "http://127.0.0.1:4199")
 
     def test_repeat_plan_compares_install_owned_files_while_host_stays_running(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:
@@ -1706,6 +1732,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[1].status, "PASS")
         self.assertEqual(len(calls), 17)
         self.assertEqual(calls[0][1], "install")
+        self.assertIn("--gateway-url", calls[0])
+        self.assertNotEqual(calls[0][calls[0].index("--gateway-url") + 1], "http://127.0.0.1:4100")
         self.assertEqual(calls[-1][1], "uninstall")
 
     def test_fixture_seeder_uses_product_install_and_requirement_is_an_explicit_fault(self):

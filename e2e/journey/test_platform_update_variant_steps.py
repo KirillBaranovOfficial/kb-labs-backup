@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from platform_update_variant_steps import run_platform_update_variant_steps
+from platform_update_variant_steps import _install_vibeproxy_adapter, run_platform_update_variant_steps
 from service_steps import Journey
 
 
@@ -29,6 +29,23 @@ def _versioned_platform(root: Path, version: str) -> Path:
 
 
 class PlatformUpdateVariantStepsTests(unittest.TestCase):
+    def test_update_fixture_installs_vibeproxy_through_platform_marketplace(self) -> None:
+        calls = []
+
+        def run(args, cwd):
+            calls.append((args, cwd))
+            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"package": "@kb-labs/adapters-vibeproxy"}}), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            cwd = Path(directory)
+            _install_vibeproxy_adapter("/platform/bin/kb", run, cwd)
+
+        self.assertEqual(len(calls), 1)
+        args, called_cwd = calls[0]
+        self.assertEqual(called_cwd, cwd)
+        self.assertEqual(args[1:], ["marketplace", "install", "@kb-labs/adapters-vibeproxy",
+                                   "--scope", "platform", "--json"])
+
     def test_installed_steps_register_each_update_variant_claim(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

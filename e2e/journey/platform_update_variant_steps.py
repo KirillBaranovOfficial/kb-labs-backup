@@ -46,6 +46,12 @@ def _target(index: Path) -> str:
     return value["channels"]["stable"]
 
 
+def _install_vibeproxy_adapter(kb_binary: str, run: Run, cwd: Path) -> None:
+    result = run(kb_command(["marketplace", "install", "@kb-labs/adapters-vibeproxy",
+                             "--scope", "platform", "--json"], executable=kb_binary), cwd)
+    _payload(result, "install VibeProxy adapter for update preservation")
+
+
 def _request_for(source: Path, version: str, target: Path) -> None:
     request = json.loads(source.read_text())
     request.setdefault("platform", {})["version"] = version
@@ -154,6 +160,7 @@ def run_platform_update_variant_steps(
 
     def save_preservation_fixture() -> None:
         nonlocal before_services
+        _install_vibeproxy_adapter(kb_binary, run, project_a)
         for project in (project_a, project_b):
             installed = cli(kb_command([ "marketplace", "install", "@kb-labs/commit-entry", "--json"], executable=kb_binary), project)
             _payload(installed, f"install preservation plugin in {project}")

@@ -13,7 +13,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from studio_steps import (
-    PLAYWRIGHT_HEADLESS_SHELL,
     create_studio_environment,
     create_studio_member,
     record_studio_browser_step,
@@ -38,6 +37,13 @@ class FakeResponse:
         return self.body
 
 
+def fake_playwright_executable(browsers_path: Path) -> Path:
+    executable = browsers_path / "chromium" / "headless_shell"
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_text("fake executable for preflight")
+    return executable
+
+
 class StudioJourneyTests(unittest.TestCase):
     def test_runner_playwright_version_matches_studio_e2e_lockfile(self):
         repository = Path(__file__).parents[2]
@@ -48,14 +54,12 @@ class StudioJourneyTests(unittest.TestCase):
         dockerfile = (Path(__file__).parent / "Dockerfile.runner").read_text()
 
         self.assertIn("FROM node:24-bookworm", dockerfile)
-        self.assertIn(f"@playwright/test@{expected_version}", dockerfile)
+        self.assertIn("/tmp/studio-playwright-version", dockerfile)
+        self.assertIn("$(cat /tmp/studio-playwright-version)", dockerfile)
         self.assertIn("ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright", dockerfile)
-
-        playwright_core = repository / f"node_modules/.pnpm/playwright-core@{expected_version}/node_modules/playwright-core"
-        browsers = json.loads((playwright_core / "browsers.json").read_text())
-        revision = next(browser["revision"] for browser in browsers["browsers"]
-                        if browser["name"] == "chromium-headless-shell")
-        self.assertEqual(PLAYWRIGHT_HEADLESS_SHELL.parts[0], f"chromium_headless_shell-{revision}")
+        from journey_resources import stage_studio_playwright_version
+        staged_version = stage_studio_playwright_version()
+        self.assertEqual(staged_version.read_text().strip(), expected_version)
 
     def test_studio_environment_preserves_playwright_browser_path(self):
         studio_env = create_studio_environment({
@@ -89,12 +93,14 @@ class StudioJourneyTests(unittest.TestCase):
             browsers_path = Path(directory) / "browsers"
             env = {"PLAYWRIGHT_BROWSERS_PATH": str(browsers_path)}
 
-            with patch("invocations.subprocess.Popen") as popen:
+            discovered = browsers_path / "chromium" / "headless_shell"
+            with patch("studio_steps.run_harness_command", return_value=subprocess.CompletedProcess([], 0, str(discovered), "")), \
+                    patch("invocations.subprocess.Popen") as popen:
                 passed, elapsed, message = run_studio_browser_step(
                     ["playwright"], env, report, "local", True)
             saved = json.loads(report.read_text())
 
-        expected_executable = browsers_path / PLAYWRIGHT_HEADLESS_SHELL
+        expected_executable = browsers_path / "chromium" / "headless_shell"
         self.assertFalse(passed)
         self.assertEqual(elapsed, 0.0)
         self.assertEqual(
@@ -111,12 +117,11 @@ class StudioJourneyTests(unittest.TestCase):
             report = Path(directory) / "service-secured.json"
             report.write_text(json.dumps({"status": "PASS", "steps": []}))
             browsers_path = Path(directory) / "browsers"
-            executable = browsers_path / PLAYWRIGHT_HEADLESS_SHELL
-            executable.parent.mkdir(parents=True)
-            executable.write_text("fake executable for preflight")
+            executable = fake_playwright_executable(browsers_path)
             env = {"PLAYWRIGHT_BROWSERS_PATH": str(browsers_path)}
 
-            with patch("invocations.subprocess.Popen") as popen:
+            with patch("studio_steps.run_harness_command", return_value=subprocess.CompletedProcess([], 0, str(executable), "")), \
+                    patch("invocations.subprocess.Popen") as popen:
                 passed, elapsed, message = run_studio_browser_step(
                     ["playwright"], env, report, "secured", True)
 
@@ -134,9 +139,7 @@ class StudioJourneyTests(unittest.TestCase):
     def test_playwright_subprocess_receives_browser_path(self):
         with tempfile.TemporaryDirectory() as directory:
             browsers_path = Path(directory) / "browsers"
-            executable = browsers_path / PLAYWRIGHT_HEADLESS_SHELL
-            executable.parent.mkdir(parents=True)
-            executable.write_text("fake executable for preflight")
+            executable = fake_playwright_executable(browsers_path)
             report = Path(directory) / "service-local.json"
             report.write_text(json.dumps({"status": "PASS", "steps": []}))
             studio_env = create_studio_environment(
@@ -144,9 +147,10 @@ class StudioJourneyTests(unittest.TestCase):
                 mode="local", project_id="project-1", project_name="Journey",
                 project_root="/tmp/project", kb_bin="/tmp/bin/kb")
 
-            passed, _elapsed, message = run_studio_browser_step(
-                [sys.executable, "-c", "import os; print(os.environ['PLAYWRIGHT_BROWSERS_PATH'])"],
-                studio_env, report, "local", True)
+            with patch("studio_steps.run_harness_command", return_value=subprocess.CompletedProcess([], 0, str(executable), "")):
+                passed, _elapsed, message = run_studio_browser_step(
+                    [sys.executable, "-c", "import os; print(os.environ['PLAYWRIGHT_BROWSERS_PATH'])"],
+                    studio_env, report, "local", True)
             log = (Path(directory) / "studio-playwright-local.log").read_text()
 
         self.assertTrue(passed, message)
@@ -156,9 +160,7 @@ class StudioJourneyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             browsers_path = root / "browsers"
-            executable = browsers_path / PLAYWRIGHT_HEADLESS_SHELL
-            executable.parent.mkdir(parents=True)
-            executable.write_text("fake executable for preflight")
+            executable = fake_playwright_executable(browsers_path)
             report = root / "service-local.json"
             report.write_text(json.dumps({"status": "PASS", "steps": []}))
             env = {
@@ -166,7 +168,8 @@ class StudioJourneyTests(unittest.TestCase):
                 "KB_JOURNEY_INVOCATIONS": str(root / "reports"),
             }
 
-            with invocation_context(report_root=root / "reports"):
+            with invocation_context(report_root=root / "reports"), \
+                    patch("studio_steps.run_harness_command", return_value=subprocess.CompletedProcess([], 0, str(executable), "")):
                 passed, _elapsed, message = run_studio_browser_step(
                     [sys.executable, "-c", "import sys; print('playwright failure'); sys.exit(7)"],
                     env, report, "local", True)
@@ -214,9 +217,7 @@ class StudioJourneyTests(unittest.TestCase):
             report = Path(directory) / "service-local.json"
             report.write_text(json.dumps({"status": "PASS", "steps": []}))
             browsers_path = Path(directory) / "browsers"
-            executable = browsers_path / PLAYWRIGHT_HEADLESS_SHELL
-            executable.parent.mkdir(parents=True)
-            executable.write_text("fake executable for preflight")
+            executable = fake_playwright_executable(browsers_path)
             command = ["playwright"]
             streamed = io.StringIO()
             def timeout_after_output(_command, *, env, timeout, on_output_line, start_new_session):
@@ -229,7 +230,8 @@ class StudioJourneyTests(unittest.TestCase):
                     on_output_line(line)
                 raise subprocess.TimeoutExpired(command, timeout, output=lines)
 
-            with patch("studio_steps.run_streaming_command", side_effect=timeout_after_output) as run_streaming:
+            with patch("studio_steps.run_harness_command", return_value=subprocess.CompletedProcess([], 0, str(executable), "")), \
+                    patch("studio_steps.run_streaming_command", side_effect=timeout_after_output) as run_streaming:
                 with redirect_stdout(streamed):
                     passed, _elapsed, message = run_studio_browser_step(
                         command, {"PLAYWRIGHT_BROWSERS_PATH": str(browsers_path)},
