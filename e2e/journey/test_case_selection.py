@@ -16,6 +16,7 @@ import select_from_cases
 from select_from_cases import read_coverage_result, selection_from_coverage, selectors_from_coverage
 from service_steps import Journey
 from select_from_cases import _case_declarations
+from installed_fixture import configure_hermetic_cli_fixture, layout_value
 
 
 def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "active", release: bool = True):
@@ -33,6 +34,19 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    def test_hermetic_fixture_stages_declared_lock_at_its_shared_root(self):
+        repository = Path(__file__).resolve().parents[2]
+        lock_path = Path(layout_value("versionStatePaths.kb_marketplace_lock"))
+        with tempfile.TemporaryDirectory(prefix="journey-hermetic-fixture-") as temporary:
+            home = Path(temporary) / "home"
+            env = configure_hermetic_cli_fixture(home, env={}, workspace_root=repository)
+            platform_root = Path(env["KB_PLATFORM_ROOT"])
+            project_root = Path(env["KB_PROJECT_ROOT"])
+
+            self.assertEqual(platform_root, project_root)
+            self.assertEqual((platform_root / lock_path).read_bytes(),
+                             (repository / lock_path).read_bytes())
+
     # case: S-203.1
     def test_coverage_cli_reader_requires_success_envelope(self):
         self.assertEqual(read_coverage_result(
@@ -78,7 +92,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             for child_env in captured:
                 self.assertNotEqual(child_env["HOME"], caller_home)
                 self.assertFalse(Path(child_env["HOME"]).exists())
-                self.assertNotIn("KB_HOME", child_env)
+                self.assertEqual(Path(child_env["KB_HOME"]), Path(child_env["HOME"]) / ".kb")
                 self.assertEqual(Path(child_env["KB_PLATFORM_ROOT"]), Path(child_env["HOME"]) / "platform")
                 self.assertNotIn("KB_NET_OFFSET", child_env)
             self.assertEqual(json.loads(output.getvalue()), {

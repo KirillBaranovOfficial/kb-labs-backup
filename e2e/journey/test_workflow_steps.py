@@ -9,7 +9,7 @@ from subprocess import CompletedProcess
 sys.path.insert(0, str(Path(__file__).parent))
 
 import workflow_steps
-from installed_fixture import write_local_access_mode
+from installed_fixture import configure_hermetic_cli_fixture
 from service_steps import Journey
 from invocations import catalogued_error_hint, catalogued_error_message
 
@@ -174,9 +174,10 @@ class WorkflowJourneyTests(unittest.TestCase):
             launcher.chmod(0o755)
             registry_env = {key: value for key, value in os.environ.items() if not key.startswith("KB_")}
             registry_env.update({"HOME": str(home), "KB_JOURNEY_CLI_PATH": str(launcher)})
-            registry_env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(Path(fixture) / "platform"))
+            registry_env = configure_hermetic_cli_fixture(
+                home, env=registry_env, workspace_root=repository)
             registry_result = workflow_steps.run_cli(["registry", "commands", "--json"],
-                                                       env=registry_env, cwd=repository)
+                                                       env=registry_env, cwd=Path(registry_env["KB_PROJECT_ROOT"]))
             if registry_result.returncode != 0:
                 self.fail(f"built CLI registry listing failed: {(registry_result.stderr or registry_result.stdout).strip()}")
             real_listing = json.loads(registry_result.stdout)
