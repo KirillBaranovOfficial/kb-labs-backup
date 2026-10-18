@@ -1146,7 +1146,8 @@ raise SystemExit(1)
             env.pop("KB_HOME", None)
             env.pop("KB_NET_OFFSET", None)
             from hermetic_cli import run_hermetic_cli
-            proc = run_hermetic_cli(command, cwd=root, env=env, timeout=120)
+            proc = run_hermetic_cli(command, cwd=root, env=env, timeout=120,
+                                    workspace_root=root)
             self.assertEqual(proc.returncode, 0, f"qa coverage show failed: {proc.stderr or proc.stdout}")
             payload = json.loads(proc.stdout)
             self.assertTrue(payload.get("ok"), payload)
@@ -1167,7 +1168,8 @@ raise SystemExit(1)
             corrupted_run_file.write_text(json.dumps(corrupted_data))
 
             corrupted_proc = run_hermetic_cli([node, str(cli_bin), "qa", "coverage", "show", "--mode", "local",
-                                              "--run", str(corrupted_run_file), "--json"], cwd=root, env=env, timeout=120)
+                                              "--run", str(corrupted_run_file), "--json"], cwd=root, env=env, timeout=120,
+                                              workspace_root=root)
             self.assertIn("claims[2].status must be PASS or FAIL", corrupted_proc.stdout + corrupted_proc.stderr)
 
     def test_service_step_exception_is_saved_and_later_steps_continue(self):

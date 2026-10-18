@@ -615,6 +615,7 @@ class DispatchRegistryTests(unittest.TestCase):
                 run_hermetic_cli(
                     ["node", "./cli/bin/dist/bin.js", "qa", "cases", "validate"],
                     cwd=Path(temporary), env={},
+                    workspace_root=Path(temporary),
                 )
 
     def test_command_path_rail_follows_two_level_wrapper_and_rejects_bare_group(self):
@@ -851,6 +852,7 @@ class DispatchRegistryTests(unittest.TestCase):
             cwd=root,
             env=os.environ,
             timeout=120,
+            workspace_root=root,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         listing = json.loads(result.stdout)
@@ -1230,7 +1232,8 @@ class DispatchRegistryTests(unittest.TestCase):
         for mode in ("local", "secured"):
             command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "coverage", "show", "--level", "all",
                        "--mode", mode, "--json"]
-            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120)
+            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120,
+                                      workspace_root=root)
             self.assertEqual(result.returncode, 0, result.stderr)
             results.append(read_coverage_result(result))
 
@@ -1665,7 +1668,8 @@ class DispatchRegistryTests(unittest.TestCase):
         for mode in ("local", "secured"):
             command = [node, str(root / "cli/bin/dist/bin.js"), "qa", "coverage", "show", "--level", "all",
                        "--mode", mode, "--json"]
-            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120)
+            result = run_hermetic_cli(command, cwd=root, env=os.environ, timeout=120,
+                                      workspace_root=root)
             self.assertEqual(result.returncode, 0, result.stderr)
             results.append(read_coverage_result(result))
         return results
