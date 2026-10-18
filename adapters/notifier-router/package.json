@@ -6,7 +6,9 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "kb": {
-    "manifest": "./dist/manifest.js"
+    "adapter": {
+      "manifest": "./dist/manifest.js"
+    }
   },
   "exports": {
     ".": {

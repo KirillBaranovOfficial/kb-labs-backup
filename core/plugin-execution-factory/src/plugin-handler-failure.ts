@@ -1,7 +1,7 @@
-import { inspect } from 'node:util';
 import {
   createContextLogger,
   createErrorEnvelope,
+  describeContractValue,
   ErrorEnvelopeError,
   toErrorEnvelope,
   validateErrorEnvelope,
@@ -36,7 +36,8 @@ function recordPluginFailure(
   reason: string,
   diagnosticStack?: string,
   malformedField?: string,
-  malformedValue?: unknown,
+  evidenceType?: string,
+  evidencePreview?: string,
 ): void {
   const logger = createContextLogger(context.logger, context.logContext)
     .forOperation('plugin.handler.failed', { correlationId: context.correlationId })
@@ -59,29 +60,12 @@ function recordPluginFailure(
       serializedError: logger.redactSensitiveValues(context.serializedError ?? error),
       ...(malformedField ? {
         malformedField,
-        malformedFieldType: runtimeType(malformedValue),
-        malformedFieldPreview: boundedPreview(logger, malformedValue),
+        malformedFieldType: evidenceType,
+        malformedFieldPreview: evidencePreview,
       } : {}),
     },
     error: logError,
   });
-}
-
-function runtimeType(value: unknown): string {
-  if (value === null) return 'null';
-  if (Array.isArray(value)) return 'array';
-  if (value instanceof Error) return 'error';
-  return typeof value;
-}
-
-function boundedPreview(logger: ReturnType<typeof createContextLogger>, value: unknown): string {
-  const redacted = logger.redactSensitiveValues(value);
-  return inspect(redacted, {
-    depth: 3,
-    maxArrayLength: 8,
-    maxStringLength: 128,
-    breakLength: Infinity,
-  }).slice(0, 256);
 }
 
 function failureReason(error: unknown): FailureReason {
@@ -135,20 +119,42 @@ export function normalizePluginHandlerFailure(
   const canonicalEnvelope = !invalidEnvelopeIssue && typedEnvelope
     ? toErrorEnvelope(error instanceof ErrorEnvelopeError ? error : envelopeCandidate, { correlationId: context.correlationId })
     : undefined;
+  const contractEnvelope = canonicalEnvelope?.code === 'KB_PLUGIN_CONTRACT_VIOLATION' ||
+    canonicalEnvelope?.code === 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION'
+    ? canonicalEnvelope
+    : undefined;
+  const contractField = typeof contractEnvelope?.details?.field === 'string'
+    ? contractEnvelope.details.field
+    : undefined;
   const malformedField = invalidEnvelopeIssue?.field ??
-    (canonicalEnvelope?.code === 'KB_PLUGIN_CONTRACT_VIOLATION' ? canonicalEnvelope.details?.field ?? 'envelope' : undefined) ??
+    contractField ??
     (context.returnedFailure && !typedEnvelope ? 'envelope' : undefined);
   const malformedValue = malformedField === 'envelope'
     ? envelopeCandidate
     : typeof envelopeCandidate === 'object' && envelopeCandidate !== null
       ? Reflect.get(envelopeCandidate, malformedField ?? '')
       : undefined;
-  const rawEnvelope = malformedField
+  const contextLogger = createContextLogger(context.logger, context.logContext);
+  const observedEvidence = contractEnvelope?.details?.observedType &&
+    contractEnvelope.details.observedValuePreview
+    ? {
+        observedType: contractEnvelope.details.observedType,
+        observedValuePreview: contractEnvelope.details.observedValuePreview,
+      }
+    : describeContractValue(malformedValue);
+  const safeObservedEvidence = {
+    observedType: observedEvidence.observedType,
+    observedValuePreview: contextLogger.redactSensitiveValues(observedEvidence.observedValuePreview).slice(0, 256),
+  };
+  const malformedReturn = Boolean(invalidEnvelopeIssue) ||
+    Boolean(context.returnedFailure && !typedEnvelope) ||
+    canonicalEnvelope?.code === 'KB_PLUGIN_CONTRACT_VIOLATION';
+  const rawEnvelope = malformedReturn
     ? createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
         correlationId: context.correlationId,
         message: `Plugin ${context.pluginId} command ${context.command} returned malformed error field "${malformedField}".`,
         hint: 'Return a valid product or platform error envelope.',
-        details: { plugin: context.pluginId, command: context.command, field: malformedField },
+        details: { plugin: context.pluginId, command: context.command, field: malformedField ?? 'envelope', ...safeObservedEvidence },
       })
     : canonicalEnvelope
       ? canonicalEnvelope
@@ -160,12 +166,11 @@ export function normalizePluginHandlerFailure(
             failureReason: reason,
           },
         });
-  const envelope = createContextLogger(context.logger, context.logContext)
-    .redactSensitiveValues(rawEnvelope);
+  const envelope = contextLogger.redactSensitiveValues(rawEnvelope);
   if (typedEnvelope) {
-    recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), 'typed product or platform error', context.diagnosticStack, malformedField, malformedValue);
+    recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), 'typed product or platform error', context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview);
     return envelope;
   }
-  recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), reason, context.diagnosticStack, malformedField, malformedValue);
+  recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), reason, context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview);
   return envelope;
 }

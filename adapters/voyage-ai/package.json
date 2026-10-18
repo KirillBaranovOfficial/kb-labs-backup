@@ -44,7 +44,9 @@
     "pnpm": ">=9.0.0"
   },
   "kb": {
-    "manifest": "./dist/embeddings-manifest.js"
+    "adapter": {
+      "manifest": "./dist/embeddings-manifest.js"
+    }
   },
   "peerDependencies": {
     "@kb-labs/sdk": "workspace:^"

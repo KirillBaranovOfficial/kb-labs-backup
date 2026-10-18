@@ -8,7 +8,7 @@
 
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, getAdapterConfigurationCommand, PlatformConfigError, PlatformLayoutContractError, ServicePortConfigError, type TypedPlatformError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
-import { createErrorDetailsContractViolation, createErrorEnvelope, createValidatedErrorEnvelope, getCatalogEntry, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
+import { createErrorDetailsContractViolation, createErrorEnvelope, createValidatedErrorEnvelope, describeContractValue, getCatalogEntry, isErrorCode, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
 import { ErrorEnvelopeError, type ErrorEnvelope, type ProductErrorCode } from './types.js';
 import { markValidatedErrorEnvelope, type ValidatedErrorEnvelope } from './validated-envelope.js';
 import { isErrorEnvelope, validateErrorEnvelope } from './validate.js';
@@ -157,6 +157,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
         ...options,
         message: 'Error details must be a flat map of string identifiers.',
         hint: 'Keep error.details values as identifiers; return structured reports in data or gate findings in error.diagnostics.',
+        details: contractViolationDetailsFor('details', source.details),
       });
     }
     return createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
@@ -172,10 +173,11 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
   const code = sourceCode && isErrorCode(sourceCode) ? sourceCode : 'KB_RUNTIME_UNEXPECTED';
   const details = getDetails(source?.details);
   if (details === null) {
-      return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
-        ...options,
-        message: 'Error details must be a flat map of string identifiers.',
+    return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+      ...options,
+      message: 'Error details must be a flat map of string identifiers.',
       hint: 'Keep error.details values as identifiers; return structured reports in data or gate findings in error.diagnostics.',
+      details: contractViolationDetailsFor('details', source?.details),
     });
   }
 
@@ -202,6 +204,15 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
     : undefined;
 
   if (sourceCode && !sourceCode.startsWith('KB_')) {
+    const productHint = source?.hint;
+    if (typeof productHint !== 'string' || productHint.length === 0) {
+      return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+        ...options,
+        message: `Product error "${sourceCode}" must include a non-empty hint.`,
+        hint: 'Return a product error with a <PLUGIN>_<CONDITION> code, message, hint, and flat string details.',
+        details: { field: 'hint', ...describeContractValue(productHint) },
+      });
+    }
     try {
       const productDetails = details ?? {};
       const statusCode = typeof source?.statusCode === 'number' ? source.statusCode : undefined;
@@ -209,7 +220,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
         ...options,
         code: sourceCode,
         message: typeof source?.message === 'string' ? source.message : '',
-        hint: typeof source?.hint === 'string' ? source.hint : '',
+        hint: productHint,
         retryable: statusCode !== undefined && isRetryableStatus(statusCode),
         details: { ...productDetails, ...(statusCode !== undefined ? { statusCode: String(statusCode) } : {}) },
         ...(typeof source?.correlationId === 'string' ? { correlationId: source.correlationId } : {}),
@@ -221,7 +232,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
           ...options,
           message: error.message,
           hint: error.hint,
-          details: { field: error.field },
+          details: contractViolationDetails(error),
         });
       }
       throw error;
@@ -229,8 +240,10 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
   }
   if (sourceCode?.startsWith('KB_') && !isErrorCode(sourceCode)) {
     return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+      ...options,
       message: `Plugin returned uncatalogued platform code "${sourceCode}".`,
       hint: 'Use a KB_* code from the platform error catalog, or a valid product code with a hint.',
+      details: contractViolationDetailsFor('code', sourceCode),
     });
   }
 
@@ -254,7 +267,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
       return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
         message: error.message,
         hint: error.hint,
-        ...('field' in error && typeof error.field === 'string' ? { details: { field: error.field } } : {}),
+        ...('field' in error && typeof error.field === 'string' ? { details: { ...contractViolationDetails(error) } } : {}),
       });
     }
     throw error;
@@ -270,7 +283,7 @@ export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEn
       ...options,
       message: `Plugin returned malformed error field "${issue.field}": ${issue.reason}.`,
       hint: 'Return a product error with a valid error envelope.',
-      details: { field: issue.field },
+      details: { field: issue.field, ...describeContractValue(readField(envelope, issue.field)) },
     });
   }
   try {
@@ -307,7 +320,7 @@ export function canonicalizeErrorEnvelope(envelope: ErrorEnvelope, options: ToEn
         ...options,
         message: cause.message,
         hint: cause.hint,
-        details: { field: cause.field },
+        details: contractViolationDetails(cause),
       });
     }
     throw cause;
@@ -366,7 +379,7 @@ function assertCanonicalEnvelope(envelope: ErrorEnvelope): ValidatedErrorEnvelop
   const problems = validateErrorEnvelope(envelope);
   if (problems.length > 0) {
     const issue = problems[0]!;
-    throw productContractViolation(`Failure envelope field "${issue.field}" ${issue.reason}.`, issue.field);
+    throw productContractViolation(`Failure envelope field "${issue.field}" ${issue.reason}.`, issue.field, readField(envelope, issue.field));
   }
   return markValidatedErrorEnvelope(envelope);
 }
@@ -415,23 +428,23 @@ export interface ProductErrorInput extends ToEnvelopeOptions {
 /** Builds and validates a product error for both thrown and returned failures. */
 export function createProductErrorEnvelope(input: ProductErrorInput): ValidatedErrorEnvelope & { code: ProductErrorCode } {
   if (typeof input.code !== 'string' || !/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(input.code) || input.code.startsWith('KB_')) {
-    throw productContractViolation(`Product error code "${input.code}" must match <PLUGIN>_<CONDITION> and must not use the KB_ prefix.`, 'code');
+    throw productContractViolation(`Product error code "${input.code}" must match <PLUGIN>_<CONDITION> and must not use the KB_ prefix.`, 'code', input.code);
   }
   if (typeof input.message !== 'string' || input.message.length === 0) {
-    throw productContractViolation(`Product error "${input.code}" must include a non-empty message.`, 'message');
+    throw productContractViolation(`Product error "${input.code}" must include a non-empty message.`, 'message', input.message);
   }
   if (typeof input.hint !== 'string' || input.hint.length === 0) {
-    throw productContractViolation(`Product error "${input.code}" must include a non-empty hint.`, 'hint');
+    throw productContractViolation(`Product error "${input.code}" must include a non-empty hint.`, 'hint', input.hint);
   }
   if (typeof input.retryable !== 'boolean') {
-    throw productContractViolation(`Product error "${input.code}" must declare whether it is retryable.`, 'retryable');
+    throw productContractViolation(`Product error "${input.code}" must declare whether it is retryable.`, 'retryable', input.retryable);
   }
   if (input.details !== undefined && (typeof input.details !== 'object' || input.details === null || Array.isArray(input.details))) {
-    throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
+    throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers', input.details);
   }
   for (const [key, value] of Object.entries(input.details ?? {})) {
     if (typeof value !== 'string' || isSerializedStructuredValue(value)) {
-      throw createErrorDetailsContractViolation(key, 'must be a flat map of string identifiers');
+      throw createErrorDetailsContractViolation(key, 'must be a flat map of string identifiers', value);
     }
   }
   const envelope: ErrorEnvelope & { code: ProductErrorCode } = {
@@ -451,12 +464,37 @@ export function createProductErrorEnvelope(input: ProductErrorInput): ValidatedE
   return markValidatedErrorEnvelope(envelope);
 }
 
-function productContractViolation(message: string, field: string): Error & { code: string; hint: string; field: string } {
+function productContractViolation(message: string, field: string, observedValue: unknown): Error & { code: string; hint: string; field: string; observedType: string; observedValuePreview: string } {
+  const evidence = describeContractValue(observedValue);
   return Object.assign(new Error(message), {
     code: 'KB_PLUGIN_CONTRACT_VIOLATION',
     hint: 'Return a product error with a <PLUGIN>_<CONDITION> code, message, hint, and flat string details.',
     field,
+    ...evidence,
   });
+}
+
+function contractViolationDetails(error: Error & { field?: string; observedType?: string; observedValuePreview?: string }): Record<string, string> {
+  return {
+    ...(error.field ? { field: error.field } : {}),
+    ...(error.observedType ? { observedType: error.observedType } : {}),
+    ...(error.observedValuePreview ? { observedValuePreview: error.observedValuePreview } : {}),
+  };
+}
+
+function contractViolationDetailsFor(field: string, value: unknown): Record<string, string> {
+  return { field, ...describeContractValue(value) };
+}
+
+function readField(value: unknown, field: string): unknown {
+  if (field === 'envelope') return value;
+  if (typeof value !== 'object' || value === null) return undefined;
+  let current: unknown = value;
+  for (const segment of field.split('.')) {
+    if (typeof current !== 'object' || current === null || !(segment in current)) return undefined;
+    current = Reflect.get(current, segment);
+  }
+  return current;
 }
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
