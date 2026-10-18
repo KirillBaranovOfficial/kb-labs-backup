@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from installed_fixture import layout_relative, layout_value, write_local_access_mode
+from installed_fixture import configure_hermetic_cli_fixture, layout_relative, layout_value
 
 import json
 import os
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -72,18 +71,12 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
 
     cli = repo_root / "cli/bin/dist/bin.js"
     with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-home-") as home:
-        env = {**os.environ, "HOME": home}
-        env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
-            Path(home) / "platform", repo_root / ".kb" / "kb.config.jsonc"))
-        kb_home = Path(home) / ".kb"
-        kb_home.mkdir()
-        shutil.copy2(repo_root / layout_value('versionStatePaths.kb_marketplace_lock'), kb_home / "marketplace.lock")
-        env["KB_HOME"] = str(kb_home)
-        env.pop("KB_NET_OFFSET", None)
+        env = configure_hermetic_cli_fixture(
+            Path(home), env=os.environ, workspace_root=repo_root)
         env["GATEWAY_PORT"] = "1"
 
         def run(*args: str) -> CompletedProcess[str]:
-            return run_command(["node", str(cli), *args], cwd=repo_root, env=env, timeout=120)
+            return run_command(["node", str(cli), *args], cwd=env["KB_PROJECT_ROOT"], env=env, timeout=120)
 
         def register_checkout() -> str | None:
             result = run_command(
@@ -92,9 +85,9 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                     "const { createProjectRegistry } = await import(process.argv[1]); "
                     "await createProjectRegistry({ env: process.env }).add(process.argv[2]);",
                     str(repo_root / "core/project-registry/dist/index.js"),
-                    str(repo_root),
+                    env["KB_PROJECT_ROOT"],
                 ],
-                cwd=repo_root,
+                cwd=env["KB_PROJECT_ROOT"],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -265,11 +258,13 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                 config_source = repo_root / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')
             isolated_lock = locked
             (kb_dir / "marketplace.lock").write_text(json.dumps(isolated_lock), encoding="utf-8")
-            isolated_env = {
-                **env,
-                "KB_PLATFORM_ROOT": str(write_local_access_mode(fixture_root, config_source)),
-                "KB_HOME": str(kb_dir),
-            }
+            isolated_env = configure_hermetic_cli_fixture(
+                fixture_root,
+                env=env,
+                workspace_root=fixture_root,
+                source_config=config_source,
+                platform_root=fixture_root,
+            )
             with invocation_context(step_id="S-179.13"):
                 help_result = run_command(["node", str(cli), "--help"], cwd=fixture_root,
                                           env=isolated_env, timeout=120)

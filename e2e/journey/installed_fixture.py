@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Iterator, Optional
+from typing import TYPE_CHECKING, Callable, Iterator, Mapping, Optional
 
 from journey_resources import workspace_resource
 
@@ -198,6 +199,55 @@ def write_local_access_mode(platform_root: Path, source_config: Path | None = No
         return Path(platform_root)
     config_path.write_text(json.dumps(config), encoding="utf-8")
     return Path(platform_root)
+
+
+def configure_hermetic_cli_fixture(
+    home: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+    workspace_root: Path | None = None,
+    source_config: Path | None = None,
+    platform_root: Path | None = None,
+) -> dict[str, str]:
+    """Own isolated CLI HOME, platform config, and optional workspace lock roots."""
+    home = Path(home)
+    home.mkdir(parents=True, exist_ok=True)
+    fixture_env = dict(os.environ if env is None else env)
+    for key in ("KB_PLATFORM_ROOT", "KB_PROJECT_ROOT", "KB_HOME", "KB_NET_OFFSET"):
+        fixture_env.pop(key, None)
+
+    fixture_env["HOME"] = str(home)
+    kb_home = home / ".kb"
+    fixture_env["KB_HOME"] = str(kb_home)
+
+    root = Path(platform_root) if platform_root is not None else home / "platform"
+    if workspace_root is not None:
+        workspace_root = Path(workspace_root).resolve()
+        if source_config is None:
+            source_config = workspace_root / layout_value(
+                "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
+
+    root = write_local_access_mode(root, source_config)
+    fixture_env["KB_PLATFORM_ROOT"] = str(root)
+
+    if workspace_root is not None:
+        relative_lock = layout_value("versionStatePaths.kb_marketplace_lock")
+        source_lock = workspace_root / relative_lock
+        destination_lock = root / relative_lock
+        if source_lock.resolve() != destination_lock.resolve():
+            destination_lock.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_lock, destination_lock)
+        journey_root = root / "e2e"
+        journey_source = workspace_root / "e2e"
+        if journey_source.is_symlink():
+            journey_source = journey_source.resolve()
+        if journey_root.is_symlink():
+            journey_root.unlink()
+        if not journey_root.exists():
+            shutil.copytree(journey_source, journey_root, symlinks=True)
+        fixture_env["KB_PROJECT_ROOT"] = str(root)
+
+    return fixture_env
 
 
 def install_fixture_root(root: Path, *, launcher: str, index: Path, run_command: Callable[..., CompletedProcess],

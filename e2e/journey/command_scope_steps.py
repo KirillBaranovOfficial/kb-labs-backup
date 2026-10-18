@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from installed_fixture import layout_relative, layout_value, write_local_access_mode
+from installed_fixture import configure_hermetic_cli_fixture, layout_relative, layout_value
 
 import json
 import os
@@ -18,10 +18,9 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
         with tempfile.TemporaryDirectory(prefix="kb-command-scope-home-") as home, \
                 tempfile.TemporaryDirectory(prefix="kb-command-scope-cwd-") as cwd, \
                 tempfile.TemporaryDirectory(prefix="kb-command-scope-project-") as project:
-            env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
-            env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
-                Path(home) / "platform", Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc"))
-            env.pop("KB_NET_OFFSET", None)
+            env = configure_hermetic_cli_fixture(
+                Path(home), env=os.environ,
+                source_config=Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc")
 
             def invoke(args: list[str]) -> tuple[int, dict]:
                 result = run_command(
@@ -76,10 +75,9 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
     def global_help_and_version_do_not_initialize_a_project() -> str | None:
         with tempfile.TemporaryDirectory(prefix="kb-global-flags-home-") as home, \
                 tempfile.TemporaryDirectory(prefix="kb-global-flags-cwd-") as cwd:
-            env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
-            env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
-                Path(home) / "platform", Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc"))
-            env.pop("KB_NET_OFFSET", None)
+            env = configure_hermetic_cli_fixture(
+                Path(home), env=os.environ,
+                source_config=Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc")
             for args in (["--help"], ["--version"]):
                 result = run_command(
                     ["node", str(cli), *args],
@@ -110,10 +108,9 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
     def platform_commands_work_without_project_or_config() -> str | None:
         with tempfile.TemporaryDirectory(prefix="kb-platform-command-home-") as home, \
                 tempfile.TemporaryDirectory(prefix="kb-platform-command-cwd-") as cwd:
-            env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
-            env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
-                Path(home) / "platform", Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc"))
-            env.pop("KB_NET_OFFSET", None)
+            env = configure_hermetic_cli_fixture(
+                Path(home), env=os.environ,
+                source_config=Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc")
             for args in (["hello", "--json"], ["logs", "query", "--json"]):
                 result = run_command(
                     ["node", str(cli), *args],
@@ -154,10 +151,9 @@ def run_config_failure_steps(journey: Journey, repo_root: Path) -> None:
         with tempfile.TemporaryDirectory(prefix="kb-config-failure-home-") as home, \
                 tempfile.TemporaryDirectory(prefix="kb-config-failure-cwd-") as cwd, \
                 tempfile.TemporaryDirectory(prefix="kb-config-failure-projects-") as projects:
-            env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
-            env["KB_PLATFORM_ROOT"] = str(write_local_access_mode(
-                Path(home) / "platform", Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc"))
-            env.pop("KB_NET_OFFSET", None)
+            env = configure_hermetic_cli_fixture(
+                Path(home), env=os.environ,
+                source_config=Path(__file__).resolve().parents[2] / ".kb" / "kb.config.jsonc")
 
             def invoke(args: list[str], command_cwd: Path = cwd) -> tuple[int, dict]:
                 result = run_command(
