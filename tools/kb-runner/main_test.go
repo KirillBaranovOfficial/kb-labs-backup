@@ -19,11 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/proc"
 )
 
-// case: S-203.6
+// case: S-237.54
 func TestRootHelpSpellingsReturnUsageSuccessfully(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}} {
 		var stdout, stderr bytes.Buffer
@@ -34,6 +35,286 @@ func TestRootHelpSpellingsReturnUsageSuccessfully(t *testing.T) {
 		if !strings.Contains(stdout.String(), "Usage: kb-runner") {
 			t.Fatalf("executeCommand(%q) did not print root usage: %s", args, stdout.String())
 		}
+	}
+}
+
+// case: S-237.54
+func TestBuiltRunnerHelpAndUnknownCommandHintAreRunnable(t *testing.T) {
+	runner := buildRunnerBinary(t)
+	for _, args := range [][]string{{"--help"}, {"help"}, {"gate", "--help"}, {"own", "--help"}, {"proc", "--help"}} {
+		command := exec.Command(runner, args...)
+		var stdout, stderr bytes.Buffer
+		command.Stdout = &stdout
+		command.Stderr = &stderr
+		err := command.Run()
+		if err != nil || !strings.Contains(stdout.String(), "Usage: kb-runner") || stderr.Len() != 0 {
+			t.Fatalf("built kb-runner %v: %v; stdout=%s stderr=%s", args, err, stdout.String(), stderr.String())
+		}
+	}
+	unknown := exec.Command(runner, "missing")
+	output, err := unknown.CombinedOutput()
+	if err == nil {
+		t.Fatalf("unknown command succeeded: %s", output)
+	}
+	if !strings.Contains(string(output), "kb-runner --help") {
+		t.Fatalf("unknown command omitted its usable help hint: %s", output)
+	}
+	help := exec.Command(runner, "--help")
+	helpOutput, helpErr := help.CombinedOutput()
+	if helpErr != nil || !strings.Contains(string(helpOutput), "Usage: kb-runner") {
+		t.Fatalf("unknown command hint did not lead to runner usage: %v; output=%s", helpErr, helpOutput)
+	}
+}
+
+// case: S-237.54
+func TestNextHintQuotesInvokedExecutablePath(t *testing.T) {
+	runner := buildRunnerBinary(t)
+	executable := filepath.Join(t.TempDir(), "runner with spaces")
+	if err := os.Symlink(runner, executable); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(executable, "run")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("incomplete run unexpectedly succeeded: %s", output)
+	}
+	hint := shellQuote(executable) + " run --help"
+	if !strings.Contains(string(output), "next: "+hint) {
+		t.Fatalf("next hint did not quote the invoked path: %s", output)
+	}
+	command = exec.Command(executable, "run", "--help")
+	output, err = command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "Usage of run:") {
+		t.Fatalf("quoted hint target was not usable: %v; output=%s", err, output)
+	}
+}
+
+// case: S-237.54
+func TestEveryNextHintPathNamesRegisteredCommand(t *testing.T) {
+	const invokedRunner = "runner-from-invocation"
+	registered := make(map[string]bool, len(runnerCommands))
+	for _, entry := range runnerCommands {
+		if registered[entry.name] {
+			t.Fatalf("runner command %q is registered twice", entry.name)
+		}
+		registered[entry.name] = true
+	}
+	type invocation struct {
+		name     string
+		args     []string
+		runID    string
+		runState string
+	}
+	invalidState := filepath.Join(t.TempDir(), "state-is-a-file")
+	if err := os.WriteFile(invalidState, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outputDir := t.TempDir()
+	invocations := make([]invocation, 0, len(runnerCommands)+40)
+	for _, entry := range runnerCommands {
+		invocations = append(invocations, invocation{name: entry.name, args: []string{entry.name}})
+	}
+	invocations = append(invocations,
+		invocation{name: "run missing command", args: []string{"run"}},
+		invocation{name: "run missing required flags", args: []string{"run", "--", "/bin/true"}},
+		invocation{name: "run invalid min-free", args: []string{"run", "--min-free", "not-bytes"}},
+		invocation{name: "run invalid memory", args: []string{"run", "--mem", "not-size"}},
+		invocation{name: "run invalid disk", args: []string{"run", "--disk", "not-size"}},
+		invocation{name: "run invalid CPU range", args: []string{"run", "--cpus", "not-a-range"}},
+		invocation{name: "run state cannot be created", args: []string{"run", "--tag", "hint-run", "--state", invalidState, "--stall", "1s", "--stdout", filepath.Join(outputDir, "stdout"), "--stderr", filepath.Join(outputDir, "stderr"), "--", "/bin/true"}},
+		invocation{name: "run supervised command exits unsuccessfully", args: []string{"run", "--tag", "hint-run-exit", "--state", t.TempDir(), "--stall", "1h", "--stdout", filepath.Join(outputDir, "exit-stdout"), "--stderr", filepath.Join(outputDir, "exit-stderr"), "--", "/bin/false"}},
+		invocation{name: "quota missing options", args: []string{"quota", "set", "--state", t.TempDir()}},
+		invocation{name: "quota unknown action", args: []string{"quota", "unknown", "--state", t.TempDir()}},
+		invocation{name: "quota set invalid resource", args: []string{"quota", "set", "--state", invalidState, "--memory", "not-size"}},
+		invocation{name: "quota set cannot open state", args: []string{"quota", "set", "--state", invalidState, "--memory", "100B"}},
+		invocation{name: "quota show invalid state", args: []string{"quota", "show", "--state", invalidState}},
+		invocation{name: "events invalid filter", args: []string{"events", "--state", t.TempDir(), "--filter", "unknown"}},
+		invocation{name: "events cannot read state", args: []string{"events", "--state", invalidState}},
+		invocation{name: "wait missing tag", args: []string{"wait", "--state", t.TempDir()}},
+		invocation{name: "wait cannot read state", args: []string{"wait", "--tag", "missing", "--state", invalidState}},
+		invocation{name: "gate usage", args: []string{"gate"}},
+		invocation{name: "gate status cannot read state", args: []string{"gate", "status", "maintenance", "--state", invalidState}},
+		invocation{name: "proc invalid PID", args: []string{"proc", "identity", "not-a-pid"}},
+		invocation{name: "proc nonpositive PID", args: []string{"proc", "identity", "0"}},
+		invocation{name: "proc dead PID", args: []string{"proc", "identity", "2147483647"}},
+		invocation{name: "proc nonnumeric invocation", args: []string{"proc"}},
+		invocation{name: "quota missing state", args: []string{"quota", "set"}},
+		invocation{name: "ps missing state", args: []string{"ps"}},
+		invocation{name: "ps list cannot read state", args: []string{"ps", "--state", invalidState}},
+		invocation{name: "ps leftovers cannot read state", args: []string{"ps", "--leftovers", "--state", invalidState}},
+		invocation{name: "events missing state", args: []string{"events"}},
+		invocation{name: "gate status missing state", args: []string{"gate", "status", "maintenance"}},
+		invocation{name: "own usage", args: []string{"own"}},
+		invocation{name: "own path without run", args: []string{"own", "path"}},
+		invocation{name: "own path invalid syntax", args: []string{"own", "path", "--create"}, runID: "hint-run", runState: t.TempDir()},
+		invocation{name: "own Compose syntax", args: []string{"own", "docker-compose", "hint-project"}, runID: "hint-run", runState: t.TempDir()},
+		invocation{name: "own path registration failure", args: []string{"own", "path", "--create", "file", filepath.Join(outputDir, "owned-path")}, runID: "hint-run", runState: invalidState},
+		invocation{name: "own Compose registration failure", args: []string{"own", "docker-compose", "hint-project", "-f", filepath.Join(outputDir, "compose.yml"), "--", "docker", "compose"}, runID: "hint-run", runState: invalidState},
+		invocation{name: "own container registration failure", args: []string{"own", "container", "hint-container"}, runID: "hint-run", runState: invalidState},
+		invocation{name: "own network registration failure", args: []string{"own", "network", "hint-network"}, runID: "hint-run", runState: invalidState},
+		invocation{name: "own volume registration failure", args: []string{"own", "volume", "hint-volume"}, runID: "hint-run", runState: invalidState},
+		invocation{name: "own unsupported resource kind", args: []string{"own", "unsupported", "hint-resource"}, runID: "hint-run", runState: invalidState},
+		invocation{name: "gc missing state", args: []string{"gc"}},
+		invocation{name: "gc cannot read state", args: []string{"gc", "--state", invalidState}},
+	)
+	for _, test := range invocations {
+		t.Run(test.name, func(t *testing.T) {
+			if test.runID != "" {
+				t.Setenv("KBLABS_CLIPROC_RUN", test.runID)
+				t.Setenv("KBLABS_CLIPROC_STATE", test.runState)
+			} else {
+				t.Setenv("KBLABS_CLIPROC_RUN", "")
+				t.Setenv("KBLABS_CLIPROC_STATE", "")
+			}
+			var stdout, stderr bytes.Buffer
+			_ = executeInvocation(invokedRunner, test.args, &stdout, &stderr)
+			output := stderr.String() + stdout.String()
+			if !strings.Contains(output, "next: ") {
+				t.Fatalf("emitted no next hint: stdout=%s stderr=%s", stdout.String(), stderr.String())
+			}
+			assertNextHintCommand(t, invokedRunner, registered, output)
+		})
+	}
+}
+
+// case: S-237.54
+func TestRuntimeNextHintBranchesNameRegisteredCommands(t *testing.T) {
+	const invokedRunner = "runner-from-invocation"
+	registered := make(map[string]bool, len(runnerCommands))
+	for _, entry := range runnerCommands {
+		registered[entry.name] = true
+	}
+	state := t.TempDir()
+	root := runnerRoot{Root: command.InvocationRoot(invokedRunner), invocation: invokedRunner}
+	var output bytes.Buffer
+	_, lostErr := renderWaitOutcome(proc.RunInfo{Tag: "lost", Status: proc.StatusLost, Error: "keeper disappeared"}, state, &output, invokedRunner)
+	hints := []string{
+		procInventoryFailure(invokedRunner, invokedRunner, errors.New("host process table denied")).Error(),
+		procIdentityFailure(invokedRunner, invokedRunner, 1, errors.New("permission denied")).Error(),
+		supervisedCommandFailure(root, state, 1).Error(),
+		keeperWaitFailure(root, state, errors.New("keeper wait failed")).Error(),
+		lostErr.Error(),
+		ownFailure(invokedRunner, invokedRunner, []string{"path", "--create", "file", "/tmp/path with space"}, state,
+			proc.Resource{Kind: proc.ResourcePath, ID: "/tmp/path with space"},
+			&proc.PathXattrUnsupportedError{Filesystem: "recorded fixture", Path: "/tmp/path with space"}).Error(),
+	}
+	for _, hint := range hints {
+		assertNextHintCommand(t, invokedRunner, registered, hint)
+	}
+}
+
+func assertNextHintCommand(t *testing.T, invokedRunner string, registered map[string]bool, output string) {
+	t.Helper()
+	parts := strings.Split(output, "next: ")
+	if len(parts) < 2 {
+		t.Fatalf("emitted no next hint: %s", output)
+	}
+	for _, part := range parts[1:] {
+		command := strings.TrimSpace(strings.SplitN(part, "\n", 2)[0])
+		fields := strings.Fields(command)
+		if len(fields) == 0 {
+			t.Fatalf("emitted an empty next hint: %q", output)
+		}
+		commandName := strings.Trim(fields[0], "`'\"")
+		if strings.HasPrefix(command, shellQuote(os.Args[0])) {
+			commandName = os.Args[0]
+		}
+		if commandName != invokedRunner {
+			if _, err := exec.LookPath(commandName); err != nil {
+				t.Fatalf("hint starts with unavailable command %q: %v", commandName, err)
+			}
+		} else {
+			if len(fields) < 2 {
+				t.Fatalf("hint names an unregistered runner command: %q", fields)
+			}
+			rootCommand := strings.Trim(fields[1], "`'\"")
+			if rootCommand != "--help" && rootCommand != "-h" && rootCommand != "help" && !registered[rootCommand] {
+				t.Fatalf("hint names an unregistered runner command: %q", fields)
+			}
+			if fields[len(fields)-1] == "--help" || rootCommand == "--help" || rootCommand == "-h" || rootCommand == "help" {
+				helpArgs := make([]string, 0, len(fields)-1)
+				for _, field := range fields[1:] {
+					helpArgs = append(helpArgs, strings.Trim(field, "`'\""))
+				}
+				if rootCommand == "--help" || rootCommand == "-h" || rootCommand == "help" {
+					helpArgs = []string{rootCommand}
+				}
+				var helpOut, helpErr bytes.Buffer
+				status := executeInvocation(invokedRunner, helpArgs, &helpOut, &helpErr)
+				if status.Code() != 0 {
+					t.Fatalf("hint help invocation %q was not usable: exit=%d stdout=%q stderr=%q", helpArgs, status.Code(), helpOut.String(), helpErr.String())
+				}
+			}
+		}
+
+		assertSingleRunnableHintCommand(t, commandName, command)
+	}
+}
+
+func assertSingleRunnableHintCommand(t *testing.T, commandName, command string) {
+	t.Helper()
+	binDir := t.TempDir()
+	stubPath := filepath.Join(binDir, commandName)
+	if strings.ContainsRune(commandName, filepath.Separator) {
+		stubPath = filepath.Join(binDir, "hint-command")
+		quotedExecutable := shellQuote(commandName)
+		if !strings.HasPrefix(command, quotedExecutable) {
+			t.Fatalf("next hint does not begin with its quoted executable %q: %s", commandName, command)
+		}
+		command = shellQuote(stubPath) + strings.TrimPrefix(command, quotedExecutable)
+	}
+	const stub = "#!/bin/sh\nprintf x >> \"$NEXT_HINT_CALLS\"\n"
+	if err := os.WriteFile(stubPath, []byte(stub), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	callsPath := filepath.Join(binDir, "calls")
+	cmd := exec.Command("/bin/sh", "-c", command)
+	cmd.Env = []string{"PATH=" + binDir, "NEXT_HINT_CALLS=" + callsPath}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("next hint is not a runnable command %q: %v (%s)", command, err, output)
+	}
+	calls, err := os.ReadFile(callsPath)
+	if err != nil {
+		t.Fatalf("next hint did not execute its command %q: %v", command, err)
+	}
+	if string(calls) != "x" {
+		t.Fatalf("next hint must contain exactly one command, got %d command invocations for %q", len(calls), command)
+	}
+}
+
+// case: S-237.54
+func TestOwnershipRuntimeHintsNameAvailableCommands(t *testing.T) {
+	state := t.TempDir()
+	resources := []proc.Resource{
+		{Kind: proc.ResourcePath, ID: filepath.Join(state, "owned path")},
+		{Kind: proc.ResourceCompose, ID: "hint-project", Files: []string{filepath.Join(state, "compose.yml")}, ComposePrefix: []string{"docker", "compose"}},
+		{Kind: proc.ResourceContainer, ID: "hint-container"},
+		{Kind: proc.ResourceNetwork, ID: "hint-network"},
+		{Kind: proc.ResourceVolume, ID: "hint-volume"},
+		{Kind: proc.ResourceKind("invalid"), ID: "hint-resource"},
+	}
+	for _, resource := range resources {
+		t.Run(string(resource.Kind), func(t *testing.T) {
+			hint := ownershipNextCommand("kb-runner", state, resource)
+			fields := strings.Fields(hint)
+			commandName := strings.Trim(fields[0], "`'\"")
+			if commandName == "kb-runner" {
+				registered := false
+				for _, entry := range runnerCommands {
+					if entry.name == strings.Trim(fields[1], "`'\"") {
+						registered = true
+						break
+					}
+				}
+				if !registered {
+					t.Fatalf("ownership next command %q is not registered", hint)
+				}
+				return
+			}
+			if _, err := exec.LookPath(commandName); err != nil {
+				t.Fatalf("ownership next command %q is unavailable: %v", commandName, err)
+			}
+		})
 	}
 }
 
@@ -742,6 +1023,8 @@ func waitForTeardownEvent(state string, timeout time.Duration) bool {
 // case: S-237.44
 func TestOwnUnsupportedXattrFailureGivesFilesystemAndNextCommands(t *testing.T) {
 	err := ownFailure(
+		"kb-runner",
+		"kb-runner",
 		[]string{"path", "--create", "file", "/tmp/path with space"},
 		"/tmp/state",
 		proc.Resource{Kind: proc.ResourcePath, ID: "/tmp/path with space"},

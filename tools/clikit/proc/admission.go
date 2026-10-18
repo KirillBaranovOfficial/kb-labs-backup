@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const admissionPollInterval = 50 * time.Millisecond
+const admissionPollInterval = 250 * time.Millisecond
 
 type gateRecord struct {
 	Name     string `json:"name"`
@@ -255,7 +255,7 @@ func admissionStateLocked(stateDir string, candidate record, source HostResource
 		if rec.RunID == candidate.RunID {
 			continue
 		}
-		if (rec.Status == StatusQueued || rec.Status == StatusBlocked) && rec.QueueOrder < candidate.QueueOrder {
+		if (rec.Status == StatusQueued || rec.Status == StatusBlocked) && rec.QueueOrder < candidate.QueueOrder && admissionResourcesOverlap(candidate, rec, quota.MinFree) {
 			queuedBefore++
 		}
 		if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled {
@@ -301,6 +301,23 @@ func admissionStateLocked(stateDir string, candidate record, source HostResource
 		}
 	}
 	return admissionDecision{Status: StatusStarting, Position: position}, nil
+}
+
+func admissionResourcesOverlap(candidate, earlier record, globalMinFree uint64) bool {
+	if candidate.SlotGroup != "" && candidate.SlotGroup == earlier.SlotGroup {
+		return true
+	}
+	for _, gate := range []string{candidate.WaitGate, candidate.HoldGate} {
+		if gate != "" && (gate == earlier.WaitGate || gate == earlier.HoldGate) {
+			return true
+		}
+	}
+	candidateDisk := candidate.DiskBytes > 0 || candidate.MinFree > 0 || globalMinFree > 0
+	earlierDisk := earlier.DiskBytes > 0 || earlier.MinFree > 0 || globalMinFree > 0
+	if candidateDisk && earlierDisk {
+		return true
+	}
+	return candidate.MemoryBytes > 0 && earlier.MemoryBytes > 0 || candidate.CPUsMin > 0 && earlier.CPUsMin > 0
 }
 
 func admissionPressureLocked(stateDir string, candidate record, source HostResourceSource) (string, error) {
