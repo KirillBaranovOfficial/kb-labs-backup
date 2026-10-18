@@ -754,6 +754,18 @@ def logs_from_query_envelope(envelope: Mapping[str, Any]) -> list[dict[str, Any]
     return [record for record in logs if isinstance(record, dict)] if isinstance(logs, list) else []
 
 
+def _resolve_invoked_executable(executable: str, cwd: str | Path | None,
+                                env: Mapping[str, str]) -> str | None:
+    if os.path.dirname(executable):
+        path = Path(executable)
+        if not path.is_absolute() and cwd is not None:
+            path = Path(cwd) / path
+        candidate = str(path)
+    else:
+        candidate = shutil.which(executable, path=env.get("PATH"))
+    return os.path.realpath(candidate) if candidate is not None else None
+
+
 def _unexpected_error_diagnostics(argv: list[str], stdout: str, stderr: str,
                                   cwd: str | Path | None, env: Mapping[str, str] | None) -> dict[str, Any] | None:
     is_unexpected, correlation_id = parse_unexpected_correlation_id(stdout, stderr)
@@ -763,7 +775,8 @@ def _unexpected_error_diagnostics(argv: list[str], stdout: str, stderr: str,
         return {"queryError": "KB_RUNTIME_UNEXPECTED omitted its correlationId"}
     effective_env = env if env is not None else os.environ
     kb_cli = _kb_shim_evidence(effective_env)
-    if not argv or kb_cli is None or os.path.realpath(argv[0]) != kb_cli["realpath"]:
+    if (not argv or kb_cli is None
+            or _resolve_invoked_executable(argv[0], cwd, effective_env) != kb_cli["realpath"]):
         return {"correlationId": correlation_id,
                 "queryError": "diagnostic retrieval requires the installed kb executable"}
     try:

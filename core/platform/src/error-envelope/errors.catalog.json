@@ -364,9 +364,12 @@
         "launcherLog",
         "log",
         "nextCommand",
+        "readinessError",
+        "readinessURL",
         "remedyOperation",
         "remedyPlatformRoot",
-        "stderrTail"
+        "stderrTail",
+        "waited"
       ]
     },
     {
