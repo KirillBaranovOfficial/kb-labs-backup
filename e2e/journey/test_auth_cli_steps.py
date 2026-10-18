@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import pty
-import select
 import subprocess
 import sys
 import tempfile
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import unittest
 from pathlib import Path
@@ -22,7 +19,7 @@ from steps.accounts import run_cli_logout_steps
 from steps.auth import (assert_platform_auth_required, run_bootstrap_recovery_steps, run_cli_auth_forbidden,
                         run_cli_auth_status, assert_cli_session_absent, run_cli_corrupt_session_file,
                         assert_machine_registration_requires_auth)
-from invocations import catalogued_error_hint
+from invocations import catalogued_error_hint, run_pty_command
 
 REAL_PROCESS_TIMEOUT_SECONDS = 60
 
@@ -93,51 +90,29 @@ class CliAuthJourneyTests(unittest.TestCase):
             node_version = subprocess.run([str(node_binary), "-p", "process.version"], env=env,
                                            capture_output=True, text=True, check=True).stdout.strip()
             cli_root = stage_cli_root(root, Path(home) / "platform")
-            master, slave = pty.openpty()
-            process = subprocess.Popen(
-                [str(node_binary), str(cli_root / "cli/bin/dist/bin.js"), "auth", "login", "--gateway-url",
-                 f"http://127.0.0.1:{gateway.server_port}", "--email", "member@example.test"],
-                cwd=cli_root, env=env, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
-            )
-            os.close(slave)
-            transcript = bytearray()
             sent = False
-            deadline = time.monotonic() + REAL_PROCESS_TIMEOUT_SECONDS
+
+            def answer_password(transcript: str) -> str | None:
+                nonlocal sent
+                if sent or "Password: " not in transcript:
+                    return None
+                sent = True
+                return password + "\n"
+
             try:
-                while process.poll() is None and time.monotonic() < deadline:
-                    ready, _, _ = select.select([master], [], [], 0.2)
-                    if not ready:
-                        continue
-                    try:
-                        chunk = os.read(master, 8192)
-                    except OSError:
-                        break
-                    transcript.extend(chunk)
-                    if not sent and b"Password: " in transcript:
-                        sent = True
-                        os.write(master, (password + "\n").encode())
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
-                    self.fail("TTY login did not finish against the local Gateway fixture; "
-                              f"transcript: {transcript.decode(errors='replace')!r}")
-                while select.select([master], [], [], 0)[0]:
-                    try:
-                        chunk = os.read(master, 8192)
-                    except OSError:
-                        break
-                    if not chunk:
-                        break
-                    transcript.extend(chunk)
+                completed, _ = run_pty_command(
+                    [str(node_binary), str(cli_root / "cli/bin/dist/bin.js"), "auth", "login", "--gateway-url",
+                     f"http://127.0.0.1:{gateway.server_port}", "--email", "member@example.test"],
+                    cwd=cli_root, env=env, timeout=REAL_PROCESS_TIMEOUT_SECONDS, on_output=answer_password,
+                )
             finally:
-                os.close(master)
                 gateway.shutdown()
                 gateway.server_close()
                 thread.join(timeout=2)
             session_created = (Path(home) / ".kb" / "session.json").is_file()
-        output = transcript.decode(errors="replace")
+        output = completed.stdout
         self.assertTrue(sent, f"TTY login under {node_binary} ({node_version}) did not show its password prompt: {output!r}")
-        self.assertEqual(process.returncode, 0, output)
+        self.assertEqual(completed.returncode, 0, output)
         self.assertNotIn(password, output)
         self.assertTrue(session_created)
 
