@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator, Mapping, Optional
 
-from journey_resources import workspace_resource
+from journey_resources import runner_resource_source_path, workspace_resource
 
 if TYPE_CHECKING:
     from invocations import CompletedProcess
@@ -181,7 +181,7 @@ def write_local_access_mode(platform_root: Path, source_config: Path | None = No
         if not modules_link.exists():
             modules_link.symlink_to(
                 workspace_root / "node_modules" / ".pnpm" / "node_modules", target_is_directory=True)
-        parser_module = (workspace_root / "core/config/dist/index.js").as_uri()
+        parser_module = runner_resource_source_path("core/config/dist/jsonc-edit.mjs").as_uri()
         script = (
             "import { readFileSync, writeFileSync } from 'node:fs'; "
             "const { parseJsonc } = await import(process.argv[1]); "

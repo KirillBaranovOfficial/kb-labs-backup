@@ -5,6 +5,7 @@ from collections import deque
 import json
 import os
 import re
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -139,6 +140,11 @@ def record_studio_browser_step(report: Path, mode: str, passed: bool, duration: 
     _record_step(report, mode, status, duration, message)
 
 
+def studio_playwright_output_directory(report: Path) -> Path:
+    """Return the run-specific writable artifact directory next to its report."""
+    return report.with_name(f"{report.stem}-playwright-results")
+
+
 def run_studio_browser_step(command: list[str], env: dict[str, str], report: Path,
                             mode: str, shell_passed: bool, timeout: int = 180) -> tuple[bool, float, str]:
     if not shell_passed:
@@ -161,6 +167,24 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
     if preflight_error:
         _record_step(report, mode, "FAIL", 0.0, preflight_error)
         return False, 0.0, preflight_error
+
+    output_dir = Path(env.get(
+        "KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR",
+        str(studio_playwright_output_directory(report)),
+    ))
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix=".write-check-", dir=output_dir):
+            pass
+    except OSError as error:
+        message = (f"Playwright output directory {output_dir} is not writable to the journey runner: "
+                   f"{error.strerror or error.__class__.__name__}; make the run report directory writable "
+                   "and rerun the journey.")
+        _record_step(report, mode, "FAIL", 0.0, message)
+        return False, 0.0, message
+
+    command = [*command, f"--output={output_dir}"]
+    env = {**env, "KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR": str(output_dir)}
 
     started = time.monotonic()
     output_lines: deque[str] = deque(maxlen=40)
