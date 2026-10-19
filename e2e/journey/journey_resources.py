@@ -21,6 +21,8 @@ class RunnerImageResource(NamedTuple):
 RUNNER_IMAGE_RESOURCES = (
     RunnerImageResource("tools/kb-create/install.sh", "/usr/local/share/kb-create/install.sh"),
     RunnerImageResource("e2e/journey", "/opt/kb-journey/e2e/journey"),
+    RunnerImageResource(".journey/runner-inputs/config-jsonc-edit.mjs",
+                        "/opt/kb-journey/core/config/dist/jsonc-edit.mjs"),
     RunnerImageResource(
         ".journey/runner-inputs/project-service-path.js",
         "/opt/kb-journey/core/plugin-contracts/dist/project-service-path.js",
@@ -85,11 +87,31 @@ def workspace_resource(*parts: str) -> Path:
     return resource_root().joinpath(*parts)
 
 
+def runner_resource_source_path(source: str) -> Path:
+    """Resolve an image-relative path through its declared runner resource."""
+    requested = PurePosixPath(source)
+    image_root = PurePosixPath("/opt/kb-journey")
+    candidates = [(resource, PurePosixPath(resource.destination).relative_to(image_root))
+                  for resource in RUNNER_IMAGE_RESOURCES
+                  if PurePosixPath(resource.destination).is_relative_to(image_root)
+                  and (requested == PurePosixPath(resource.destination).relative_to(image_root)
+                       or requested.is_relative_to(PurePosixPath(resource.destination).relative_to(image_root)))]
+    if not candidates:
+        raise ValueError(f"runner image has no declared resource for {source!r}")
+    resource, destination = max(candidates, key=lambda candidate: len(candidate[1].parts))
+    suffix = requested.relative_to(destination).parts
+    image_path = workspace_resource(*destination.parts, *suffix)
+    if image_path.exists():
+        return image_path
+    return workspace_resource(*PurePosixPath(resource.source).parts, *suffix)
+
+
 def stage_runner_image_inputs() -> tuple[Path, ...]:
     """Stage declared runner inputs whose repository source is generated or ignored."""
     staged_paths = list(stage_studio_playwright_specs(
         workspace_resource(".journey", "runner-inputs", "studio-specs")))
     staged_paths.append(stage_studio_playwright_version())
+    staged_paths.append(stage_config_jsonc_parser())
     for resource in RUNNER_IMAGE_RESOURCES:
         if resource.stage_source is None:
             continue
@@ -129,6 +151,33 @@ def stage_studio_playwright_version() -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(version + "\n", encoding="utf-8")
     return destination
+
+
+def stage_config_jsonc_parser() -> Path:
+    """Bundle the canonical core-config JSONC parser for the isolated runner image."""
+    from invocations import run_harness_command
+
+    source = workspace_resource("core", "config", "src", "user-config", "jsonc-edit.ts")
+    destination = workspace_resource(".journey", "runner-inputs", "config-jsonc-edit.mjs")
+    result = run_harness_command([
+        str(_esbuild_binary()), str(source), "--bundle", "--platform=node", "--format=esm",
+        f"--outfile={destination}",
+    ])
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"Core config JSONC parser staging failed: {detail}")
+    return destination
+
+
+def _esbuild_binary() -> Path:
+    candidates = sorted((resource_root() / "node_modules/.pnpm").glob(
+        "esbuild@*/node_modules/esbuild/bin/esbuild"))
+    if not candidates:
+        raise FileNotFoundError(
+            "Journey runner inputs cannot be bundled because workspace esbuild is missing. "
+            "Build the workspace tooling before preparing the journey runner image."
+        )
+    return candidates[-1]
 
 
 def stage_studio_playwright_specs(output_dir: Path | None = None) -> tuple[Path, ...]:
@@ -175,19 +224,11 @@ def stage_studio_playwright_specs(output_dir: Path | None = None) -> tuple[Path,
         if not entry.is_file():
             raise FileNotFoundError(f"Playwright selected missing Studio spec {entry}")
 
-    esbuild_candidates = sorted((root / "node_modules/.pnpm").glob(
-        "esbuild@*/node_modules/esbuild/bin/esbuild"))
-    if not esbuild_candidates:
-        raise FileNotFoundError(
-            "Studio Playwright specs cannot be bundled because workspace esbuild is missing. "
-            "Build the workspace tooling before preparing the journey runner image."
-        )
-
     destination = output_dir or workspace_resource(".journey", "runner-inputs", "studio-specs")
     shutil.rmtree(destination, ignore_errors=True)
     destination.mkdir(parents=True, exist_ok=True)
     command = [
-        str(esbuild_candidates[-1]),
+        str(_esbuild_binary()),
         *(str(entry) for entry in sorted(entries)),
         "--bundle",
         "--platform=node",
