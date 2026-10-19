@@ -1,7 +1,7 @@
 ---
 title: "Authentication"
 description: "How to obtain and rotate the bearer token passed to KBPlatform."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-19"
 order: 3
 ---
 
@@ -171,7 +171,7 @@ For single-tenant backends talking to KB Labs, neither of these matters — one 
 
 ## Rate limits
 
-The gateway may rate-limit requests per token, per tenant, or per IP. When rate-limited, the server returns 429 and the client throws an error with the message from `PlatformCallResponse.error`.
+The gateway may rate-limit requests per token, per tenant, or per IP. When rate-limited, the server returns 429 and the client throws an error with the message from its shared UX failure envelope.
 
 `@kb-labs/platform-client` does not retry automatically on 429. If you need retry-with-backoff, implement it in your calling code:
 
