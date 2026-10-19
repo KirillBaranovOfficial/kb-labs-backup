@@ -40,7 +40,7 @@
     "pnpm": ">=9.0.0"
   },
   "peerDependencies": {
-    "@kb-labs/core-platform": "workspace:^"
+    "@kb-labs/core-platform": "workspace:*"
   },
   "peerDependenciesMeta": {
     "@kb-labs/core-platform": {

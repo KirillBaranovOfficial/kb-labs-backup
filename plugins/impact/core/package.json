@@ -57,6 +57,6 @@
   },
   "sideEffects": false,
   "peerDependencies": {
-    "@kb-labs/core-project-registry": "workspace:^"
+    "@kb-labs/core-project-registry": "workspace:*"
   }
 }

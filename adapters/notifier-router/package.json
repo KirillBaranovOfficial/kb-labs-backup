@@ -44,7 +44,7 @@
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
-    "@kb-labs/sdk": "workspace:^"
+    "@kb-labs/sdk": "workspace:*"
   },
   "engines": {
     "node": "24.x",

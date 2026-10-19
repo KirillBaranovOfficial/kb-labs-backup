@@ -43,7 +43,7 @@
   },
   "bugs": "https://github.com/kirill-baranov/kb-labs-product-template/issues",
   "devDependencies": {
-    "@byjohann/toon": "*",
+    "@byjohann/toon": "^0.6.0",
     "@kb-labs/devkit": "workspace:*",
     "@types/node": "^24.3.3",
     "@typescript-eslint/eslint-plugin": "^8",
