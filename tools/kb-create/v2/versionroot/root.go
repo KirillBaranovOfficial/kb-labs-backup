@@ -247,6 +247,10 @@ func (l Layout) SharedRuntimePath(platformPath string) (string, error) {
 	return "", fmt.Errorf("platform path %q is not declared as shared runtime state", platformPath)
 }
 
+func (l Layout) PackageManagerStateDir() string {
+	return contracts.PackageManagerStateDirectory(l.Root)
+}
+
 // AtomicWriteFile keeps version-root links to shared runtime files intact.
 // A rename over a symlink replaces the link itself, so atomic writers must
 // write beside its declared target and rename that target instead.
@@ -1331,6 +1335,8 @@ func (l Layout) validatePreinstallTree() error {
 			var treeErr error
 			if entry.Name() == filepath.Base(l.VersionsDir()) {
 				treeErr = l.validateVersionTreeSymlinks()
+			} else if path == l.SharedStateDir() {
+				treeErr = l.validateSharedStateSymlinks(path)
 			} else {
 				treeErr = validateNoSymlinks(path)
 			}
@@ -1343,6 +1349,14 @@ func (l Layout) validatePreinstallTree() error {
 }
 
 func validateNoSymlinks(root string) error {
+	return validateContainerSymlinks(root, "", "")
+}
+
+func (l Layout) validateSharedStateSymlinks(root string) error {
+	return validateContainerSymlinks(root, l.Root, l.PackageManagerStateDir())
+}
+
+func validateContainerSymlinks(root, installRoot, packageManagerStateRoot string) error {
 	return filepath.WalkDir(root, func(path string, _ os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -1352,6 +1366,23 @@ func validateNoSymlinks(root string) error {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
+			if packageManagerStateRoot != "" && pathWithin(packageManagerStateRoot, path) {
+				linkTarget, err := os.Readlink(path)
+				if err != nil {
+					return fmt.Errorf("install container package-manager symlink target cannot be resolved at %s: %w", path, err)
+				}
+				if !filepath.IsAbs(linkTarget) {
+					linkTarget = filepath.Join(filepath.Dir(path), linkTarget)
+				}
+				resolvedTarget, err := canonicalPath(filepath.Clean(linkTarget))
+				if err != nil {
+					return fmt.Errorf("install container package-manager symlink target cannot be resolved at %s: %w", path, err)
+				}
+				if !pathWithinOrEqual(installRoot, resolvedTarget) {
+					return fmt.Errorf("install container package-manager symlink target escapes install root: %s -> %s", path, resolvedTarget)
+				}
+				return nil
+			}
 			return fmt.Errorf("install container cannot contain a symbolic link at %s", path)
 		}
 		if !info.IsDir() && !info.Mode().IsRegular() {
@@ -1359,6 +1390,15 @@ func validateNoSymlinks(root string) error {
 		}
 		return nil
 	})
+}
+
+func pathWithin(root, path string) bool {
+	return path != root && pathWithinOrEqual(root, path)
+}
+
+func pathWithinOrEqual(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))))
 }
 
 func (l Layout) validateVersionTreeSymlinks() error {
@@ -1500,7 +1540,7 @@ func (l Layout) ValidateStructure() error {
 	if err := l.validateContractStatePaths(); err != nil {
 		return err
 	}
-	if err := validateNoSymlinks(l.SharedStateDir()); err != nil {
+	if err := l.validateSharedStateSymlinks(l.SharedStateDir()); err != nil {
 		return err
 	}
 	if err := validateNoSymlinks(l.InstallerStateDir()); err != nil {

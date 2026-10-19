@@ -5,6 +5,7 @@
     "path": "versions"
   },
   "sharedStateDirectory": "state",
+  "packageManagerStateDirectory": "state/package-manager",
   "installerStateDirectory": "installer",
   "hostStateDirectory": "installer/host",
   "platformDataRoot": { "platformPath": ".kb/data", "statePath": "state/data" },
