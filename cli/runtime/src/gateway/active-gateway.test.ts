@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 
 const mocks = vi.hoisted(() => ({
   loadPlatformConfig: vi.fn(),
@@ -38,6 +39,26 @@ afterEach(async () => {
 });
 
 describe('resolveActiveGateway', () => {
+  // case: S-203.16
+  it('rejects an invalid GATEWAY_PORT before selecting the installed receipt URL', async () => {
+    await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+    await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+      installationId: 'installed-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+    }));
+
+    let failure: unknown;
+    try {
+      await resolveActiveGateway({ cwd: root, env: { GATEWAY_PORT: 'not-a-port' } });
+    } catch (error) {
+      failure = toErrorEnvelope(error);
+    }
+    expect(failure).toMatchObject({
+      code: 'KB_CONFIG_INVALID',
+      details: { path: 'GATEWAY_PORT' },
+      hint: expect.any(String),
+    });
+  });
+
   it('uses the receipt URL even when ambient dev network variables are set', async () => {
     await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
     await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
