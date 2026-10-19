@@ -189,6 +189,23 @@ test('seals gateway packages with staged config and doctor failure requirements'
   }
 });
 
+test('refuses a staged requirement when its package is absent from the release manifest', () => {
+  const root = mkdtempSync(join(tmpdir(), 'journey-staged-missing-package-'));
+  try {
+    const packages = join(root, 'packages');
+    seedReleasePackages(root, packages);
+    assert.throws(() => prepareJourneyUpdatePackages(packages, join(root, 'update'), '3.0.2', {
+      publishDir: packages,
+      digestTool,
+      requiredConfigPackage: '@kb-labs/not-shipped',
+      requiredConfig: { id: 'fixture.required', path: '/fixture/required', required: true },
+      registryManifest,
+    }), /staged requirement package is absent from the release manifest/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 
 test('release package set follows the manifest when a plugin is removed or added', () => {
   const root = mkdtempSync(join(tmpdir(), 'journey-update-manifest-mutation-'));

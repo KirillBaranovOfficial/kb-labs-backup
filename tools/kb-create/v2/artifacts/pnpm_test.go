@@ -59,6 +59,85 @@ func TestPnpmRestoreRequiresSharedCacheForSealedArtifacts(t *testing.T) {
 	}
 }
 
+func TestPnpmCommandKeepsPackageManagerStateInsideInstallRoot(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "kb-platform")
+	cacheRoot := filepath.Join(root, "state", ".kb", "v2", "cache")
+	corepackDir := t.TempDir()
+	corepack := filepath.Join(corepackDir, "corepack")
+	script := "#!/bin/sh\nset -eu\nif [ \"${PNPM_HOME+x}\" = x ]; then exit 23; fi\nmkdir -p \"$XDG_CACHE_HOME/pnpm\" \"$XDG_DATA_HOME/pnpm\" \"$XDG_STATE_HOME/pnpm\" \"$npm_config_cache\" \"$npm_config_store_dir/v11\" \"$COREPACK_HOME\"\nprintf verified > \"$XDG_CACHE_HOME/pnpm/lockfile-verified.jsonl\"\nprintf store > \"$npm_config_store_dir/v11/marker\"\nprintf data > \"$XDG_DATA_HOME/pnpm/marker\"\nprintf state > \"$XDG_STATE_HOME/pnpm/marker\"\nprintf cache > \"$npm_config_cache/marker\"\nprintf corepack > \"$COREPACK_HOME/marker\"\n"
+	if err := os.WriteFile(corepack, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PNPM_HOME", filepath.Join(home, ".local", "share", "pnpm"))
+	t.Setenv("PATH", corepackDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := os.MkdirAll(filepath.Join(home, ".cache", "pnpm"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".cache", "pnpm", "keep"), []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTestTree(t, home, root)
+	manager := Pnpm{Root: root, CacheRoot: cacheRoot, PackageManagerRoot: filepath.Join(root, "state", "package-manager")}
+	for _, command := range []string{"add", "install", "remove"} {
+		if err := manager.run(command, "@kb-labs/fixture@1.0.0"); err != nil {
+			t.Fatalf("pnpm %s: %v", command, err)
+		}
+	}
+	if err := (Pnpm{Root: root, PackageManagerRoot: filepath.Join(root, "state", "package-manager")}).run("install"); err != nil {
+		t.Fatalf("pnpm install without a separate artifact cache root: %v", err)
+	}
+	assertOutsideTestRootUnchanged(t, before, snapshotTestTree(t, home, root))
+	managerRoot := filepath.Join(root, "state", "package-manager")
+	for _, path := range []string{
+		filepath.Join(managerRoot, "xdg-cache", "pnpm", "lockfile-verified.jsonl"),
+		filepath.Join(managerRoot, "pnpm-store", "v11", "marker"),
+		filepath.Join(managerRoot, "xdg-data", "pnpm", "marker"),
+		filepath.Join(managerRoot, "xdg-state", "pnpm", "marker"),
+		filepath.Join(managerRoot, "pnpm-cache", "marker"),
+		filepath.Join(managerRoot, "corepack", "marker"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("package-manager state %q was not created inside the install root: %v", path, err)
+		}
+	}
+}
+
+func snapshotTestTree(t *testing.T, home, root string) map[string]string {
+	t.Helper()
+	entries := make(map[string]string)
+	err := filepath.WalkDir(home, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() {
+			entries[path] = "directory"
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		entries[path] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot HOME outside install root: %v", err)
+	}
+	return entries
+}
+
+func assertOutsideTestRootUnchanged(t *testing.T, before, after map[string]string) {
+	t.Helper()
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("package-manager command changed HOME outside the install root: before=%#v after=%#v", before, after)
+	}
+}
+
 func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -142,7 +221,7 @@ func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
 
 	root := t.TempDir()
 	writeMinimumReleaseAgeWorkspace(t, root)
-	pm := Pnpm{Root: root, Registry: server.URL}
+	pm := Pnpm{Root: root, PackageManagerRoot: filepath.Join(root, "state", "package-manager"), Registry: server.URL}
 	if err := pm.Install([]contracts.Artifact{itemV1}); err != nil {
 		t.Fatalf("install first sealed exact version: %v", err)
 	}
@@ -160,7 +239,7 @@ func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
 	freshRoot := t.TempDir()
 	writeMinimumReleaseAgeWorkspace(t, freshRoot)
 	var transcript strings.Builder
-	err = (Pnpm{Root: freshRoot, Registry: server.URL + "/fresh", Log: &transcript}).Install([]contracts.Artifact{sealedFreshDependency})
+	err = (Pnpm{Root: freshRoot, PackageManagerRoot: filepath.Join(freshRoot, "state", "package-manager"), Registry: server.URL + "/fresh", Log: &transcript}).Install([]contracts.Artifact{sealedFreshDependency})
 	if err == nil {
 		requestLogMu.Lock()
 		requests := append([]string(nil), requestLog...)
