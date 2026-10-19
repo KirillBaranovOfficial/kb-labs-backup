@@ -36,9 +36,9 @@ class MemoryLoggerSink implements ILogger {
   }
 }
 
-describe('createExecutionBackend returned failure stack diagnostics', () => {
+describe('createExecutionBackend returned contract failure diagnostics', () => {
   // case: S-203.6
-  it('keeps serialized returned stack in the correlated structured log only', async () => {
+  it('records safe source metadata without logging the returned message or stack', async () => {
     const logger = new MemoryLoggerSink();
     const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
     const fixturePath = fileURLToPath(new URL('./fixtures/returned-serialized-failure-handler.js', import.meta.url));
@@ -74,7 +74,13 @@ describe('createExecutionBackend returned failure stack diagnostics', () => {
     expect(records[0]).toMatchObject({
       event: 'plugin.handler.failed',
       correlationId: 'returned-stack-correlation',
-      error: { stack: returnedStack },
+      sourceCode: 'undefined',
+      sourceHintType: 'absent',
+      pluginId: '@kb-labs/returned-failure-fixture',
+      command: 'fixture failure',
     });
+    expect(JSON.stringify(records[0])).not.toContain(returnedStack);
+    expect(records[0]).not.toHaveProperty('serializedError');
+    expect(records[0]).not.toHaveProperty('error');
   });
 });

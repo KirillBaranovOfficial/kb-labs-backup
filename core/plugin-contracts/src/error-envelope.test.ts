@@ -85,8 +85,24 @@ describe('core toErrorEnvelope for plugin errors', () => {
       hint: 'Stage the intended changes, then retry.',
       area: 'product',
     });
-    expect(toErrorEnvelope(new ProductPluginError('Nothing is staged.', productError.code))).toMatchObject({
-      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+    expect(error.envelope).toMatchObject({
+      code: 'COMMIT_NOTHING_STAGED',
+      message: 'Nothing is staged.',
+      hint: 'Stage the intended changes, then retry.',
+      area: 'product',
+      retryable: false,
     });
+  });
+
+  it('refuses to construct product plugin errors without a valid hint', () => {
+    const productError = createProductErrorEnvelope({
+      code: 'COMMIT_NOTHING_STAGED',
+      message: 'Nothing is staged.',
+      hint: 'Stage the intended changes, then retry.',
+      retryable: false,
+    });
+
+    expect(() => Reflect.construct(ProductPluginError, ['Nothing is staged.', productError.code]))
+      .toThrow(/non-empty hint/);
   });
 });

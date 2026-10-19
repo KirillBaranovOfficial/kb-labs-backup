@@ -72,6 +72,82 @@ describe('normalizePluginHandlerFailure', () => {
     expect(records).toHaveLength(1);
   });
 
+  it.each([undefined, { remedy: 'invalid-shape' }])('rebuilds catalogued platform errors with a malformed hint through the shared envelope owner', (hint) => {
+    const records: Array<Record<string, unknown>> = [];
+    const malformed = { ...createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId: 'missing-hint-correlation' }), hint };
+    const envelope = normalizePluginHandlerFailure(malformed, {
+      pluginId: '@kb-labs/test-plugin', command: 'test run', correlationId: 'missing-hint-correlation',
+      pluginVersion: '1.0.0',
+      returnedFailure: true,
+      returnedFailureError: malformed,
+      logger: loggerFor(records), logContext,
+    });
+
+    expect(envelope.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(envelope.hint).toBeTruthy();
+    expect(envelope.correlationId).toBe('missing-hint-correlation');
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', event: 'plugin.handler.failed' });
+  });
+
+  it.each([
+    [{ code: 'MIND_INVALID', message: 'source message marker' }, 'absent'],
+    [{ code: 'MIND_INVALID', message: 'source message marker', hint: undefined }, 'undefined'],
+    [{ code: 'MIND_INVALID', message: 'source message marker', hint: null }, 'null'],
+    [{ code: 'MIND_INVALID', message: 'source message marker', hint: '' }, 'string'],
+    [{ code: 'MIND_INVALID', message: 'source message marker', hint: { value: 'source hint marker' } }, 'object'],
+    [{ code: 'MIND_INVALID', message: 'source message marker', hint: 17 }, 'number'],
+  ])('logs safe source error diagnostics when rejecting a plugin result (%s)', (candidate, sourceHintType) => {
+    const records: Array<Record<string, unknown>> = [];
+    const envelope = normalizePluginHandlerFailure(candidate, {
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
+      command: 'test run',
+      correlationId: 'source-diagnostic-correlation',
+      returnedFailure: true,
+      returnedFailureError: candidate,
+      logger: loggerFor(records),
+      logContext,
+    });
+
+    expect(envelope.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      event: 'plugin.handler.failed',
+      correlationId: 'source-diagnostic-correlation',
+      sourceCode: 'MIND_INVALID',
+      sourceHintType,
+      pluginId: '@kb-labs/test-plugin',
+      command: 'test run',
+    });
+  });
+
+  it('never logs source message or hint values for a plugin contract violation', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const sourceMessage = 'private-source-message-marker';
+    const sourceHint = 'private-source-hint-marker';
+    const candidate = { code: 'MIND_INVALID', message: sourceMessage, hint: { token: sourceHint } };
+
+    normalizePluginHandlerFailure(candidate, {
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
+      command: 'test run',
+      correlationId: 'source-secret-correlation',
+      returnedFailure: true,
+      returnedFailureError: candidate,
+      logger: loggerFor(records),
+      logContext,
+    });
+
+    expect(records).toHaveLength(1);
+    const serializedEvent = JSON.stringify(records[0]);
+    expect(serializedEvent).not.toContain(sourceMessage);
+    expect(serializedEvent).not.toContain(sourceHint);
+    expect(records[0]).not.toHaveProperty('malformedFieldPreview');
+    expect(records[0]).not.toHaveProperty('serializedError');
+    expect(records[0]).not.toHaveProperty('error');
+  });
+
   it('records malformed field type and a bounded redacted preview with plugin provenance', () => {
     const records: Array<Record<string, unknown>> = [];
     const logger = loggerFor(records);
@@ -103,14 +179,10 @@ describe('normalizePluginHandlerFailure', () => {
       command: 'test open',
       malformedField: 'hint',
       malformedFieldType: 'object',
-      malformedFieldPreview: expect.stringContaining('[REDACTED]'),
     });
+    expect(records[0]).not.toHaveProperty('malformedFieldPreview');
     const record = JSON.stringify(records[0]);
-    expect(record).toContain('[REDACTED]');
     expect(record).not.toContain(secret);
-    const preview = records[0]?.malformedFieldPreview;
-    expect(typeof preview).toBe('string');
-    expect((preview as string).length).toBeLessThanOrEqual(256);
     expect(JSON.stringify(envelope.details)).not.toContain(secret);
     expect((envelope.details?.observedValuePreview ?? '').length).toBeLessThanOrEqual(256);
   });

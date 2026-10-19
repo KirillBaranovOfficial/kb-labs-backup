@@ -21,8 +21,9 @@ type FailureDetails<C extends PlatformErrorCode> = [RequiredKeys<DetailsFor<C>>]
   ? [hint?: string, details?: DetailsFor<C>]
   : [hint: string | undefined, details: DetailsFor<C>];
 
-export function ok<T>(data: T): ApiSuccessResponse<T> {
-  return createUxSuccessResult(data);
+export function ok<T>(data: T): ApiSuccessResponse<Exclude<T, undefined>> {
+  if (data === undefined) throw new TypeError('Workflow API success data must be defined.');
+  return createUxSuccessResult(data as Exclude<T, undefined>);
 }
 
 export function fail<C extends PlatformErrorCode>(

@@ -1,7 +1,6 @@
 export { KBPlatform } from './client.js';
 export type {
   KBPlatformOptions,
-  PlatformCallResponse,
   LLMOptions,
   LLMResponse,
   LLMToolCallResponse,

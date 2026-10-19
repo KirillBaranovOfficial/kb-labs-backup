@@ -259,9 +259,21 @@ def run_gateway_steps(journey: Journey, *, token: str, project_id: str, project_
     with invocation_context(step_id="S-189.2"):
         call_status, call_body = _http("/platform/v1/analytics/track", token=token, method="POST",
                                        payload={"args": ["case.gateway.call", {"source": "case-fixture"}]}, opener=opener)
+    with invocation_context(step_id="S-189.2"):
+        events_status, events_body = _http("/platform/v1/analytics/getEvents", token=token, method="POST",
+                                           payload={"args": [{"type": "case.gateway.call", "limit": 50}]}, opener=opener)
+    event_data = events_body.get("data", {}) if isinstance(events_body, dict) else {}
+    recorded_events = event_data.get("events", []) if isinstance(event_data, dict) else []
+    event_recorded = isinstance(recorded_events, list) and any(
+        isinstance(event, dict) and event.get("type") == "case.gateway.call"
+        for event in recorded_events
+    )
     journey.step("call analytics through platform API", "gateway", lambda: (
         None if call_status == 200 and isinstance(call_body, dict)
-        else f"platform analytics call returned HTTP {call_status} without the success envelope"
+        and call_body.get("ok") is True and "data" in call_body and call_body["data"] is None
+        and isinstance(call_body.get("meta"), dict) and isinstance(call_body["meta"].get("durationMs"), (int, float))
+        and events_status == 200 and event_recorded
+        else f"platform analytics call returned HTTP {call_status} without its valid success result and recorded event (read HTTP {events_status})"
     ), cases=["S-189.2"])
 
     for path in ("/platform/v1/unknownAdapter/method", "/platform/v1/analytics/unknownMethod"):

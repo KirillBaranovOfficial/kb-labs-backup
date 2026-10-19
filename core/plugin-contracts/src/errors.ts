@@ -9,7 +9,9 @@ import type {
   DetailsFor,
   PlatformErrorCode,
   ProductErrorCode,
+  ValidatedErrorEnvelope,
 } from '@kb-labs/core-platform/error-envelope';
+import { createProductErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 
 type PluginErrorArguments<C extends PlatformErrorCode> = [...DetailsArgumentFor<C>, hint?: string];
 
@@ -46,14 +48,16 @@ export class PluginError<C extends PlatformErrorCode> extends Error {
 export class ProductPluginError extends Error {
   readonly code: ProductErrorCode;
   readonly details?: Record<string, string>;
-  readonly hint?: string;
+  readonly hint: string;
+  readonly envelope: ValidatedErrorEnvelope & { code: ProductErrorCode };
 
-  constructor(message: string, code: ProductErrorCode, details?: Record<string, string>, hint?: string) {
+  constructor(message: string, code: ProductErrorCode, details: Record<string, string> | undefined, hint: string) {
     super(message);
     this.name = 'ProductPluginError';
-    this.code = code;
-    this.details = details;
-    this.hint = hint;
+    this.envelope = createProductErrorEnvelope({ code, message, details, hint, retryable: false });
+    this.code = this.envelope.code;
+    this.details = this.envelope.details;
+    this.hint = this.envelope.hint;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }

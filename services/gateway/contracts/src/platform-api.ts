@@ -5,23 +5,18 @@
  * Route: POST /platform/v1/{adapter}/{method}
  * Adapter and method come from URL params; args come from the request body.
  */
-import { z } from 'zod';
-
 // ── Request ─────────────────────────────────────────────────────────────────
 
-export const PlatformCallRequestSchema = z.object({
-  /** Arguments to pass to the adapter method. Order matters. */
-  args: z.array(z.unknown()).default([]),
-});
+/** Request schema used by Fastify validation and the hidden route declaration. */
+export const PlatformCallRequestJsonSchema = {
+  type: 'object',
+  properties: {
+    /** Arguments to pass to the adapter method. Order matters. */
+    args: { type: 'array', items: {} },
+  },
+  additionalProperties: true,
+} as const;
 
-export type PlatformCallRequest = z.infer<typeof PlatformCallRequestSchema>;
-
-// ── Response ────────────────────────────────────────────────────────────────
-
-export interface PlatformCallResponse {
-  ok: boolean;
-  result?: unknown;
-  error?: { message: string; code?: string; hint?: string; correlationId?: string };
-  /** Wall-clock duration of the adapter call in milliseconds. */
-  durationMs: number;
+export interface PlatformCallRequest {
+  args?: unknown[];
 }

@@ -17,7 +17,11 @@ export interface UxFailureResult {
 export type UxResult<T = unknown> = UxSuccessResult<T> | UxFailureResult;
 
 /** Construct the shared success shape at a machine-result boundary. */
-export function createUxSuccessResult<T>(data: T, meta?: Record<string, unknown>): UxSuccessResult<T> {
+export function createUxSuccessResult<T>(
+  data: Exclude<T, undefined>,
+  meta?: Record<string, unknown>,
+): UxSuccessResult<Exclude<T, undefined>> {
+  if (data === undefined) throw new TypeError('UX success result data must be defined.');
   return { ok: true, data, ...(meta ? { meta } : {}) };
 }
 

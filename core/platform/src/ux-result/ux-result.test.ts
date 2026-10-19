@@ -34,6 +34,10 @@ describe('shared UX-result fixtures', () => {
     expect(isUxResult(failure)).toBe(true);
   });
 
+  it('rejects undefined success data so JSON serialization cannot remove the required data field', () => {
+    expect(() => Reflect.apply(createUxSuccessResult, undefined, [undefined])).toThrow(/data must be defined/);
+  });
+
   for (const { name, value } of loadFixtures('valid')) {
     // case: S-203.5
     it(`accepts valid/${name}`, () => {

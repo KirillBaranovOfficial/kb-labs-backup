@@ -6,6 +6,7 @@ import {
   toErrorEnvelope,
   validateErrorEnvelope,
   hasErrorEnvelopeIdentity,
+  isErrorCode,
   serializeError,
   type SerializedError,
   type ErrorEnvelope,
@@ -38,6 +39,7 @@ function recordPluginFailure(
   malformedField?: string,
   evidenceType?: string,
   evidencePreview?: string,
+  contractDiagnostic?: { sourceCode: unknown; sourceHintType: string },
 ): void {
   const logger = createContextLogger(context.logger, context.logContext)
     .forOperation('plugin.handler.failed', { correlationId: context.correlationId })
@@ -49,7 +51,7 @@ function recordPluginFailure(
   }
   logger.event('error', {
     event: 'plugin.handler.failed',
-    message: envelope.message,
+    message: contractDiagnostic ? 'Plugin handler returned a malformed failure envelope.' : envelope.message,
     fields: {
       code: envelope.code,
       pluginId: context.pluginId,
@@ -57,14 +59,22 @@ function recordPluginFailure(
       command: context.command,
       failureReason: reason,
       correlationId: context.correlationId,
-      serializedError: logger.redactSensitiveValues(context.serializedError ?? error),
+      ...(!contractDiagnostic ? { serializedError: logger.redactSensitiveValues(context.serializedError ?? error) } : {}),
+      ...(contractDiagnostic ? {
+        sourceCode: typeof contractDiagnostic.sourceCode === 'string'
+          ? logger.redactSensitiveValues(contractDiagnostic.sourceCode)
+          : contractDiagnostic.sourceCode === undefined
+            ? 'undefined'
+            : typeof contractDiagnostic.sourceCode,
+        sourceHintType: contractDiagnostic.sourceHintType,
+      } : {}),
       ...(malformedField ? {
         malformedField,
         malformedFieldType: evidenceType,
-        malformedFieldPreview: evidencePreview,
+        ...(!contractDiagnostic ? { malformedFieldPreview: evidencePreview } : {}),
       } : {}),
     },
-    error: logError,
+    ...(!contractDiagnostic ? { error: logError } : {}),
   });
 }
 
@@ -110,14 +120,24 @@ export function normalizePluginHandlerFailure(
   const thinCommandError = typeof envelopeCandidate === 'object' && envelopeCandidate !== null &&
     !Array.isArray(envelopeCandidate) && !(envelopeCandidate instanceof Error) &&
     'code' in envelopeCandidate && typeof envelopeCandidate.code === 'string';
-  const validationIssues = candidateHasEnvelopeFields ? validateErrorEnvelope(envelopeCandidate) : [];
+  const sourceCode = typeof envelopeCandidate === 'object' && envelopeCandidate !== null && 'code' in envelopeCandidate
+    ? envelopeCandidate.code
+    : undefined;
+  const candidateIssues = candidateHasEnvelopeFields ? validateErrorEnvelope(envelopeCandidate) : [];
+  const cataloguedHintRepair = candidateIssues.length === 1 && candidateIssues[0]?.field === 'hint' &&
+    invalidHintCanUseCatalog(envelopeCandidate, sourceCode)
+    ? toErrorEnvelope(withoutHint(envelopeCandidate), { correlationId: context.correlationId })
+    : undefined;
+  const validationIssues = cataloguedHintRepair
+    ? validateErrorEnvelope(cataloguedHintRepair)
+    : candidateIssues;
   const invalidEnvelopeIssue = validationIssues[0];
   const typedEnvelope = returnedCandidate !== undefined
     ? (candidateHasEnvelopeFields && validationIssues.length === 0) || thinCommandError
     : error instanceof ErrorEnvelopeError ||
       (candidateHasEnvelopeFields && validationIssues.length === 0) || thinCommandError;
   const canonicalEnvelope = !invalidEnvelopeIssue && typedEnvelope
-    ? toErrorEnvelope(error instanceof ErrorEnvelopeError ? error : envelopeCandidate, { correlationId: context.correlationId })
+    ? cataloguedHintRepair ?? toErrorEnvelope(error instanceof ErrorEnvelopeError ? error : envelopeCandidate, { correlationId: context.correlationId })
     : undefined;
   const contractEnvelope = canonicalEnvelope?.code === 'KB_PLUGIN_CONTRACT_VIOLATION' ||
     canonicalEnvelope?.code === 'KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION'
@@ -167,10 +187,32 @@ export function normalizePluginHandlerFailure(
           },
         });
   const envelope = contextLogger.redactSensitiveValues(rawEnvelope);
+  const contractDiagnostic = envelope.code === 'KB_PLUGIN_CONTRACT_VIOLATION'
+    ? { sourceCode, sourceHintType: sourceHintType(envelopeCandidate) }
+    : undefined;
   if (typedEnvelope) {
-    recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), 'typed product or platform error', context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview);
+    recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), 'typed product or platform error', context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview, contractDiagnostic);
     return envelope;
   }
-  recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), reason, context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview);
+  recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), reason, context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview, contractDiagnostic);
   return envelope;
+}
+
+function sourceHintType(value: unknown): string {
+  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, 'hint')) return 'absent';
+  const hint = Reflect.get(value, 'hint');
+  if (hint === undefined) return 'undefined';
+  if (hint === null) return 'null';
+  return typeof hint;
+}
+
+function invalidHintCanUseCatalog(value: unknown, code: unknown): value is Record<string, unknown> {
+  return hasErrorEnvelopeIdentity(value) && typeof code === 'string' && isErrorCode(code) &&
+    Object.hasOwn(value, 'hint') && typeof Reflect.get(value, 'hint') !== 'string';
+}
+
+function withoutHint(value: Record<string, unknown>): Record<string, unknown> {
+  const canonical = { ...value };
+  delete canonical.hint;
+  return canonical;
 }
