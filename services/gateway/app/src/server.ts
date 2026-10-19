@@ -696,6 +696,7 @@ export async function createServer(
     scope.get(
       "/metrics",
       {
+        // Prometheus text exposition is consumed by scrapers, not UX JSON clients.
         config: { ux: 'raw' },
         schema: {
           tags: ["Observability"],

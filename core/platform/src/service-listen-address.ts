@@ -51,6 +51,7 @@ export async function resolveCliGatewayTarget(
   options: GatewayServiceAddressOptions,
   transport?: Pick<IServiceTransport, 'listenAddress'>,
 ): Promise<CliGatewayTarget> {
+  validateConfiguredGatewayPort(options);
   const installation = platformRoot ? await readInstalledPlatformIdentity(platformRoot) : undefined;
   const gatewayUrl = options.gatewayUrl
     ? resolveGatewayServiceAddress(undefined, options)
@@ -132,6 +133,7 @@ export function resolveGatewayServiceAddress(
   transport: Pick<IServiceTransport, 'listenAddress'> | undefined,
   options: GatewayServiceAddressOptions,
 ): string {
+  validateConfiguredGatewayPort(options);
   if (options.gatewayUrl) {
     return getHostServiceAddress('gateway', { KB_GATEWAY_URL: options.gatewayUrl });
   }
@@ -144,6 +146,16 @@ export function resolveGatewayServiceAddress(
     defaultHost: GATEWAY_SERVICE_NETWORK.defaultHost,
   }, options.netOffset);
   return `http://127.0.0.1:${address.port}`;
+}
+
+function validateConfiguredGatewayPort(options: GatewayServiceAddressOptions): void {
+  if (options.gatewayPort === undefined) return;
+  resolveServiceListenAddress(undefined, {
+    serviceId: GATEWAY_SERVICE_NETWORK.serviceId,
+    portEnvVar: GATEWAY_SERVICE_NETWORK.portEnvVar,
+    portEnvValue: options.gatewayPort,
+    defaultPort: GATEWAY_SERVICE_NETWORK.defaultPort,
+  }, 0);
 }
 
 /**
