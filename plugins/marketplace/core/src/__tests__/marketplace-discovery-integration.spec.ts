@@ -122,6 +122,44 @@ describe('Marketplace → Discovery Integration', () => {
     expect((await new DiscoveryManager({ root: tmpDir, verifyIntegrity: false }).discover()).plugins).toEqual([]);
   });
 
+  it('link → discover: a linked entry package uses its manifest identity', async () => {
+    const projectRoot = path.join(tmpDir, 'project');
+    await fs.mkdir(projectRoot, { recursive: true });
+    const dir = path.join(projectRoot, 'packages', 'demo-entry');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
+      name: '@kb-labs/demo-entry',
+      version: '0.1.0',
+      kb: { manifest: './kb.plugin.json' },
+    }));
+    await fs.writeFile(path.join(dir, 'kb.plugin.json'), JSON.stringify({
+      schema: 'kb.plugin/3',
+      id: '@kb-labs/demo',
+      version: '0.1.0',
+      display: { name: 'demo', description: 'Demo plugin' },
+      cli: { commands: [{ path: 'demo hello', describe: 'Say hello', handler: './dist/hello.js' }] },
+    }));
+
+    const source: PackageSource = {
+      async resolve(): Promise<ResolvedPackage> { throw new Error('link does not resolve packages'); },
+      async install(): Promise<InstalledPackage> { throw new Error('link does not install packages'); },
+      async remove() {},
+      async commitInstall() {},
+      async rollbackInstall() {},
+    };
+    const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+    const result = await service.link({ scope: 'project', projectRoot }, 'packages/demo-entry');
+    const lock = JSON.parse(await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8')) as {
+      plugins: Record<string, { resolvedPath?: string }>;
+    };
+
+    expect(result.id).toBe('@kb-labs/demo');
+    expect(lock.plugins).toHaveProperty('@kb-labs/demo');
+    expect(lock.plugins).not.toHaveProperty('@kb-labs/demo-entry');
+    const discovered = await new DiscoveryManager({ root: projectRoot, verifyIntegrity: false }).discover();
+    expect(discovered.plugins.map(plugin => plugin.id)).toContain('@kb-labs/demo');
+  });
+
   it('writes a portable v3 pin and resolves it from two independent machine stores', async () => {
     const projectRoot = path.join(tmpDir, 'project');
     const storeOneRoot = path.join(tmpDir, 'machine-one');

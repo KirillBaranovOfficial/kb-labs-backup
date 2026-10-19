@@ -286,6 +286,9 @@ describe('NpmPackageSource', () => {
       const sealedDigest = 'sealed-runtime-digest';
       const receiptPath = path.join(root, '.kb', 'v2', 'receipt.json');
       await fs.mkdir(path.dirname(receiptPath), { recursive: true });
+      const cacheRoot = path.join(root, 'pnpm-store', 'sealed-cache');
+      await fs.mkdir(cacheRoot, { recursive: true });
+      await fs.symlink(cacheRoot, path.join(root, '.kb', 'v2', 'cache'), 'dir');
       const receipt = JSON.stringify({ plan: { artifacts: [
         { package: sealedPackage, sha256: sealedDigest, tarball: 'registry/sealed-runtime.tgz', kind: 'sdk' },
       ] } }) + '\n';
@@ -293,7 +296,7 @@ describe('NpmPackageSource', () => {
       const workspacePath = path.join(root, 'pnpm-workspace.yaml');
       const workspace = (await fs.readFile(workspacePath, 'utf8')).replace(
         'overrides:\n  unrelated-package: 1.0.0',
-        `overrides:\n  "${sealedPackage}": "file:.kb/v2/cache/packages/${sealedDigest}.tgz"\n  unrelated-package: 1.0.0`,
+        `overrides:\n  "${sealedPackage}": "file:${path.join(cacheRoot, 'packages', `${sealedDigest}.tgz`).replaceAll('\\', '/')}"\n  unrelated-package: 1.0.0`,
       );
       await fs.writeFile(workspacePath, workspace);
       const sealedInstalledPackage = path.join(root, 'node_modules', ...sealedPackage.split('/'), 'package.json');
@@ -449,8 +452,11 @@ describe('NpmPackageSource', () => {
 
   it('validates every sealed artifact from the receipt when root dependencies contain no file specs', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-pnpm-overrides-'));
+    let cacheRoot = '';
     try {
       await fs.mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      cacheRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-shared-cache-'));
+      await fs.symlink(cacheRoot, path.join(root, '.kb', 'v2', 'cache'), 'dir');
       await fs.writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
         id: 'sealed-platform',
         plan: { artifacts: [
@@ -481,14 +487,15 @@ describe('NpmPackageSource', () => {
       expect(JSON.parse(await fs.readFile(packageFile, 'utf8')).dependencies).toEqual({});
       await fs.writeFile(workspaceFile, [
         'overrides:',
-        '  "@kb-labs/workflow-daemon": file:.kb/v2/cache/packages/abc123.tgz',
-        '  "@kb-labs/gateway-app": file:.kb/v2/cache/packages/def456.tgz',
+        `  "@kb-labs/workflow-daemon": file:${path.join(cacheRoot, 'packages', 'abc123.tgz').replaceAll('\\', '/')}`,
+        `  "@kb-labs/gateway-app": file:${path.join(cacheRoot, 'packages', 'def456.tgz').replaceAll('\\', '/')}`,
         '',
       ].join('\n'));
       await expect(assertSealedPlatformOverrides(root, '@kb-labs/adapters-analytics-file', '2.120.1'))
         .resolves.toBeUndefined();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
+      if (cacheRoot) { await fs.rm(cacheRoot, { recursive: true, force: true }); }
     }
   });
 
