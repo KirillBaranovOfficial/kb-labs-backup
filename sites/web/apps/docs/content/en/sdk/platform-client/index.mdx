@@ -1,7 +1,7 @@
 ---
 title: "Overview"
 description: "The platform-client package surface, constructor options, and the Unified Platform API it calls."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-19"
 order: 1
 ---
 
@@ -19,7 +19,7 @@ import {
   VectorStoreProxy,
   AnalyticsProxy,
   type KBPlatformOptions,
-  type PlatformCallResponse,
+  type UxResult,
   type LLMOptions,
   type LLMResponse,
   type LLMToolCallResponse,
@@ -123,23 +123,9 @@ Content-Type: application/json
 }
 ```
 
-The server unpacks `args`, calls the matching adapter method on the platform, and returns:
+The server returns the shared `UxResult<T>` envelope, also exported as a type by this package. Its success branch carries the method value in `data` with optional `meta`; its failure branch carries the shared `ErrorEnvelope` in `error`.
 
-```ts
-interface PlatformCallResponse<T = unknown> {
-  ok: boolean;
-  result?: T;
-  error?: { message: string; code?: string };
-  durationMs: number;
-}
-```
-
-- **Success**: `ok: true`, `result: <whatever the method returned>`.
-- **Failure**: `ok: false`, `error: { message, code? }`. The client throws an `Error` with the message.
-
-HTTP non-2xx responses are also treated as failures — the client tries to parse the body as a `PlatformCallResponse`, and if it can, uses the error message from there; otherwise it falls back to `"Platform API error: {status} {body}"`.
-
-This unified shape means the client code is tiny (~100 lines total across all proxies) and every adapter method is reachable the same way.
+`KBPlatform.call()` validates this envelope, returns the success `data`, and throws a plain `Error` with the failure message. HTTP non-2xx responses use the error message when the body is a valid UX failure envelope; otherwise the client throws `Platform API error: {status} {body}`. The client does not return the raw envelope.
 
 ## Telemetry endpoint
 
@@ -216,4 +202,4 @@ No WebSocket library, no HTTP client, no JSON schema validator, no polyfill. It'
 - **[Authentication](/product-sdk/authentication)** — how to get a valid `apiKey`.
 - **[LLM, Cache, Vector Store](/product-sdk/commands)** — the typed proxies in detail.
 - **[Telemetry](/product-sdk/streaming)** — event batching and flush.
-- **[Error handling](/product-sdk/errors)** — `PlatformCallResponse`, retries, shutdown hooks.
+- **[Error handling](/product-sdk/errors)** — the shared `UxResult` envelope, retries, shutdown hooks.

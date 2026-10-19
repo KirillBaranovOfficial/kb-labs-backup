@@ -29,7 +29,7 @@ export {
 
 export type {
   KBPlatformOptions,
-  PlatformCallResponse,
+  UxResult,
   LLMOptions,
   LLMResponse,
   LLMToolCallResponse,

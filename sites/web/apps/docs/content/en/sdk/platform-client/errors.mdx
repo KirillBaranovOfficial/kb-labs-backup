@@ -1,11 +1,11 @@
 ---
 title: "Error Handling"
 description: "How platform-client reports errors, what they mean, and how to retry them."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-19"
 order: 9
 ---
 
-`@kb-labs/platform-client` has a deliberately simple error model: every proxy method throws a plain `Error` when something goes wrong, and every error's `message` comes from either the server's `PlatformCallResponse.error` or from the HTTP layer when the server didn't respond with a valid response.
+`@kb-labs/platform-client` has a deliberately simple error model: every proxy method throws a plain `Error` when something goes wrong, and every error's `message` comes from either the server's shared UX failure envelope or from the HTTP layer when the server did not return a valid response.
 
 The client itself still has no error class hierarchy, retry logic, circuit breaker, or exponential backoff. It is ~300 lines of zero-dep HTTP dispatch. For consistent failure classification in calling code, use the classifier exposed by `@kb-labs/sdk`.
 
@@ -17,30 +17,17 @@ Every failure — from `platform.llm.complete(...)`, `platform.cache.get(...)`, 
 
 ### 1. Server-side error with structured response
 
-The server returned a valid `PlatformCallResponse` with `ok: false`:
-
-```json
-{
-  "ok": false,
-  "error": {
-    "message": "LLM adapter not configured",
-    "code": "ADAPTER_UNAVAILABLE"
-  },
-  "durationMs": 12
-}
-```
-
-The client throws:
+The server returned the failure branch of the shared `UxResult<T>` envelope. Its `error` is the shared `ErrorEnvelope`; the client throws a plain `Error` with that envelope's message:
 
 ```ts
 new Error('LLM adapter not configured')
 ```
 
-The `code` field from the response is dropped — only the `message` survives. If you need the code, you'll have to catch the error, re-request with `platform.call()` directly, and inspect the raw response body yourself.
+The thrown `Error` does not retain the envelope code. `platform.call()` follows the same behavior and returns only successful data; callers that need structured error codes must use an HTTP client that reads the shared `UxResult<T>` envelope directly.
 
 ### 2. HTTP-level error with non-JSON body
 
-The server returned an HTTP error status (4xx, 5xx) but didn't send a valid `PlatformCallResponse`:
+The server returned an HTTP error status (4xx, 5xx) but did not send a valid UX failure envelope:
 
 ```
 HTTP 401 Unauthorized
@@ -328,7 +315,7 @@ This makes stack traces and log lines much easier to read when you're debugging 
 
 ## Gotchas
 
-- **No error codes.** The `code` field from `PlatformCallResponse.error` is dropped by the client. If you need codes, use `platform.call()` and inspect the raw response.
+- **No error codes on thrown errors.** The client throws a plain `Error` and does not expose the failure envelope code. Use an HTTP client that reads the shared `UxResult<T>` if your caller needs that code.
 - **No timeout.** Calls hang until the server responds. Wrap with `Promise.race` for a caller-side timeout.
 - **No retry.** Implement your own retry layer.
 - **`TypeError` for network errors.** Native `fetch` throws `TypeError`, not `Error`, on network-level failures. Adjust your `instanceof` checks if you rely on them.
@@ -336,7 +323,7 @@ This makes stack traces and log lines much easier to read when you're debugging 
 
 ## What to read next
 
-- **[Overview](/product-sdk/overview)** — the `PlatformCallResponse` shape and the Unified Platform API.
+- **[Overview](/product-sdk/overview)** — the shared `UxResult` envelope and the Unified Platform API.
 - **[Authentication](/product-sdk/authentication)** — handling 401/403 errors.
 - **[Typed Proxies](/product-sdk/commands)** — the proxies that throw on failure.
 - **[Telemetry](/product-sdk/streaming)** — the one place `onError` is actually useful.
