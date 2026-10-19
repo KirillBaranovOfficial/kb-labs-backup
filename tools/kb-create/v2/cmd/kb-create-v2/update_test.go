@@ -999,6 +999,18 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T) {
 	launcher, fakehost := binaries(t)
 	home := filepath.Join(t.TempDir(), "home")
+	packageManagerPaths := []string{
+		filepath.Join(home, ".cache", "pnpm", "lockfile-verified.jsonl"),
+		filepath.Join(home, ".local", "share", "pnpm", "store", "v1", "outside-root-marker"),
+	}
+	for _, path := range packageManagerPaths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("outside-root package-manager state\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	launcherDir := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(launcherDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -1063,6 +1075,7 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 	}
 	assertShimUsesCurrentActiveCLI(t, installedLauncher, layout)
 	beforeUpdate := snapshotOutsideRoot(t, home, root)
+	assertPackageManagerPathsIncluded(t, beforeUpdate, packageManagerPaths)
 	update := updatePlan(t, root, port)
 	update.PlanHash, update.ServiceGraph.PlatformVersion = "outside-root-v2", "2.0.0"
 	installer := &recordingInstaller{onInstall: func(_ []contracts.Artifact) error {
@@ -1079,6 +1092,7 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 		t.Fatalf("stop before rollback: %s", output)
 	}
 	beforeRollback := snapshotOutsideRoot(t, home, root)
+	assertPackageManagerPathsIncluded(t, beforeRollback, packageManagerPaths)
 	rollback, code, output := invoke(t, operationTestSetup{Operation: "rollback", PlatformRoot: root, Snapshot: snapshotID,
 		Yes: true, JSON: true, RuntimeDeps: &runtime.Dependencies{Artifacts: &recordingInstaller{}}})
 	if code != 0 || rollback["hostRestarted"] != false {
@@ -1086,6 +1100,15 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 	}
 	assertOutsideRootIdentity(t, beforeRollback, snapshotOutsideRoot(t, home, root), "rollback")
 	assertShimUsesCurrentActiveCLI(t, installedLauncher, layout)
+}
+
+func assertPackageManagerPathsIncluded(t *testing.T, snapshot map[string]string, paths []string) {
+	t.Helper()
+	for _, path := range paths {
+		if _, ok := snapshot[path]; !ok {
+			t.Fatalf("outside-root snapshot omitted package-manager state %q", path)
+		}
+	}
 }
 
 func writeCLIEntryToUpdateStage(root string) error {

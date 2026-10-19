@@ -322,7 +322,7 @@ for (const candidate of stagedFailureCandidates) {
   prepareJourneyUpdatePackages(stage, candidatePackages, candidate.version, {
     publishDir: packagesDir,
     digestTool: sealer,
-    requiredConfigPackage: '@kb-labs/adapters-vibeproxy',
+    requiredConfigPackage: '@kb-labs/gateway-app',
     requiredConfig: candidate.requirement,
   });
   const candidateProvenance = writeProvenanceManifest(candidatePackages, sourceRevision);

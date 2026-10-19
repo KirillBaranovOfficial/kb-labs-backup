@@ -43,6 +43,9 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
     registryManifest: releaseManifest = registryManifest } = {}) {
   if (!digestTool) throw new Error('kb-create-release-index owner is required');
   const versionedPackages = new Set(releasePackageNames(releaseManifest));
+  if (requiredConfig && !versionedPackages.has(requiredConfigPackage)) {
+    throw new Error(`staged requirement package is absent from the release manifest: ${requiredConfigPackage}`);
+  }
   const sourceDir = resolve(packagesDir);
   const targetDir = resolve(updatePackagesDir);
   const registryDir = resolve(publishDir ?? packagesDir);

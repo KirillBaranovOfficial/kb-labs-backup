@@ -609,6 +609,44 @@ func TestInitialTargetRefusesSymlinkedAndWrongTypedOwnedEntries(t *testing.T) {
 	}
 }
 
+func TestPackageManagerStateAllowsPnpmProjectSymlinks(t *testing.T) {
+	t.Run("project target inside install root is accepted", func(t *testing.T) {
+		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+		target := filepath.Join(layout.PackageManagerStateDir(), "projects", "fixture")
+		if err := os.MkdirAll(target, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(layout.PackageManagerStateDir(), "pnpm", "store", "projects", "project")
+		if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := layout.ValidateStructure(); err != nil {
+			t.Fatalf("package-manager project symlink with an in-root target was rejected: %v", err)
+		}
+	})
+
+	t.Run("project target outside install root is rejected", func(t *testing.T) {
+		layout, _ := initialLayout(t, filepath.Join(t.TempDir(), "platform"), "1.0.0")
+		target := filepath.Join(t.TempDir(), "project")
+		if err := os.MkdirAll(target, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(layout.PackageManagerStateDir(), "pnpm", "store", "projects", "project")
+		if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := layout.ValidateStructure(); err == nil || !strings.Contains(err.Error(), "package-manager symlink target escapes install root") {
+			t.Fatalf("ValidateStructure error = %v, want named package-manager symlink escape diagnostic", err)
+		}
+	})
+}
+
 func TestInitialTargetRefusesVersionLinksThatEscapeTheContainer(t *testing.T) {
 	layout, err := New(filepath.Join(t.TempDir(), "platform"))
 	if err != nil {

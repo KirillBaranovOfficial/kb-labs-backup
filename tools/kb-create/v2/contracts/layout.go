@@ -15,6 +15,7 @@ type platformLayout struct {
 	CurrentLink                  string              `json:"currentLink"`
 	VersionRoots                 layoutDirectory     `json:"versionRoots"`
 	SharedStateDirectory         string              `json:"sharedStateDirectory"`
+	PackageManagerStateDirectory string              `json:"packageManagerStateDirectory"`
 	InstallerStateDirectory      string              `json:"installerStateDirectory"`
 	HostStateDirectory           string              `json:"hostStateDirectory"`
 	PlatformDataRoot             PlatformDataRoot    `json:"platformDataRoot"`
@@ -78,6 +79,14 @@ func SharedStateDirectory(installRoot string) string {
 		panic("invalid embedded platform layout shared-state path")
 	}
 	return filepath.Join(installRoot, filepath.FromSlash(layout.SharedStateDirectory))
+}
+
+func PackageManagerStateDirectory(installRoot string) string {
+	var layout platformLayout
+	if err := json.Unmarshal(platformLayoutJSON, &layout); err != nil || layout.PackageManagerStateDirectory == "" {
+		panic("invalid embedded platform layout package-manager-state path")
+	}
+	return filepath.Join(installRoot, filepath.FromSlash(layout.PackageManagerStateDirectory))
 }
 
 func InstallerStateDirectory(installRoot string) string {
