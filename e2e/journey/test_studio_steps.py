@@ -65,12 +65,66 @@ class StudioJourneyTests(unittest.TestCase):
         studio_env = create_studio_environment({
             "HOME": "/tmp/isolated-home",
             "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright",
+            "KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR": "/tmp/journey-run/studio-results",
         }, mode="local", project_id="project-1", project_name="Journey",
            project_root="/tmp/project", kb_bin="/tmp/bin/kb")
 
         self.assertEqual(studio_env["HOME"], "/tmp/isolated-home")
         self.assertEqual(studio_env["PLAYWRIGHT_BROWSERS_PATH"], "/ms-playwright")
+        self.assertEqual(studio_env["KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR"], "/tmp/journey-run/studio-results")
         self.assertEqual(studio_env["KB_ACCESS_MODE"], "local")
+
+    def test_unwritable_playwright_output_directory_fails_with_path_and_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            blocker = root / "not-a-directory"
+            blocker.write_text("blocker")
+            output_dir = blocker / "studio-results"
+            report = root / "service-local.json"
+            report.write_text(json.dumps({"status": "PASS", "steps": []}))
+            browsers_path = root / "browsers"
+            executable = fake_playwright_executable(browsers_path)
+            env = {
+                "PLAYWRIGHT_BROWSERS_PATH": str(browsers_path),
+                "KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR": str(output_dir),
+            }
+
+            with patch("studio_steps.run_harness_command", return_value=subprocess.CompletedProcess([], 0, str(executable), "")), \
+                    patch("studio_steps.run_streaming_command",
+                          return_value=(subprocess.CompletedProcess([], 0, "", ""), 0.0)) as run_streaming:
+                passed, elapsed, message = run_studio_browser_step(
+                    ["playwright"], env, report, "local", True)
+            saved = json.loads(report.read_text())
+
+        self.assertFalse(passed)
+        self.assertEqual(elapsed, 0.0)
+        self.assertIn(str(output_dir), message)
+        self.assertIn("writable to the journey runner", message)
+        run_streaming.assert_not_called()
+        self.assertEqual(saved["steps"][0]["status"], "FAIL")
+
+    def test_playwright_receives_the_explicit_per_run_output_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            browsers_path = root / "browsers"
+            executable = fake_playwright_executable(browsers_path)
+            output_dir = root / "run-17" / "studio-results"
+            report = root / "run-17" / "service-local.json"
+            report.parent.mkdir()
+            report.write_text(json.dumps({"status": "PASS", "steps": []}))
+            env = {
+                "PLAYWRIGHT_BROWSERS_PATH": str(browsers_path),
+                "KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR": str(output_dir),
+            }
+            completed = subprocess.CompletedProcess(["playwright"], 0, "", "")
+            with patch("studio_steps.run_harness_command", return_value=subprocess.CompletedProcess([], 0, str(executable), "")), \
+                    patch("studio_steps.run_streaming_command", return_value=(completed, 0.0)) as run_streaming:
+                passed, _elapsed, message = run_studio_browser_step(
+                    ["playwright", "test"], env, report, "local", True)
+            invoked = run_streaming.call_args.args[0]
+
+        self.assertTrue(passed, message)
+        self.assertIn(f"--output={output_dir}", invoked)
 
     # case: S-020.3
     def test_secured_studio_environment_exports_admin_before_member_provisioning(self):
@@ -219,10 +273,12 @@ class StudioJourneyTests(unittest.TestCase):
             browsers_path = Path(directory) / "browsers"
             executable = fake_playwright_executable(browsers_path)
             command = ["playwright"]
+            output_dir = report.with_name("service-local-playwright-results")
             streamed = io.StringIO()
             def timeout_after_output(_command, *, env, timeout, on_output_line, start_new_session):
-                self.assertEqual(_command, command)
-                self.assertEqual(env, {"PLAYWRIGHT_BROWSERS_PATH": str(browsers_path)})
+                self.assertEqual(_command, [*command, f"--output={output_dir}"])
+                self.assertEqual(env["PLAYWRIGHT_BROWSERS_PATH"], str(browsers_path))
+                self.assertEqual(env["KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR"], str(output_dir))
                 self.assertEqual(timeout, 0.2)
                 self.assertTrue(start_new_session)
                 lines = "".join(f"playwright line {i}\n" for i in range(45))

@@ -144,6 +144,22 @@ class JourneyImportOrderTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
+            parser = subprocess.run(
+                [sys.executable, "-B", "-c",
+                 "from journey_resources import runner_resource_source_path; "
+                 "print(runner_resource_source_path('core/config/dist/jsonc-edit.mjs'))"],
+                cwd=journey_root, env=env, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(parser.returncode, 0, parser.stderr or parser.stdout)
+            parser_import = subprocess.run(
+                ["node", "--input-type=module", "-e",
+                 "const { parseJsonc } = await import(process.argv[1]); "
+                 "if (parseJsonc('{\\\"ok\\\":true}').ok !== true) process.exit(1)",
+                 Path(parser.stdout.strip()).as_uri()],
+                cwd=journey_root, env=env, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(parser_import.returncode, 0, parser_import.stderr or parser_import.stdout)
+
             for module in _journey_modules(journey_root, resources):
                 with self.subTest(module=module):
                     imported = subprocess.run(
