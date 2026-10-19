@@ -419,7 +419,8 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       provides,
     });
 
-    const canonicalId = manifest?.id ?? id;
+    const resolvedId = manifest?.id ?? (strategy?.resolveId ? await strategy.resolveId(absPath) : null);
+    const canonicalId = resolvedId ?? id;
     await addToMarketplaceLock(scopeRoot, canonicalId, entry, ctx.scope);
     await this.cacheManifest(scopeRoot, canonicalId, absPath, primaryKind, integrity, manifest);
 
