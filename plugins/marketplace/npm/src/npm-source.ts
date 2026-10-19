@@ -225,7 +225,7 @@ export async function assertSealedPlatformOverrides(root: string, packageId: str
     if (typeof artifact.package !== 'string' || typeof artifact.sha256 !== 'string' || !artifact.sha256) {
       throw new Error('Installed platform receipt contains an invalid sealed artifact identity. Run "kb-create doctor --platform-root <platform-root>".');
     }
-    sealed.set(artifact.package, `file:.kb/v2/cache/packages/${artifact.sha256}.tgz`);
+    sealed.set(artifact.package, artifact.sha256);
   }
   if (sealed.size === 0) { throw new PlatformArtifactPinsError(root, packageId, version); }
   let workspace;
@@ -237,17 +237,34 @@ export async function assertSealedPlatformOverrides(root: string, packageId: str
     }
     throw error;
   }
-  for (const [name, spec] of sealed) {
-    const key = `(?:${escapeRegExp(JSON.stringify(name))}|'${escapeRegExp(name)}'|${escapeRegExp(name)})`;
-    const value = `(?:${escapeRegExp(JSON.stringify(spec))}|'${escapeRegExp(spec)}'|${escapeRegExp(spec)})`;
-    if (!new RegExp(`^  ${key}:\\s*${value}\\s*(?:#.*)?$`, 'm').test(workspace)) {
+  const document = parseDocument(workspace);
+  if (document.errors.length > 0) {
+    throw new PlatformArtifactPinsError(root, packageId, version);
+  }
+  if (!isMap(document.contents)) {
+    throw new PlatformArtifactPinsError(root, packageId, version);
+  }
+  const overrides = document.get('overrides', true);
+  if (!isMap(overrides)) {
+    throw new PlatformArtifactPinsError(root, packageId, version);
+  }
+  let cacheRoot: string;
+  try {
+    cacheRoot = await fs.realpath(path.join(root, '.kb', 'v2', 'cache'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new PlatformArtifactPinsError(root, packageId, version);
+    }
+    throw error;
+  }
+  for (const [name, sha256] of sealed) {
+    const override = overrides.get(name, true);
+    const archive = path.join(cacheRoot, 'packages', `${sha256}.tgz`).split(path.sep).join('/');
+    const spec = `file:${archive}`;
+    if (!isScalar(override) || override.value !== spec) {
       throw new PlatformArtifactPinsError(root, packageId, version);
     }
   }
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ---------------------------------------------------------------------------
