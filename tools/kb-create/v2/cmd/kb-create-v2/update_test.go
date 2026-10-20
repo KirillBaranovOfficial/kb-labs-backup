@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -34,6 +36,7 @@ import (
 	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // recordingInstaller stands in for pnpm: what an update changes for the host is
@@ -996,6 +999,18 @@ func TestFreshContainerInstallUpdateUpdateRestartRollbackRepeatUpdateUninstallWr
 func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T) {
 	launcher, fakehost := binaries(t)
 	home := filepath.Join(t.TempDir(), "home")
+	packageManagerPaths := []string{
+		filepath.Join(home, ".cache", "pnpm", "lockfile-verified.jsonl"),
+		filepath.Join(home, ".local", "share", "pnpm", "store", "v1", "outside-root-marker"),
+	}
+	for _, path := range packageManagerPaths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("outside-root package-manager state\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	launcherDir := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(launcherDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -1060,6 +1075,7 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 	}
 	assertShimUsesCurrentActiveCLI(t, installedLauncher, layout)
 	beforeUpdate := snapshotOutsideRoot(t, home, root)
+	assertPackageManagerPathsIncluded(t, beforeUpdate, packageManagerPaths)
 	update := updatePlan(t, root, port)
 	update.PlanHash, update.ServiceGraph.PlatformVersion = "outside-root-v2", "2.0.0"
 	installer := &recordingInstaller{onInstall: func(_ []contracts.Artifact) error {
@@ -1076,6 +1092,7 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 		t.Fatalf("stop before rollback: %s", output)
 	}
 	beforeRollback := snapshotOutsideRoot(t, home, root)
+	assertPackageManagerPathsIncluded(t, beforeRollback, packageManagerPaths)
 	rollback, code, output := invoke(t, operationTestSetup{Operation: "rollback", PlatformRoot: root, Snapshot: snapshotID,
 		Yes: true, JSON: true, RuntimeDeps: &runtime.Dependencies{Artifacts: &recordingInstaller{}}})
 	if code != 0 || rollback["hostRestarted"] != false {
@@ -1083,6 +1100,15 @@ func TestUpdateAndRollbackPreserveOutsideRootIdentityAndCurrentShim(t *testing.T
 	}
 	assertOutsideRootIdentity(t, beforeRollback, snapshotOutsideRoot(t, home, root), "rollback")
 	assertShimUsesCurrentActiveCLI(t, installedLauncher, layout)
+}
+
+func assertPackageManagerPathsIncluded(t *testing.T, snapshot map[string]string, paths []string) {
+	t.Helper()
+	for _, path := range paths {
+		if _, ok := snapshot[path]; !ok {
+			t.Fatalf("outside-root snapshot omitted package-manager state %q", path)
+		}
+	}
 }
 
 func writeCLIEntryToUpdateStage(root string) error {
@@ -1456,6 +1482,141 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 	rolledBack, err := receipt.Read(platformRootForTest(t, root))
 	if err != nil || rolledBack.Plan.ServiceGraph.PlatformVersion != "1.0.0" {
 		t.Fatalf("production rollback did not restore update1 snapshot: version=%q error=%v", rolledBack.Plan.ServiceGraph.PlatformVersion, err)
+	}
+}
+
+// case: S-054.11
+func TestFreshKbCreateInstallPinsAllowMarketplaceAdapterInstall(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "install")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COREPACK_HOME", filepath.Join(home, "corepack"))
+	_, fakehost := binaries(t)
+	port := freeLoopbackPort(t)
+	registerTestHostProcessTreeCleanup(t, root)
+	sealed := fixturePackageArtifact(t, "@kb-labs/sealed-runtime", "1.0.0")
+	plan := contracts.ResolvedInstallPlan{
+		Schema: contracts.ResolvedPlanSchema, PlanHash: "fresh-marketplace-pin-install",
+		Request: contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Profile: "default",
+			Services: []contracts.Service{{ID: "gateway", Command: "gateway", Port: port}}},
+		Host: &contracts.HostSpec{Command: fakehost, Args: []string{"-port", fmt.Sprint(port)},
+			HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5},
+		Artifacts: []contracts.Artifact{sealed},
+	}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: productionPackageFixtureRunner{},
+		Runtime: &runtime.Dependencies{}}
+	if _, failure := executeApply(context.Background(), applyCommandInput{Resolved: &resolvedPlan{Plan: plan, State: host.State{Dir: t.TempDir()}}}, deps); failure != nil {
+		t.Fatalf("fresh kb-create apply: code=%s reason=%s cause=%s meta=%v", failure.Code, failure.Reason, failure.Cause, failure.Meta)
+	}
+
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installedReceipt, err := receipt.Read(activeRoot)
+	if err != nil {
+		t.Fatalf("read producer receipt from active root: %v", err)
+	}
+	if len(installedReceipt.Plan.Artifacts) != 1 || installedReceipt.Plan.Artifacts[0].Package != sealed.Package || installedReceipt.Plan.Artifacts[0].SHA256 != sealed.SHA256 {
+		t.Fatalf("producer receipt artifacts = %#v", installedReceipt.Plan.Artifacts)
+	}
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(cacheRoot, "packages", sealed.SHA256+".tgz")
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("producer archive %q: %v", archivePath, err)
+	}
+	workspacePath := filepath.Join(activeRoot, "pnpm-workspace.yaml")
+	workspace, err := os.ReadFile(workspacePath)
+	if err != nil {
+		t.Fatalf("read producer workspace: %v", err)
+	}
+	var workspaceConfig struct {
+		Overrides map[string]string `yaml:"overrides"`
+	}
+	if err := yaml.Unmarshal(workspace, &workspaceConfig); err != nil {
+		t.Fatalf("parse producer workspace: %v", err)
+	}
+	wantOverride := "file:" + filepath.ToSlash(archivePath)
+	if workspaceConfig.Overrides[sealed.Package] != wantOverride {
+		t.Fatalf("producer override for %s = %q, want %q", sealed.Package, workspaceConfig.Overrides[sealed.Package], wantOverride)
+	}
+
+	const adapterID = "@kb-labs/marketplace-adapter-fixture"
+	adapterTarball := testPackageTarball(adapterID, "1.0.0")
+	integrity := sha512.Sum512(adapterTarball)
+	var registry *httptest.Server
+	registry = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if strings.HasSuffix(request.URL.Path, ".tgz") {
+			_, _ = writer.Write(adapterTarball)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"name": adapterID, "dist-tags": map[string]string{"latest": "1.0.0"},
+			"versions": map[string]any{"1.0.0": map[string]any{
+				"name": adapterID, "version": "1.0.0", "kb": map[string]any{"adapter": map[string]any{}},
+				"dist": map[string]string{"integrity": "sha512-" + base64.StdEncoding.EncodeToString(integrity[:]),
+					"tarball": registry.URL + "/marketplace-adapter-fixture-1.0.0.tgz"},
+			}},
+		})
+	}))
+	defer registry.Close()
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	corepackPath, err := exec.LookPath("corepack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pnpmShim := filepath.Join(binDir, "pnpm")
+	if err := os.WriteFile(pnpmShim, []byte("#!/bin/sh\nexec \"$COREPACK_PATH\" pnpm@11.4.0 \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("COREPACK_PATH", corepackPath)
+	t.Setenv("npm_config_store_dir", filepath.Join(home, "pnpm-store"))
+	workspaceRoot, err := filepath.Abs("../../../../../")
+	if err != nil {
+		t.Fatal(err)
+	}
+	marketplaceModule := filepath.Join(workspaceRoot, "plugins", "marketplace", "npm", "dist", "index.js")
+	const marketplaceInstall = `
+const moduleURL = (await import('node:url')).pathToFileURL(process.argv[1]).href;
+const { NpmPackageSource } = await import(moduleURL);
+const [root, registry, packageId] = process.argv.slice(2);
+const source = new NpmPackageSource({ registryUrl: registry });
+const resolved = await source.resolve(packageId);
+const installed = await source.install(resolved, root);
+await source.commitInstall(packageId, root);
+console.log(JSON.stringify({ id: installed.id, version: installed.version }));
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, nodePath, "--input-type=module", "-e", marketplaceInstall,
+		marketplaceModule, activeRoot, registry.URL, adapterID)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Marketplace adapter install against producer root: %v\n%s", err, output)
+	}
+	var installedAdapter struct {
+		ID      string `json:"id"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(output, &installedAdapter); err != nil || installedAdapter.ID != adapterID || installedAdapter.Version != "1.0.0" {
+		t.Fatalf("Marketplace adapter result = %#v, err=%v, output=%s", installedAdapter, err, output)
 	}
 }
 

@@ -152,7 +152,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
       payload: { args: [] },
     });
     expect(res.statusCode).toBe(404);
-    expect(res.json().error.code).toBe('ADAPTER_NOT_FOUND');
+    expect(res.json().error.code).toBe('KB_RUNTIME_RESOURCE_NOT_FOUND');
   });
 
   it('returns 403 for disallowed method', async () => {
@@ -174,7 +174,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
       payload: { args: [{ query: 'test' }] },
     });
     expect(res.statusCode).toBe(503);
-    expect(res.json().error.code).toBe('ADAPTER_UNAVAILABLE');
+    expect(res.json().error.code).toBe('KB_ADAPTER_NOT_CONFIGURED');
   });
 
   // ── Cache adapter ─────────────────────────────────────────────────────
@@ -192,8 +192,8 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.ok).toBe(true);
-    expect(body.result).toBe('hello-world');
-    expect(typeof body.durationMs).toBe('number');
+    expect(body.data).toBe('hello-world');
+    expect(typeof body.meta.durationMs).toBe('number');
     expect(mockCacheAdapter.get).toHaveBeenCalledWith('my-key');
   });
 
@@ -231,13 +231,14 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.ok).toBe(true);
-    expect(body.result.content).toBe('Hello!');
+    expect(body.data.content).toBe('Hello!');
     expect(mockLLM.complete).toHaveBeenCalledWith('Say hello', { temperature: 0.5 });
   });
 
   // ── Analytics adapter ─────────────────────────────────────────────────
 
-  it('analytics/track proxies to analytics', async () => {
+  // case: S-189.2
+  it('analytics/track proxies to analytics with the shared UX envelope', async () => {
     (mockAnalytics.track as any).mockResolvedValueOnce(undefined);
 
     const res = await app.inject({
@@ -248,13 +249,13 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().ok).toBe(true);
+    expect(res.json()).toMatchObject({ ok: true, data: null, meta: { durationMs: expect.any(Number) } });
     expect(mockAnalytics.track).toHaveBeenCalledWith('user.signup', { plan: 'pro' });
   });
 
   // ── Error handling ────────────────────────────────────────────────────
 
-  it('returns 502 when adapter method throws', async () => {
+  it('returns a shared failure envelope when an adapter method throws', async () => {
     mockLLM.complete = vi.fn().mockRejectedValueOnce(new Error('Provider timeout'));
 
     const res = await app.inject({
@@ -267,14 +268,14 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(res.statusCode).toBe(502);
     const body = res.json();
     expect(body.ok).toBe(false);
-    expect(body.error.message).toBe('Provider timeout');
-    expect(body.error.code).toBe('ADAPTER_ERROR');
-    expect(typeof body.durationMs).toBe('number');
+    expect(body.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(body.error.message).toBeTruthy();
+    expect(body.error.hint).toBeTruthy();
   });
 
-  // ── durationMs ────────────────────────────────────────────────────────
+  // ── UX result metadata ────────────────────────────────────────────────
 
-  it('includes durationMs in response', async () => {
+  it('includes durationMs in UX result metadata', async () => {
     mockCacheAdapter.get.mockResolvedValueOnce(null);
 
     const res = await app.inject({
@@ -285,8 +286,8 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(typeof res.json().durationMs).toBe('number');
-    expect(res.json().durationMs).toBeGreaterThanOrEqual(0);
+    expect(typeof res.json().meta.durationMs).toBe('number');
+    expect(res.json().meta.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   // ── Args passing ──────────────────────────────────────────────────────

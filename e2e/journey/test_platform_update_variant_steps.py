@@ -46,6 +46,20 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
         self.assertEqual(args[1:], ["marketplace", "install", "@kb-labs/adapters-vibeproxy",
                                    "--scope", "platform", "--json"])
 
+    def test_marketplace_refusal_keeps_structured_error_on_journey_step(self) -> None:
+        catalog = Path(__file__).resolve().parents[2] / "core" / "platform" / "src" / "error-envelope" / "errors.catalog.json"
+        errors = json.loads(catalog.read_text(encoding="utf-8"))["codes"]
+        error = next(item for item in errors if item["code"] == "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING")
+        result = subprocess.CompletedProcess(
+            ["kb", "marketplace", "install"], 1,
+            json.dumps({"ok": False, "error": {"code": error["code"], "message": error["message"]}}), "")
+        journey = Journey("local", "marketplace-structured-error")
+        step = journey.step("Marketplace install", "marketplace", lambda: _install_vibeproxy_adapter(
+            "kb", lambda _args, _cwd: result, Path("/tmp")))
+
+        self.assertEqual(step.status, "FAIL")
+        self.assertEqual(step.details["error"], {"code": error["code"], "message": error["message"]})
+
     def test_installed_steps_register_each_update_variant_claim(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

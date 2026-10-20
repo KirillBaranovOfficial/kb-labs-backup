@@ -13,7 +13,7 @@ export const manifest: AdapterManifest = {
   type: "core",
   implements: "ICache",
   networkRequired: false,
-  defaultFor: ["cache"],
+  defaultFor: { cache: [] },
   capabilities: {
     custom: {
       ttl: true,

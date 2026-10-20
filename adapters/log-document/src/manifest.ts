@@ -21,7 +21,7 @@ export const manifest: AdapterManifest = {
   type: "extension",
   implements: "ILogPersistence",
   networkRequired: false,
-  defaultFor: ["logPersistence"],
+  defaultFor: { logPersistence: [] },
   extends: {
     adapter: "logger",
     hook: "onLog",

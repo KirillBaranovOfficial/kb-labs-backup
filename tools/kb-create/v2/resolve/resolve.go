@@ -42,6 +42,18 @@ func Plan(request contracts.InstallRequest, source catalog.Catalog) (contracts.R
 // PlanWith resolves a request; the schema gate and launcher-version gate run
 // before any resolution work.
 func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options Options) (contracts.ResolvedInstallPlan, error) {
+	return planWith(request, source, options, false)
+}
+
+// ValidateWith checks whether a request can be resolved against a catalog while
+// allowing required operator inputs to remain unanswered. It does not produce
+// an install plan; runtime callers must use PlanWith before applying anything.
+func ValidateWith(request contracts.InstallRequest, source catalog.Catalog, options Options) error {
+	_, err := planWith(request, source, options, true)
+	return err
+}
+
+func planWith(request contracts.InstallRequest, source catalog.Catalog, options Options, allowMissingRequiredInputs bool) (contracts.ResolvedInstallPlan, error) {
 	// Loaded indexes are already gated by catalog.Decode; this guards a catalog
 	// handed in directly. An in-memory catalog with no schema is the current one.
 	if source.Schema != "" {
@@ -269,7 +281,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 	}
 	bindings = uniqueBindings(bindings)
-	patches, err := configPatches(platform, artifacts, bindings, source, request)
+	patches, err := configPatches(platform, artifacts, bindings, source, request, allowMissingRequiredInputs)
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
@@ -316,7 +328,7 @@ func appendSelectedSDK(artifacts []contracts.Artifact, sdk contracts.Artifact, p
 }
 
 func appendSelectedAdapter(artifacts []contracts.Artifact, adapter catalog.Adapter) ([]contracts.Artifact, error) {
-	for _, existing := range artifacts {
+	for index, existing := range artifacts {
 		if existing.Identity() != adapter.Package {
 			continue
 		}
@@ -324,6 +336,7 @@ func appendSelectedAdapter(artifacts []contracts.Artifact, adapter catalog.Adapt
 		if !adapterRole || existing.Version != adapter.Version || existing.SHA256 != adapter.SHA256 || existing.Tarball != adapter.Tarball {
 			return nil, contracts.PlanArtifactIdentityFailure(adapter.Package)
 		}
+		artifacts[index].Config = append([]contracts.ConfigRequirement(nil), adapter.Config...)
 		return artifacts, nil
 	}
 	return append(artifacts, artifact(adapter.Component, "adapter")), nil
@@ -643,7 +656,7 @@ func uniqueBindings(values []contracts.ProviderBinding) []contracts.ProviderBind
 	sort.Slice(result, func(i, j int) bool { return result[i].Capability < result[j].Capability })
 	return result
 }
-func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifact, bindings []contracts.ProviderBinding, source catalog.Catalog, request contracts.InstallRequest) ([]contracts.ConfigPatch, error) {
+func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifact, bindings []contracts.ProviderBinding, source catalog.Catalog, request contracts.InstallRequest, allowMissingRequiredInputs bool) ([]contracts.ConfigPatch, error) {
 	result := []contracts.ConfigPatch{{Path: "/platform/version", Value: platform.Version, Owner: "platform"}}
 	for _, v := range bindings {
 		result = append(result, contracts.ConfigPatch{Path: "/platform/adapters/" + v.Capability, Value: v.Package + "@" + v.Version, Owner: "adapter:" + v.AdapterID})
@@ -690,7 +703,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 			if supplied {
 				return nil, resolutionDiag(contracts.CodeInputRequired, "secret "+requirement.ID+" must be supplied through the secret store", map[string]string{"requirement": requirement.ID})
 			}
-			if requirement.Required && !optionalRequirement(requirement) && !contains(request.SecretInputs, requirement.ID) {
+			if requirement.Required && !optionalRequirement(requirement) && !contains(request.SecretInputs, requirement.ID) && !allowMissingRequiredInputs {
 				return nil, resolutionDiag(contracts.CodeInputRequired, "required secret input "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
 			}
 			if requirement.Generate || contains(request.SecretInputs, requirement.ID) {
@@ -701,7 +714,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 		if !supplied {
 			value = requirement.Default
 		}
-		if value == "" && requirement.Required && !optionalRequirement(requirement) {
+		if value == "" && requirement.Required && !optionalRequirement(requirement) && !allowMissingRequiredInputs {
 			return nil, resolutionDiag(contracts.CodeConfigRequired, "required configuration "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
 		}
 		if value != "" {

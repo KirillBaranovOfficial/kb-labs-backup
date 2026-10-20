@@ -49,6 +49,6 @@
   },
   "sideEffects": false,
   "peerDependencies": {
-    "@kb-labs/cli-runtime": "workspace:^"
+    "@kb-labs/cli-runtime": "workspace:*"
   }
 }

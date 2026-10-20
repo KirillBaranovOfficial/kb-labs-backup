@@ -28,9 +28,11 @@ type Runner interface {
 	Run(context.Context, io.Writer, string, ...string) error
 }
 
-type commandRunner struct{}
+type commandRunner struct {
+	environment []string
+}
 
-func (commandRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
+func (r commandRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
 	if name == "pnpm" {
 		// Corepack downloads and caches this exact package-manager release; the
 		// user's globally installed pnpm never participates in an install.
@@ -38,17 +40,37 @@ func (commandRunner) Run(ctx context.Context, output io.Writer, name string, arg
 		name = "corepack"
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
+	if len(r.environment) > 0 {
+		cmd.Env = packageManagerEnvironment(os.Environ(), r.environment)
+	}
 	cmd.Stdout, cmd.Stderr = output, output
 	return cmd.Run()
 }
 
+func packageManagerEnvironment(base, overrides []string) []string {
+	owned := map[string]struct{}{"pnpm_home": {}}
+	for _, entry := range overrides {
+		name, _, _ := strings.Cut(entry, "=")
+		owned[strings.ToLower(name)] = struct{}{}
+	}
+	result := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		name, _, _ := strings.Cut(entry, "=")
+		if _, replaced := owned[strings.ToLower(name)]; !replaced {
+			result = append(result, entry)
+		}
+	}
+	return append(result, overrides...)
+}
+
 type Pnpm struct {
-	Root      string
-	CacheRoot string
-	Registry  string
-	Offline   bool
-	Client    *http.Client
-	Runner    Runner
+	Root               string
+	CacheRoot          string
+	PackageManagerRoot string
+	Registry           string
+	Offline            bool
+	Client             *http.Client
+	Runner             Runner
 	// Log receives the complete package-manager transcript. It is deliberately
 	// file-oriented: raw package-manager output must never pollute human or JSON
 	// command output.
@@ -199,7 +221,10 @@ func (p Pnpm) run(command string, specs ...string) error {
 	}
 	runner := p.Runner
 	if runner == nil {
-		runner = commandRunner{}
+		if p.PackageManagerRoot == "" {
+			return fmt.Errorf("pnpm package-manager state root is required")
+		}
+		runner = commandRunner{environment: p.packageManagerEnvironment()}
 	}
 	log := p.Log
 	if log == nil {
@@ -215,6 +240,18 @@ func (p Pnpm) run(command string, specs ...string) error {
 		return fmt.Errorf("pnpm %s exact artifacts: %w", command, err)
 	}
 	return nil
+}
+
+func (p Pnpm) packageManagerEnvironment() []string {
+	root := p.PackageManagerRoot
+	return []string{
+		"COREPACK_HOME=" + filepath.Join(root, "corepack"),
+		"XDG_CACHE_HOME=" + filepath.Join(root, "xdg-cache"),
+		"XDG_DATA_HOME=" + filepath.Join(root, "xdg-data"),
+		"XDG_STATE_HOME=" + filepath.Join(root, "xdg-state"),
+		"npm_config_cache=" + filepath.Join(root, "pnpm-cache"),
+		"npm_config_store_dir=" + filepath.Join(root, "pnpm-store"),
+	}
 }
 
 func (p Pnpm) prepare() error {

@@ -11,8 +11,9 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { glob } from 'glob';
 import { parse as parseYaml } from 'yaml';
-import { declaredManifestPath, resolveAdapterManifestModulePath } from '@kb-labs/core-platform';
+import { declaredManifestPath } from '@kb-labs/core-platform';
 import { DISCOVERY_PACKAGE_MANIFEST, DISCOVERY_WORKSPACE_FILE } from './discovery-inputs.js';
+import { resolveDeclaredManifestPath } from './manifest-loader.js';
 
 export interface WorkspaceCandidate {
   /** `name` from package.json */
@@ -54,15 +55,11 @@ async function exists(file: string): Promise<boolean> {
 async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | null> {
   const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST));
   if (!pkg || typeof pkg.name !== 'string') {return null;}
-  let manifestFile: string | undefined;
-  try {
-    manifestFile = await resolveAdapterManifestModulePath({ packageRoot });
-  } catch (error) {
-    if (isMissingFile(error)) return null;
-    throw error;
-  }
-  if (!manifestFile) {return null;}
-  const built = await exists(manifestFile) || await exists(manifestFile.replace(/\.[cm]?js$/, '.json'));
+  const manifestField = declaredManifestPath(pkg);
+  if (!manifestField) {return null;}
+  const resolved = resolveDeclaredManifestPath(packageRoot, manifestField);
+  if (resolved.escapesRoot) return { packageName: pkg.name, packageRoot };
+  const built = await exists(resolved.manifestPath) || await exists(resolved.manifestPath.replace(/\.[cm]?js$/, '.json'));
   return built ? { packageName: pkg.name, packageRoot } : null;
 }
 

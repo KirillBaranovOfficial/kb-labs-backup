@@ -131,11 +131,11 @@ func run(indexPath, packageDirectory, installRoot string) (runErr error) {
 		}
 		item.Tarball = baseURL + "/artifact?package=" + url.QueryEscape(item.Package) + "&version=" + url.QueryEscape(item.Version)
 	}
-	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	installer, err := candidatePackageInstaller(layout, stage)
 	if err != nil {
-		return fmt.Errorf("resolve installer shared cache: %w", err)
+		return fmt.Errorf("resolve candidate package-manager paths: %w", err)
 	}
-	if err := (artifacts.Pnpm{Root: stage, CacheRoot: cacheRoot, Log: os.Stderr}).Install(plan.Artifacts); err != nil {
+	if err := installer.Install(plan.Artifacts); err != nil {
 		return fmt.Errorf("install candidate artifacts with kb-create's package installer: %w", err)
 	}
 	if err := receipt.Write(stage, contracts.InstallReceipt{ID: "candidate-runtime-import-check", Plan: plan}); err != nil {
@@ -143,6 +143,19 @@ func run(indexPath, packageDirectory, installRoot string) (runErr error) {
 	}
 	fmt.Println(stage)
 	return nil
+}
+
+func candidatePackageInstaller(layout versionroot.Layout, stage string) (artifacts.Pnpm, error) {
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		return artifacts.Pnpm{}, err
+	}
+	return artifacts.Pnpm{
+		Root:               stage,
+		CacheRoot:          cacheRoot,
+		PackageManagerRoot: layout.PackageManagerStateDir(),
+		Log:                os.Stderr,
+	}, nil
 }
 
 func readCandidatePackages(directory string) (*packageRegistry, error) {

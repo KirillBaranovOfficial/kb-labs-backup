@@ -809,6 +809,11 @@ custom_checks:
     on: [check]
     scope: workspace
 
+  - name: pinned-specifiers
+    run: node scripts/checks/check-pinned-specifiers.mjs
+    on: [check]
+    scope: workspace
+
   - name: browser-node-builtins
     run: node scripts/checks/check-browser-node-builtins.mjs
     on: [check]

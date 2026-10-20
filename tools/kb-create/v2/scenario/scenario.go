@@ -122,7 +122,8 @@ func IDs() ([]string, error) {
 
 // ValidateCatalog resolves every built-in journey against the candidate
 // release index during sealing. This catches absent plugins/adapters and
-// ambiguous capability providers before an index is published.
+// ambiguous capability providers before an index is published, while required
+// operator inputs can remain unanswered until install or update time.
 func ValidateCatalog(source catalog.Catalog) error {
 	ids, err := IDs()
 	if err != nil {
@@ -167,7 +168,7 @@ func ValidateCatalog(source catalog.Catalog) error {
 			options.OS, options.Arch = platform.Binaries[0].OS, platform.Binaries[0].Arch
 			break
 		}
-		if _, err := resolve.PlanWith(request, source, options); err != nil {
+		if err := resolve.ValidateWith(request, source, options); err != nil {
 			return fmt.Errorf("scenario %q does not resolve against release index: %w", id, err)
 		}
 	}

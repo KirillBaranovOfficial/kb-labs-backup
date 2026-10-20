@@ -14,7 +14,7 @@ import { resolveRuntimeStatePath } from "@kb-labs/sdk/adapters";
 
 describe("FilesystemStorageAdapter manifest", () => {
   it("declares storage as a built-in provider default", () => {
-    expect(manifest.defaultFor).toEqual(["storage"]);
+    expect(manifest.defaultFor).toEqual({ storage: [] });
   });
 });
 

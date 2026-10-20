@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"log"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 func TestRegistryReportsMetadataEncodingFailure(t *testing.T) {
@@ -28,5 +31,17 @@ func TestRegistryReportsMetadataEncodingFailure(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "encode candidate package metadata") {
 		t.Fatalf("expected encoding failure in server log, got %q", output.String())
+	}
+}
+
+func TestCandidatePackageInstallerUsesInstallRootPackageManagerState(t *testing.T) {
+	layout := versionroot.Layout{Root: t.TempDir()}
+	stage := filepath.Join(layout.Root, "versions", "candidate")
+	installer, err := candidatePackageInstaller(layout, stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installer.PackageManagerRoot != layout.PackageManagerStateDir() {
+		t.Fatalf("package manager root = %q, want install-root state %q", installer.PackageManagerRoot, layout.PackageManagerStateDir())
 	}
 }

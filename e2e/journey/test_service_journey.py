@@ -109,6 +109,7 @@ class ServiceJourneyTests(unittest.TestCase):
 
         self.assertEqual(result.status, "PASS")
         self.assertTrue(graph.states["host-running"]["passed"])
+        self.assertEqual(graph.states["host-running"]["step"], "flow:state probe: host-running")
 
     def test_invalidated_state_is_reestablished_by_its_declared_probe(self):
         journey = Journey("secured", "mutated-shared-state-restored")
@@ -188,6 +189,7 @@ class ServiceJourneyTests(unittest.TestCase):
         blocked = next(step for step in journey.steps if step.name == "consumer prerequisite gate")
         self.assertIn("state project-registered", blocked.message)
         self.assertIn("secondary shim missing", blocked.message)
+        self.assertEqual(blocked.details["requires"], ["state:project-registered"])
 
     def test_mutated_state_blocks_consumers_until_its_producer_reestablishes_it(self):
         journey = Journey("secured", "declared-state-mutation")
@@ -204,6 +206,7 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(blocked.status, "BLOCKED")
         self.assertIn("state project-registered", blocked.message)
         self.assertIn("recovery removed the shared project registration", blocked.message)
+        self.assertEqual(blocked.details["requires"], ["state:project-registered"])
 
         graph.probe_state("project-registered", "project", "project registration restored",
                           lambda: None,
@@ -720,6 +723,7 @@ raise SystemExit(1)
         self.assertIn("KB_PROJECT_UNKNOWN", journey.steps[0].message)
         self.assertIn("hint: create the project directory", journey.steps[0].message)
         self.assertIn("KB_PROJECT_UNKNOWN", journey.steps[1].message)
+        self.assertEqual(graph.states["project-registered"]["step"], journey.steps[0].step_id)
 
     def test_service_runner_main_consumes_full_list_and_selection_closure(self):
         declared = [
@@ -1029,6 +1033,10 @@ raise SystemExit(1)
         self.assertIn("project registration ended FAIL", target.message)
         self.assertEqual(target.details["prerequisiteFailures"],
                          ["step:project registration ended FAIL: registration failed"])
+        self.assertEqual(target.details["requires"], ["step:flow:project registration"])
+        serialized = journey.result().steps
+        self.assertEqual(serialized[0]["stepId"], "flow:project registration")
+        self.assertEqual(serialized[1]["stepId"], "case:S-042.1")
         self.assertEqual(journey.result().case_run["claims"], [])
         self.assertEqual(journey.result().status, "FAIL")
 
@@ -1045,6 +1053,7 @@ raise SystemExit(1)
 
         self.assertEqual(target.status, "FAIL")
         self.assertIn("harness defect: unknown journey prerequisite 'unrun-prerequisite'", target.message)
+        self.assertEqual(target.details["requires"], ["step:unresolved:unrun-prerequisite"])
         self.assertEqual(journey.result().case_run["claims"], [
             {"claimId": "S-042.1", "kind": "journey", "status": "FAIL"},
         ])

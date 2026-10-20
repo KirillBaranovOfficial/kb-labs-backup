@@ -20,9 +20,9 @@ export const manifest: AdapterManifest = {
   type: "extension",
   implements: "ILogRingBuffer",
   networkRequired: false,
-  defaultFor: ["logRingBuffer"],
+  defaultFor: { logRingBuffer: [] },
   configSchema: {
-    maxSize: { type: "number", integer: true, minimum: 1 },
+    maxSize: { type: "number", default: 100, integer: true, minimum: 1 },
     ttl: { type: "number", integer: true, minimum: 0 },
   },
   extends: {

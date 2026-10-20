@@ -20,6 +20,6 @@ export default {
     await input.sender.sendTo(['target-a', 'target-b'], { type: 'targeted', timestamp: 4 });
     await input.sender.send({ type: 'ordered', payload: 1, timestamp: 5 });
     await input.sender.send({ type: 'ordered', payload: 2, timestamp: 6 });
-    input.sender.close(4001, 'fixture complete');
+    await input.sender.close(4001, 'fixture complete');
   },
 };

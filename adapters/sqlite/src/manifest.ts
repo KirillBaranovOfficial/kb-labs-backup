@@ -26,7 +26,7 @@ export const manifest: AdapterManifest = {
   // kvStore platform slots on a shared better-sqlite3 connection.
   implements: ['IDocumentDatabase', 'IKVStore'],
   networkRequired: false,
-  defaultFor: ['documentDatabase', 'kvStore'],
+  defaultFor: { documentDatabase: [], kvStore: ['kv'] },
   contexts: ['workspace', 'platformData'],
   capabilities: {
     transactions: true,
@@ -42,6 +42,7 @@ export const manifest: AdapterManifest = {
       type: 'string',
       description: 'Database file path (use :memory: for in-memory database)',
       pathBase: 'platformData',
+      defaultPath: { root: 'projectState', segments: ['database', 'kb.sqlite'] },
       specialValues: [':memory:'],
     },
     readonly: {

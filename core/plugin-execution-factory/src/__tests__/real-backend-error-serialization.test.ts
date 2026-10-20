@@ -140,7 +140,7 @@ describe.each(backends)('%s real health mode', (mode) => {
 });
 
 describe.each(backends)('%s real failure dispatch', (mode) => {
-  it.each(failures)('validates the $label envelope and retains its stack in the correlated log', async (failure) => {
+  it.each(failures)('validates the $label envelope and records safe correlated diagnostics', async (failure) => {
     const logger = new MemoryLoggerSink();
     const platform = { logger, getAdapter: () => undefined } as unknown as PlatformServices;
     const backend = makeBackend(mode, platform, logger);
@@ -164,16 +164,30 @@ describe.each(backends)('%s real failure dispatch', (mode) => {
       expect(record).toEqual(expect.objectContaining({
         event: 'plugin.handler.failed',
         correlationId,
-        serializedError: expect.objectContaining({
-          name: failure.name,
-          message: failure.message,
-          ...(failure.stack ? { stack: failure.stack } : {}),
-          ...(failure.stackIncludes ? { stack: expect.stringContaining(failure.stackIncludes) } : {}),
-        }),
       }));
-      expect((record?.serializedError as { stack?: string } | undefined)?.stack).toContain(
-        failure.stackIncludes ?? failure.stack,
-      );
+      if (failure.expectedCode === 'KB_PLUGIN_CONTRACT_VIOLATION') {
+        expect(record).toMatchObject({
+          sourceCode: 'undefined',
+          sourceHintType: 'absent',
+          pluginId: '@kb-labs/failure-fixture',
+          command: 'fixture failure',
+        });
+        expect(JSON.stringify(record)).not.toContain(failure.message);
+        expect(record).not.toHaveProperty('serializedError');
+        expect(record).not.toHaveProperty('error');
+      } else {
+        expect(record).toMatchObject({
+          serializedError: expect.objectContaining({
+            name: failure.name,
+            message: failure.message,
+            ...(failure.stack ? { stack: failure.stack } : {}),
+            ...(failure.stackIncludes ? { stack: expect.stringContaining(failure.stackIncludes) } : {}),
+          }),
+        });
+        expect((record?.serializedError as { stack?: string } | undefined)?.stack).toContain(
+          failure.stackIncludes ?? failure.stack,
+        );
+      }
     } finally {
       await backend.shutdown();
     }

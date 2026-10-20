@@ -49,7 +49,7 @@
     }
   },
   "peerDependencies": {
-    "@kb-labs/sdk": "workspace:^"
+    "@kb-labs/sdk": "workspace:*"
   },
   "sideEffects": false
 }

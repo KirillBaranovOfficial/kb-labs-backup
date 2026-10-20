@@ -88,11 +88,27 @@ function routeRequest(route: RouteOptions, method: FixtureMethod, invalid = fals
   if (invalid && ['POST', 'PUT', 'PATCH'].includes(method) && schema.body) {
     const bodySchema = schema.body as { anyOf?: Array<{ maxProperties?: number }>; required?: string[]; properties?: Record<string, unknown> };
     const noBody = bodySchema.anyOf?.some((branch) => branch.maxProperties === 0) ?? false;
-    request.payload = noBody || !bodySchema.required?.length && !Object.keys(bodySchema.properties ?? {}).length ? '{"__ux_fixture_invalid__":true}' : '{}';
+    const firstProperty = Object.entries(bodySchema.properties ?? {})[0];
+    request.payload = noBody || !firstProperty
+      ? '{"__ux_fixture_invalid__":true}'
+      : JSON.stringify({ [firstProperty[0]]: invalidSchemaExample(firstProperty[1]) });
   }
   else if (!invalid && ['POST', 'PUT', 'PATCH'].includes(method) && schema.body) request.payload = JSON.stringify(schemaExample(schema.body));
   if (request.payload !== undefined) request.headers = { 'content-type': 'application/json' };
   return request;
+}
+
+function invalidSchemaExample(schema: unknown): unknown {
+  if (typeof schema !== 'object' || schema === null || !('type' in schema)) return { __ux_fixture_invalid__: true };
+  switch (schema.type) {
+    case 'string': return 1;
+    case 'number':
+    case 'integer': return 'invalid';
+    case 'boolean': return 'invalid';
+    case 'array': return {};
+    case 'object': return 'invalid';
+    default: return { __ux_fixture_invalid__: true };
+  }
 }
 
 function makeTransport(callResult?: ServiceTransportResponse): IServiceTransport {

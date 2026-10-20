@@ -14,13 +14,6 @@ export interface KBPlatformOptions {
   onError?: (error: Error) => void;
 }
 
-export interface PlatformCallResponse<T = unknown> {
-  ok: boolean;
-  result?: T;
-  error?: { message: string; code?: string };
-  durationMs: number;
-}
-
 // ── LLM types ─────────────────────────────────────────────────────────────
 
 export interface LLMOptions {

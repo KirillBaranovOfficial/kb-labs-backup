@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { noopTraceContext, noopUI } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
-import { createProjectRegistry } from '@kb-labs/core-project-registry';
+import { createProjectRegistry, resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { writeMarketplaceLock } from '@kb-labs/core-discovery';
 import { adapterBind } from '../../commands/system/adapter/bind.js';
 import { adapterList } from '../../commands/system/adapter/list.js';
@@ -220,12 +220,12 @@ describe('kb adapter list', () => {
   it('shows a manifest-discovered local default when an installed layout leaves the slot unbound', async () => {
     const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-fs');
     await mkdir(join(packageRoot, 'dist'), { recursive: true });
-    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-fs', type: 'module', kb: { manifest: './dist/manifest.js' } }));
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-fs', type: 'module', kb: { adapter: { manifest: './dist/manifest.js' } } }));
     await writeFile(join(packageRoot, 'dist', 'manifest.js'), [
-      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fs-storage', name: 'Filesystem Storage', version: '1.0.0', type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: ['storage'] })};`,
+      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fs-storage', name: 'Filesystem Storage', version: '1.0.0', type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: { storage: [] }, configSchema: { baseDir: { type: 'string', defaultPath: { root: 'projectState', segments: ['storage'] } } } })};`,
     ].join('\n'));
     await writeFile(join(packageRoot, 'dist', 'index.js'), [
-      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fs-storage', name: 'Filesystem Storage', version: '1.0.0', type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: ['storage'] })};`,
+      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fs-storage', name: 'Filesystem Storage', version: '1.0.0', type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: { storage: [] }, configSchema: { baseDir: { type: 'string', defaultPath: { root: 'projectState', segments: ['storage'] } } } })};`,
       'export function createAdapter() { return {}; }',
     ].join('\n'));
     await writeMarketplaceLock(platformRoot, {
@@ -238,9 +238,7 @@ describe('kb adapter list', () => {
         },
       },
     });
-    await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
-      platform: { adapterOptions: { storage: { baseDir: 'storage' } } },
-    }));
+    await writeFile(join(platformRoot, '.kb', 'kb.config.json'), '{}');
     const { ctx, outputs } = context();
     mockAdapterHealth(ctx, [
       { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs', configuredPackage: '@kb-labs/adapters-fs' },
@@ -251,19 +249,19 @@ describe('kb adapter list', () => {
     expect(code).toBe(0);
     const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
     expect(adapters.find(({ slot }) => slot === 'storage')).toMatchObject({
-      implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: join(await realpath(join(sandbox, 'state', 'data')), 'storage'), networkRequired: false,
+      implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: resolveRuntimeStatePath(projectRoot, ['storage']), networkRequired: false,
     });
   });
 
   it('marks a default OpenAI binding as missing credentials without exposing values', async () => {
     const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-openai');
     await mkdir(join(packageRoot, 'dist'), { recursive: true });
-    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-openai', type: 'module', kb: { manifest: './dist/manifest.js' } }));
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-openai', type: 'module', kb: { adapter: { manifest: './dist/manifest.js' } } }));
     await writeFile(join(packageRoot, 'dist', 'manifest.js'), [
-      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: true, defaultFor: ['llm'], configSchema: { apiKey: { type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY' } } })};`,
+      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: true, defaultFor: { llm: ['llm'] }, configSchema: { apiKey: { type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY' } } })};`,
     ].join('\n'));
     await writeFile(join(packageRoot, 'dist', 'index.js'), [
-      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: true, defaultFor: ['llm'], configSchema: { apiKey: { type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY' } } })};`,
+      `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: true, defaultFor: { llm: ['llm'] }, configSchema: { apiKey: { type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY' } } })};`,
       'export function createAdapter() { return {}; }',
     ].join('\n'));
     await writeMarketplaceLock(platformRoot, {
@@ -276,7 +274,8 @@ describe('kb adapter list', () => {
         },
       },
     });
-    vi.stubEnv('OPENAI_API_KEY', '');
+    await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapterOptions: { llm: { apiKey: '${OPENAI_API_KEY}' } } } }));
+    vi.stubEnv('OPENAI_API_KEY', undefined);
     const { ctx, outputs } = context();
     mockAdapterHealth(ctx, [
       { slot: 'llm', mode: 'real', implementation: '@kb-labs/adapters-openai', configuredPackage: '@kb-labs/adapters-openai' },
@@ -310,10 +309,10 @@ describe('platform adapter commands from unregistered directories', () => {
     });
     const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-fs');
     await mkdir(packageRoot, { recursive: true });
-    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-fs', type: 'module', kb: { manifest: './manifest.js' } }));
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-fs', type: 'module', kb: { adapter: { manifest: './manifest.js' } } }));
     await writeFile(join(packageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({
       schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fs', name: 'Filesystem', version: '1.0.0',
-      type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: ['storage'],
+      type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: { storage: [] },
     })};`);
     const { ctx, outputs } = context(cwd);
     mockAdapterHealth(ctx, [{ slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs' }]);
@@ -349,8 +348,8 @@ describe('kb adapter bind', () => {
     });
     const adapterPackageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-memory-cache');
     await mkdir(adapterPackageRoot, { recursive: true });
-    await writeFile(join(adapterPackageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-memory-cache', type: 'module', kb: { manifest: './manifest.js' } }));
-    await writeFile(join(adapterPackageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'memory-cache', name: 'Memory Cache', version: '1.0.0', type: 'core', implements: 'ICache', networkRequired: false, defaultFor: ['cache'] })};`);
+    await writeFile(join(adapterPackageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-memory-cache', type: 'module', kb: { adapter: { manifest: './manifest.js' } } }));
+    await writeFile(join(adapterPackageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'memory-cache', name: 'Memory Cache', version: '1.0.0', type: 'core', implements: 'ICache', networkRequired: false, defaultFor: { cache: [] } })};`);
     const { ctx, outputs } = context();
 
     const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-memory-cache'], { json: true });
@@ -376,8 +375,8 @@ describe('kb adapter bind', () => {
     });
     const adapterPackageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-qdrant');
     await mkdir(adapterPackageRoot, { recursive: true });
-    await writeFile(join(adapterPackageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-qdrant', type: 'module', kb: { manifest: './manifest.js' } }));
-    await writeFile(join(adapterPackageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'qdrant', name: 'Qdrant', version: '1.0.0', type: 'core', implements: 'IVectorStore', networkRequired: true, defaultFor: ['vectorStore'] })};`);
+    await writeFile(join(adapterPackageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-qdrant', type: 'module', kb: { adapter: { manifest: './manifest.js' } } }));
+    await writeFile(join(adapterPackageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'qdrant', name: 'Qdrant', version: '1.0.0', type: 'core', implements: 'IVectorStore', networkRequired: true, defaultFor: { vectorStore: [] } })};`);
     const { ctx, outputs } = context();
 
     const code = await adapterBind.run(ctx, ['vectorStore', '@kb-labs/adapters-qdrant'], { json: true });
@@ -424,8 +423,8 @@ describe('kb adapter bind', () => {
     });
     const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-storage-fixture');
     await mkdir(packageRoot, { recursive: true });
-    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-storage-fixture', type: 'module', kb: { manifest: './manifest.js' } }));
-    await writeFile(join(packageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'storage-fixture', name: 'Storage Fixture', version: '1.0.0', type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: ['storage'] })};`);
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-storage-fixture', type: 'module', kb: { adapter: { manifest: './manifest.js' } } }));
+    await writeFile(join(packageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'storage-fixture', name: 'Storage Fixture', version: '1.0.0', type: 'core', implements: 'IStorage', networkRequired: false, defaultFor: { storage: [] } })};`);
     const before = await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8');
     const { ctx, outputs } = context();
 
@@ -496,8 +495,8 @@ describe('kb adapter bind', () => {
     });
     const adapterPackageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-memory-cache');
     await mkdir(adapterPackageRoot, { recursive: true });
-    await writeFile(join(adapterPackageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-memory-cache', type: 'module', kb: { manifest: './manifest.js' } }));
-    await writeFile(join(adapterPackageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'memory-cache', name: 'Memory Cache', version: '1.0.0', type: 'core', implements: 'ICache', networkRequired: false, defaultFor: ['cache'] })};`);
+    await writeFile(join(adapterPackageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-memory-cache', type: 'module', kb: { adapter: { manifest: './manifest.js' } } }));
+    await writeFile(join(adapterPackageRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'memory-cache', name: 'Memory Cache', version: '1.0.0', type: 'core', implements: 'ICache', networkRequired: false, defaultFor: { cache: [] } })};`);
     const { ctx, outputs } = context();
 
     const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-memory-cache'], { json: true, 'dry-run': true });

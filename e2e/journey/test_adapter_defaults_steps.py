@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from adapter_defaults_steps import (_assert_required_upstreams_ready, _json, _restore_platform_adapter_fixture,
+from adapter_defaults_steps import (_assert_no_network_defaults, _assert_required_upstreams_ready, _json, _restore_platform_adapter_fixture,
                                     _run_from_registered_project, run_adapter_default_steps)
 from sdk_runtime_import_check import check_installed_runtime_imports
 from invocations import invocation_context
@@ -21,6 +21,19 @@ from test_install_layout import create_test_install_container
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
+    # case: S-054.4
+    def test_network_requirement_check_excludes_slots_that_require_configuration(self):
+        rows = {
+            "storage": {"networkRequired": False, "mode": "real"},
+            "llm": {"networkRequired": True, "mode": "real"},
+            "serviceTransport": {"networkRequired": True, "mode": "unconfigured", "requiresConfiguration": True},
+        }
+        _assert_no_network_defaults(rows, lambda: None)
+
+        rows["storage"] = {"networkRequired": True, "mode": "real"}
+        with self.assertRaisesRegex(RuntimeError, "built-in default reports a network dependency"):
+            _assert_no_network_defaults(rows, lambda: None)
+
     # case: S-054.16
     def test_installed_runtime_import_check_names_missing_module_and_importer(self):
         with tempfile.TemporaryDirectory(prefix="kb-installed-runtime-imports-") as directory:
@@ -441,6 +454,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 if args[:2] == ["config", "set"]:
                     if args[2:4] == ["commit.llm.enabled", "true"]:
                         return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+                    if args[2:4] == ["--scope", "project"]:
+                        error = {"code": "KB_ADAPTER_PROJECT_SCOPE", "message": "Project adapter configuration is unsupported.",
+                                 "hint": "Move `platform.adapters` and `platform.adapterOptions` to the platform config."}
+                        return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                     if args[2:4] == ["--scope", "platform"]:
                         key, raw = args[4], args[5]
                     else:

@@ -22,7 +22,8 @@ from types import MappingProxyType
 from typing import Callable
 
 from studio_steps import (create_studio_access_tokens, create_studio_environment,
-                          create_studio_member, run_studio_browser_step)
+                          create_studio_member, run_studio_browser_step,
+                          studio_playwright_output_directory)
 from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from bootstrap_secret_steps import (register_install_password_absence_step,
@@ -2231,6 +2232,8 @@ def _main(*, update_variant_runner=None):
                     project_root=str(PROJECT),
                     kb_bin=str(BIN / "kb"),
                 )
+                studio_env["KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR"] = str(
+                    studio_playwright_output_directory(service_report))
                 for key in ("KB_STUDIO_OAUTH_JOURNEY", "KB_STUDIO_OIDC_PROVIDER_ID",
                             "KB_STUDIO_OIDC_PROVIDER_NAME", "KB_STUDIO_OIDC_EMAIL"):
                     studio_env.pop(key, None)

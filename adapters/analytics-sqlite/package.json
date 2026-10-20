@@ -58,6 +58,6 @@
   "packageManager": "pnpm@11.4.0",
   "sideEffects": false,
   "peerDependencies": {
-    "@kb-labs/sdk": "workspace:^"
+    "@kb-labs/sdk": "workspace:*"
   }
 }

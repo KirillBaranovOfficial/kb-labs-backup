@@ -9,6 +9,8 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/doctor"
+	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"os"
 	"path/filepath"
@@ -203,6 +205,71 @@ func TestDeclaredProviderDefaultWinsWithoutOrderDependence(t *testing.T) {
 	if err != nil || len(plan.ProviderBindings) != 1 || plan.ProviderBindings[0].AdapterID != "a" {
 		t.Fatalf("plan/error = %#v / %v", plan, err)
 	}
+}
+
+// cases: S-054.2, S-054.8, S-054.10
+func TestSelectedPlatformMemberAdapterRetainsItsCredentialRequirement(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	platformRoot := filepath.Join(home, "kb-platform")
+	requirementsData, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "adapters", "openai", "dist", "kb-create.requirements.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requirementsFile struct {
+		Requirements []catalog.ConfigRequirement `json:"requirements"`
+	}
+	if err := json.Unmarshal(requirementsData, &requirementsFile); err != nil {
+		t.Fatal(err)
+	}
+	if len(requirementsFile.Requirements) != 1 {
+		t.Fatalf("OpenAI package requirements = %#v", requirementsFile.Requirements)
+	}
+	requirement := requirementsFile.Requirements[0]
+	provider := catalog.Adapter{
+		Component: catalog.Component{
+			ID: "openai-llm", Version: "2.0.0", Package: "@kb-labs/adapters-openai",
+			SHA256: "openai", Config: []catalog.ConfigRequirement{requirement},
+		},
+		Provides: []string{"llm"}, DefaultFor: []string{"llm"},
+	}
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+			Requires: []catalog.Requirement{{Capability: "llm", RequiredBy: "platform"}},
+			Members: []catalog.Component{{
+				ID: provider.ID, Version: provider.Version, Package: provider.Package, SHA256: provider.SHA256,
+			}},
+		}},
+		Adapters: []catalog.Adapter{provider},
+	}
+
+	plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: platformRoot}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, artifact := range plan.Artifacts {
+		if artifact.Package != provider.Package {
+			continue
+		}
+		if err := installed.Write(platformRoot, artifact); err != nil {
+			t.Fatal(err)
+		}
+		input, err := installed.DoctorInput(platformRoot, []contracts.Artifact{artifact}, map[string]bool{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		findings := doctor.Diagnose(input.Manifests, input.Configured)
+		if len(findings) != 1 || findings[0].Code != doctor.CodeAdapterCredentialsMissing || findings[0].Severity != doctor.SeverityWarning || findings[0].Path != requirement.Path || findings[0].Action != requirement.Action {
+			t.Fatalf("installed doctor findings = %#v; want the manifest-declared optional OpenAI credential warning", findings)
+		}
+		return
+	}
+	t.Fatalf("resolved plan omitted selected OpenAI platform member: %#v", plan.Artifacts)
 }
 
 func TestFreshPlatformInstallResolvesAndBindsBuiltinFilesystemStorage(t *testing.T) {

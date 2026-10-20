@@ -22,7 +22,7 @@ from invocations import (
     read_kb_create_cli_result,
     start_background_command,
 )
-from service_steps import Journey
+from service_steps import Journey, StructuredJourneyError
 from journey_resources import active_platform_root, shared_runtime_file_fingerprints, snapshot_state_tree
 
 
@@ -34,7 +34,9 @@ def _payload(result: CompletedProcess, label: str) -> dict:
     value = read_kb_create_cli_result(result.args[1], result)
     if result.returncode:
         error = decode_ux_error_result(value)
-        raise RuntimeError(f"{label}: {error!r}")
+        if isinstance(error, dict):
+            raise StructuredJourneyError(error)
+        raise RuntimeError(f"{label}: expected a structured error")
     payload = decode_ux_success_result(value)
     if not isinstance(payload, dict):
         raise RuntimeError(f"{label}: expected an object result")
@@ -257,6 +259,8 @@ def run_platform_update_variant_steps(
                                 "--input", str(request), "--json"]), f"staged {label} verification")
             if not error.get("code") or not error.get("hint"):
                 raise RuntimeError(f"staged {label} verification failure omitted its typed error and hint")
+            if label == "config" and error["code"] != "KB_INSTALL_CONFIG_REQUIRED":
+                raise RuntimeError("update without the newly required configuration did not return KB_INSTALL_CONFIG_REQUIRED")
             if hashlib.sha256(receipt_path.read_bytes()).hexdigest() != receipt_hash:
                 raise RuntimeError(f"staged {label} failure changed the active receipt")
             if hashlib.sha256(config_path.read_bytes()).hexdigest() != config_hash:

@@ -309,7 +309,9 @@ class GatewayStepTests(unittest.TestCase):
             if path == "/platform/v1/llm/stream":
                 return 200, "data: chunk\n\n[DONE]"
             if path == "/platform/v1/analytics/track":
-                return 200, {"ok": True, "data": {}}
+                return 200, {"ok": True, "data": None, "meta": {"durationMs": 1}}
+            if path == "/platform/v1/analytics/getEvents":
+                return 200, {"ok": True, "data": {"events": [{"type": "case.gateway.call"}]}}
             if path == "/telemetry/v1/ingest":
                 return 200, {"accepted": 500, "rejected": 0}
             return 200, {"events": []}
@@ -326,6 +328,41 @@ class GatewayStepTests(unittest.TestCase):
         claims = {item["claimId"] for item in journey.result().case_run["claims"]}
         self.assertNotIn("S-189.1", claims)
         self.assertNotIn("/platform/v1/adapters", paths)
+
+    def test_gateway_analytics_track_claim_requires_the_shared_void_success_fields(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_PROJECT_ID": "prj_fixture",
+        }, clear=False), patch("gateway_steps._http", return_value=(200, {"ok": True, "durationMs": 1})), \
+                patch("gateway_steps.run_llm_provider_steps"):
+            journey = Journey("local", "analytics-track-missing-data")
+            run_gateway_steps(journey, token="fixture-token", project_id="project-a",
+                              project_root="/fixture/project-a", project_b_id="project-b",
+                              project_b_root="/fixture/project-b")
+
+        claims = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
+        self.assertEqual(claims["S-189.2"], "FAIL")
+
+    def test_gateway_analytics_track_claim_requires_the_recorded_event_too(self):
+        def fake_http(path, **_kwargs):
+            if path == "/platform/v1/analytics/track":
+                return 200, {"ok": True, "data": None, "meta": {"durationMs": 1}}
+            if path == "/platform/v1/analytics/getEvents":
+                return 200, {"ok": True, "data": {"events": [{"type": "case.gateway.call"}]}}
+            return 200, {}
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_PROJECT_ID": "prj_fixture",
+        }, clear=False), patch("gateway_steps._http", side_effect=fake_http), \
+                patch("gateway_steps.run_llm_provider_steps"):
+            journey = Journey("local", "analytics-track-recorded")
+            run_gateway_steps(journey, token="fixture-token", project_id="project-a",
+                              project_root="/fixture/project-a", project_b_id="project-b",
+                              project_b_root="/fixture/project-b")
+
+        claims = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
+        self.assertEqual(claims["S-189.2"], "PASS")
 
 
 if __name__ == "__main__":

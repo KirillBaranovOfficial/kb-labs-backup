@@ -20,7 +20,7 @@ export const manifest: AdapterManifest = {
   type: "core",
   implements: "IStorage",
   networkRequired: false,
-  defaultFor: ["storage"],
+  defaultFor: { storage: [] },
   contexts: ['workspace', 'platformData'],
   capabilities: {
     streaming: true,
@@ -34,6 +34,7 @@ export const manifest: AdapterManifest = {
       type: "string",
       description: "Base directory for all file operations; omitted paths use platform state for the current project",
       pathBase: 'platformData',
+      defaultPath: { root: 'projectState', segments: ['storage'] },
     },
   },
 };

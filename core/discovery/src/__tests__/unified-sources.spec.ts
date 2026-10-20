@@ -394,13 +394,13 @@ describe('workspace adapter candidates', () => {
   const moduleFor = (roles: string | string[]) =>
     `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: roles, networkRequired: false })};\n`;
 
-  it('uses only kb.manifest and classifies undeclared packages as non-adapters', async () => {
+  it('uses only kb.adapter.manifest and classifies undeclared packages as non-adapters', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-result-'));
     try {
       await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
         name: '@fixture/manifest',
         type: 'module',
-        kb: { manifest: './manifest.js' },
+        kb: { adapter: { manifest: './manifest.js' } },
       }));
       await fs.writeFile(path.join(root, 'manifest.js'), moduleFor('IFirst'));
       expect(await loadAdapterManifest({ packageRoot: root })).toMatchObject({ kind: 'adapter', manifest: { schema: 'kb.adapter/1', implements: 'IFirst' } });
@@ -410,7 +410,7 @@ describe('workspace adapter candidates', () => {
       await fs.writeFile(path.join(multiRoleRoot, 'package.json'), JSON.stringify({
         name: '@fixture/multi-role',
         type: 'module',
-        kb: { manifest: './roles.js' },
+        kb: { adapter: { manifest: './roles.js' } },
       }));
       await fs.writeFile(path.join(multiRoleRoot, 'roles.js'), moduleFor(['IRoleA', 'IRoleB']));
       expect(await loadAdapterManifest({ packageRoot: multiRoleRoot })).toMatchObject({ kind: 'adapter', manifest: { schema: 'kb.adapter/1', implements: ['IRoleA', 'IRoleB'] } });
@@ -419,12 +419,12 @@ describe('workspace adapter candidates', () => {
         name: '@fixture/undeclared',
         type: 'module',
       }));
-      expect(await loadAdapterManifest({ packageRoot: root })).toMatchObject({ kind: 'not-adapter', reason: expect.stringContaining('kb.manifest') });
+      expect(await loadAdapterManifest({ packageRoot: root })).toMatchObject({ kind: 'not-adapter', reason: expect.stringContaining('kb.adapter.manifest') });
 
       const brokenRoot = path.join(root, 'broken');
       await fs.mkdir(brokenRoot, { recursive: true });
       await fs.writeFile(path.join(brokenRoot, 'package.json'), JSON.stringify({
-        name: '@fixture/broken', type: 'module', kb: { manifest: './dist/manifest.js' },
+        name: '@fixture/broken', type: 'module', kb: { adapter: { manifest: './dist/manifest.js' } },
       }));
       expect(await loadAdapterManifest({ packageRoot: brokenRoot })).toMatchObject({ kind: 'failed' });
 
@@ -451,12 +451,12 @@ describe('workspace adapter candidates', () => {
       await fs.writeFile(path.join(providerRoot, 'package.json'), JSON.stringify({
         name: '@fixture/llm-provider',
         type: 'module',
-        kb: { manifest: './dist/manifest.js' },
+        kb: { adapter: { manifest: './dist/manifest.js' } },
       }));
       await fs.writeFile(path.join(providerRoot, 'dist', 'manifest.js'), moduleFor('ILLM'));
       await fs.writeFile(path.join(fixtureRoot, 'pnpm-workspace.yaml'), 'packages: ["packages/*"]\n');
 
-      const workspaceCandidates = await findWorkspaceCandidates(fixtureRoot);
+      const workspaceCandidates = await findWorkspacePackages(fixtureRoot);
       const llmProviders = (await Promise.all(workspaceCandidates.map(async candidate => ({
         packageName: candidate.packageName,
         manifest: await loadAdapterManifest({ packageRoot: candidate.packageRoot }),

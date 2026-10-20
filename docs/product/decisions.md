@@ -4,6 +4,19 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-20
+
+### Release sealing checks install scenarios without requiring operator input
+
+The release sealer validates built-in install scenarios against each candidate
+index for artifact and compatibility resolution. A required configuration
+value or secret that the operator has not supplied does not make that index
+invalid; the resolver still refuses the install or update until the value is
+provided. Other scenario resolution failures, including missing artifacts and
+incompatible releases, still fail sealing. Update-only requirements remain on
+their staged update index and do not appear in the base index. Cases: S-023.12,
+S-214.11.
+
 ## 2026-10-16
 
 ### D49 — MCP tool calls are durably audited with user and token identity
@@ -397,10 +410,11 @@ Cases: S-007.4, S-041.7 to S-041.13, S-045.5, S-104, S-140.6.
 Fresh local and secured installs resolve the same built-in adapter for every platform slot with a persistent local implementation, including when the user has not added a binding. Defaults are replaceable through `kb adapter bind <slot> <package>`; replacing a provider does not migrate or delete data held by the previous provider. An available persistent adapter must never be silently replaced by an InMemory fallback. OpenAI remains the implicit LLM provider; its adapter can construct without a key and reports `KB_ADAPTER_CREDENTIALS_MISSING` only when used. Missing credentials for optional capabilities are warning-severity doctor findings and do not make an otherwise healthy install fail; use reports the typed credentials error. Adapter manifests may declare required credential options as secret values with environment sources; these credentials may be missing at construction, while required structural options such as a service map exclude a provider from implicit defaults. Embeddings and vector store remain unconfigured and return typed adapter-required errors without configured providers. Durable account, workflow, KV, document, and analytics data survives a host restart. Doctor diagnosis is read-only; `kb-create doctor --fix` is the explicit repair operation for missing installed manifest projections.
 
 The sealed base install includes `@kb-labs/adapters-openai` so the runtime can
-select it through `defaultFor: ["llm"]` without writing an explicit
-`platform.adapters.llm` binding. With `OPENAI_API_KEY` unset, adapter list and
-doctor report the missing credential as a warning; an LLM request returns the
-typed credentials error.
+select it through `defaultFor: { llm: ["llm"] }` without writing an explicit
+`platform.adapters.llm` binding. Each `defaultFor` entry maps a platform slot
+to package entry-point path segments; an empty array selects the package root.
+With `OPENAI_API_KEY` unset, adapter list and doctor report the missing
+credential as a warning; an LLM request returns the typed credentials error.
 Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11.
 
 ### 2026-10-01: Explicit token kinds and lifecycle contract changes
