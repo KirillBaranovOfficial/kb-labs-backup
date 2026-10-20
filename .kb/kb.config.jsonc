@@ -14,6 +14,9 @@
       "serviceTransport": "@kb-labs/adapters-service-transport-http"
     },
     "adapterOptions": {
+      "storage": {
+        "baseDir": "storage"
+      },
       "cache": {
         "url": "http://127.0.0.1:7777",
         "namespace": "kb:"
@@ -36,9 +39,6 @@
             "url": "http://127.0.0.1:7779"
           }
         }
-      },
-      "storage": {
-        "baseDir": "storage"
       },
       "documentDatabase": {
         "filename": "database/kb.sqlite"

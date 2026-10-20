@@ -76,7 +76,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
         env["GATEWAY_PORT"] = "1"
 
         def run(*args: str) -> CompletedProcess[str]:
-            return run_command(["node", str(cli), *args], cwd=env["KB_PROJECT_ROOT"], env=env, timeout=120)
+            return run_command(["node", str(cli), *args], cwd=repo_root, env=env, timeout=120)
 
         def register_checkout() -> str | None:
             result = run_command(
@@ -85,9 +85,9 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path, *, prechecked: bo
                     "const { createProjectRegistry } = await import(process.argv[1]); "
                     "await createProjectRegistry({ env: process.env }).add(process.argv[2]);",
                     str(repo_root / "core/project-registry/dist/index.js"),
-                    env["KB_PROJECT_ROOT"],
+                    str(repo_root),
                 ],
-                cwd=env["KB_PROJECT_ROOT"],
+                cwd=repo_root,
                 env=env,
                 capture_output=True,
                 text=True,

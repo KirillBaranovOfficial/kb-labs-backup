@@ -93,7 +93,9 @@ process.env.CLI_VERSION = __KB_CLI_VERSION__;
 
   let code: number | void;
   try {
-    code = await run(process.argv.slice(2), { moduleUrl: BIN_MODULE_URL });
+    code = await run(process.argv.slice(2), {
+      moduleUrl: BIN_MODULE_URL,
+    });
   } finally {
     try {
       await platform.shutdown();

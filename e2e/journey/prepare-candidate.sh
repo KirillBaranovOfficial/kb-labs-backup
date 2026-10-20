@@ -93,6 +93,7 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
   --binary-manifest "$TARGET/binary-manifest.json" \
   --binary-manifest-tool "$ROOT/tools/kb-create/scripts/prepare-binary-manifest.mjs" \
   --binary-checksums "$TARGET/binary-checksums.txt" \
+  --release-config "$ROOT/tools/kb-create/config/platform-release.jsonc" \
   --binary-version "$BINARY_VERSION" \
   --source-revision "$COMMIT" \
   --prepare-script "$ROOT/tools/kb-create/scripts/prepare-release-index.mjs" \

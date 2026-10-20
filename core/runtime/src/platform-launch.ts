@@ -255,7 +255,12 @@ async function launch(
       adapterProjectRoot,
       uiProvider,
       adapterProjectRoot === platformRoot ? undefined : platformRoot,
-      { assemblyHook, hostServiceEnvironment, workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult) },
+      {
+        assemblyHook,
+        hostServiceEnvironment,
+        workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
+        workspaceRoot: projectRoot,
+      },
     );
   } catch (error) {
     if (failurePolicy === "strict") {
@@ -270,7 +275,12 @@ async function launch(
       adapterProjectRoot,
       uiProvider,
       undefined,
-      { assemblyHook, hostServiceEnvironment, workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult) },
+      {
+        assemblyHook,
+        hostServiceEnvironment,
+        workspaceDevelopment: isWorkspaceDevelopmentMode(loadResult),
+        workspaceRoot: projectRoot,
+      },
     );
   }
 
