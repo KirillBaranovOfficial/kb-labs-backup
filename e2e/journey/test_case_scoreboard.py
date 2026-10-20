@@ -1,12 +1,13 @@
 import json
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from scoreboard import build_scoreboard, load_cases, release_claims_for_case, render_delta, render_markdown, write_scoreboards
 from service_steps import FlowGraph, Journey
+
+
+JOURNEY_ROOT = Path(__file__).resolve().parent
 
 
 class CaseScoreboardTests(unittest.TestCase):
@@ -168,19 +169,12 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertIn("Unresolved state owners", render_markdown(report))
 
     def test_failure_summary_uses_structured_marketplace_error_and_bounds_length(self):
-        workspace = Path(__file__).resolve().parents[3]
-        invocations = workspace / "reports" / "j81-local" / "invocations" / "calls.jsonl"
-        extractor = (
-            "import json,sys; "
-            "p=sys.argv[1]; "
-            "rows=(json.loads(line) for line in open(p,encoding='utf-8') "
-            "if 'prepare update preservation baseline' in line); "
-            "row=next(row for row in rows if row.get('step_id') == 'prepare update preservation baseline'); "
-            "print(json.dumps(json.loads(row['stdout'])['error']))"
-        )
-        extracted = subprocess.run([sys.executable, "-c", extractor, str(invocations)],
-                                   check=True, capture_output=True, text=True)
-        marketplace_payload = json.loads(extracted.stdout)
+        fixture = JOURNEY_ROOT / "testdata" / "marketplace-install-j81.jsonl"
+        artifact_rows = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()
+                         if line.startswith("{")]
+        invocation = next(row for row in artifact_rows
+                          if row["step_id"] == "prepare update preservation baseline")
+        marketplace_payload = json.loads(invocation["stdout"])["error"]
         self.assertEqual(marketplace_payload["code"], "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING")
         self.write_json("platform-update-local.json", {
             "case_run": {"mode": "local", "claims": []},
