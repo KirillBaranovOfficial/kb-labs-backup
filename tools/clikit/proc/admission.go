@@ -17,6 +17,7 @@ import (
 )
 
 const admissionPollInterval = 250 * time.Millisecond
+const idleQueueThreshold = 10 * time.Minute
 
 type gateRecord struct {
 	Name     string `json:"name"`
@@ -164,7 +165,7 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 					return err
 				}
 				if !statusChanged && decision.Status == StatusBlocked {
-					return nil
+					return reportIdleQueueLocked(cfg.StateDir, time.Now().UTC())
 				}
 				eventType := EventQueued
 				if decision.Status == StatusBlocked {
@@ -175,13 +176,18 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 				event.Position = decision.Position
 				event.DiskNeedBytes = decision.DiskNeedBytes
 				event.DiskFreeBytes = decision.DiskFreeBytes
-				return appendEvent(cfg.StateDir, event)
+				if err := appendEvent(cfg.StateDir, event); err != nil {
+					return err
+				}
+				return reportIdleQueueLocked(cfg.StateDir, time.Now().UTC())
 			}
 			if rec.ResourceNotice != notice {
 				rec.ResourceNotice = notice
-				return writeRecordAtomic(rec)
+				if err := writeRecordAtomic(rec); err != nil {
+					return err
+				}
 			}
-			return nil
+			return reportIdleQueueLocked(cfg.StateDir, time.Now().UTC())
 		})
 		if err != nil {
 			cleanupAdmission(cfg.StateDir, runID, err.Error())
@@ -195,6 +201,49 @@ func reserveAdmission(ctx context.Context, cfg Config, runID string, parentPID i
 		case <-ticker.C:
 		}
 	}
+}
+
+func reportIdleQueueLocked(stateDir string, now time.Time) error {
+	records, err := readRecordsLocked(stateDir)
+	if err != nil {
+		return err
+	}
+	active := false
+	for _, rec := range records {
+		if rec.Status == StatusStarting || rec.Status == StatusRunning || rec.Status == StatusStalled {
+			active = true
+			break
+		}
+	}
+	if active {
+		return nil
+	}
+	waiting := make([]string, 0, len(records))
+	eligible := make(map[string]bool)
+	for _, rec := range records {
+		if (rec.Status == StatusQueued || rec.Status == StatusBlocked) && !rec.IdleReported &&
+			!rec.EnqueuedAt.IsZero() && now.Sub(rec.EnqueuedAt) >= idleQueueThreshold {
+			waiting = append(waiting, rec.Tag)
+			eligible[rec.RunID] = true
+		}
+	}
+	if len(waiting) == 0 {
+		return nil
+	}
+	sort.Strings(waiting)
+	event := Event{Schema: EventSchema, At: now, Type: EventIdle, Tag: "queue", Reason: "no active runs while work remains queued", WaitingItems: waiting}
+	if err := appendEvent(stateDir, event); err != nil {
+		return err
+	}
+	for index := range records {
+		if eligible[records[index].RunID] {
+			records[index].IdleReported = true
+			if err := writeRecordAtomic(records[index]); err != nil {
+				return fmt.Errorf("mark idle queue event for %s: %w", records[index].Tag, err)
+			}
+		}
+	}
+	return nil
 }
 
 func admissionStateLocked(stateDir string, candidate record, source HostResourceSource) (admissionDecision, error) {
