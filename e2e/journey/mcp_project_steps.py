@@ -569,8 +569,6 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
     journey.step("create project agent session", "agents", create, cases=["S-141.1"])
 
     def list_sessions() -> str | None:
-        if not session_id:
-            return "agent session list cannot run because session creation failed"
         with invocation_context(step_id="S-141.2"):
             status, body, _ = _ux_request(base, token=token)
         data = body.get("data", body) if isinstance(body, dict) else {}
@@ -584,11 +582,10 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
             return "agent session list total did not include the created session"
         return None
 
-    journey.step("list project agent sessions", "agents", list_sessions, cases=["S-141.2"])
+    journey.step("list project agent sessions", "agents", list_sessions, cases=["S-141.2"],
+                 requires=("step:create project agent session",))
 
     def inspect_session() -> str | None:
-        if not session_id:
-            return "agent session inspection cannot run because session creation failed"
         for suffix, description in (("", "detail"), ("/turns", "turn history"), ("/plan", "plan")):
             with invocation_context(step_id="S-141.3"):
                 status, body, _ = _ux_request(f"{base}/{session_id}{suffix}", token=token)
@@ -607,7 +604,8 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
                     return f"agent session {description} did not identify the created session"
         return None
 
-    journey.step("inspect project agent session", "agents", inspect_session, cases=["S-141.3"])
+    journey.step("inspect project agent session", "agents", inspect_session, cases=["S-141.3"],
+                 requires=("step:create project agent session",))
 
     def unknown_session() -> str | None:
         missing_id = "session-does-not-exist"

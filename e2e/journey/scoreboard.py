@@ -277,8 +277,12 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
             error = details.get("error") if isinstance(details.get("error"), dict) else {}
             error_code = error.get("code") if isinstance(error.get("code"), str) else None
             error_message = error.get("message") if isinstance(error.get("message"), str) else None
-            failure = (f"{error_code}: {' '.join(error_message.split())}"
-                       if error_code and error_message else "structured error unavailable")
+            recorded_message = root_step.get("message")
+            failure = (f"{error_code}: {error_message}"
+                       if error_code and error_message else
+                       recorded_message if isinstance(recorded_message, str) and recorded_message else
+                       "failure message unavailable")
+            failure = " ".join(failure.split())
             failure = failure[:FAILURE_MAX_LENGTH]
             roots.append({"mode": mode, "source": filename, "stepId": root_id,
                           "step": root_step.get("name", root_id),
@@ -404,10 +408,11 @@ def _render_mode_report(mode: str, report: dict) -> list[str]:
              f"Claims reachable (not BLOCKED): **{headline['claimsReachable']['count']} / {headline['claimsReachable']['total']}**.",
              "", "### Blocking roots", ""]
     if report["blockingRoots"]:
-        lines.extend(["| Layer | Step ID | Step | Impacted claims | Blocked cases | Failure |",
-                      "|---:|---|---|---:|---|---|"])
+        lines.extend(["| Layer | Step ID | Step | Impacted claims | Blocked steps | Blocked cases | Failure |",
+                      "|---:|---|---|---:|---|---|---|"])
         for root in report["blockingRoots"]:
             lines.append(f"| {root['layer']} | `{root['stepId']}` | {root['step']} | {root['unblockedClaims']} | "
+                         f"{', '.join(f'`{step_id}`' for step_id in root['blockedStepIds']) or 'none'} | "
                          f"{', '.join(root['blockedCaseIds']) or 'none'} | {root['failure']} |")
     else:
         lines.append("No failed roots.")
