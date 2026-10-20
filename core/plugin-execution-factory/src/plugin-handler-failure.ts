@@ -39,7 +39,7 @@ function recordPluginFailure(
   malformedField?: string,
   evidenceType?: string,
   evidencePreview?: string,
-  contractDiagnostic?: { sourceCode: unknown; sourceHintType: string },
+  sourceFailure?: { sourceCode?: string; sourceErrorClass: string; sourceMessage?: string; failureMode: 'thrown' | 'returned'; sourceHintType: string },
 ): void {
   const logger = createContextLogger(context.logger, context.logContext)
     .forOperation('plugin.handler.failed', { correlationId: context.correlationId })
@@ -51,7 +51,9 @@ function recordPluginFailure(
   }
   logger.event('error', {
     event: 'plugin.handler.failed',
-    message: contractDiagnostic ? 'Plugin handler returned a malformed failure envelope.' : envelope.message,
+    message: sourceFailure && envelope.code === 'KB_PLUGIN_CONTRACT_VIOLATION'
+      ? 'Plugin handler failure did not satisfy the error envelope contract.'
+      : envelope.message,
     fields: {
       code: envelope.code,
       pluginId: context.pluginId,
@@ -59,22 +61,23 @@ function recordPluginFailure(
       command: context.command,
       failureReason: reason,
       correlationId: context.correlationId,
-      ...(!contractDiagnostic ? { serializedError: logger.redactSensitiveValues(context.serializedError ?? error) } : {}),
-      ...(contractDiagnostic ? {
-        sourceCode: typeof contractDiagnostic.sourceCode === 'string'
-          ? logger.redactSensitiveValues(contractDiagnostic.sourceCode)
-          : contractDiagnostic.sourceCode === undefined
-            ? 'undefined'
-            : typeof contractDiagnostic.sourceCode,
-        sourceHintType: contractDiagnostic.sourceHintType,
+      ...(sourceFailure ? {
+        ...(sourceFailure.sourceCode ? { sourceCode: sourceFailure.sourceCode } : {}),
+        sourceErrorClass: sourceFailure.sourceErrorClass,
+        ...(sourceFailure.sourceMessage ? { sourceMessage: sourceFailure.sourceMessage } : {}),
+        failureMode: sourceFailure.failureMode,
+        sourceHintType: sourceFailure.sourceHintType,
       } : {}),
+      ...(!sourceFailure || envelope.code !== 'KB_PLUGIN_CONTRACT_VIOLATION'
+        ? { serializedError: logger.redactSensitiveValues(context.serializedError ?? error) }
+        : {}),
       ...(malformedField ? {
         malformedField,
         malformedFieldType: evidenceType,
-        ...(!contractDiagnostic ? { malformedFieldPreview: evidencePreview } : {}),
+        ...(!sourceFailure || envelope.code !== 'KB_PLUGIN_CONTRACT_VIOLATION' ? { malformedFieldPreview: evidencePreview } : {}),
       } : {}),
     },
-    ...(!contractDiagnostic ? { error: logError } : {}),
+    ...(!sourceFailure || envelope.code !== 'KB_PLUGIN_CONTRACT_VIOLATION' ? { error: logError } : {}),
   });
 }
 
@@ -155,6 +158,8 @@ export function normalizePluginHandlerFailure(
       ? Reflect.get(envelopeCandidate, malformedField ?? '')
       : undefined;
   const contextLogger = createContextLogger(context.logger, context.logContext);
+  const sourceIdentityCandidate = returnedCandidate ?? context.serializedError ?? envelopeCandidate;
+  const sourceFailure = describeSourceFailure(sourceIdentityCandidate, context.returnedFailure === true ? 'returned' : 'thrown', contextLogger);
   const observedEvidence = contractEnvelope?.details?.observedType &&
     contractEnvelope.details.observedValuePreview
     ? {
@@ -174,8 +179,21 @@ export function normalizePluginHandlerFailure(
         correlationId: context.correlationId,
         message: `Plugin ${context.pluginId} command ${context.command} returned malformed error field "${malformedField}".`,
         hint: 'Return a valid product or platform error envelope.',
-        details: { plugin: context.pluginId, command: context.command, field: malformedField ?? 'envelope', ...safeObservedEvidence },
+        details: {
+          plugin: context.pluginId,
+          command: context.command,
+          field: malformedField ?? 'envelope',
+          ...safeObservedEvidence,
+          ...sourceFailureDetails(sourceFailure),
+        },
       })
+    : canonicalEnvelope?.code === 'KB_PLUGIN_COMMAND_FAILED'
+      ? createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
+          correlationId: context.correlationId,
+          message: canonicalEnvelope.message,
+          hint: canonicalEnvelope.hint,
+          details: { ...(canonicalEnvelope.details ?? {}), ...sourceFailureDetails(sourceFailure) },
+        })
     : canonicalEnvelope
       ? canonicalEnvelope
       : createErrorEnvelope('KB_PLUGIN_COMMAND_FAILED', {
@@ -184,18 +202,56 @@ export function normalizePluginHandlerFailure(
             plugin: context.pluginId,
             command: context.command,
             failureReason: reason,
+            ...sourceFailureDetails(sourceFailure),
           },
         });
   const envelope = contextLogger.redactSensitiveValues(rawEnvelope);
-  const contractDiagnostic = envelope.code === 'KB_PLUGIN_CONTRACT_VIOLATION'
-    ? { sourceCode, sourceHintType: sourceHintType(envelopeCandidate) }
-    : undefined;
   if (typedEnvelope) {
-    recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), 'typed product or platform error', context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview, contractDiagnostic);
+    recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), 'typed product or platform error', context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview,
+      envelope.code === 'KB_PLUGIN_CONTRACT_VIOLATION' || envelope.code === 'KB_PLUGIN_COMMAND_FAILED' ? sourceFailure : undefined);
     return envelope;
   }
-  recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), reason, context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview, contractDiagnostic);
+  recordPluginFailure(context, envelope, context.serializedError ?? serializeError(error), reason, context.diagnosticStack, malformedField, safeObservedEvidence.observedType, safeObservedEvidence.observedValuePreview,
+    malformedReturn || envelope.code === 'KB_PLUGIN_COMMAND_FAILED' ? sourceFailure : undefined);
   return envelope;
+}
+
+function describeSourceFailure(
+  value: unknown,
+  failureMode: 'thrown' | 'returned',
+  logger: ReturnType<typeof createContextLogger>,
+): { sourceCode?: string; sourceErrorClass: string; sourceMessage?: string; failureMode: 'thrown' | 'returned'; sourceHintType: string } {
+  const sourceCode = typeof value === 'object' && value !== null && 'code' in value && typeof value.code === 'string'
+    ? value.code
+    : undefined;
+  const sourceErrorClass = value instanceof Error
+    ? value.name || value.constructor.name
+    : typeof value === 'object' && value !== null && 'name' in value && typeof value.name === 'string'
+      ? value.name
+    : typeof value === 'object' && value !== null && value.constructor?.name
+      ? value.constructor.name
+      : typeof value;
+  const sourceMessage = typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
+    ? logger.redactSensitiveValues(value.message).slice(0, 256)
+    : undefined;
+  return {
+    ...(sourceCode ? { sourceCode: logger.redactSensitiveValues(sourceCode).slice(0, 256) } : {}),
+    sourceErrorClass: logger.redactSensitiveValues(sourceErrorClass).slice(0, 128),
+    ...(sourceMessage ? { sourceMessage } : {}),
+    failureMode,
+    sourceHintType: sourceHintType(value),
+  };
+}
+
+function sourceFailureDetails(
+  sourceFailure: ReturnType<typeof describeSourceFailure>,
+): Record<string, string> {
+  return {
+    ...(sourceFailure.sourceCode ? { sourceCode: sourceFailure.sourceCode } : {}),
+    sourceErrorClass: sourceFailure.sourceErrorClass,
+    ...(sourceFailure.sourceMessage ? { sourceMessage: sourceFailure.sourceMessage } : {}),
+    failureMode: sourceFailure.failureMode,
+  };
 }
 
 function sourceHintType(value: unknown): string {
