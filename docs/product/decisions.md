@@ -397,10 +397,11 @@ Cases: S-007.4, S-041.7 to S-041.13, S-045.5, S-104, S-140.6.
 Fresh local and secured installs resolve the same built-in adapter for every platform slot with a persistent local implementation, including when the user has not added a binding. Defaults are replaceable through `kb adapter bind <slot> <package>`; replacing a provider does not migrate or delete data held by the previous provider. An available persistent adapter must never be silently replaced by an InMemory fallback. OpenAI remains the implicit LLM provider; its adapter can construct without a key and reports `KB_ADAPTER_CREDENTIALS_MISSING` only when used. Missing credentials for optional capabilities are warning-severity doctor findings and do not make an otherwise healthy install fail; use reports the typed credentials error. Adapter manifests may declare required credential options as secret values with environment sources; these credentials may be missing at construction, while required structural options such as a service map exclude a provider from implicit defaults. Embeddings and vector store remain unconfigured and return typed adapter-required errors without configured providers. Durable account, workflow, KV, document, and analytics data survives a host restart. Doctor diagnosis is read-only; `kb-create doctor --fix` is the explicit repair operation for missing installed manifest projections.
 
 The sealed base install includes `@kb-labs/adapters-openai` so the runtime can
-select it through `defaultFor: ["llm"]` without writing an explicit
-`platform.adapters.llm` binding. With `OPENAI_API_KEY` unset, adapter list and
-doctor report the missing credential as a warning; an LLM request returns the
-typed credentials error.
+select it through `defaultFor: { llm: ["llm"] }` without writing an explicit
+`platform.adapters.llm` binding. Each `defaultFor` entry maps a platform slot
+to package entry-point path segments; an empty array selects the package root.
+With `OPENAI_API_KEY` unset, adapter list and doctor report the missing
+credential as a warning; an LLM request returns the typed credentials error.
 Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11.
 
 ### 2026-10-01: Explicit token kinds and lifecycle contract changes

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const SUPPORTED_SCHEMAS = new Set(['kb.service/1', 'kb.adapter/1', 'kb.plugin/3'])
@@ -22,6 +22,34 @@ export async function emitManifestJson({ manifestModule, outputPath }) {
   const output = resolve(outputPath)
   mkdirSync(dirname(output), { recursive: true })
   writeFileSync(output, `${JSON.stringify(manifest, null, 2)}\n`)
+  if (manifest.schema === 'kb.adapter/1') {
+    const requirements = []
+    for (const [key, option] of Object.entries(manifest.configSchema ?? {})) {
+      if (!option.doctor) continue
+      if (!option.required || !option.secret || !option.env || Object.keys(manifest.defaultFor ?? {}).length !== 1) {
+        throw new TypeError(`adapter manifest ${manifest.id} option ${key} has doctor metadata without required secret, env, and exactly one default slot declaration`)
+      }
+      for (const slot of Object.keys(manifest.defaultFor)) {
+        const pointer = value => value.replaceAll('~', '~0').replaceAll('/', '~1')
+        requirements.push({
+          id: option.doctor.id,
+          path: `/platform/adapterOptions/${pointer(slot)}/${pointer(key)}`,
+          required: option.required,
+          ...(option.doctor.optional !== undefined ? { optional: option.doctor.optional } : {}),
+          ...(option.doctor.severity ? { severity: option.doctor.severity } : {}),
+          secret: option.secret,
+          env: option.env,
+          services: option.doctor.services,
+          ...(option.doctor.action ? { action: option.doctor.action } : {}),
+          hint: option.doctor.hint,
+        })
+      }
+    }
+    writeFileSync(join(dirname(output), 'kb-create.requirements.json'), `${JSON.stringify({
+      schema: 'kb.create.requirements/v1',
+      requirements,
+    }, null, 2)}\n`)
+  }
   return manifest
 }
 

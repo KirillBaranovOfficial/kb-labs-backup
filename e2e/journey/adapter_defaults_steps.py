@@ -723,32 +723,16 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                      cases=["S-048.2"], requires=("step:bind the platform storage adapter",))
 
         def reject_project_adapter_config() -> None:
-            error_to_raise = None
-            try:
-                for project_config in (
-                    {"platform": {"adapters": {"storage": "@kb-labs/adapters-fs"}}},
-                    {"adapters": {"storage": "@kb-labs/adapters-fs"}},
-                ):
-                    write_config(project_a, project_config)
-                    result = runner(kb_command([ "adapter", "list", "--json"]), cwd=str(project_a), env=base_env,
-                                    capture_output=True, text=True, timeout=300)
-                    payload = _json(result, ["adapter", "list", "--json"])
-                    error = payload.get("error")
-                    if result.returncode == 0 or not isinstance(error, dict) or error.get("code") != "KB_ADAPTER_PROJECT_SCOPE":
-                        raise RuntimeError("project adapter config did not return KB_ADAPTER_PROJECT_SCOPE")
-                    if "platform config" not in str(error.get("hint", "")):
-                        raise RuntimeError("project adapter scope error did not point to platform config")
-            except Exception as error:
-                error_to_raise = error
-            finally:
-                try:
-                    write_config(project_a, {})
-                except Exception as cleanup_error:
-                    if error_to_raise is None:
-                        raise
-                    raise error_to_raise from cleanup_error
-            if error_to_raise is not None:
-                raise error_to_raise
+            for key in ("platform.adapters.storage", "adapters.storage"):
+                command = ["config", "set", "--scope", "project", key, "@kb-labs/adapters-fs", "--json"]
+                result = runner(kb_command(command), cwd=str(project_a), env=base_env,
+                                capture_output=True, text=True, timeout=300)
+                payload = _json(result, command)
+                error = payload.get("error")
+                if result.returncode == 0 or not isinstance(error, dict) or error.get("code") != "KB_ADAPTER_PROJECT_SCOPE":
+                    raise RuntimeError("project adapter config did not return KB_ADAPTER_PROJECT_SCOPE")
+                if "platform config" not in str(error.get("hint", "")):
+                    raise RuntimeError("project adapter scope error did not point to platform config")
         journey.step("reject project adapter configuration", "adapter", reject_project_adapter_config,
                      cases=["S-048.3"], requires=("step:configure platform storage options",))
 
@@ -918,7 +902,8 @@ def _save_run(run_workflow, project):
 
 
 def _assert_no_network_defaults(rows: dict[str, dict], assert_doctor) -> None:
-    if any(row.get("networkRequired") is not False for slot, row in rows.items() if slot != "llm"):
+    if any(row.get("networkRequired") is not False for slot, row in rows.items()
+           if slot != "llm" and not row.get("requiresConfiguration")):
         raise RuntimeError("a built-in default reports a network dependency")
     if rows.get("llm", {}).get("networkRequired") is not True:
         raise RuntimeError("the OpenAI LLM default does not report its external network requirement")

@@ -20,7 +20,7 @@ export const manifest: AdapterManifest = {
   type: 'core',
   implements: 'IEventBus',
   networkRequired: false,
-  defaultFor: ['eventBus'],
+  defaultFor: { eventBus: [] },
   requires: {
     adapters: [{ id: 'cache', alias: 'cache' }],
     platform: '>= 1.0.0',

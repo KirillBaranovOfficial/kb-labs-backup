@@ -20,7 +20,7 @@ export const manifest: AdapterManifest = {
   type: "core",
   implements: "ILogger",
   networkRequired: false,
-  defaultFor: ["logger"],
+  defaultFor: { logger: [] },
   optional: {
     adapters: ["analytics"],
   },

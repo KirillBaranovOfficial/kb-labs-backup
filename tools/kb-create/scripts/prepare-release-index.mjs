@@ -146,11 +146,11 @@ const manifestFor = item => {
   return undefined;
 };
 
-// A package declares the configuration it needs (non-secret paths, secrets and
-// the environment variables/services they feed) in a `kb-create.requirements.json`
-// shipped in its tarball. It is separate from the declarative dist/manifest.json
-// artifact: this file only adds requirements and never replaces the package's
-// service, plugin, or adapter contract. The sealer
+// Service packages declare package-specific configuration in a
+// `kb-create.requirements.json`. Adapter packages receive this artifact from the
+// manifest build emitter, which projects their configSchema into the same
+// requirement format. The file never replaces a package's service, plugin, or
+// adapter contract. The sealer
 // validates each requirement's shape; here we only fail closed on a malformed
 // file, so a typo cannot silently ship a package without its requirements.
 const REQUIREMENTS_FILE = 'kb-create.requirements.json';
@@ -274,13 +274,18 @@ for (const item of stage) {
     const capabilities = (Array.isArray(manifest.implements) ? manifest.implements : [manifest.implements])
       .filter(Boolean)
       .map(interfaceToCapability);
-    if (manifest.defaultFor !== undefined && !Array.isArray(manifest.defaultFor)) {
-      throw new Error(`${item.name} defaultFor must be an array of provided capabilities`);
+    if (manifest.defaultFor !== undefined && (typeof manifest.defaultFor !== 'object' || Array.isArray(manifest.defaultFor) || manifest.defaultFor === null)) {
+      throw new Error(`${item.name} defaultFor must map provided capabilities to module entry points`);
     }
-    const defaults = manifest.defaultFor ?? [];
+    const defaults = Object.keys(manifest.defaultFor ?? {});
     for (const capability of defaults) {
       if (!capabilities.includes(capability)) {
         throw new Error(`${item.name} declares defaultFor ${capability} but does not implement it`);
+      }
+    }
+    for (const [capability, entrypoint] of Object.entries(manifest.defaultFor ?? {})) {
+      if (!Array.isArray(entrypoint)) {
+        throw new Error(`${item.name} defaultFor ${capability} must declare module path segments`);
       }
     }
     adapters.push({

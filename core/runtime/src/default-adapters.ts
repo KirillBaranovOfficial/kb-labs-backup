@@ -9,7 +9,7 @@ export interface ResolvedAdapterConfig {
 }
 
 /**
- * Fill blank adapter slots from installed manifests declaring `defaultFor`.
+ * Fill blank adapter slots from installed manifests declaring `defaultFor` entry points.
  * Explicit platform bindings always win. Only manifest metadata and
  * marketplace locks are used here, so core-platform stays independent of
  * concrete adapter packages.
@@ -39,15 +39,13 @@ export function resolveDiscoveredAdapterDefaults(
   for (const adapter of packages.values()) {
     const manifest = adapter.module.manifest;
     if (!manifest || typeof manifest !== 'object') {continue;}
-    const declared = manifest as { defaultFor?: unknown; configSchema?: Record<string, { required?: boolean; default?: unknown; secret?: boolean; env?: string }> };
-    const hasUnprovidedStructure = Object.values(declared.configSchema ?? {}).some(option =>
+    const hasUnprovidedStructure = Object.values(manifest.configSchema ?? {}).some(option =>
       option.required && option.default === undefined && !(option.secret && option.env),
     );
     if (hasUnprovidedStructure) {continue;}
-    const defaultFor = declared.defaultFor;
-    if (!Array.isArray(defaultFor)) {continue;}
-    for (const slot of defaultFor) {
-      if (typeof slot !== 'string' || adapters[slot]) {continue;}
+    const defaultFor = manifest.defaultFor ?? {};
+    for (const slot of Object.keys(defaultFor)) {
+      if (adapters[slot]) {continue;}
       const candidates = defaults.get(slot) ?? [];
       candidates.push(adapter);
       defaults.set(slot, candidates);
@@ -61,32 +59,36 @@ export function resolveDiscoveredAdapterDefaults(
     }
     const adapter = candidates[0];
     if (!adapter) {continue;}
-    const manifest = adapter.module.manifest as { implements?: string | string[] };
-    const capabilities = Array.isArray(manifest.implements) ? manifest.implements : [manifest.implements];
-    const subpath = slot === 'kvStore' && capabilities.includes('IKVStore') ? '/kv' : '';
-    adapters[slot] = `${adapter.packageName}${subpath}`;
+    const manifest = adapter.module.manifest;
+    const entrypoint = manifest.defaultFor?.[slot];
+    if (!entrypoint) {
+      throw new Error(`Adapter ${adapter.packageName} declares default slot ${slot} without an entry point. Add the module path to its adapter manifest and rebuild it with \`corepack pnpm --filter ${adapter.packageName} build\`.`);
+    }
+    adapters[slot] = [adapter.packageName, ...entrypoint].join('/');
     adapterOptions[slot] = {
-      ...defaultOptions(slot),
+      ...declaredDefaults(adapter.module.manifest, projectRoot),
       ...asRecord(adapterOptions[slot]),
     };
   }
 
   return { adapters, adapterOptions };
 
-  function defaultOptions(slot: string): Record<string, unknown> {
-    switch (slot) {
-      case 'storage': return { baseDir: resolveRuntimeStatePath(projectRoot, ['storage']) };
-      case 'documentDatabase':
-      case 'kvStore': return { filename: resolveRuntimeStatePath(projectRoot, ['database', 'kb.sqlite']) };
-      case 'analytics': return {
-        dbPath: resolveRuntimeStatePath(projectRoot, ['analytics', 'analytics.sqlite']),
-        retentionDays: 90,
-      };
-      case 'logRingBuffer': return { maxSize: 100 };
-      case 'logPersistence': return { collection: 'logs' };
-      default: return {};
+}
+
+function declaredDefaults(
+  manifest: DiscoveredAdapter['module']['manifest'],
+  projectRoot: string,
+): Record<string, unknown> {
+  if (!manifest || typeof manifest !== 'object') {return {};}
+  const result: Record<string, unknown> = {};
+  for (const [key, option] of Object.entries(manifest.configSchema ?? {})) {
+    if (option.defaultPath) {
+      result[key] = resolveRuntimeStatePath(projectRoot, option.defaultPath.segments);
+    } else if (option.default !== undefined) {
+      result[key] = option.default;
     }
   }
+  return result;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

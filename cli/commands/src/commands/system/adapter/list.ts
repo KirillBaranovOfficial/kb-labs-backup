@@ -2,6 +2,7 @@
 
 import { ADAPTER_DEFAULTS, toErrorEnvelope, ErrorEnvelopeError, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { ADAPTER_CONFIG_KEYS, discoverAdapters, isWorkspaceDevelopmentMode, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
+import { isEnvReference } from '@kb-labs/core-config';
 import { resolvePlatformDataPath, resolvePlatformDataRoot } from '@kb-labs/core-project-registry';
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
@@ -70,7 +71,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     const resolvedDefaults = await resolveInstalledAdapterDefaults({
       adapters: Object.fromEntries(Object.entries(config.adapters ?? {})),
       adapterOptions: Object.fromEntries(Object.entries(config.adapterOptions ?? {})),
-    }, loaded.platformRoot, loaded.projectRoot);
+    }, loaded.platformRoot, loaded.projectRoot ?? getContextCwd(ctx));
     const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
     const effectiveAdapterOptions = resolvedDefaults.adapterOptions as Record<string, unknown>;
     const discovered = await discoverAdapters(loaded.platformRoot);
@@ -118,7 +119,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       const missingCredentials = credentialOptions
         .filter(([key, field]) => {
           const value = optionValues[key];
-          return !(typeof value === 'string' && value.length > 0) && !(ctx.runtime.env(field.env ?? '') || '').length;
+          return !(typeof value === 'string' && value.length > 0 && !isEnvReference(value)) && !(ctx.runtime.env(field.env ?? '') || '').length;
         })
         .map(([, field]) => field.env as string);
       const baseDir = slot === 'storage' && option && typeof option === 'object' &&

@@ -316,7 +316,7 @@ func appendSelectedSDK(artifacts []contracts.Artifact, sdk contracts.Artifact, p
 }
 
 func appendSelectedAdapter(artifacts []contracts.Artifact, adapter catalog.Adapter) ([]contracts.Artifact, error) {
-	for _, existing := range artifacts {
+	for index, existing := range artifacts {
 		if existing.Identity() != adapter.Package {
 			continue
 		}
@@ -324,6 +324,7 @@ func appendSelectedAdapter(artifacts []contracts.Artifact, adapter catalog.Adapt
 		if !adapterRole || existing.Version != adapter.Version || existing.SHA256 != adapter.SHA256 || existing.Tarball != adapter.Tarball {
 			return nil, contracts.PlanArtifactIdentityFailure(adapter.Package)
 		}
+		artifacts[index].Config = append([]contracts.ConfigRequirement(nil), adapter.Config...)
 		return artifacts, nil
 	}
 	return append(artifacts, artifact(adapter.Component, "adapter")), nil

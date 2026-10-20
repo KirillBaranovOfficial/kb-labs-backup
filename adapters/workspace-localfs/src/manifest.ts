@@ -12,7 +12,7 @@ export const manifest: AdapterManifest = {
   type: 'core',
   implements: 'IWorkspaceProvider',
   networkRequired: false,
-  defaultFor: ['workspaceProvider'],
+  defaultFor: { workspaceProvider: [] },
   contexts: ['workspace'],
   capabilities: {
     custom: {
