@@ -19,6 +19,29 @@ describe('shared HTTP failure boundary', () => {
     });
   });
 
+  it('retains the failing field for structured HTTP validation errors', () => {
+    const result = normalizeHttpFailure({
+      code: 'FST_ERR_VALIDATION',
+      statusCode: 400,
+      validation: [{
+        instancePath: '/events',
+        schemaPath: '#/properties/events/maxItems',
+        keyword: 'maxItems',
+        params: { limit: 500 },
+        message: 'must NOT have more than 500 items',
+      }],
+    }, { correlationId: 'request-validation', statusCode: 400 });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        correlationId: 'request-validation',
+        details: { field: 'events' },
+      },
+    });
+  });
+
   it('normalizes a plain known code and rejects a catalog code without an HTTP status', () => {
     expect(normalizeHttpFailure({ error: { code: 'KB_RUNTIME_INPUT_INVALID' } }, { correlationId: 'request-2', statusCode: 500 })).toMatchObject({
       ok: false,
