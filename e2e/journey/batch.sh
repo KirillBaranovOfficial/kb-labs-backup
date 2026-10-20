@@ -16,8 +16,6 @@ fi
 : > "$SHARED_OUT/build.log"
 cd "$ROOT"
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/kb-journey-batch.XXXXXX")
-unit_home=""
 commit=""
 interrupted=0
 batch_started_at=$(date +%s)
@@ -76,12 +74,6 @@ cleanup() {
   fi
   printf '\n- Result: %s\n' "$result" >> "$SHARED_OUT/summary.md"
   write_metadata "$result"
-  if [ -n "$unit_home" ] && [ -d "$unit_home" ]; then
-    if ! chmod -R u+w "$unit_home"; then echo "could not make temporary HOME writable for cleanup: $unit_home" >&2; fi
-    if ! rm -rf "$unit_home"; then echo "could not remove temporary HOME: $unit_home" >&2; fi
-  fi
-  if ! chmod -R u+w "$work"; then echo "could not make batch temp directory writable for cleanup: $work" >&2; fi
-  if ! rm -rf "$work"; then echo "could not remove batch temp directory: $work" >&2; fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -124,54 +116,23 @@ if [ "$reset_rc" -ne 0 ]; then
   echo "journey stack reset failed; see $SHARED_OUT/reset.log; next: e2e/journey/run.sh --down" >&2
   exit 1
 fi
-start_stage build
-build_rc=0
-(cd tools/kb-devkit && go build -o "$work/kb-devkit" .) > "$SHARED_OUT/build.log" 2>&1 || build_rc=$?
-if [ "$build_rc" -ne 0 ]; then
-  finish_stage
-  record_failure_log build build.log
-  echo "could not build kb-devkit from this checkout; see $SHARED_OUT/build.log; next: (cd tools/kb-devkit && go build .)" >&2
+preflight_rc=0
+"$ROOT/e2e/journey/preflight.sh" "$SHARED_OUT" "$BUILD_BASE" || preflight_rc=$?
+if [ -s "$SHARED_OUT/stage-durations.env" ]; then
+  . "$SHARED_OUT/stage-durations.env"
+  build_seconds=$build
+  candidate_seconds=$candidate
+  unit_seconds=$unit
+  rm -f "$SHARED_OUT/stage-durations.env"
+fi
+if [ "$preflight_rc" -ne 0 ]; then
+  failure_stage=${failed_stage:-build}
+  record_failure_log "$failure_stage" "$failure_stage.log"
   exit 1
 fi
-if ! env KB_DEVKIT_BASE_REF="$BUILD_BASE" "$work/kb-devkit" run build --affected >> "$SHARED_OUT/build.log" 2>&1; then
-  finish_stage
-  record_failure_log build build.log
-  echo "devkit affected build failed; see $SHARED_OUT/build.log; next: (cd tools/kb-devkit && KB_DEVKIT_BASE_REF='$BUILD_BASE' go run . run build --affected)" >&2
-  exit 1
-fi
-output_check_rc=0
-node "$ROOT/e2e/scripts/validate-package-outputs.mjs" --build-outputs "$ROOT" > "$SHARED_OUT/release-build-output-check.log" 2>&1 || output_check_rc=$?
-cat "$SHARED_OUT/release-build-output-check.log" >> "$SHARED_OUT/build.log"
-if [ "$output_check_rc" -ne 0 ]; then
-  finish_stage
-  record_failure_log build build.log
-  cat "$SHARED_OUT/release-build-output-check.log" >&2
-  echo "release package build outputs are missing; see $SHARED_OUT/build.log" >&2
-  exit 1
-fi
-finish_stage
-unit_home=$(mktemp -d "${TMPDIR:-/tmp}/kb-batch-unit.XXXXXX")
-unit_rc=0
-start_stage unit
-HOME="$unit_home" env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET python3 -m unittest discover -s e2e/journey -p 'test_*.py' > "$SHARED_OUT/unit.log" 2>&1 || unit_rc=$?
-if ! chmod -R u+w "$unit_home"; then echo "could not make temporary HOME writable for cleanup: $unit_home" >&2; fi
-if ! rm -rf "$unit_home"; then echo "could not remove temporary HOME: $unit_home" >&2; fi
-unit_home=""
-finish_stage
-if [ "$unit_rc" -ne 0 ]; then
-  record_failure_log unit unit.log
-  echo "journey unit suite failed; see $SHARED_OUT/unit.log; next: python3 -m unittest discover -s e2e/journey -p 'test_*.py'" >&2
-  exit 1
-fi
-start_stage candidate
-candidate_rc=0
-e2e/journey/prepare-candidate.sh > "$SHARED_OUT/candidate.log" 2>&1 || candidate_rc=$?
-finish_stage
-if [ "$candidate_rc" -ne 0 ]; then
-  record_failure_log candidate candidate.log
-  echo "journey candidate preparation failed; see $SHARED_OUT/candidate.log; next: e2e/journey/prepare-candidate.sh" >&2
-  exit 1
-fi
+build_seconds=$build
+candidate_seconds=$candidate
+unit_seconds=$unit
 
 batch_rc=0
 for mode in local secured; do
