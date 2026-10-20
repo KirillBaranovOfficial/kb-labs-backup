@@ -454,11 +454,15 @@ func eventsCommand(root runnerRoot, args []string, output io.Writer) (int, error
 	state := fs.String("state", "", "directory containing events.jsonl")
 	follow := fs.Bool("follow", false, "continue streaming appended events")
 	filter := fs.String("filter", "", "comma-separated event types to emit")
+	offset := fs.Int64("offset", 0, "start reading events.jsonl at this byte offset")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
 	if *state == "" {
 		return 2, fmt.Errorf("%s events: --state is required; next: %s events --help", root.Name(), root.InvocationCommand())
+	}
+	if *offset < 0 {
+		return 2, fmt.Errorf("%s events: --offset must not be negative; next: %s events --help", root.Name(), root.InvocationCommand())
 	}
 	ctx := context.Background()
 	if *follow {
@@ -470,7 +474,7 @@ func eventsCommand(root runnerRoot, args []string, output io.Writer) (int, error
 	if err != nil {
 		return 2, fmt.Errorf("%s events: %w; next: %s events --help", root.Name(), err, root.InvocationCommand())
 	}
-	if err := proc.Events(ctx, *state, *follow, filters, output); err != nil && !errors.Is(err, context.Canceled) {
+	if err := proc.Events(ctx, *state, *follow, filters, *offset, output); err != nil && !errors.Is(err, context.Canceled) {
 		return 1, fmt.Errorf("%s events: %w\nnext: ls -l %s", root.Name(), err, shellQuote(filepath.Join(*state, "events.jsonl")))
 	}
 	return 0, nil

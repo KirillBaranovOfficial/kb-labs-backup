@@ -32,6 +32,7 @@ type EventType string
 const (
 	EventQueued     EventType = "queued"
 	EventBlocked    EventType = "blocked"
+	EventIdle       EventType = "idle"
 	EventPressure   EventType = "pressure"
 	EventOverBudget EventType = "over-budget"
 	EventStart      EventType = "start"
@@ -79,6 +80,7 @@ type Event struct {
 	Signal             string               `json:"signal,omitempty"`
 	Error              string               `json:"error,omitempty"`
 	Reason             string               `json:"reason,omitempty"`
+	WaitingItems       []string             `json:"waiting_items,omitempty"`
 	Position           int                  `json:"position,omitempty"`
 	DiskNeedBytes      uint64               `json:"disk_need_bytes,omitempty"`
 	DiskFreeBytes      uint64               `json:"disk_free_bytes,omitempty"`
@@ -246,6 +248,7 @@ type record struct {
 	Slots              int       `json:"slots,omitempty"`
 	QueueOrder         uint64    `json:"queue_order,omitempty"`
 	EnqueuedAt         time.Time `json:"enqueued_at,omitempty"`
+	IdleReported       bool      `json:"idle_reported,omitempty"`
 	WaitReason         string    `json:"wait_reason,omitempty"`
 	WaitGate           string    `json:"wait_gate,omitempty"`
 	HoldGate           string    `json:"hold_gate,omitempty"`
