@@ -35,7 +35,7 @@ describe('loadAdapterManifest', () => {
     }));
     await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
       schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture-cache', name: 'Fixture Cache', version: '1.0.0',
-      type: 'core', implements: 'ICache', networkRequired: false, configSchema: { directory: { type: 'string' } },
+      type: 'core', implements: 'ICache', networkRequired: false, defaultFor: { cache: [] }, configSchema: { directory: { type: 'string' } },
     })};`);
 
     const result = await loadAdapterManifest({ spec: '@fixture/cache', platformRoot: tempRoot });
@@ -43,6 +43,27 @@ describe('loadAdapterManifest', () => {
     if (result.kind !== 'adapter') {throw new Error('expected adapter manifest');}
     expect(result.manifest.requires).toBeUndefined();
     expect(result.manifest.configSchema?.directory?.type).toBe('string');
+  });
+
+  it.each([
+    ['array', ['storage']],
+    ['non-array entrypoint', { storage: 'database' }],
+    ['invalid path segment', { storage: ['..'] }],
+  ] as const)('returns a structured failure for a malformed defaultFor %s', async (_kind, defaultFor) => {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-loader-'));
+    const packageRoot = path.join(tempRoot, 'malformed-default-for');
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: 'malformed-default-for', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
+    }));
+    await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
+      schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'malformed-default-for', name: 'Malformed Default', version: '1.0.0',
+      type: 'core', implements: 'ICache', networkRequired: false, defaultFor,
+    })};`);
+
+    await expect(loadAdapterManifest({ packageRoot })).resolves.toMatchObject({
+      kind: 'failed', reason: 'adapter manifest defaultFor must be a slot-to-entrypoint map of path segments',
+    });
   });
 
   it('rejects an adapter manifest without its required network declaration', async () => {

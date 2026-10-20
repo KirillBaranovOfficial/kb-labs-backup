@@ -109,9 +109,9 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     // ID must come from the manifest's own id, not a package-name heuristic.
     packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
     packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-daemon', '2.0.0', '{"schema":"kb.service/1","id":"workflow","runtime":{"port":7778,"healthCheck":"/health"}}', { bin: { 'kb-workflow': './dist/index.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', '{"schema":"kb.adapter/1","id":"pino-logger","implements":["ILogger"],"defaultFor":["logger"]}'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', '{"schema":"kb.adapter/1","id":"pino-logger","implements":["ILogger"],"defaultFor":{"logger":[] }}'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-service-transport-http', '2.0.0', '{"schema":"kb.adapter/1","id":"service-transport-http","implements":["IServiceTransport"]}'),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', '{"schema":"kb.adapter/1","id":"sqlite-stores","implements":["IDocumentDatabase","IKVStore"],"defaultFor":["documentDatabase","kvStore"]}'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', '{"schema":"kb.adapter/1","id":"sqlite-stores","implements":["IDocumentDatabase","IKVStore"],"defaultFor":{"documentDatabase":[],"kvStore":["kv"]}}'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-openai', '2.0.0', '{"schema":"kb.adapter/1","id":"openai","implements":["ILLM"]}'),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
@@ -323,7 +323,7 @@ test('filesystem adapter contributes the project storage directory default to th
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-fs', '2.0.0', '{"schema":"kb.adapter/1","id":"fs-storage","implements":"IStorage","defaultFor":["storage"]}', {}, {
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-fs', '2.0.0', '{"schema":"kb.adapter/1","id":"fs-storage","implements":"IStorage","defaultFor":{"storage":[] }}', {}, {
       'kb-create.requirements.json': JSON.stringify({ schema: 'kb.create.requirements/v1', requirements: [requirement] }),
     }),
   ];
@@ -482,10 +482,10 @@ function writeStageManifest(root, packageRoot, stage, artifacts) {
     staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })));
   }
   if (!packages.has('@kb-labs/adapters-state-broker')) {
-    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', '{"schema":"kb.adapter/1","id":"state-broker","implements":"ICache","defaultFor":["cache"]}'));
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', '{"schema":"kb.adapter/1","id":"state-broker","implements":"ICache","defaultFor":{"cache":[] }}'));
   }
   if (!packages.has('@kb-labs/adapters-sqlite')) {
-    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', '{"schema":"kb.adapter/1","id":"sqlite-stores","implements":["IDocumentDatabase","IKVStore"],"defaultFor":["documentDatabase","kvStore"]}'));
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', '{"schema":"kb.adapter/1","id":"sqlite-stores","implements":["IDocumentDatabase","IKVStore"],"defaultFor":{"documentDatabase":[],"kvStore":["kv"]}}'));
   }
   if (!packages.has('@kb-labs/adapters-service-transport-http')) {
     staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-service-transport-http', '2.0.0', '{"schema":"kb.adapter/1","id":"service-transport-http","implements":["IServiceTransport"]}'));
@@ -564,12 +564,12 @@ test('the release index requires and binds the persistent fresh-install defaults
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-fs', '2.0.0', '{"schema":"kb.adapter/1","id":"fs","implements":"IStorage","defaultFor":["storage"]}'),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', '{"schema":"kb.adapter/1","id":"state-broker","implements":"ICache","defaultFor":["cache"]}'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-fs', '2.0.0', '{"schema":"kb.adapter/1","id":"fs","implements":"IStorage","defaultFor":{"storage":[] }}'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', '{"schema":"kb.adapter/1","id":"state-broker","implements":"ICache","defaultFor":{"cache":[] }}'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-eventbus-cache', '2.0.0', '{"schema":"kb.adapter/1","id":"eventbus-cache","implements":"IEventBus"}'),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', '{"schema":"kb.adapter/1","id":"sqlite-stores","implements":["IDocumentDatabase","IKVStore"],"defaultFor":["documentDatabase","kvStore"]}'),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-analytics-sqlite', '2.0.0', '{"schema":"kb.adapter/1","id":"analytics","implements":"IAnalytics","defaultFor":["analytics"]}'),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-openai', '2.0.0', '{"schema":"kb.adapter/1","id":"openai-llm","implements":"ILLM","defaultFor":["llm"]}'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', '{"schema":"kb.adapter/1","id":"sqlite-stores","implements":["IDocumentDatabase","IKVStore"],"defaultFor":{"documentDatabase":[],"kvStore":["kv"]}}'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-analytics-sqlite', '2.0.0', '{"schema":"kb.adapter/1","id":"analytics","implements":"IAnalytics","defaultFor":{"analytics":[] }}'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-openai', '2.0.0', '{"schema":"kb.adapter/1","id":"openai-llm","implements":"ILLM","defaultFor":{"llm":["llm"] }}'),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
