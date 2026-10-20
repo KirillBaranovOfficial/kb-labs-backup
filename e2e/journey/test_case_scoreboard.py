@@ -101,6 +101,43 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertIn("Blocking roots", render_markdown(scoreboard))
         self.assertIn("Unclaimed", render_markdown(scoreboard))
 
+    # case: S-261.3
+    def test_j86_fixture_projects_recorded_failure_and_installer_prerequisite(self):
+        fixture = JOURNEY_ROOT / "testdata" / "x104-j86" / "local.json"
+        data = json.loads(fixture.read_text(encoding="utf-8"))
+        recorded_session_failure = next(step["message"] for step in data["steps"]
+                                        if step["stepId"] == "case:S-141.1")
+        journey = Journey("local", "x104-j86-replay")
+        journey.step("create project agent session", "agents", lambda: recorded_session_failure,
+                     cases=["S-141.1"])
+        for name, claim in (("list project agent sessions", "S-141.2"),
+                            ("inspect project agent session", "S-141.3")):
+            journey.step(name, "agents", lambda: self.fail("blocked check was invoked"), cases=[claim],
+                         requires=("step:create project agent session",))
+        data["steps"] = [step for step in data["steps"]
+                         if step["stepId"] not in {"case:S-141.1", "case:S-141.2", "case:S-141.3"}]
+        data["steps"].extend(journey.result().steps)
+        self.write_json("installer-cases-local.json", data)
+
+        real_catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
+        report = build_scoreboard(self.reports, real_catalog, ["local"])
+        root_step = next(step for step in data["steps"]
+                         if step["stepId"] == "case:PC-001.10,S-181.3")
+        root = next(item for item in report["blockingRoots"]
+                    if item["stepId"] == root_step["stepId"])
+        self.assertEqual(root["failure"], root_step["message"])
+        self.assertIn("case:S-181.6", root["blockedStepIds"])
+        blocked = next(step for step in data["steps"] if step["stepId"] == "case:S-181.6")
+        self.assertEqual(blocked["status"], "BLOCKED")
+        self.assertEqual(blocked["details"]["requires"], [f"step:{root_step['stepId']}"])
+        session_root = next(item for item in report["blockingRoots"]
+                            if item["stepId"] == "case:S-141.1")
+        self.assertEqual(session_root["failure"], recorded_session_failure)
+        self.assertEqual(session_root["blockedStepIds"], ["case:S-141.2", "case:S-141.3"])
+        markdown = render_markdown(report)
+        self.assertIn("`case:S-141.2`", markdown)
+        self.assertIn(recorded_session_failure, markdown)
+
     def test_state_precondition_links_failed_state_owner_to_blocked_claim(self):
         self.write_json("service-local.json", {
             "case_run": {"mode": "local", "claims": []},
