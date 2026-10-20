@@ -128,10 +128,36 @@ describe('discoverAdapters (lock-based)', () => {
 
     const result = await discoverAdapters(tmpDir, {
       development: true,
+      workspaceRoot: tmpDir,
       configuredPackages: [{ packageName: '@kb-labs/adapters-sqlite', slot: 'documentDatabase' }],
     });
 
     expect(result.get('@kb-labs/adapters-sqlite')).toMatchObject({ packageName: '@kb-labs/adapters-sqlite', pkgRoot: packageRoot });
+  });
+
+  // case: S-179.5
+  it('loads workspace CLI adapters from the CLI workspace when platform root is isolated', async () => {
+    const platformRoot = path.join(tmpDir, 'home', 'platform');
+    const workspaceRoot = path.join(tmpDir, 'checkout');
+    const packageRoot = path.join(workspaceRoot, 'adapters', 'fs');
+    const distDir = path.join(packageRoot, 'dist');
+    await fs.mkdir(distDir, { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
+    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@kb-labs/adapters-fs',
+      type: 'module',
+      kb: { adapter: { manifest: './dist/manifest.js' } },
+    }));
+    await fs.writeFile(path.join(distDir, 'manifest.js'), validAdapterManifest('IStorage'));
+    await fs.writeFile(path.join(distDir, 'index.js'), 'export function createAdapter() { return {}; }');
+
+    const result = await discoverAdapters(platformRoot, {
+      development: true,
+      workspaceRoot,
+      configuredPackages: [{ packageName: '@kb-labs/adapters-fs', slot: 'storage' }],
+    });
+
+    expect(result.get('@kb-labs/adapters-fs')).toMatchObject({ packageName: '@kb-labs/adapters-fs', pkgRoot: packageRoot });
   });
 
   it('classifies configured workspace adapters from their declared manifest, not package names', async () => {
@@ -140,6 +166,7 @@ describe('discoverAdapters (lock-based)', () => {
 
     const result = await discoverAdapters(tmpDir, {
       development: true,
+      workspaceRoot: tmpDir,
       configuredPackages: [{ packageName: '@example/storage', slot: 'storage' }],
     });
 
@@ -153,6 +180,7 @@ describe('discoverAdapters (lock-based)', () => {
 
     await expect(discoverAdapters(tmpDir, {
       development: true,
+      workspaceRoot: tmpDir,
       configuredPackages: [{ packageName: '@kb-labs/adapters-not-an-adapter', slot: 'logger' }],
     })).rejects.toMatchObject({
       name: 'AdapterUnavailableError',
@@ -169,6 +197,7 @@ describe('discoverAdapters (lock-based)', () => {
 
     const result = await discoverAdapters(tmpDir, {
       development: true,
+      workspaceRoot: tmpDir,
       configuredPackages: [{ packageName: '@example/configured', slot: 'storage' }],
     });
 
@@ -182,6 +211,7 @@ describe('discoverAdapters (lock-based)', () => {
 
     await expect(discoverAdapters(tmpDir, {
       development: true,
+      workspaceRoot: tmpDir,
       configuredPackages: [{ packageName: '@example/invalid', slot: 'storage' }],
     })).rejects.toMatchObject({
       name: 'AdapterUnavailableError',
@@ -200,6 +230,7 @@ describe('discoverAdapters (lock-based)', () => {
 
     await expect(discoverAdapters(tmpDir, {
       development: true,
+      workspaceRoot: tmpDir,
       configuredPackages: [{ packageName: '@example/invalid', slot: 'storage' }],
     })).rejects.toMatchObject({
       name: 'AdapterUnavailableError',
@@ -230,6 +261,7 @@ describe('discoverAdapters (lock-based)', () => {
       await writeWorkspacePackage(projectRoot, path.join(projectRoot, 'packages', 'project'), projectPackage, `${validAdapterManifest('IStorage')} export function createAdapter() { return {}; }`);
       const result = await discoverAdapters(tmpDir, {
         development: true,
+        workspaceRoot: tmpDir,
         configuredPackages: [{ packageName: projectPackage, slot: 'storage' }],
       });
       expect(result.has(projectPackage)).toBe(false);
@@ -246,6 +278,7 @@ describe('discoverAdapters (lock-based)', () => {
 
     const failure = discoverAdapters(tmpDir, {
       development: true,
+      workspaceRoot: tmpDir,
       configuredPackages: [{ packageName: '@example/unbuilt', slot: 'storage' }],
     });
     await expect(failure).rejects.toBeInstanceOf(AdapterUnavailableError);

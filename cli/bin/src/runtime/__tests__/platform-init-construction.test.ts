@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import { discoverAdapters, isWorkspaceDevelopmentMode, loadPlatformConfig } from "@kb-labs/core-runtime";
 import type { LoadPlatformConfigResult } from "@kb-labs/core-runtime";
 
 const mocks = vi.hoisted(() => {
@@ -82,5 +86,76 @@ describe("CLI adapter construction", () => {
       expect.objectContaining({ workspaceDevelopment: false }),
     );
     expect(result.projectRoot).toBe(projectRoot);
+  });
+
+  async function loadWorkspaceConfigFromCommitSubdirectory() {
+    const workspaceRoot = path.resolve(process.cwd(), "../..");
+    const invocationDir = path.join(workspaceRoot, "plugins/commit");
+    const home = await mkdtemp(path.join(tmpdir(), "cli-workspace-root-"));
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      KB_HOME: path.join(home, ".kb"),
+      KB_PLATFORM_ROOT: workspaceRoot,
+    };
+    delete env.KB_PROJECT_ROOT;
+    delete env.KB_PROJECT_ID;
+    const config = await loadPlatformConfig({
+      startDir: invocationDir,
+      env,
+      loadEnvFile: false,
+      projectScope: "platform",
+    });
+    const projectRoot = config.projectRoot;
+    if (!projectRoot) throw new Error("config resolver did not return a project root for the development config");
+    return { config, home, invocationDir, projectRoot, workspaceRoot };
+  }
+
+  it("takes workspace discovery root from the config resolver result", async () => {
+    const { config, home, invocationDir, projectRoot, workspaceRoot } = await loadWorkspaceConfigFromCommitSubdirectory();
+    try {
+      expect(projectRoot).toBe(workspaceRoot);
+      expect(config.sources.roots.projectStartDir).toBe(invocationDir);
+      expect(isWorkspaceDevelopmentMode(config)).toBe(true);
+      mocks.initPlatform.mockResolvedValue(mocks.platform);
+
+      await initializePlatform(config);
+
+      expect(mocks.initPlatform).toHaveBeenCalledWith(
+        config.platformConfig,
+        config.platformRoot,
+        expect.any(Function),
+        undefined,
+        expect.objectContaining({
+          workspaceDevelopment: true,
+          workspaceRoot: projectRoot,
+        }),
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers a workspace adapter from a subdirectory invocation without gateway access", async () => {
+    const { config, home, invocationDir, projectRoot, workspaceRoot } = await loadWorkspaceConfigFromCommitSubdirectory();
+    try {
+      expect(config.sources.roots.projectStartDir).toBe(invocationDir);
+      expect(projectRoot).toBe(workspaceRoot);
+      mocks.initPlatform.mockResolvedValue(mocks.platform);
+      await initializePlatform(config);
+
+      const storageBinding = config.platformConfig.adapters?.storage;
+      const storagePackage = Array.isArray(storageBinding) ? storageBinding[0] : storageBinding;
+      expect(storagePackage).toBeTruthy();
+      const packageName = storagePackage!.split("/").slice(0, 2).join("/");
+      const discovered = await discoverAdapters(config.platformRoot, {
+        development: true,
+        workspaceRoot: projectRoot,
+        configuredPackages: [{ packageName, slot: "storage" }],
+      });
+      expect(discovered.has(packageName)).toBe(true);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
