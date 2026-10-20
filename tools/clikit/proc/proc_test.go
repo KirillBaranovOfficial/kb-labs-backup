@@ -36,6 +36,103 @@ func startTest(ctx context.Context, cfg proc.Config) (*proc.Run, error) {
 	return proc.StartWithHostResourceSource(ctx, cfg, stableHostResourceSource{})
 }
 
+// case: S-237.56
+func TestLauncherExitTerminatesItsSpawnedRun(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	childPIDFile := filepath.Join(state, "child.pid")
+	command := exec.Command(runner, "run", "--tag", "launcher-owned", "--state", state,
+		"--stall", "1h", "--stdout", filepath.Join(state, "out"), "--stderr", filepath.Join(state, "err"),
+		"--", "/bin/sh", "-c", `echo $$ > "$1"; exec /bin/sleep 30`, "sh", childPIDFile)
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var childPID int
+	var childIdentity string
+	t.Cleanup(func() {
+		if command.Process != nil && command.ProcessState == nil {
+			if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				t.Errorf("kill launcher process %d during cleanup: %v", command.Process.Pid, err)
+			}
+			if _, err := command.Process.Wait(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				t.Errorf("wait for launcher process %d during cleanup: %v", command.Process.Pid, err)
+			}
+		}
+		records, err := filepath.Glob(filepath.Join(state, "runs", "*.json"))
+		if err != nil {
+			t.Errorf("find test-owned run records during cleanup: %v", err)
+		} else {
+			for _, path := range records {
+				data, readErr := os.ReadFile(path)
+				if readErr != nil {
+					t.Errorf("read test-owned run record %s during cleanup: %v", path, readErr)
+					continue
+				}
+				var owner struct {
+					PID       int    `json:"pid"`
+					StartedAt string `json:"started_at"`
+				}
+				if err := json.Unmarshal(data, &owner); err != nil {
+					t.Errorf("decode test-owned run record %s during cleanup: %v", path, err)
+					continue
+				}
+				identity, alive, identityErr := proc.ProcessIdentity(owner.PID)
+				if identityErr != nil {
+					t.Errorf("inspect test-owned process %d during cleanup: %v", owner.PID, identityErr)
+					continue
+				}
+				if alive && identity == owner.StartedAt {
+					if err := syscall.Kill(owner.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+						t.Errorf("kill test-owned process %d during cleanup: %v", owner.PID, err)
+					}
+				}
+			}
+		}
+		if childPID > 0 && childIdentity != "" {
+			identity, alive, err := proc.ProcessIdentity(childPID)
+			if err != nil {
+				t.Errorf("inspect spawned child %d during cleanup: %v", childPID, err)
+			} else if alive && identity == childIdentity {
+				if err := syscall.Kill(childPID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+					t.Errorf("kill spawned child %d during cleanup: %v", childPID, err)
+				}
+			}
+		}
+	})
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(childPIDFile)
+		if err == nil {
+			childPID, err = strconv.Atoi(strings.TrimSpace(string(data)))
+			if err == nil {
+				childIdentity, _, err = proc.ProcessIdentity(childPID)
+				if err == nil && childIdentity != "" {
+					break
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if childPID == 0 || childIdentity == "" {
+		t.Fatalf("launcher did not start a verifiable child: pid=%d identity=%q", childPID, childIdentity)
+	}
+	if err := command.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Wait(); err == nil {
+		t.Fatal("terminated launcher reported a successful exit")
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		identity, alive, err := proc.ProcessIdentity(childPID)
+		if err == nil && (!alive || identity != childIdentity) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("launcher-owned child %d survived launcher termination", childPID)
+}
+
 // case: S-237.1
 func TestNormalExitRemovesDescendantsAndWritesExitEvent(t *testing.T) {
 	state := t.TempDir()
@@ -2081,6 +2178,29 @@ func TestWaitReturnsRecordedExitAndFilteredEvents(t *testing.T) {
 	}
 	if countEvents(t, state, "teardown") != 1 || countEvents(t, state, "start") != 1 {
 		t.Fatalf("lifecycle event counts start=%d teardown=%d", countEvents(t, state, "start"), countEvents(t, state, "teardown"))
+	}
+}
+
+// case: S-237.59
+func TestEventsStartsAtPersistedByteOffset(t *testing.T) {
+	state := t.TempDir()
+	runner := buildRunner(t)
+	first := []byte(`{"schema":"kb.proc-event/v2","type":"queued","tag":"agent:old"}` + "\n")
+	second := []byte(`{"schema":"kb.proc-event/v2","type":"queued","tag":"agent:new"}` + "\n")
+	if err := os.WriteFile(filepath.Join(state, "events.jsonl"), append(first, second...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(runner, "events", "--state", state, "--offset", strconv.Itoa(len(first)))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("events from byte offset failed: %v; output=%s", err, output)
+	}
+	var event proc.Event
+	if err := json.Unmarshal(bytes.TrimSpace(output), &event); err != nil {
+		t.Fatalf("decode event from byte offset: %v; output=%s", err, output)
+	}
+	if event.Tag != "agent:new" {
+		t.Fatalf("event at offset = %q, want agent:new; output=%s", event.Tag, output)
 	}
 }
 

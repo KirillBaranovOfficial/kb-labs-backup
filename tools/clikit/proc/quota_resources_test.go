@@ -19,7 +19,7 @@ import (
 func countResourceEvents(t *testing.T, state string, kind EventType) int {
 	t.Helper()
 	var stream bytes.Buffer
-	if err := Events(context.Background(), state, false, []EventType{kind}, &stream); err != nil {
+	if err := Events(context.Background(), state, false, []EventType{kind}, 0, &stream); err != nil {
 		t.Fatal(err)
 	}
 	scanner := bufio.NewScanner(&stream)
